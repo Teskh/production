@@ -339,6 +339,9 @@ Advancement logic:
 - active (boolean)
 - guidance_text (nullable)
 - version (integer, for tracking changes)
+- kind (triggered | manual_template)
+- created_by_user_id (nullable, for manual templates)
+- archived_at (nullable)
 
 `QCTrigger`
 - id
@@ -362,7 +365,10 @@ Advancement logic:
 
 `QCCheckInstance`
 - id
-- check_definition_id
+- check_definition_id (nullable)
+- origin (triggered | manual)
+- ad_hoc_title (nullable)
+- ad_hoc_guidance (nullable)
 - scope (panel | module)
 - work_unit_id
 - panel_unit_id (nullable)
@@ -371,6 +377,7 @@ Advancement logic:
 - status (Open | Closed)
 - sampling_selected (boolean)
 - sampling_probability (float)
+- opened_by_user_id (nullable)
 - opened_at
 - closed_at (nullable)
 
@@ -413,6 +420,15 @@ Advancement logic:
 - status (Active | Dismissed)
 - created_at
 - seen_at (nullable)
+
+Notes:
+- `QCTrigger` rows apply only to `QCCheckDefinition.kind = triggered`.
+- Manual QC entries are created as `QCCheckInstance` rows with `origin = manual`.
+  - If created from a manual template, set `check_definition_id` and leave `ad_hoc_*` null.
+  - If fully ad hoc, leave `check_definition_id` null and require `ad_hoc_title`.
+  - Manual checks bypass sampling: set `sampling_selected = true` and `sampling_probability = 1.0`.
+- `opened_by_user_id` records the QC user for manual checks; triggered checks can leave it null or set to a system user.
+- `QCApplicability` can still scope manual templates; ad hoc checks bypass applicability filters.
 
 ---
 
@@ -622,6 +638,10 @@ These are behavior and UX requirements from the legacy spec that are not capture
 ### 5.7 QC workflows and sampling
 - Trigger types: task_completed (panel or module) and enter_station.
 - Applicability rules match by house type, module number, and subtype; higher specificity wins.
+- Manual QC checks are created directly by QC staff against a module/panel (optional station context).
+  - If created from a manual template, it uses `QCCheckDefinition.kind = manual_template`.
+  - If fully ad hoc, it uses `QCCheckInstance.ad_hoc_title` and no definition.
+  - Manual checks bypass triggers and sampling but still allow evidence and rework tasks.
 - Deterministic sampling seed: sha256("{plan_id}:{check_definition_id}:{trigger_event_id}")[:16].
 - Sampling uses current rate if present; skipped samples still create instances with status=skipped.
 - Adaptive sampling: fail sets current rate to 1.0; pass decreases by sampling_step but not below base rate.
