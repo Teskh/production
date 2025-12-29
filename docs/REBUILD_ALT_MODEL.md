@@ -54,7 +54,6 @@ Status semantics:
 - id
 - name
 - number_of_modules
-- linked_project_id (nullable, for external materials lookup)
 
 `HouseSubType`
 - id
@@ -140,6 +139,9 @@ def next_station(current_station):
 - panel_definition_id (nullable)
 - station_sequence_order (nullable)
 
+Notes:
+- `station_sequence_order` is required for station-bound tasks. If it is NULL, the task is treated as "unscheduled" and appears only in the "Other tasks" picker, not in station queues.
+
 Resolution order (most specific wins):
 1. panel_definition_id + station_sequence_order
 2. module_number + sub_type_id + station_sequence_order
@@ -166,7 +168,6 @@ Resolution order (most specific wins):
 - login_required (boolean)
 - active (boolean)
 - assigned_station_ids (json array, nullable)
-- geovictoria_id (nullable, for attendance integration)
 - supervisor_id (nullable, FK to AdminUser)
 
 `Skill`
@@ -189,7 +190,9 @@ Resolution order (most specific wins):
 
 Notes:
 - `allowed`: only these workers can perform the task
-- `regular_crew`: suggested default crew (UI hint only)
+- `regular_crew`: "favorites" list for group starts. The crew picker preselects these
+  workers so one worker can start a group task in a few clicks; workers can be
+  toggled on/off before starting. No logs/participations are created until start.
 
 ### 1.6 Execution (unified model)
 
@@ -441,13 +444,25 @@ Advancement logic:
 ### 2.5 Dependencies and concurrency
 - `TaskDefinition.dependencies_json` lists prerequisite task_definition_ids.
 - A task is blocked until all dependencies have Completed instances for the same work_unit (and panel_unit if panel-scoped).
+- Invalid or unparsable dependency config blocks the task start (fail closed for both panel and module tasks).
 - A worker cannot start a non-concurrent task if they have another non-concurrent task InProgress.
+- Allowed-worker restrictions are enforced for both panel and module tasks when configured; `regular_crew` is a UI-only suggestion list.
 
 ### 2.6 Skips and carryovers
 - Skipping creates a `TaskException(type=Skip)` at the current station.
+- Skipping pauses any in-progress work on that task instance and records a `TaskPause` reason like "Skipped override: ...".
 - Skipped tasks count as satisfied for advancement.
 - Downstream stations surface skipped tasks as carryover opportunities (computed at runtime, not stored).
 - Completing a carryover task creates a normal `TaskInstance` at the downstream station.
+- Carryovers are optional and do not block auto-advance when a station has no required tasks.
+
+### 2.7 W1 selection behavior
+- W1 offers a recommended next panel based on planned sequence.
+- Workers can manually select any eligible panel from the plan list (no "next two only" gating).
+
+### 2.8 Performance and caching
+
+For rebuild performance, cache task *templates* (applicability + expected durations) per panel definition and station sequence on the server, and invalidate only when task definitions or applicability/duration data change. Keep task status live from `TaskInstance`/`TaskException` data rather than caching status, and support a batched summary endpoint so UIs can request multiple station summaries in one call instead of recomputing the schedule for each station separately.
 
 ---
 
@@ -558,14 +573,80 @@ After migration, verify:
 
 ---
 
-## 5) Open questions for implementation
+## 5) Behavioral requirements migrated from REBUILD_SPEC.md
 
-1. **Rework task execution**: Should rework use `TaskInstance` with an `is_rework` flag, or a separate `ReworkExecution` table? Current system has `ReworkTaskLogs`.
+These are behavior and UX requirements from the legacy spec that are not captured elsewhere in this model. Where they conflict with the sections above, the model above wins.
 
-2. **Historical data**: Should completed WorkOrders be archived to a separate schema/database for performance?
+### 5.1 Product scope and roles
+- SCP covers worker station execution, admin configuration/history, QC workflows, and auxiliary stations.
+- Roles: Worker, Supervisor/Admin/SysAdmin, Control de Calidad.
+- Admin auth uses AdminUser first+last+pin; legacy SysAdmin uses hardcoded credentials (replace in rebuild).
+- Worker auth: name list plus PIN; name-only allowed when qr=true or login_required=0; default PIN "1111" triggers require_pin_change.
+- Legacy access control is UI-gated and most APIs are unauthenticated; rebuild should enforce auth.
 
-3. **Real-time updates**: WebSocket or polling for station UI updates?
+### 5.2 Station context and login UX
+- Station context is persisted in localStorage keys: selectedStationContext, selectedSpecificStationId, autoFocusPrevStationContext.
+- If a context maps to multiple stations, show a modal station picker; selection commits immediately.
+- Login screen shows a read-only station schedule preview for the selected context.
+- Auto-focus: if worker has an InProgress task, redirect to that station and pre-select module/panel; latest started task wins (panel wins ties).
 
-4. **Offline support**: Should workers be able to log work offline with sync?
+### 5.3 Worker station UI and task actions
+- Actions: start, pause (reason required), resume, finish (optional notes/templates), skip (reason required).
+- Pause reasons and comment templates are station-scoped; predefined pause reasons can auto-confirm.
+- Crew selection modal is used for group starts; regular crew is a "favorites" list
+  that preselects workers to minimize clicks (workers can be toggled on/off).
+  No logs/participations are created until the task is started.
+- Manual module/panel selector is available for items not listed in the queue.
+- Quick-start "other task" modal surfaces startable tasks from other stations plus backlog tasks; hides completed/skipped/blocked/in-progress tasks when concurrency disallows; starts via normal start endpoint with station_start set.
 
-5. **Audit trail**: Should all changes to TaskInstance/TaskParticipation be logged to an audit table?
+### 5.4 Station queues and daily schedule
+- W stations show panels whose current station matches and status is InProgress, grouped by module.
+- Magazine shows modules in Magazine status with a list of panels and their statuses.
+- Assembly stations show modules in Assembly status at that station; first station also shows Magazine modules eligible to pull.
+- Upcoming modules list is ordered by planned sequence and excludes Completed items.
+- Daily schedule stream (if kept) iterates planned modules and panel order, includes placeholder rows when a panel has no tasks at that station, and excludes tasks completed on prior calendar days.
+- W stations return panels_passed_today_count/list/area_sum for daily summaries.
+
+### 5.5 Task listing and sorting
+- Panel task order: panel-defined list if present, otherwise station sequence then name.
+- Module task lists default to TaskDefinition.name ordering when otherwise unspecified.
+- "Other task" modal sorts by station name, scope, task name; backlog tasks ordered by planned_sequence then name.
+
+### 5.6 Dependencies, permissions, and specialty
+- Dependencies block starts when prerequisites are not completed.
+- Legacy: module dependency parse failures block start; panel dependency parse failures allow start.
+- Allowed-worker restriction enforced for module tasks; legacy panel tasks do not enforce.
+- Legacy specialty filtering: panel tasks filtered by worker's first specialty; module tasks not filtered.
+- Preferred: unify via TaskSkillRequirement for both panel and module tasks.
+
+### 5.7 QC workflows and sampling
+- Trigger types: task_completed (panel or module) and enter_station.
+- Applicability rules match by house type, module number, and subtype; higher specificity wins.
+- Deterministic sampling seed: sha256("{plan_id}:{check_definition_id}:{trigger_event_id}")[:16].
+- Sampling uses current rate if present; skipped samples still create instances with status=skipped.
+- Adaptive sampling: fail sets current rate to 1.0; pass decreases by sampling_step but not below base rate.
+- Fail creates QCReworkTask (status Open) and QCNotification for the original worker; pass/waive/skip closes the instance and auto-completes open rework tasks.
+- Notifications feed returns active failures within 36 hours unless rework is done or canceled.
+- Evidence capture supports image/video upload; camera requires secure context; watermark includes module/panel/check + timestamp.
+
+### 5.8 Auxiliary stations
+- Aux stations are those with role=auxiliary or line_type not in W/M/A/B/C.
+- Aux tasks are module-scope and do not advance module status or current station.
+- Eligible statuses default to Planned and Panels (configurable).
+- Pending tasks are applicable definitions minus completed/skipped tasks.
+- Dual-mode pairing can auto-pair one additional identical module (same house_type/module_number/sub_type) without existing logs for that task; dependency checks still apply.
+
+### 5.9 Reporting and analytics
+- Task analysis: filters by house type/panel/task/station/worker/date; task mode returns per log durations; station/panel modes aggregate per plan; expected minutes sourced from panel definition task durations.
+- Panel linear meters: uses completed W-station panel tasks; work time excludes pause minutes; optional outlier filter by ratio; compute avg_time and lm_per_min.
+- Station panels finished: include completed tasks, skips, and pass-through panels; grouped by house/module/panel with time summaries.
+- Ex-post notes append to all task logs for a panel (store as appended text on TaskInstance notes).
+- Export endpoints generate XLSX from the same report payloads.
+- Anomalies/backlog tasks: unfinished tasks (expected by station) and misplaced tasks (logged at wrong station) can be surfaced in station overviews when enabled.
+
+### 5.10 Planning, reorder, timebase, and login behavior
+- Plan generation: planned_sequence appends from max; modules per house inserted in descending module_number; planned_start_datetime increments +1h; planned line cycles A/B/C; house_identifier_base accepted with optional collision checks.
+- Reorder rewrites planned_sequence to 1..N in the provided order (no concurrency guard).
+- "Today" uses server local midnight for daily schedule and reports; station panels finished uses 08:20 as day start for idle/overtime summaries; QC timestamps use server time.
+- Workers without login_permanance are auto-logged out after 45s inactivity.
+- QR login uses first two whitespace tokens as first/last name; scanner polls about 1 Hz with a 10s de-dupe window.

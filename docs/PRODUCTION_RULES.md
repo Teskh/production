@@ -1,30 +1,30 @@
-# Production Rules Reference (Behavioral)
+# Production Rules Reference (Behavioral, Alt Model)
 
 This document captures the shop-floor production rules in business terms.
-It avoids code-level naming and focuses on the behavior the rebuild must preserve.
-It complements `docs/REBUILD_SPEC.md`.
+It mirrors `docs/PRODUCTION_RULES.md` but aligns with `docs/REBUILD_ALT_MODEL.md`.
+It avoids code-level naming and focuses on behavior the rebuild must preserve.
 
 ---
 
 ## 1) Core concepts and statuses
 
-Module plan item statuses:
+Work units (modules) statuses:
 - Planned
 - Panels
 - Magazine
 - Assembly
 - Completed
 
-Panel plan item statuses:
+Panel units statuses:
 - Planned (or missing entry = not started)
 - In Progress
 - Completed
 - Consumed
 
-Task execution logs:
-- Panel tasks and module tasks each have execution logs.
-- Statuses include Not Started (implicit), In Progress, Paused, Completed.
-- Skips are represented as station-scoped overrides rather than a log status.
+Task execution:
+- Tasks are represented by a single TaskInstance with per-worker TaskParticipation.
+- TaskInstance statuses include Not Started (implicit), In Progress, Paused, Completed.
+- Skips are represented as TaskException(type=Skip) rather than a task status.
 
 ---
 
@@ -36,12 +36,11 @@ Stations:
 - For assembly lines (A/B/C), the first station is the lowest sequence order for that line.
 
 Tasks:
-- Tasks are either panel tasks or module tasks.
-- Task applicability is filtered by:
-  - House type (specific or general)
-  - Station sequence order (specific or general)
-  - Specialty when a worker specialty is provided (otherwise only general specialty)
-- Tasks with no station sequence order are treated as applicable at any station sequence.
+- Tasks are panel-scope or module-scope.
+- Task applicability is resolved via TaskApplicability with most-specific-wins rules.
+- Tasks require a station_sequence_order to appear in a station queue.
+- Tasks with no station_sequence_order are treated as "unscheduled" and appear only in the
+  "Other tasks" picker.
 
 Panel-specific task lists:
 - A panel definition may provide a whitelist and ordering of applicable tasks.
@@ -52,25 +51,19 @@ Panel-specific task lists:
 
 ## 3) Panel line rules (W line)
 
-### 3.1 W1 start order (next two panels only)
+### 3.1 W1 selection behavior
 
-At W1, only one of the next two scheduled panels can be started, unless the panel
-is already in progress at W1. The "next two" list is computed as follows:
-1) Use the daily schedule stream for W1, which is derived from the global planned
-   order of modules and panels. Panels with no tasks still appear as pass-through
-   entries. Tasks completed on prior calendar days are excluded from the stream.
-2) If the daily schedule yields no candidates, fall back to the global planned
-   sequence of modules in Planned/Panels status and take the earliest not-started
-   panels for each module (based on defined panel order).
-
-If the upcoming list is empty, W1 start order is not restricted.
+At W1:
+- The station UI offers a recommended "next panel" based on planned sequence.
+- The worker can manually select any eligible panel from the plan list.
+- There is no "next two only" gating.
 
 ### 3.2 Which panel tasks appear at a station
 
 For a given panel at a station, the task list is built by:
 - Selecting active panel tasks that match the module house type (or are general),
-  and match the station sequence (or are general).
-- Filtering by worker specialty if provided.
+  and match the station sequence (required).
+- Filtering by worker skills when a worker is provided (per TaskSkillRequirement).
 - Applying the panel's applicable task list if defined.
 - Ordering tasks by the panel's list (if defined), otherwise by station sequence and name.
 
@@ -80,17 +73,16 @@ Carryover tasks (optional suggestions):
 - These tasks are marked as carried over and include the origin station and skip reason.
 - Carryovers do not block advancement or auto-advance.
 
-### 3.3 Panel task completion and shared logs
+### 3.3 Panel task completion and shared participation
 
 When a panel task is completed:
-- All non-completed logs for the same panel/task are completed together.
-- Any open pauses for those logs are closed.
+- The TaskInstance is completed once, and all active TaskParticipations are closed.
+- Any open pauses for the TaskInstance are closed.
 
 ### 3.4 Panel advancement at a station
 
 A panel advances when all required tasks for the current station are satisfied:
 - A task is satisfied if it is completed or explicitly skipped at that station.
-- Specialty filtering is not used for the satisfaction check.
 
 Advancement on the W line:
 - Move to the next W station that has applicable tasks for the panel.
@@ -98,10 +90,10 @@ Advancement on the W line:
 
 ### 3.5 Auto-advance when a station has no tasks
 
-If a panel has no applicable tasks at the current W station (ignoring specialty):
+If a panel has no applicable tasks at the current W station:
 - The panel auto-advances to the next W station that has tasks.
 - If no station has tasks, the panel becomes Completed and the module moves to Magazine.
-- If the panel plan item does not exist yet, it is created as In Progress.
+- If the panel unit does not exist yet, it is created as In Progress.
 - If the module was still Planned, it becomes Panels.
 
 ---
@@ -111,9 +103,8 @@ If a panel has no applicable tasks at the current W station (ignoring specialty)
 ### 4.1 Module task applicability
 
 Module tasks can be restricted by applicability lists:
-- If there is a task list for (house type, module number, subtype), only those tasks apply.
-- Else if there is a task list for (house type, module number, no subtype), only those apply.
-- Else all matching tasks apply.
+- TaskApplicability rows can scope tasks by house type, module number, subtype, and station.
+- Most-specific-wins resolution applies (panel-specific scope is ignored for module tasks).
 
 ### 4.2 Module status transitions
 
@@ -137,14 +128,15 @@ When the module is in Magazine and the task starts at the first station of a lin
 
 ### 4.4 Module advancement at a station
 
-There are two modes:
-1) Rule-based: if an advance rule exists for the station sequence (scoped by house type/subtype),
-   the module advances when all rule trigger tasks are completed anywhere in the module.
-   Advancing via a rule auto-pauses any in-progress module tasks at that station.
-2) Fallback: the module advances when all required tasks at the station are satisfied
-   (completed or explicitly skipped). If the station has no required tasks, it advances immediately.
+Advancement uses AdvanceRule:
+1) If an AdvanceRule exists for the station sequence (scoped by house type/subtype/line),
+   the module advances when all rule trigger tasks are completed for that module.
+2) If no rule applies, the module advances when all required tasks at the station are
+   satisfied (completed or explicitly skipped). If the station has no required tasks,
+   it advances immediately.
 
-Advancement:
+Advancing:
+- Auto-pause any in-progress tasks at the current station (reason: "Auto-pausa por avance").
 - Move to the next station in the same line with applicable tasks.
 - If none exists, the module becomes Completed and all panels become Consumed.
 
@@ -175,20 +167,21 @@ Upcoming modules list:
 ## 6) Dependencies, concurrency, skips, permissions
 
 Dependencies:
-- Panel task dependencies are evaluated per panel; if parsing fails, the task can still start.
-- Module task dependencies are evaluated per module; if parsing fails, the task cannot start.
+- Panel task dependencies are evaluated per panel unit; parsing failures are treated as blocked.
+- Module task dependencies are evaluated per module unit; parsing failures are treated as blocked.
 
 Concurrency:
-- A worker can have only one active non-exempt task (panel or module) at a time.
+- A worker can have only one active non-exempt task at a time.
 - Tasks marked as concurrent are exempt from this restriction.
 
 Skips:
-- Skipping records a station-scoped override and pauses any active logs for that task.
+- Skipping records a station-scoped TaskException(type=Skip) and a reason.
+- Skips pause any active work on that task.
 - Skips count as satisfied for station advancement.
 
 Permissions:
-- Module tasks enforce allowed-worker lists when configured.
-- Panel tasks do not enforce allowed-worker lists in current behavior.
+- Allowed-worker restrictions are enforced uniformly for panel and module tasks when configured.
+- Regular crew lists are UI suggestions only; they do not override concurrency or allowed-worker rules.
 
 ---
 
@@ -196,17 +189,6 @@ Permissions:
 
 Auxiliary stations are those marked as auxiliary or with a line type outside W/M/A/B/C.
 Rules:
-- Only module tasks run at auxiliary stations.
+- Only module-scope tasks run at auxiliary stations.
 - Dependencies, concurrency, and allowed-worker restrictions apply.
-- By default, auxiliary selection targets modules in Planned/Panels status unless overridden.
-
----
-
-## 8) Edge behaviors to preserve
-
-- W1 gating applies only when the panel is not already in progress at W1.
-- If the "upcoming panels" list is empty, W1 start order is not restricted.
-- Completing any single panel through W advances its module to Magazine.
-- Task completion is shared across workers for the same panel/module task.
-- Advancement and auto-advance ignore specialty filtering.
-- Tasks without a station sequence apply to any station sequence within their line.
+- Auxiliary work does not advance module current station or status.

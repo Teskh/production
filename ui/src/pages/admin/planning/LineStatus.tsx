@@ -21,12 +21,12 @@ const LineStatus: React.FC = () => {
           <div className="min-w-[800px] flex flex-col items-center space-y-12">
             
             {/* 1. Panel Line (Snake Layout) */}
-            <div className="w-full max-w-4xl relative">
+            <div className="w-full max-w-5xl relative">
               {/* Row 1: Left to Right */}
-              <div className="flex justify-between items-center mb-4 px-12">
+              <div className="flex justify-between items-center mb-4 px-24">
                 {['Panel St 1', 'Panel St 2', 'Panel St 3'].map((name, i) => (
                   <React.Fragment key={name}>
-                    <div className="w-40 h-24 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
+                    <div className="w-56 h-32 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
                       <span className="text-xs font-bold uppercase text-blue-800 mb-1">{name}</span>
                       <span className="text-xs text-gray-500">Running</span>
                       {i === 1 && (
@@ -42,13 +42,13 @@ const LineStatus: React.FC = () => {
               </div>
 
               {/* U-Turn Connector (Right Side) */}
-              <div className="absolute right-0 top-12 h-32 w-24 border-r-4 border-gray-200 rounded-r-3xl pointer-events-none" />
+              <div className="absolute right-0 top-16 h-44 w-24 border-r-4 border-gray-200 rounded-r-3xl pointer-events-none" />
               
               {/* Row 2: Right to Left */}
-              <div className="flex justify-between items-center mt-12 px-12 flex-row-reverse">
+              <div className="flex justify-between items-center mt-12 px-24 flex-row-reverse">
                 {['Panel St 4', 'Panel St 5', 'Panel St 6'].map((name, i) => (
                   <React.Fragment key={name}>
-                    <div className="w-40 h-24 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
+                    <div className="w-56 h-32 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
                       <span className="text-xs font-bold uppercase text-blue-800 mb-1">{name}</span>
                       <span className="text-xs text-gray-500">Running</span>
                     </div>
@@ -59,55 +59,43 @@ const LineStatus: React.FC = () => {
               </div>
             </div>
 
-            {/* Connection Panel Line -> Magazine */}
-            <div className="w-full max-w-4xl px-12">
-               <div className="w-40 flex justify-center">
-                 <ArrowDown className="text-gray-300 w-10 h-10" />
-               </div>
+            {/* Connection Panel Line -> Magazine (Centered) */}
+            <div className="w-full flex justify-center">
+               <ArrowDown className="text-gray-300 w-10 h-10" />
             </div>
 
-            {/* 2. Magazine (Buffer) */}
-            <div className="w-full max-w-4xl px-12">
-              <div className="w-40 h-32 bg-indigo-50 border-2 border-indigo-200 rounded-xl flex flex-col items-center justify-center shadow-sm relative">
-                <Box className="w-8 h-8 text-indigo-500 mb-2" />
-                <span className="font-bold text-indigo-900">MAGAZINE</span>
-                <span className="text-xs text-indigo-600 mt-1">Buffer: 45/100</span>
-              </div>
+            {/* 2. Magazine (Buffer) - Centered and cleaned up */}
+            <div className="w-80 h-32 bg-indigo-50 border-2 border-indigo-200 rounded-xl flex flex-col items-center justify-center shadow-sm relative">
+              <Box className="w-8 h-8 text-indigo-500 mb-2" />
+              <span className="font-bold text-indigo-900">MAGAZINE</span>
             </div>
 
-            {/* Arrows from Magazine to Assembly Lines */}
-            <div className="w-full max-w-4xl px-8 relative h-16">
-               {/* Central vertical line */}
-               {/* <div className="absolute left-12 top-0 h-8 w-0.5 bg-gray-300"></div> */}
-               
-               {/* Branching lines */}
+            {/* Arrows from Magazine to Assembly Lines (Centered and Branching) */}
+            <div className="w-full max-w-5xl h-24 relative">
                <svg className="w-full h-full text-gray-300 overflow-visible">
-                 {/* Start from center of Magazine (roughly left 140px/2 + padding... simplified: assume aligned) */}
-                 {/* We need to connect the Magazine (left aligned above) to 3 items distributed */}
-                 {/* Let's actually center the Magazine relative to the assembly lines below for better visual balance */}
-                 
-                 {/* Since the Magazine is currently aligned left (under Station 6), let's keep it there but show arrows branching out */}
-                 <path d="M 80 0 L 80 20 L 380 20 L 380 60" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
-                 <path d="M 80 0 L 80 60" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
-                 <path d="M 80 0 L 80 20 L -220 20 L -220 60" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
-                 
                  <defs>
-                   <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orient="auto">
+                   <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
                      <polygon points="0 0, 10 3.5, 0 7" fill="#cbd5e1" />
                    </marker>
                  </defs>
+                 {/* Start from horizontal center (50%) */}
+                 {/* Main vertical stem */}
+                 <line x1="50%" y1="0" x2="50%" y2="40" stroke="currentColor" strokeWidth="2" />
+                 {/* Horizontal crossbar */}
+                 <line x1="16.66%" y1="40" x2="83.33%" y2="40" stroke="currentColor" strokeWidth="2" />
+                 {/* Three vertical drops */}
+                 <line x1="16.66%" y1="40" x2="16.66%" y2="80" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
+                 <line x1="50%" y1="40" x2="50%" y2="80" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
+                 <line x1="83.33%" y1="40" x2="83.33%" y2="80" stroke="currentColor" strokeWidth="2" markerEnd="url(#arrowhead)" />
                </svg>
             </div>
 
             {/* 3. Assembly Lines */}
-            <div className="w-full flex justify-between gap-8">
+            <div className="w-full max-w-5xl flex justify-between gap-8">
               {['Assembly Line 1', 'Assembly Line 2', 'Assembly Line 3'].map((name) => (
-                <div key={name} className="flex-1 min-w-[200px] bg-green-50 border border-green-200 rounded-lg p-4 min-h-[150px] relative">
-                  <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                    <ArrowDown className="text-gray-300 w-6 h-6" />
-                  </div>
+                <div key={name} className="flex-1 min-w-[300px] bg-green-50 border border-green-200 rounded-lg p-4 min-h-[240px] relative flex flex-col items-center">
                   <h4 className="font-bold text-green-900 text-center mb-4">{name}</h4>
-                  <div className="space-y-2">
+                  <div className="w-full space-y-2">
                     <div className="bg-white p-2 rounded border border-green-100 text-xs shadow-sm">
                       Status: <span className="text-green-600 font-semibold">Active</span>
                     </div>

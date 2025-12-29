@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Play, Pause, CheckSquare, FastForward, MoreHorizontal, 
-  Users, Search, PlusCircle 
+  Users, Search, PlusCircle, X
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -24,7 +24,7 @@ const StationWorkspace: React.FC = () => {
     { id: '3', module: 'MOD-1003', name: 'Frame Assembly', status: 'pending', meta: 'House Type A' },
   ]);
   
-  const [activeModal, setActiveModal] = useState<'pause' | 'skip' | 'finish' | 'crew' | 'manual' | null>(null);
+  const [activeModal, setActiveModal] = useState<'pause' | 'skip' | 'finish' | 'crew' | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   // Mock Data for Modals
@@ -53,24 +53,9 @@ const StationWorkspace: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Controls / Aux Toggle */}
+      {/* Top Controls */}
       <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm border border-gray-200">
         <h2 className="text-lg font-semibold text-gray-800">Task Queue</h2>
-        <div className="flex items-center space-x-3">
-           <button 
-             onClick={() => setActiveModal('manual')}
-             className="flex items-center px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100"
-            >
-             <Search className="w-4 h-4 mr-2" />
-             Find Module
-           </button>
-           <div className="flex items-center border-l pl-4 ml-4">
-             <span className="text-sm text-gray-500 mr-2">Aux Mode</span>
-             <button className="relative inline-flex flex-shrink-0 h-6 w-11 border-2 border-transparent rounded-full cursor-pointer transition-colors ease-in-out duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 bg-gray-200">
-               <span className="translate-x-0 pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition ease-in-out duration-200"></span>
-             </button>
-           </div>
-        </div>
       </div>
 
       {/* Main Task List */}
@@ -102,9 +87,9 @@ const StationWorkspace: React.FC = () => {
                 <>
                   <button 
                     onClick={() => handleAction(task.id, 'pause')}
-                    className="flex flex-col items-center justify-center w-20 h-20 rounded-lg bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200 transition-colors"
+                    className="flex flex-col items-center justify-center w-24 h-24 rounded-lg bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200 transition-colors"
                   >
-                    <Pause className="w-8 h-8 mb-1" />
+                    <Pause className="w-10 h-10 mb-1" />
                     <span className="text-xs font-semibold">Pause</span>
                   </button>
                   <button 
@@ -119,17 +104,17 @@ const StationWorkspace: React.FC = () => {
                 <>
                   <button 
                     onClick={() => handleAction(task.id, 'skip')}
-                    className="flex flex-col items-center justify-center w-16 h-16 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                    className="flex flex-col items-center justify-center w-24 h-24 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
                   >
-                    <FastForward className="w-6 h-6 mb-1" />
+                    <FastForward className="w-10 h-10 mb-1" />
                     <span className="text-xs">Skip</span>
                   </button>
                   <button 
                     onClick={() => handleAction(task.id, 'start')}
-                    className="flex flex-col items-center justify-center w-20 h-20 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
+                    className="flex flex-col items-center justify-center w-24 h-24 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
                   >
-                    <Play className="w-8 h-8 mb-1" />
-                    <span className="text-xs font-semibold">Start</span>
+                    <Play className="w-10 h-10 mb-1" />
+                    <span className="text-sm font-bold">Start</span>
                   </button>
                 </>
               )}
@@ -143,15 +128,6 @@ const StationWorkspace: React.FC = () => {
             </div>
           </div>
         ))}
-
-        {/* Empty State / Add More */}
-        <button 
-          onClick={() => setActiveModal('manual')}
-          className="w-full py-4 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-blue-400 hover:text-blue-500 flex items-center justify-center transition-colors"
-        >
-          <PlusCircle className="w-5 h-5 mr-2" />
-          Add Task manually
-        </button>
       </div>
 
       {/* MODALS */}
@@ -221,24 +197,6 @@ const StationWorkspace: React.FC = () => {
                         >
                           Complete Task
                         </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* MANUAL SELECTOR MODAL */}
-              {activeModal === 'manual' && (
-                <div>
-                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Find Module</h3>
-                    <div className="mt-2">
-                      <input type="text" placeholder="Search module ID..." className="w-full border border-gray-300 rounded-md p-2 mb-4" />
-                      <div className="h-48 overflow-y-auto border rounded bg-gray-50 p-2 text-sm text-gray-500">
-                        <p>Results will appear here...</p>
-                      </div>
-                      <div className="mt-4 flex justify-end">
-                         <button onClick={closeModal} className="px-4 py-2 border rounded">Close</button>
                       </div>
                     </div>
                   </div>
