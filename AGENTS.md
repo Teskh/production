@@ -4,3 +4,5 @@ Deeper guides about the functioning of the project is found in docs/
 docs/ROADMAP.md is a checklist style roadmap of where we are in the rebuilding of the refactor
 
 Whenever big assumptions have to be made, outside the scope of docs/, leave the assumption in docs/ASSUMPTIONS_MADE.md to keep a clean registry.
+
+always use 'uv' instead of 'pip' for python dependencies. We already have a root level uv virtual environment (venv)

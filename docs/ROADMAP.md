@@ -3,18 +3,17 @@
 Checklist for building the application. Update each item to `In progress` or `Done` as work advances.
 
 ## Database And Schema
-- [ ] Status: Not started - finalize data model (WorkOrder/WorkUnit/PanelUnit, tasks, applicability, stations, workers, QC)
-- [ ] Status: Not started - pick migration tool + create initial migration scaffolding
-- [ ] Status: Not started - implement PostgreSQL schema for core entities and execution logs
+- [-] Status: In progress - finalize data model (WorkOrder/WorkUnit/PanelUnit, tasks, applicability, stations, workers, QC)
+- [X] Status: Done - implement PostgreSQL schema for core entities and execution logs
 - [ ] Status: Not started - seed baseline reference data (stations, line types, roles, pause reasons, comment templates)
 - [ ] Status: Not started - add data access layer patterns (repositories/services) and base validation
 
 ## Minimal Admin Backend + Frontend
-- [ ] Status: Not started - admin auth (AdminUser + roles) and session handling
-- [ ] Status: Not started - CRUD APIs for workers, skills, stations, house types/subtypes, panel definitions
-- [ ] Status: Not started - CRUD APIs for task definitions, applicability, expected durations, advance rules
-- [ ] Status: Not started - CRUD APIs for house parameters and per-module parameter values
-- [ ] Status: Not started - admin UI screens to edit the above (list/detail/edit/import)
+- [X] Status: Done - admin auth (AdminUser + roles) and session handling
+- [X] Status: Done - CRUD APIs for workers, skills, stations, house types/subtypes, panel definitions
+- [X] Status: Done - CRUD APIs for task definitions, applicability, expected durations, advance rules
+- [X] Status: Done - CRUD APIs for house parameters and per-module parameter values
+- [X] Status: Done - admin UI screens to edit the above (list/detail/edit/import)
 - [ ] Status: Not started - guardrails/validation in admin UI (required fields, ranges, conflicts)
 
 ## Production Line Logic

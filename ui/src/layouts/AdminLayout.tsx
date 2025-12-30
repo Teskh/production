@@ -1,8 +1,18 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { 
-  Users, Calendar, Settings, FileText, BarChart, 
-  Menu, X, Home, ClipboardList, CheckSquare, Layers
+import {
+  Users,
+  Calendar,
+  Settings,
+  FileText,
+  BarChart,
+  Menu,
+  X,
+  Home,
+  ClipboardList,
+  CheckSquare,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -15,10 +25,10 @@ const AdminLayout: React.FC = () => {
       title: 'Personnel',
       items: [
         { name: 'Workers', path: '/admin/workers', icon: Users },
-        { name: 'Specialties', path: '/admin/specialties', icon: Settings }, // Using Settings as placeholder
+        { name: 'Specialties', path: '/admin/specialties', icon: Settings },
         { name: 'Admin Team', path: '/admin/team', icon: Users },
         { name: 'Assistance', path: '/admin/assistance', icon: Calendar },
-      ]
+      ],
     },
     {
       title: 'Planning & Production',
@@ -29,7 +39,7 @@ const AdminLayout: React.FC = () => {
         { name: 'Station Finished', path: '/admin/station-finished', icon: CheckSquare },
         { name: 'Task Analysis', path: '/admin/task-analysis', icon: BarChart },
         { name: 'Panel Meters', path: '/admin/panel-meters', icon: BarChart },
-      ]
+      ],
     },
     {
       title: 'Product Definition',
@@ -38,7 +48,7 @@ const AdminLayout: React.FC = () => {
         { name: 'House Params', path: '/admin/house-params', icon: Settings },
         { name: 'House Panels', path: '/admin/house-panels', icon: FileText },
         { name: 'Module Rules', path: '/admin/rules', icon: Settings },
-      ]
+      ],
     },
     {
       title: 'Configuration',
@@ -47,87 +57,109 @@ const AdminLayout: React.FC = () => {
         { name: 'Task Definitions', path: '/admin/task-defs', icon: ClipboardList },
         { name: 'Pause Definitions', path: '/admin/pause-defs', icon: Settings },
         { name: 'Note Definitions', path: '/admin/note-defs', icon: FileText },
-      ]
+      ],
     },
     {
       title: 'Quality',
-      items: [
-        { name: 'QC Checks', path: '/admin/qc-checks', icon: CheckSquare },
-      ]
-    }
+      items: [{ name: 'QC Checks', path: '/admin/qc-checks', icon: CheckSquare }],
+    },
   ];
 
   return (
-    <div className="flex h-screen bg-gray-100">
-      {/* Mobile Sidebar Overlay */}
-      {!sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
-          onClick={() => setSidebarOpen(true)}
-        />
-      )}
+    <div className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef9f2,_#f2ede1_45%,_#e7e2d8_100%)]">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute right-12 top-10 h-32 w-32 rounded-full bg-[rgba(242,98,65,0.2)] blur-2xl animate-drift" />
+        <div className="absolute left-10 bottom-16 h-40 w-40 rounded-full bg-[rgba(47,107,79,0.15)] blur-3xl" />
+      </div>
+      <div className="relative flex min-h-screen">
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
 
-      {/* Sidebar */}
-      <div className={clsx(
-        "fixed lg:static inset-y-0 left-0 z-30 w-64 bg-slate-800 text-white transition-transform duration-300 transform",
-        !sidebarOpen ? "-translate-x-full lg:translate-x-0" : "translate-x-0",
-        "lg:translate-x-0" // Always show on large screens? Actually spec says "Sidebar collapses on small screens"
-      )}>
-        <div className="flex items-center justify-between p-4 border-b border-slate-700">
-          <h1 className="text-xl font-bold">Admin Panel</h1>
-          <button 
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="lg:hidden p-1 hover:bg-slate-700 rounded"
-          >
-            <X size={20} />
-          </button>
-        </div>
-        
-        <nav className="p-4 space-y-6 overflow-y-auto h-[calc(100vh-65px)]">
-          {menuItems.map((group, idx) => (
-            <div key={idx}>
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                {group.title}
-              </h3>
-              <div className="space-y-1">
-                {group.items.map((item) => (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={clsx(
-                      "flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors",
-                      location.pathname === item.path 
-                        ? "bg-slate-700 text-white" 
-                        : "text-slate-300 hover:bg-slate-700 hover:text-white"
-                    )}
-                  >
-                    <item.icon size={18} className="mr-3" />
-                    {item.name}
-                  </Link>
-                ))}
+        <aside
+          className={clsx(
+            "fixed lg:static inset-y-0 left-0 z-30 w-72 text-white transition-transform duration-300 transform",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+            "lg:translate-x-0"
+          )}
+        >
+          <div className="h-full bg-[linear-gradient(160deg,_#0f1b2d_0%,_#1e2f4a_45%,_#132234_100%)] shadow-xl">
+            <div className="flex items-center justify-between p-5 border-b border-white/10">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.3em] text-white/60">SCP Control</p>
+                <h1 className="text-lg font-display tracking-wide">Admin Console</h1>
+              </div>
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="lg:hidden p-1 hover:bg-white/10 rounded"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <nav className="p-5 space-y-6 overflow-y-auto h-[calc(100vh-96px)]">
+              {menuItems.map((group) => (
+                <div key={group.title}>
+                  <h3 className="text-[11px] font-semibold text-white/50 uppercase tracking-[0.2em] mb-3">
+                    {group.title}
+                  </h3>
+                  <div className="space-y-1">
+                    {group.items.map((item) => (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        className={clsx(
+                          "flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors",
+                          location.pathname === item.path
+                            ? "bg-white/15 text-white"
+                            : "text-white/70 hover:bg-white/10 hover:text-white"
+                        )}
+                      >
+                        <item.icon size={18} className="mr-3" />
+                        {item.name}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </div>
+        </aside>
+
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <header className="bg-white/80 backdrop-blur border-b border-black/5 h-16 flex items-center px-6">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="lg:hidden mr-4 text-slate-700"
+            >
+              <Menu size={24} />
+            </button>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(242,98,65,0.18)]">
+                <Sparkles className="h-5 w-5 text-[var(--accent)]" />
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Admin Workspace
+                </p>
+                <h2 className="font-display text-lg text-[var(--ink)]">Operations Control</h2>
               </div>
             </div>
-          ))}
-        </nav>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white shadow-sm h-16 flex items-center px-6">
-          <button 
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="lg:hidden mr-4 text-gray-600"
-          >
-            <Menu size={24} />
-          </button>
-          <div className="flex-1"></div>
-          <div className="text-sm text-gray-600">
-            Admin User
-          </div>
-        </header>
-        <main className="flex-1 overflow-auto p-6">
-          <Outlet />
-        </main>
+            <div className="flex-1" />
+            <div className="flex items-center gap-3">
+              <div className="rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)]">
+                Shift: Day
+              </div>
+              <div className="text-sm text-[var(--ink)]">Admin User</div>
+            </div>
+          </header>
+          <main className="flex-1 overflow-auto px-6 py-8">
+            <Outlet />
+          </main>
+        </div>
       </div>
     </div>
   );

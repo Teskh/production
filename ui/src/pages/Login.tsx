@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Lock, MapPin, Calendar, ArrowRight, Shield, QrCode } from 'lucide-react';
+
+// Mock Data Types
+type Worker = {
+  name: string;
+  stations: string[];
+};
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -9,29 +15,47 @@ const Login: React.FC = () => {
   const [pin, setPin] = useState('');
   const [showStationPicker, setShowStationPicker] = useState(false);
   const [stationContext, setStationContext] = useState('Line 1 - Station A');
+  const [showAllWorkers, setShowAllWorkers] = useState(false);
 
   // Mock Data
-  const workers = ['John Doe', 'Jane Smith', 'Bob Johnson', 'Alice Williams'];
   const stations = ['Line 1 - Station A', 'Line 1 - Station B', 'Line 2 - Station A'];
+  
+  const workers: Worker[] = [
+    { name: 'John Doe', stations: ['Line 1 - Station A'] },
+    { name: 'Jane Smith', stations: ['Line 1 - Station A'] },
+    { name: 'Mike Ross', stations: ['Line 1 - Station A'] },
+    { name: 'Rachel Zane', stations: ['Line 1 - Station A'] },
+    { name: 'Bob Johnson', stations: ['Line 1 - Station B'] },
+    { name: 'Alice Williams', stations: ['Line 2 - Station A'] },
+    { name: 'Harvey Specter', stations: ['Line 1 - Station B', 'Line 2 - Station A'] },
+    { name: 'Donna Paulsen', stations: ['Line 1 - Station A'] },
+  ];
+
+  const WORKER_THRESHOLD = 5;
 
   const handleLogin = () => {
     if (isAdmin) {
-      navigate('/admin');
+      navigate('/admin/dashboard');
     } else {
-      // Simulate context ambiguity check
-      if (Math.random() > 0.5) {
-        setShowStationPicker(true);
-      } else {
-        navigate('/station');
-      }
+      // Logic to determine where to go next
+      // For now, we just go to the station dashboard or worker workspace
+      navigate('/worker/workspace');
     }
   };
 
   const handleStationSelect = (station: string) => {
     setStationContext(station);
     setShowStationPicker(false);
-    navigate('/station');
+    setSelectedWorker(null); // Reset selection on station change
+    setShowAllWorkers(false); // Reset "show all" on station change
   };
+
+  const availableWorkers = useMemo(() => {
+    if (showAllWorkers) return workers;
+    return workers.filter(w => w.stations.includes(stationContext));
+  }, [workers, stationContext, showAllWorkers]);
+
+  const shouldUseDropdown = showAllWorkers || availableWorkers.length > WORKER_THRESHOLD;
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col lg:flex-row">
@@ -50,33 +74,85 @@ const Login: React.FC = () => {
           <div className="space-y-6">
             {!isAdmin ? (
               <>
+                {/* Station Display/Picker Trigger */}
                 <div>
-                  <label htmlFor="worker" className="block text-sm font-medium text-gray-700">
+                  <label className="block text-sm font-medium text-gray-700">Current Station</label>
+                  <div className="mt-1 flex items-center justify-between p-3 border border-gray-200 rounded-md bg-gray-50 text-gray-500">
+                    <div className="flex items-center">
+                      <MapPin className="w-4 h-4 mr-2" />
+                      {stationContext}
+                    </div>
+                    <button onClick={() => setShowStationPicker(true)} className="text-xs text-blue-600 font-semibold uppercase hover:text-blue-800">Change</button>
+                  </div>
+                </div>
+
+                {/* Worker Selection */}
+                <div>
+                  <label htmlFor="worker" className="block text-sm font-medium text-gray-700 mb-2">
                     Who are you?
                   </label>
-                  <div className="mt-1 relative">
-                    <select
-                      id="worker"
-                      className="block w-full pl-3 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md border"
-                      value={selectedWorker || ''}
-                      onChange={(e) => setSelectedWorker(e.target.value)}
-                    >
-                      <option value="" disabled>Select your name</option>
-                      {workers.map(w => <option key={w} value={w}>{w}</option>)}
-                    </select>
-                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                      <User className="h-5 w-5 text-gray-400" />
+                  
+                  {shouldUseDropdown ? (
+                    <div className="relative">
+                      <select
+                        id="worker"
+                        className="block w-full pl-3 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md border bg-white"
+                        value={selectedWorker || ''}
+                        onChange={(e) => setSelectedWorker(e.target.value)}
+                      >
+                        <option value="" disabled>Select your name</option>
+                        {availableWorkers.map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
+                      </select>
+                      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                        <User className="h-5 w-5 text-gray-400" />
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-2 flex justify-end">
-                    <button className="text-sm text-blue-600 hover:text-blue-500 flex items-center">
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2">
+                      {availableWorkers.map(w => (
+                        <button
+                          key={w.name}
+                          onClick={() => setSelectedWorker(w.name)}
+                          className={`w-full text-left px-4 py-3 border rounded-md transition-colors flex items-center justify-between ${
+                            selectedWorker === w.name
+                              ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
+                              : 'border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          <span className={`font-medium ${selectedWorker === w.name ? 'text-blue-900' : 'text-gray-900'}`}>
+                            {w.name}
+                          </span>
+                          {selectedWorker === w.name && <div className="h-2 w-2 rounded-full bg-blue-500"></div>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-3 flex justify-between items-center">
+                     {!showAllWorkers ? (
+                        <button 
+                          onClick={() => setShowAllWorkers(true)}
+                          className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          Not in your station? Log in
+                        </button>
+                     ) : (
+                        <button 
+                          onClick={() => setShowAllWorkers(false)}
+                          className="text-sm text-gray-500 hover:text-gray-700 hover:underline"
+                        >
+                          Show station workers only
+                        </button>
+                     )}
+
+                    <button className="text-sm text-blue-600 hover:text-blue-500 flex items-center ml-auto">
                       <QrCode className="w-4 h-4 mr-1" /> Scan Badge
                     </button>
                   </div>
                 </div>
 
                 {selectedWorker && (
-                  <div>
+                  <div className="animate-fade-in-down">
                     <label htmlFor="pin" className="block text-sm font-medium text-gray-700">
                       PIN Code
                     </label>
@@ -85,7 +161,7 @@ const Login: React.FC = () => {
                         type="password"
                         id="pin"
                         className="focus:ring-blue-500 focus:border-blue-500 block w-full pl-3 pr-10 py-3 sm:text-sm border-gray-300 rounded-md border"
-                        placeholder="1234"
+                        placeholder="Enter PIN"
                         value={pin}
                         onChange={(e) => setPin(e.target.value)}
                       />
@@ -95,17 +171,6 @@ const Login: React.FC = () => {
                     </div>
                   </div>
                 )}
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Current Station</label>
-                  <div className="mt-1 flex items-center justify-between p-3 border border-gray-200 rounded-md bg-gray-50 text-gray-500">
-                    <div className="flex items-center">
-                      <MapPin className="w-4 h-4 mr-2" />
-                      {stationContext}
-                    </div>
-                    <button onClick={() => setShowStationPicker(true)} className="text-xs text-blue-600 font-semibold uppercase">Change</button>
-                  </div>
-                </div>
               </>
             ) : (
               <>
@@ -124,7 +189,10 @@ const Login: React.FC = () => {
             <div>
               <button
                 onClick={handleLogin}
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                disabled={!isAdmin && (!selectedWorker || !pin)}
+                className={`w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                  (!isAdmin && (!selectedWorker || !pin)) ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                }`}
               >
                 {isAdmin ? 'Log in as Admin' : 'Start Shift'}
                 <ArrowRight className="ml-2 w-4 h-4" />
@@ -134,7 +202,11 @@ const Login: React.FC = () => {
           
           <div className="mt-6">
             <button 
-              onClick={() => setIsAdmin(!isAdmin)}
+              onClick={() => {
+                setIsAdmin(!isAdmin);
+                setSelectedWorker(null);
+                setPin('');
+              }}
               className="w-full flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
               <Shield className="w-4 h-4 mr-2 text-gray-500" />

@@ -1,3 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --font-sans: "Space Grotesk", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-display: "Fraunces", "Georgia", serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
+  --canvas: #f6f2ea;
+  --ink: #0f1b2d;
+  --ink-muted: #5f6c7b;
+  --accent: #f26241;
+  --accent-soft: #f7c9b8;
+  --leaf: #2f6b4f;
+  --sky: #c9d7f5;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(12px, -8px, 0);
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+  .animate-rise {
+    animation: rise 0.5s ease both;
+  }
+  .animate-drift {
+    animation: drift 8s ease-in-out infinite;
+  }
+  .bg-grid {
+    background-image: linear-gradient(transparent 31px, rgba(15, 27, 45, 0.08) 32px),
+      linear-gradient(90deg, transparent 31px, rgba(15, 27, 45, 0.08) 32px);
+    background-size: 32px 32px;
+  }
+}
