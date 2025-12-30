@@ -6,7 +6,6 @@ import {
   Filter,
   Plus,
   Search,
-  UploadCloud,
   Users,
 } from 'lucide-react';
 
@@ -168,12 +167,8 @@ const Workers: React.FC = () => {
         setWorkers(sortedWorkers);
         setStations(stationData);
         setSkills(skillData);
-        if (sortedWorkers.length > 0) {
-          setSelectedWorkerId((prev) => prev ?? sortedWorkers[0].id);
-        } else {
-          setSelectedWorkerId(null);
-          setDraft(emptyWorkerDraft());
-        }
+        setSelectedWorkerId(null);
+        setDraft(emptyWorkerDraft());
       } catch (error) {
         if (active) {
           const message = error instanceof Error ? error.message : 'Failed to load workers.';
@@ -193,7 +188,7 @@ const Workers: React.FC = () => {
 
   useEffect(() => {
     if (selectedWorkerId === null) {
-      setDraft((prev) => (prev?.id ? emptyWorkerDraft() : prev ?? emptyWorkerDraft()));
+      setDraft(emptyWorkerDraft());
       setGeoSelected(null);
       setGeoQuery('');
       setGeoSuggestions([]);
@@ -496,12 +491,8 @@ const Workers: React.FC = () => {
                 ? worker.assigned_station_ids.join(', ')
                 : 'Unassigned';
               return (
-                <button
+                <div
                   key={worker.id}
-                  onClick={() => {
-                    setStatusMessage(null);
-                    setSelectedWorkerId(worker.id);
-                  }}
                   className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
                     selectedWorkerId === worker.id
                       ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
@@ -518,6 +509,16 @@ const Workers: React.FC = () => {
                         <p className="font-semibold text-[var(--ink)]">
                           {worker.first_name} {worker.last_name}
                         </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStatusMessage(null);
+                            setSelectedWorkerId(worker.id);
+                          }}
+                          className="rounded-full border border-black/10 px-2 py-0.5 text-xs font-semibold text-[var(--ink)] hover:bg-black/5"
+                        >
+                          Edit
+                        </button>
                         {worker.active && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(47,107,79,0.15)] px-2 py-0.5 text-xs text-[var(--leaf)]">
                             <BadgeCheck className="h-3 w-3" /> Active
@@ -538,7 +539,7 @@ const Workers: React.FC = () => {
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
-                </button>
+                </div>
               );
             })}
           </div>
@@ -554,11 +555,11 @@ const Workers: React.FC = () => {
                 <h2 className="text-lg font-display text-[var(--ink)]">
                   {draft
                     ? `${draft.first_name || 'New'} ${draft.last_name || 'Worker'}`
-                    : 'Select a worker'}
+                    : 'New worker'}
                 </h2>
               </div>
               <span className="rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)]">
-                {draft?.id ? `ID ${draft.id}` : 'New'}
+                {draft?.id ? `Editing ${draft.id}` : 'New'}
               </span>
             </div>
 
@@ -751,27 +752,6 @@ const Workers: React.FC = () => {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Import
-                </p>
-                <h2 className="text-lg font-display text-[var(--ink)]">Bulk add workers</h2>
-              </div>
-              <UploadCloud className="h-5 w-5 text-[var(--ink-muted)]" />
-            </div>
-            <div className="mt-4 rounded-2xl border border-dashed border-black/15 bg-[rgba(47,107,79,0.08)] p-4 text-sm text-[var(--ink-muted)]">
-              Drop a CSV file or click to upload. Preview mappings before saving.
-            </div>
-            <div className="mt-4 text-xs text-[var(--ink-muted)]">
-              Columns: geovictoria_id, geovictoria_identifier, first_name, last_name, pin,
-              login_required, active, assigned_station_ids, skill_ids
-            </div>
-            <button className="mt-4 inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]">
-              Download CSV template
-            </button>
-          </section>
         </aside>
       </div>
     </div>
