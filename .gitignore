@@ -46,3 +46,4 @@ frontend/build/
 *dump.sql
 *data_dump_excluding_stations.sql
 qc_media_gallery/
+docs/references/

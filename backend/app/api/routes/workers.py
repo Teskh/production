@@ -46,6 +46,51 @@ def create_worker(payload: WorkerCreate, db: Session = Depends(get_db)) -> Worke
     return worker
 
 
+@router.get("/skills", response_model=list[SkillRead])
+def list_skills(db: Session = Depends(get_db)) -> list[Skill]:
+    return list(db.execute(select(Skill).order_by(Skill.name)).scalars())
+
+
+@router.post("/skills", response_model=SkillRead, status_code=status.HTTP_201_CREATED)
+def create_skill(payload: SkillCreate, db: Session = Depends(get_db)) -> Skill:
+    skill = Skill(**payload.model_dump())
+    db.add(skill)
+    db.commit()
+    db.refresh(skill)
+    return skill
+
+
+@router.get("/skills/{skill_id}", response_model=SkillRead)
+def get_skill(skill_id: int, db: Session = Depends(get_db)) -> Skill:
+    skill = db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
+    return skill
+
+
+@router.put("/skills/{skill_id}", response_model=SkillRead)
+def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_db)) -> Skill:
+    skill = db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(skill, key, value)
+    db.commit()
+    db.refresh(skill)
+    return skill
+
+
+@router.delete("/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_skill(skill_id: int, db: Session = Depends(get_db)) -> None:
+    skill = db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
+    db.delete(skill)
+    db.commit()
+
+
+
+
 @router.get("/{worker_id}", response_model=WorkerRead)
 def get_worker(worker_id: int, db: Session = Depends(get_db)) -> Worker:
     worker = db.get(Worker, worker_id)
@@ -124,46 +169,3 @@ def set_worker_skills(
         db.add(WorkerSkill(worker_id=worker_id, skill_id=skill.id))
     db.commit()
     return skills
-
-
-@router.get("/skills", response_model=list[SkillRead])
-def list_skills(db: Session = Depends(get_db)) -> list[Skill]:
-    return list(db.execute(select(Skill).order_by(Skill.name)).scalars())
-
-
-@router.post("/skills", response_model=SkillRead, status_code=status.HTTP_201_CREATED)
-def create_skill(payload: SkillCreate, db: Session = Depends(get_db)) -> Skill:
-    skill = Skill(**payload.model_dump())
-    db.add(skill)
-    db.commit()
-    db.refresh(skill)
-    return skill
-
-
-@router.get("/skills/{skill_id}", response_model=SkillRead)
-def get_skill(skill_id: int, db: Session = Depends(get_db)) -> Skill:
-    skill = db.get(Skill, skill_id)
-    if not skill:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
-    return skill
-
-
-@router.put("/skills/{skill_id}", response_model=SkillRead)
-def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_db)) -> Skill:
-    skill = db.get(Skill, skill_id)
-    if not skill:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(skill, key, value)
-    db.commit()
-    db.refresh(skill)
-    return skill
-
-
-@router.delete("/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_skill(skill_id: int, db: Session = Depends(get_db)) -> None:
-    skill = db.get(Skill, skill_id)
-    if not skill:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
-    db.delete(skill)
-    db.commit()
