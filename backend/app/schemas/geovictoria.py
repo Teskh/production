@@ -10,3 +10,10 @@ class GeoVictoriaWorker(BaseModel):
     position: str | None = None
     group: str | None = None
     enabled: bool | None = None
+
+
+class GeoVictoriaWorkerSummary(BaseModel):
+    geovictoria_id: str
+    identifier: str
+    first_name: str | None = None
+    last_name: str | None = None

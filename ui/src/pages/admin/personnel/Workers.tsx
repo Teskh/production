@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   BadgeCheck,
   ChevronRight,
-  Download,
   Filter,
   Plus,
   Search,
@@ -56,10 +55,6 @@ type GeoVictoriaWorker = {
   identifier: string | null;
   first_name: string | null;
   last_name: string | null;
-  email?: string | null;
-  position?: string | null;
-  group?: string | null;
-  enabled?: boolean | null;
 };
 
 const emptyWorkerDraft = (): WorkerDraft => ({
@@ -118,6 +113,12 @@ const buildHeaders = (options: RequestInit): Headers => {
   return headers;
 };
 
+const normalizeSearchValue = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -140,10 +141,14 @@ const Workers: React.FC = () => {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
   const [draft, setDraft] = useState<WorkerDraft | null>(null);
+  const [workerQuery, setWorkerQuery] = useState('');
+  const [geoDirectory, setGeoDirectory] = useState<GeoVictoriaWorker[]>([]);
   const [geoQuery, setGeoQuery] = useState('');
   const [geoSuggestions, setGeoSuggestions] = useState<GeoVictoriaWorker[]>([]);
   const [geoSelected, setGeoSelected] = useState<GeoVictoriaWorker | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
+  const [geoSearchLoading, setGeoSearchLoading] = useState(false);
+  const [geoDirectoryLoaded, setGeoDirectoryLoaded] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -185,6 +190,104 @@ const Workers: React.FC = () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadGeoDirectory = async () => {
+      setGeoLoading(true);
+      setGeoError(null);
+      try {
+        const results = await apiRequest<GeoVictoriaWorker[]>(
+          '/api/geovictoria/workers/active'
+        );
+        if (active) {
+          setGeoDirectory(results);
+        }
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Failed to load GeoVictoria workers.';
+          setGeoError(message);
+        }
+      } finally {
+        if (active) {
+          setGeoLoading(false);
+          setGeoDirectoryLoaded(true);
+        }
+      }
+    };
+    loadGeoDirectory();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const query = geoQuery.trim();
+    if (query.length < 2) {
+      setGeoSuggestions([]);
+      setGeoSearchLoading(false);
+      return;
+    }
+    if (geoDirectoryLoaded && geoDirectory.length > 0) {
+      const results: GeoVictoriaWorker[] = [];
+      const lowered = normalizeSearchValue(query);
+      for (const item of geoDirectory) {
+        if (!item.geovictoria_id || !item.identifier) {
+          continue;
+        }
+        const haystack = normalizeSearchValue(
+          [item.first_name, item.last_name, item.identifier].filter(Boolean).join(' ')
+        );
+        if (haystack.includes(lowered)) {
+          results.push(item);
+          if (results.length >= 8) {
+            break;
+          }
+        }
+      }
+      setGeoSuggestions(results);
+      setGeoSearchLoading(false);
+      return;
+    }
+    if (geoDirectoryLoaded && !geoError) {
+      setGeoSuggestions([]);
+      setGeoSearchLoading(false);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(async () => {
+      setGeoSearchLoading(true);
+      setGeoError(null);
+      try {
+        const results = await apiRequest<GeoVictoriaWorker[]>(
+          `/api/geovictoria/workers?query=${encodeURIComponent(query)}`
+        );
+        if (active) {
+          setGeoSuggestions(results);
+        }
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Failed to search GeoVictoria.';
+          setGeoError(message);
+          setGeoSuggestions([]);
+        }
+      } finally {
+        if (active) {
+          setGeoSearchLoading(false);
+        }
+      }
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [geoDirectory, geoDirectoryLoaded, geoError, geoQuery]);
 
   useEffect(() => {
     if (selectedWorkerId === null) {
@@ -229,56 +332,30 @@ const Workers: React.FC = () => {
     };
   }, [selectedWorkerId, workers]);
 
-  useEffect(() => {
-    const query = geoQuery.trim();
-    if (query.length < 2) {
-      setGeoSuggestions([]);
-      setGeoLoading(false);
-      setGeoError(null);
-      return;
-    }
-    let active = true;
-    const timer = setTimeout(async () => {
-      setGeoLoading(true);
-      setGeoError(null);
-      try {
-        const results = await apiRequest<GeoVictoriaWorker[]>(
-          `/api/geovictoria/workers?query=${encodeURIComponent(query)}`
-        );
-        if (active) {
-          setGeoSuggestions(results);
-        }
-      } catch (error) {
-        if (active) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : 'Failed to search GeoVictoria.';
-          setGeoError(message);
-          setGeoSuggestions([]);
-        }
-      } finally {
-        if (active) {
-          setGeoLoading(false);
-        }
-      }
-    }, 250);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [geoQuery]);
-
   const activeCount = useMemo(() => workers.filter((worker) => worker.active).length, [
     workers,
   ]);
   const filteredGeoSuggestions = useMemo(
     () =>
-      geoSuggestions.filter(
-        (item) => item.geovictoria_id && item.identifier
-      ),
+      geoSuggestions.filter((item) => item.geovictoria_id && item.identifier),
     [geoSuggestions]
   );
+  const filteredWorkers = useMemo(() => {
+    const query = normalizeSearchValue(workerQuery.trim());
+    if (!query) {
+      return workers;
+    }
+    return workers.filter((worker) => {
+      const haystack = normalizeSearchValue(
+        [
+          worker.first_name,
+          worker.last_name,
+          worker.geovictoria_identifier ?? '',
+        ].join(' ')
+      );
+      return haystack.includes(query);
+    });
+  }, [workerQuery, workers]);
 
   const updateDraft = (patch: Partial<WorkerDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -443,9 +520,6 @@ const Workers: React.FC = () => {
           >
             <Plus className="h-4 w-4" /> Add Worker
           </button>
-          <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/80 px-4 py-2 text-sm font-semibold text-[var(--ink)]">
-            <Download className="h-4 w-4" /> Export
-          </button>
         </div>
       </header>
       {statusMessage && (
@@ -472,6 +546,8 @@ const Workers: React.FC = () => {
                   type="search"
                   placeholder="Search worker"
                   className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                  value={workerQuery}
+                  onChange={(event) => setWorkerQuery(event.target.value)}
                 />
               </label>
               <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm">
@@ -486,7 +562,12 @@ const Workers: React.FC = () => {
                 No workers found. Add the first worker to get started.
               </div>
             )}
-            {workers.map((worker, index) => {
+            {workers.length > 0 && filteredWorkers.length === 0 && !loading && (
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+                No workers match that search.
+              </div>
+            )}
+            {filteredWorkers.map((worker, index) => {
               const stationsLabel = worker.assigned_station_ids?.length
                 ? worker.assigned_station_ids.join(', ')
                 : 'Unassigned';
@@ -592,7 +673,6 @@ const Workers: React.FC = () => {
                               <p className="font-semibold">{name || 'Unknown worker'}</p>
                               <p className="text-xs text-[var(--ink-muted)]">
                                 {identifier}
-                                {item.position ? ` · ${item.position}` : ''}
                               </p>
                             </div>
                             <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
@@ -603,6 +683,11 @@ const Workers: React.FC = () => {
                   )}
                 </div>
                 {geoLoading && (
+                  <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                    Loading GeoVictoria roster...
+                  </p>
+                )}
+                {geoSearchLoading && !geoLoading && (
                   <p className="mt-2 text-xs text-[var(--ink-muted)]">
                     Searching GeoVictoria...
                   </p>
@@ -631,13 +716,6 @@ const Workers: React.FC = () => {
                         Clear
                       </button>
                     </div>
-                    {(geoSelected.position || geoSelected.group || geoSelected.email) && (
-                      <p className="mt-2 text-[var(--ink-muted)]">
-                        {[geoSelected.position, geoSelected.group, geoSelected.email]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </p>
-                    )}
                   </div>
                 )}
               </div>

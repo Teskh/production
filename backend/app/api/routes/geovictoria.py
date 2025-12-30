@@ -7,7 +7,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.config import settings
-from app.schemas.geovictoria import GeoVictoriaWorker
+from app.schemas.geovictoria import GeoVictoriaWorker, GeoVictoriaWorkerSummary
 
 router = APIRouter()
 
@@ -84,7 +84,15 @@ def _normalize_user(raw: Mapping[str, Any]) -> GeoVictoriaWorker:
     group = str(raw.get("GroupDescription") or "").strip() or None
     enabled = raw.get("Enabled")
     if isinstance(enabled, str):
-        enabled = enabled.lower() == "true"
+        normalized = enabled.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "si", "s"}:
+            enabled = True
+        elif normalized in {"false", "0", "no", "n"}:
+            enabled = False
+        else:
+            enabled = None
+    elif isinstance(enabled, (int, float)):
+        enabled = bool(enabled)
     return GeoVictoriaWorker(
         geovictoria_id=_extract_id(raw),
         identifier=identifier,
@@ -94,6 +102,23 @@ def _normalize_user(raw: Mapping[str, Any]) -> GeoVictoriaWorker:
         position=position,
         group=group,
         enabled=enabled if isinstance(enabled, bool) else None,
+    )
+
+
+def _is_active(user: GeoVictoriaWorker) -> bool:
+    if user.enabled is None:
+        return True
+    return user.enabled
+
+
+def _summarize_user(user: GeoVictoriaWorker) -> GeoVictoriaWorkerSummary | None:
+    if not user.geovictoria_id or not user.identifier:
+        return None
+    return GeoVictoriaWorkerSummary(
+        geovictoria_id=user.geovictoria_id,
+        identifier=user.identifier,
+        first_name=user.first_name,
+        last_name=user.last_name,
     )
 
 
@@ -148,6 +173,18 @@ def search_workers(
         if len(results) >= limit:
             break
     return results
+
+
+@router.get("/workers/active", response_model=list[GeoVictoriaWorkerSummary])
+def list_active_workers() -> list[GeoVictoriaWorkerSummary]:
+    active_users: list[GeoVictoriaWorkerSummary] = []
+    for user in _fetch_users():
+        if not _is_active(user):
+            continue
+        summary = _summarize_user(user)
+        if summary:
+            active_users.append(summary)
+    return active_users
 
 
 @router.get("/workers/{geovictoria_id}", response_model=GeoVictoriaWorker)

@@ -60,6 +60,10 @@ class SkillAssignment(BaseModel):
     skill_ids: list[int]
 
 
+class WorkerAssignment(BaseModel):
+    worker_ids: list[int]
+
+
 class WorkerSkillBase(BaseModel):
     worker_id: int
     skill_id: int

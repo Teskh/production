@@ -14,6 +14,7 @@ Checklist for building the application. Update each item to `In progress` or `Do
 - [X] Status: Done - CRUD APIs for task definitions, applicability, expected durations, advance rules
 - [X] Status: Done - CRUD APIs for house parameters and per-module parameter values
 - [X] Status: Done - admin UI screens to edit the above (list/detail/edit/import)
+- [X] Status: Done - specialties admin page wired to skills and worker assignments
 - [ ] Status: Not started - guardrails/validation in admin UI (required fields, ranges, conflicts)
 
 ## Production Line Logic

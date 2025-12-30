@@ -1,21 +1,279 @@
-import React, { useMemo, useState } from 'react';
-import { ChevronRight, Layers, Plus, Search, Settings } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ChevronRight, Layers, Plus, Search, Settings, Trash2 } from 'lucide-react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+type Skill = {
+  id: number;
+  name: string;
+};
+
+type Worker = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  active: boolean;
+};
+
+type WorkerSkillAssignment = {
+  worker_id: number;
+  skill_id: number;
+};
+
+type SkillDraft = {
+  id?: number;
+  name: string;
+  worker_ids: number[];
+};
+
+const emptySkillDraft = (): SkillDraft => ({
+  name: '',
+  worker_ids: [],
+});
+
+const sortSkills = (list: Skill[]) =>
+  [...list].sort((a, b) => a.name.localeCompare(b.name));
+
+const sortWorkers = (list: Worker[]) =>
+  [...list].sort((a, b) => {
+    const lastCompare = a.last_name.localeCompare(b.last_name);
+    if (lastCompare !== 0) {
+      return lastCompare;
+    }
+    return a.first_name.localeCompare(b.first_name);
+  });
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
 
 const Specialties: React.FC = () => {
-  const [selectedSkillId, setSelectedSkillId] = useState(1);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [assignments, setAssignments] = useState<WorkerSkillAssignment[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<SkillDraft>(emptySkillDraft());
+  const [query, setQuery] = useState('');
+  const [workerQuery, setWorkerQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const skills = [
-    { id: 1, name: 'Framing', workers: 18 },
-    { id: 2, name: 'Electrical', workers: 9 },
-    { id: 3, name: 'Plumbing', workers: 6 },
-    { id: 4, name: 'Assembly', workers: 22 },
-    { id: 5, name: 'Quality', workers: 7 },
-  ];
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      setStatusMessage(null);
+      try {
+        const [skillData, workerData, assignmentData] = await Promise.all([
+          apiRequest<Skill[]>('/api/workers/skills'),
+          apiRequest<Worker[]>('/api/workers'),
+          apiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
+        ]);
+        if (!active) {
+          return;
+        }
+        const sortedSkills = sortSkills(skillData);
+        setSkills(sortedSkills);
+        setWorkers(sortWorkers(workerData));
+        setAssignments(assignmentData);
+        setSelectedSkillId(sortedSkills.length ? sortedSkills[0].id : null);
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to load specialties.';
+          setStatusMessage(message);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const assignmentMap = useMemo(() => {
+    const map = new Map<number, number[]>();
+    for (const assignment of assignments) {
+      const list = map.get(assignment.skill_id);
+      if (list) {
+        list.push(assignment.worker_id);
+      } else {
+        map.set(assignment.skill_id, [assignment.worker_id]);
+      }
+    }
+    return map;
+  }, [assignments]);
 
   const selectedSkill = useMemo(
-    () => skills.find((skill) => skill.id === selectedSkillId) ?? skills[0],
+    () => skills.find((skill) => skill.id === selectedSkillId) ?? null,
     [selectedSkillId, skills]
   );
+
+  useEffect(() => {
+    if (!selectedSkill) {
+      setDraft(emptySkillDraft());
+      return;
+    }
+    const workerIds = assignmentMap.get(selectedSkill.id) ?? [];
+    setDraft({
+      id: selectedSkill.id,
+      name: selectedSkill.name,
+      worker_ids: workerIds,
+    });
+  }, [assignmentMap, selectedSkill]);
+
+  const filteredSkills = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return skills;
+    }
+    return skills.filter((skill) => skill.name.toLowerCase().includes(needle));
+  }, [query, skills]);
+
+  const filteredWorkers = useMemo(() => {
+    const needle = workerQuery.trim().toLowerCase();
+    if (!needle) {
+      return workers;
+    }
+    return workers.filter((worker) => {
+      const name = `${worker.first_name} ${worker.last_name}`.toLowerCase();
+      return name.includes(needle);
+    });
+  }, [workerQuery, workers]);
+
+  const assignedWorkers = useMemo(() => {
+    const workerMap = new Map(workers.map((worker) => [worker.id, worker]));
+    return draft.worker_ids
+      .map((workerId) => workerMap.get(workerId))
+      .filter((worker): worker is Worker => Boolean(worker));
+  }, [draft.worker_ids, workers]);
+
+  const updateDraft = (patch: Partial<SkillDraft>) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const toggleWorker = (workerId: number) => {
+    setDraft((prev) => {
+      const selected = new Set(prev.worker_ids);
+      if (selected.has(workerId)) {
+        selected.delete(workerId);
+      } else {
+        selected.add(workerId);
+      }
+      return { ...prev, worker_ids: Array.from(selected) };
+    });
+  };
+
+  const handleAddSkill = () => {
+    setStatusMessage(null);
+    setSelectedSkillId(null);
+    setDraft(emptySkillDraft());
+  };
+
+  const handleSave = async () => {
+    const name = draft.name.trim();
+    if (!name) {
+      setStatusMessage('Specialty name is required.');
+      return;
+    }
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      const savedSkill = draft.id
+        ? await apiRequest<Skill>(`/api/workers/skills/${draft.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name }),
+          })
+        : await apiRequest<Skill>('/api/workers/skills', {
+            method: 'POST',
+            body: JSON.stringify({ name }),
+          });
+      const assigned = await apiRequest<Worker[]>(
+        `/api/workers/skills/${savedSkill.id}/workers`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ worker_ids: draft.worker_ids }),
+        }
+      );
+      setSkills((prev) => {
+        const exists = prev.some((skill) => skill.id === savedSkill.id);
+        const next = exists
+          ? prev.map((skill) => (skill.id === savedSkill.id ? savedSkill : skill))
+          : [...prev, savedSkill];
+        return sortSkills(next);
+      });
+      setAssignments((prev) => {
+        const remaining = prev.filter((item) => item.skill_id !== savedSkill.id);
+        const next = assigned.map((worker) => ({
+          worker_id: worker.id,
+          skill_id: savedSkill.id,
+        }));
+        return [...remaining, ...next];
+      });
+      setSelectedSkillId(savedSkill.id);
+      setStatusMessage('Specialty saved.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to save specialty.';
+      setStatusMessage(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!draft.id) {
+      return;
+    }
+    if (!window.confirm('Remove this specialty?')) {
+      return;
+    }
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await apiRequest<void>(`/api/workers/skills/${draft.id}`, {
+        method: 'DELETE',
+      });
+      setSkills((prev) => prev.filter((skill) => skill.id !== draft.id));
+      setAssignments((prev) => prev.filter((item) => item.skill_id !== draft.id));
+      setSelectedSkillId(null);
+      setDraft(emptySkillDraft());
+      setStatusMessage('Specialty removed.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to remove specialty.';
+      setStatusMessage(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const canSave = Boolean(draft.name.trim()) && !saving;
 
   return (
     <div className="space-y-6">
@@ -29,17 +287,29 @@ const Specialties: React.FC = () => {
             Curate skills and map them to workers for station filtering and task eligibility.
           </p>
         </div>
-        <button className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white">
+        <button
+          onClick={handleAddSkill}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+        >
           <Plus className="h-4 w-4" /> New Specialty
         </button>
       </header>
+      {statusMessage && (
+        <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-2 text-sm text-[var(--ink-muted)]">
+          {statusMessage}
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-display text-[var(--ink)]">Skill Inventory</h2>
-              <p className="text-sm text-[var(--ink-muted)]">12 specialties configured</p>
+              <p className="text-sm text-[var(--ink-muted)]">
+                {loading
+                  ? 'Loading specialties...'
+                  : `${skills.length} specialties configured`}
+              </p>
             </div>
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
@@ -47,34 +317,51 @@ const Specialties: React.FC = () => {
                 type="search"
                 placeholder="Search skills"
                 className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
               />
             </label>
           </div>
 
           <div className="mt-6 space-y-3">
-            {skills.map((skill, index) => (
-              <button
-                key={skill.id}
-                onClick={() => setSelectedSkillId(skill.id)}
-                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                  selectedSkillId === skill.id
-                    ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                    : 'border-black/5 bg-white'
-                }`}
-                style={{ animationDelay: `${index * 70}ms` }}
-              >
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-                    <Layers className="h-5 w-5" />
+            {filteredSkills.length === 0 && !loading && (
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+                {skills.length === 0 && !query
+                  ? 'No specialties created yet.'
+                  : 'No specialties match your search.'}
+              </div>
+            )}
+            {filteredSkills.map((skill, index) => {
+              const workerCount = assignmentMap.get(skill.id)?.length ?? 0;
+              return (
+                <button
+                  key={skill.id}
+                  onClick={() => {
+                    setStatusMessage(null);
+                    setSelectedSkillId(skill.id);
+                  }}
+                  className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+                    selectedSkillId === skill.id
+                      ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
+                      : 'border-black/5 bg-white'
+                  }`}
+                  style={{ animationDelay: `${index * 70}ms` }}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
+                      <Layers className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-[var(--ink)]">{skill.name}</p>
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        {workerCount} workers assigned
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-semibold text-[var(--ink)]">{skill.name}</p>
-                    <p className="text-xs text-[var(--ink-muted)]">{skill.workers} workers assigned</p>
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
-              </button>
-            ))}
+                  <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -82,7 +369,9 @@ const Specialties: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Edit</p>
-              <h2 className="text-lg font-display text-[var(--ink)]">{selectedSkill.name}</h2>
+              <h2 className="text-lg font-display text-[var(--ink)]">
+                {draft.name || selectedSkill?.name || 'New Specialty'}
+              </h2>
             </div>
             <Settings className="h-5 w-5 text-[var(--ink-muted)]" />
           </div>
@@ -92,39 +381,86 @@ const Specialties: React.FC = () => {
               Specialty name
               <input
                 className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                defaultValue={selectedSkill.name}
-              />
-            </label>
-
-            <label className="text-sm text-[var(--ink-muted)]">
-              Notes
-              <textarea
-                className="mt-2 min-h-[120px] w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                placeholder="Describe how this skill is used."
+                value={draft.name}
+                onChange={(event) => updateDraft({ name: event.target.value })}
               />
             </label>
 
             <div>
-              <p className="text-sm text-[var(--ink-muted)]">Assigned workers</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-[var(--ink-muted)]">
+                  Assigned workers ({assignedWorkers.length})
+                </p>
+                <label className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-[var(--ink-muted)]" />
+                  <input
+                    type="search"
+                    placeholder="Search workers"
+                    className="h-8 rounded-full border border-black/10 bg-white pl-8 pr-3 text-xs"
+                    value={workerQuery}
+                    onChange={(event) => setWorkerQuery(event.target.value)}
+                  />
+                </label>
+              </div>
               <div className="mt-2 flex flex-wrap gap-2">
-                {['Alicia Ramos', 'Mateo Lopez', 'Sofia Castro'].map((worker) => (
+                {assignedWorkers.length === 0 && (
+                  <span className="text-xs text-[var(--ink-muted)]">
+                    No workers assigned yet.
+                  </span>
+                )}
+                {assignedWorkers.map((worker) => (
                   <span
-                    key={worker}
+                    key={worker.id}
                     className="rounded-full bg-[rgba(47,107,79,0.12)] px-3 py-1 text-xs text-[var(--leaf)]"
                   >
-                    {worker}
+                    {worker.first_name} {worker.last_name}
                   </span>
                 ))}
+              </div>
+              <div className="mt-3 max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
+                {filteredWorkers.length === 0 && (
+                  <p className="text-[var(--ink-muted)]">No workers found.</p>
+                )}
+                {filteredWorkers.map((worker) => {
+                  const checked = draft.worker_ids.includes(worker.id);
+                  return (
+                    <label key={worker.id} className="flex items-center gap-2 py-1">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleWorker(worker.id)}
+                      />
+                      <span>
+                        {worker.first_name} {worker.last_name}
+                      </span>
+                      {!worker.active && (
+                        <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                          Inactive
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white">
+              <button
+                onClick={() => void handleSave()}
+                disabled={!canSave}
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
                 Save specialty
               </button>
-              <button className="rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]">
-                Archive
-              </button>
+              {draft.id && (
+                <button
+                  onClick={() => void handleDelete()}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Remove
+                </button>
+              )}
             </div>
           </div>
         </section>

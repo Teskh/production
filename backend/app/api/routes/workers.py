@@ -11,8 +11,10 @@ from app.schemas.workers import (
     SkillCreate,
     SkillRead,
     SkillUpdate,
+    WorkerAssignment,
     WorkerCreate,
     WorkerRead,
+    WorkerSkillRead,
     WorkerUpdate,
 )
 
@@ -101,6 +103,11 @@ def list_skills(db: Session = Depends(get_db)) -> list[Skill]:
     return list(db.execute(select(Skill).order_by(Skill.name)).scalars())
 
 
+@router.get("/skills/assignments", response_model=list[WorkerSkillRead])
+def list_skill_assignments(db: Session = Depends(get_db)) -> list[WorkerSkill]:
+    return list(db.execute(select(WorkerSkill)).scalars())
+
+
 @router.post("/skills", response_model=SkillRead, status_code=status.HTTP_201_CREATED)
 def create_skill(payload: SkillCreate, db: Session = Depends(get_db)) -> Skill:
     skill = Skill(**payload.model_dump())
@@ -137,6 +144,31 @@ def delete_skill(skill_id: int, db: Session = Depends(get_db)) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
     db.delete(skill)
     db.commit()
+
+
+@router.put("/skills/{skill_id}/workers", response_model=list[WorkerRead])
+def set_skill_workers(
+    skill_id: int, payload: WorkerAssignment, db: Session = Depends(get_db)
+) -> list[Worker]:
+    skill = db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
+    if payload.worker_ids:
+        workers = list(
+            db.execute(select(Worker).where(Worker.id.in_(payload.worker_ids))).scalars()
+        )
+        if len(workers) != len(set(payload.worker_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="One or more workers not found",
+            )
+    else:
+        workers = []
+    db.query(WorkerSkill).filter(WorkerSkill.skill_id == skill_id).delete()
+    for worker in workers:
+        db.add(WorkerSkill(worker_id=worker.id, skill_id=skill_id))
+    db.commit()
+    return workers
 
 
 @router.get("/{worker_id}", response_model=WorkerRead)
