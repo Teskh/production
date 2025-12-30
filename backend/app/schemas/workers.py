@@ -4,6 +4,8 @@ from app.models.enums import RestrictionType
 
 
 class WorkerBase(BaseModel):
+    geovictoria_id: str | None = None
+    geovictoria_identifier: str | None = None
     first_name: str
     last_name: str
     pin: str | None = None
@@ -14,10 +16,13 @@ class WorkerBase(BaseModel):
 
 
 class WorkerCreate(WorkerBase):
-    pass
+    geovictoria_id: str
+    geovictoria_identifier: str
 
 
 class WorkerUpdate(BaseModel):
+    geovictoria_id: str | None = None
+    geovictoria_identifier: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     pin: str | None = None

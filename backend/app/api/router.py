@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin_auth,
+    geovictoria,
     house_params,
     house_types,
     panel_definitions,
@@ -14,6 +15,7 @@ from app.api.routes import (
 api_router = APIRouter()
 
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
+api_router.include_router(geovictoria.router, prefix="/geovictoria", tags=["geovictoria"])
 api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
 api_router.include_router(stations.router, prefix="/stations", tags=["stations"])
 api_router.include_router(house_types.router, prefix="/house-types", tags=["house-types"])

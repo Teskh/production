@@ -14,6 +14,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 type Worker = {
   id: number;
+  geovictoria_id: string | null;
+  geovictoria_identifier: string | null;
   first_name: string;
   last_name: string;
   pin: string | null;
@@ -38,6 +40,8 @@ type Skill = {
 
 type WorkerDraft = {
   id?: number;
+  geovictoria_id: string;
+  geovictoria_identifier: string;
   first_name: string;
   last_name: string;
   pin: string;
@@ -48,7 +52,20 @@ type WorkerDraft = {
   skill_ids: number[];
 };
 
+type GeoVictoriaWorker = {
+  geovictoria_id: string | null;
+  identifier: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  email?: string | null;
+  position?: string | null;
+  group?: string | null;
+  enabled?: boolean | null;
+};
+
 const emptyWorkerDraft = (): WorkerDraft => ({
+  geovictoria_id: '',
+  geovictoria_identifier: '',
   first_name: '',
   last_name: '',
   pin: '',
@@ -61,6 +78,8 @@ const emptyWorkerDraft = (): WorkerDraft => ({
 
 const buildDraftFromWorker = (worker: Worker): WorkerDraft => ({
   id: worker.id,
+  geovictoria_id: worker.geovictoria_id ?? '',
+  geovictoria_identifier: worker.geovictoria_identifier ?? '',
   first_name: worker.first_name,
   last_name: worker.last_name,
   pin: worker.pin ?? '',
@@ -70,6 +89,18 @@ const buildDraftFromWorker = (worker: Worker): WorkerDraft => ({
   supervisor_id: worker.supervisor_id ?? null,
   skill_ids: [],
 });
+
+const buildGeoSelectionFromWorker = (worker: Worker): GeoVictoriaWorker | null => {
+  if (!worker.geovictoria_id && !worker.geovictoria_identifier) {
+    return null;
+  }
+  return {
+    geovictoria_id: worker.geovictoria_id,
+    identifier: worker.geovictoria_identifier,
+    first_name: worker.first_name,
+    last_name: worker.last_name,
+  };
+};
 
 const sortWorkers = (list: Worker[]) =>
   [...list].sort((a, b) => {
@@ -110,6 +141,11 @@ const Workers: React.FC = () => {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
   const [draft, setDraft] = useState<WorkerDraft | null>(null);
+  const [geoQuery, setGeoQuery] = useState('');
+  const [geoSuggestions, setGeoSuggestions] = useState<GeoVictoriaWorker[]>([]);
+  const [geoSelected, setGeoSelected] = useState<GeoVictoriaWorker | null>(null);
+  const [geoLoading, setGeoLoading] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -158,6 +194,10 @@ const Workers: React.FC = () => {
   useEffect(() => {
     if (selectedWorkerId === null) {
       setDraft((prev) => (prev?.id ? emptyWorkerDraft() : prev ?? emptyWorkerDraft()));
+      setGeoSelected(null);
+      setGeoQuery('');
+      setGeoSuggestions([]);
+      setGeoError(null);
       return;
     }
     const worker = workers.find((item) => item.id === selectedWorkerId);
@@ -165,6 +205,10 @@ const Workers: React.FC = () => {
       return;
     }
     setDraft(buildDraftFromWorker(worker));
+    setGeoSelected(buildGeoSelectionFromWorker(worker));
+    setGeoQuery('');
+    setGeoSuggestions([]);
+    setGeoError(null);
     let active = true;
     const loadSkills = async () => {
       try {
@@ -190,9 +234,56 @@ const Workers: React.FC = () => {
     };
   }, [selectedWorkerId, workers]);
 
+  useEffect(() => {
+    const query = geoQuery.trim();
+    if (query.length < 2) {
+      setGeoSuggestions([]);
+      setGeoLoading(false);
+      setGeoError(null);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(async () => {
+      setGeoLoading(true);
+      setGeoError(null);
+      try {
+        const results = await apiRequest<GeoVictoriaWorker[]>(
+          `/api/geovictoria/workers?query=${encodeURIComponent(query)}`
+        );
+        if (active) {
+          setGeoSuggestions(results);
+        }
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Failed to search GeoVictoria.';
+          setGeoError(message);
+          setGeoSuggestions([]);
+        }
+      } finally {
+        if (active) {
+          setGeoLoading(false);
+        }
+      }
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [geoQuery]);
+
   const activeCount = useMemo(() => workers.filter((worker) => worker.active).length, [
     workers,
   ]);
+  const filteredGeoSuggestions = useMemo(
+    () =>
+      geoSuggestions.filter(
+        (item) => item.geovictoria_id && item.identifier
+      ),
+    [geoSuggestions]
+  );
 
   const updateDraft = (patch: Partial<WorkerDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -228,10 +319,36 @@ const Workers: React.FC = () => {
     });
   };
 
+  const handleGeoSelect = (worker: GeoVictoriaWorker) => {
+    if (!worker.geovictoria_id || !worker.identifier) {
+      setGeoError('GeoVictoria selection is missing an identifier.');
+      return;
+    }
+    setGeoSelected(worker);
+    setGeoQuery('');
+    setGeoSuggestions([]);
+    setGeoError(null);
+    updateDraft({
+      geovictoria_id: worker.geovictoria_id,
+      geovictoria_identifier: worker.identifier,
+      first_name: worker.first_name ?? '',
+      last_name: worker.last_name ?? '',
+    });
+  };
+
+  const clearGeoSelection = () => {
+    setGeoSelected(null);
+    updateDraft({ geovictoria_id: '', geovictoria_identifier: '' });
+  };
+
   const handleAddWorker = () => {
     setStatusMessage(null);
     setSelectedWorkerId(null);
     setDraft(emptyWorkerDraft());
+    setGeoSelected(null);
+    setGeoQuery('');
+    setGeoSuggestions([]);
+    setGeoError(null);
   };
 
   const handleSave = async (override?: WorkerDraft) => {
@@ -243,9 +360,18 @@ const Workers: React.FC = () => {
       setStatusMessage('First and last name are required.');
       return;
     }
+    if (
+      !working.geovictoria_id.trim() ||
+      !working.geovictoria_identifier.trim()
+    ) {
+      setStatusMessage('GeoVictoria link is required before saving a worker.');
+      return;
+    }
     setSaving(true);
     setStatusMessage(null);
     const payload = {
+      geovictoria_id: working.geovictoria_id.trim(),
+      geovictoria_identifier: working.geovictoria_identifier.trim(),
       first_name: working.first_name.trim(),
       last_name: working.last_name.trim(),
       pin: working.pin.trim() ? working.pin.trim() : null,
@@ -297,7 +423,11 @@ const Workers: React.FC = () => {
   };
 
   const canSave =
-    !saving && Boolean(draft?.first_name.trim()) && Boolean(draft?.last_name.trim());
+    !saving &&
+    Boolean(draft?.first_name.trim()) &&
+    Boolean(draft?.last_name.trim()) &&
+    Boolean(draft?.geovictoria_id.trim()) &&
+    Boolean(draft?.geovictoria_identifier.trim());
 
   return (
     <div className="space-y-6">
@@ -402,6 +532,9 @@ const Workers: React.FC = () => {
                       <p className="text-xs text-[var(--ink-muted)]">
                         Stations: {stationsLabel}
                       </p>
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        RUT: {worker.geovictoria_identifier || 'Unlinked'}
+                      </p>
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
@@ -430,6 +563,84 @@ const Workers: React.FC = () => {
             </div>
 
             <div className="mt-4 grid gap-4">
+              <div>
+                <p className="text-sm text-[var(--ink-muted)]">GeoVictoria link</p>
+                <div className="relative mt-2">
+                  <input
+                    className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                    placeholder="Search by name or RUT"
+                    value={geoQuery}
+                    onChange={(event) => setGeoQuery(event.target.value)}
+                  />
+                  {filteredGeoSuggestions.length > 0 && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      {filteredGeoSuggestions.map((item, index) => {
+                        const name = [item.first_name, item.last_name]
+                          .filter(Boolean)
+                          .join(' ');
+                        const identifier = item.identifier ?? 'Missing RUT';
+                        const key = item.geovictoria_id ?? item.identifier ?? `${index}`;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => handleGeoSelect(item)}
+                            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm text-[var(--ink)] hover:bg-black/5"
+                          >
+                            <div>
+                              <p className="font-semibold">{name || 'Unknown worker'}</p>
+                              <p className="text-xs text-[var(--ink-muted)]">
+                                {identifier}
+                                {item.position ? ` · ${item.position}` : ''}
+                              </p>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {geoLoading && (
+                  <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                    Searching GeoVictoria...
+                  </p>
+                )}
+                {geoError && (
+                  <p className="mt-2 text-xs text-[var(--accent)]">{geoError}</p>
+                )}
+                {geoSelected && (
+                  <div className="mt-3 rounded-2xl border border-black/10 bg-[rgba(201,215,245,0.2)] px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-[var(--ink)]">
+                          {[geoSelected.first_name, geoSelected.last_name]
+                            .filter(Boolean)
+                            .join(' ') || 'GeoVictoria worker'}
+                        </p>
+                        <p className="text-[var(--ink-muted)]">
+                          RUT: {geoSelected.identifier ?? 'Unknown'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearGeoSelection}
+                        className="rounded-full border border-black/10 px-3 py-1 text-[10px] font-semibold text-[var(--ink)]"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    {(geoSelected.position || geoSelected.group || geoSelected.email) && (
+                      <p className="mt-2 text-[var(--ink-muted)]">
+                        {[geoSelected.position, geoSelected.group, geoSelected.email]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="text-sm text-[var(--ink-muted)]">
                   First name
@@ -554,7 +765,8 @@ const Workers: React.FC = () => {
               Drop a CSV file or click to upload. Preview mappings before saving.
             </div>
             <div className="mt-4 text-xs text-[var(--ink-muted)]">
-              Columns: first_name, last_name, pin, login_required, active, assigned_station_ids, skill_ids
+              Columns: geovictoria_id, geovictoria_identifier, first_name, last_name, pin,
+              login_required, active, assigned_station_ids, skill_ids
             </div>
             <button className="mt-4 inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]">
               Download CSV template

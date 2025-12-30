@@ -1,5 +1,6 @@
 from app.api.routes import (
     admin_auth,
+    geovictoria,
     house_params,
     house_types,
     panel_definitions,
@@ -11,6 +12,7 @@ from app.api.routes import (
 
 __all__ = [
     "admin_auth",
+    "geovictoria",
     "house_params",
     "house_types",
     "panel_definitions",

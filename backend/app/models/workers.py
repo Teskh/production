@@ -10,6 +10,12 @@ class Worker(Base):
     __tablename__ = "workers"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    geovictoria_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    geovictoria_identifier: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, unique=True
+    )
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
     pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
