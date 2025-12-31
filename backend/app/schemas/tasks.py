@@ -33,6 +33,22 @@ class TaskDefinitionRead(TaskDefinitionBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TaskStationSequence(BaseModel):
+    station_sequence_order: int | None = None
+
+
+class TaskSpecialty(BaseModel):
+    skill_id: int | None = None
+
+
+class TaskAllowedWorkers(BaseModel):
+    worker_ids: list[int] | None = None
+
+
+class TaskRegularCrew(BaseModel):
+    worker_ids: list[int] | None = None
+
+
 class TaskApplicabilityBase(BaseModel):
     task_definition_id: int
     house_type_id: int | None = None
@@ -87,4 +103,3 @@ class TaskExpectedDurationRead(TaskExpectedDurationBase):
     id: int
 
     model_config = ConfigDict(from_attributes=True)
-
