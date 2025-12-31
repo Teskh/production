@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Grid2X2, Layout, Plus, SlidersHorizontal, X } from 'lucide-react';
+import { Grid2X2, Layout, Plus, X } from 'lucide-react';
 
 const HousePanels: React.FC = () => {
   const [selectedPanelId, setSelectedPanelId] = useState(1);
@@ -163,20 +163,6 @@ const HousePanels: React.FC = () => {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(47,107,79,0.12)] text-[var(--leaf)]">
-                <SlidersHorizontal className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-[var(--ink)]">Import panel list</h3>
-                <p className="text-xs text-[var(--ink-muted)]">Panels + applicability in bulk.</p>
-              </div>
-            </div>
-            <div className="mt-4 rounded-2xl border border-dashed border-black/15 bg-[rgba(201,215,245,0.25)] p-4 text-sm text-[var(--ink-muted)]">
-              Upload CSV with house_type, module_number, panel_code, group, area, length.
-            </div>
-          </section>
         </aside>
       </div>
 

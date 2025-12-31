@@ -466,20 +466,6 @@ const Specialties: React.FC = () => {
         </section>
       </div>
 
-      <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-            <Layers className="h-5 w-5" />
-          </div>
-          <div>
-            <h3 className="text-base font-semibold text-[var(--ink)]">Import specialties</h3>
-            <p className="text-xs text-[var(--ink-muted)]">Bulk load skill definitions.</p>
-          </div>
-        </div>
-        <div className="mt-4 rounded-2xl border border-dashed border-black/15 bg-[rgba(201,215,245,0.25)] p-4 text-sm text-[var(--ink-muted)]">
-          Upload CSV with specialty_name and optional notes.
-        </div>
-      </section>
     </div>
   );
 };

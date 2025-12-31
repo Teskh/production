@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
+  ChevronDown,
   ChevronRight,
   Filter,
   Plus,
@@ -150,9 +151,11 @@ const Workers: React.FC = () => {
   const [geoSearchLoading, setGeoSearchLoading] = useState(false);
   const [geoDirectoryLoaded, setGeoDirectoryLoaded] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const stationDropdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -296,6 +299,7 @@ const Workers: React.FC = () => {
       setGeoQuery('');
       setGeoSuggestions([]);
       setGeoError(null);
+      setStationDropdownOpen(false);
       return;
     }
     const worker = workers.find((item) => item.id === selectedWorkerId);
@@ -307,6 +311,7 @@ const Workers: React.FC = () => {
     setGeoQuery('');
     setGeoSuggestions([]);
     setGeoError(null);
+    setStationDropdownOpen(false);
     let active = true;
     const loadSkills = async () => {
       try {
@@ -356,6 +361,69 @@ const Workers: React.FC = () => {
       return haystack.includes(query);
     });
   }, [workerQuery, workers]);
+
+  const stationNameById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.name])),
+    [stations]
+  );
+
+  const orderedStations = useMemo(
+    () =>
+      [...stations].sort((a, b) => {
+        const sequenceCompare = (a.sequence_order ?? Number.POSITIVE_INFINITY) -
+          (b.sequence_order ?? Number.POSITIVE_INFINITY);
+        if (sequenceCompare !== 0) {
+          return sequenceCompare;
+        }
+        return a.name.localeCompare(b.name);
+      }),
+    [stations]
+  );
+
+  const stationSubtitle = (station: Station) =>
+    station.role === 'Assembly' && station.line_type ? `línea ${station.line_type}` : null;
+
+  const assignedStationNames = useMemo(() => {
+    if (!draft?.assigned_station_ids) {
+      return [];
+    }
+    return draft.assigned_station_ids.map((id) => stationNameById.get(id) ?? 'Unknown station');
+  }, [draft?.assigned_station_ids, stationNameById]);
+
+  const assignedStationLabel = useMemo(() => {
+    if (assignedStationNames.length === 0) {
+      return 'No stations selected';
+    }
+    if (assignedStationNames.length <= 2) {
+      return assignedStationNames.join(', ');
+    }
+    return `${assignedStationNames[0]}, ${assignedStationNames[1]} +${assignedStationNames.length - 2}`;
+  }, [assignedStationNames]);
+
+  useEffect(() => {
+    if (!stationDropdownOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!stationDropdownRef.current) {
+        return;
+      }
+      if (!stationDropdownRef.current.contains(event.target as Node)) {
+        setStationDropdownOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setStationDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [stationDropdownOpen]);
 
   const updateDraft = (patch: Partial<WorkerDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -570,7 +638,7 @@ const Workers: React.FC = () => {
             {filteredWorkers.map((worker, index) => {
               const stationsLabel = worker.assigned_station_ids?.length
                 ? worker.assigned_station_ids
-                    .map((id) => stations.find((station) => station.id === id)?.name ?? `${id}`)
+                    .map((id) => stationNameById.get(id) ?? 'Unknown station')
                     .join(', ')
                 : 'Unassigned';
               return (
@@ -776,17 +844,50 @@ const Workers: React.FC = () => {
 
               <div>
                 <p className="text-sm text-[var(--ink-muted)]">Assigned stations</p>
-                <div className="mt-2 grid max-h-28 grid-cols-3 gap-2 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
-                  {stations.map((station) => (
-                    <label key={station.id} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={(draft?.assigned_station_ids ?? []).includes(station.id)}
-                        onChange={() => toggleStation(station.id)}
-                      />
-                      <span title={station.name}>{station.id}</span>
-                    </label>
-                  ))}
+                <div className="relative mt-2" ref={stationDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setStationDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-2xl border border-black/10 bg-white px-3 py-2 text-left text-sm text-[var(--ink)]"
+                  >
+                    <span className="truncate">{assignedStationLabel}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                        stationDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {stationDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      {orderedStations.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
+                          No stations available.
+                        </div>
+                      ) : (
+                        <div className="max-h-56 overflow-auto p-3 text-sm">
+                          <div className="flex flex-col gap-2">
+                            {orderedStations.map((station) => (
+                              <label key={station.id} className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={(draft?.assigned_station_ids ?? []).includes(station.id)}
+                                  onChange={() => toggleStation(station.id)}
+                                />
+                                <span className="flex items-center gap-2">
+                                  <span className="text-[var(--ink)]">{station.name}</span>
+                                  {stationSubtitle(station) && (
+                                    <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                      {stationSubtitle(station)}
+                                    </span>
+                                  )}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

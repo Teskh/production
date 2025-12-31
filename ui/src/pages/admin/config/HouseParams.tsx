@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Database, Edit3, Plus, UploadCloud } from 'lucide-react';
+import { Edit3, Plus } from 'lucide-react';
 
 const HouseParams: React.FC = () => {
   const [selectedParamId, setSelectedParamId] = useState(1);
@@ -136,23 +136,6 @@ const HouseParams: React.FC = () => {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(47,107,79,0.12)] text-[var(--leaf)]">
-                <Database className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-[var(--ink)]">Import values</h3>
-                <p className="text-xs text-[var(--ink-muted)]">House type + module matrix.</p>
-              </div>
-            </div>
-            <div className="mt-4 rounded-2xl border border-dashed border-black/15 bg-[rgba(201,215,245,0.25)] p-4 text-sm text-[var(--ink-muted)]">
-              Upload a CSV with parameter_name, house_type, module_number, value.
-            </div>
-            <button className="mt-4 inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]">
-              <UploadCloud className="h-4 w-4" /> Download template
-            </button>
-          </section>
         </aside>
       </div>
     </div>

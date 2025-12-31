@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "interval_minutes": 1440,
+  "last_backup_at": "2025-12-31T22:44:18.676298+00:00",
+  "retention_count": 14
+}
