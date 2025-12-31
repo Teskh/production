@@ -4,11 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.models.house import HouseSubType, HouseType, PanelDefinition
-from app.models.tasks import AdvanceRule, TaskApplicability, TaskDefinition, TaskExpectedDuration
+from app.models.tasks import TaskApplicability, TaskDefinition, TaskExpectedDuration
 from app.schemas.tasks import (
-    AdvanceRuleCreate,
-    AdvanceRuleRead,
-    AdvanceRuleUpdate,
     TaskApplicabilityCreate,
     TaskApplicabilityRead,
     TaskApplicabilityUpdate,
@@ -215,76 +212,6 @@ def delete_task_duration(duration_id: int, db: Session = Depends(get_db)) -> Non
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task duration not found"
-        )
-    db.delete(row)
-    db.commit()
-
-
-@router.get("/advance-rules", response_model=list[AdvanceRuleRead])
-def list_advance_rules(db: Session = Depends(get_db)) -> list[AdvanceRule]:
-    return list(db.execute(select(AdvanceRule).order_by(AdvanceRule.id)).scalars())
-
-
-@router.post("/advance-rules", response_model=AdvanceRuleRead, status_code=status.HTTP_201_CREATED)
-def create_advance_rule(payload: AdvanceRuleCreate, db: Session = Depends(get_db)) -> AdvanceRule:
-    if payload.house_type_id is not None and not db.get(HouseType, payload.house_type_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="House type not found"
-        )
-    if payload.sub_type_id is not None and not db.get(HouseSubType, payload.sub_type_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="House subtype not found"
-        )
-    row = AdvanceRule(**payload.model_dump())
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@router.get("/advance-rules/{rule_id}", response_model=AdvanceRuleRead)
-def get_advance_rule(rule_id: int, db: Session = Depends(get_db)) -> AdvanceRule:
-    row = db.get(AdvanceRule, rule_id)
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Advance rule not found"
-        )
-    return row
-
-
-@router.put("/advance-rules/{rule_id}", response_model=AdvanceRuleRead)
-def update_advance_rule(
-    rule_id: int, payload: AdvanceRuleUpdate, db: Session = Depends(get_db)
-) -> AdvanceRule:
-    row = db.get(AdvanceRule, rule_id)
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Advance rule not found"
-        )
-    updates = payload.model_dump(exclude_unset=True)
-    if "house_type_id" in updates and updates["house_type_id"] is not None:
-        if not db.get(HouseType, updates["house_type_id"]):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="House type not found"
-            )
-    if "sub_type_id" in updates and updates["sub_type_id"] is not None:
-        if not db.get(HouseSubType, updates["sub_type_id"]):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="House subtype not found"
-            )
-    for key, value in updates.items():
-        setattr(row, key, value)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@router.delete("/advance-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_advance_rule(rule_id: int, db: Session = Depends(get_db)) -> None:
-    row = db.get(AdvanceRule, rule_id)
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Advance rule not found"
         )
     db.delete(row)
     db.commit()

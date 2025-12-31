@@ -128,6 +128,7 @@ def next_station(current_station):
 - active (boolean)
 - skippable (boolean)
 - concurrent_allowed (boolean)
+- advance_trigger (boolean, module-only; true advances the module on completion)
 - dependencies_json (list of task_definition_ids)
 
 `TaskApplicability`
@@ -287,28 +288,17 @@ Total man-hours = sum(worker_work_minutes) / 60
 - All participations without `left_at` get `left_at = completed_at`.
 - This matches current behavior where one worker finishing closes all parallel logs.
 
-### 1.8 Advancement rules
-
-`AdvanceRule`
-- id
-- scope (panel | module)
-- station_sequence_order
-- line_type (nullable, for scoping to specific lines)
-- house_type_id (nullable)
-- sub_type_id (nullable)
-- mode (AllTasksAtStation | TriggerTasks)
-- trigger_task_definition_ids (json, required when mode=TriggerTasks)
+### 1.8 Advancement
 
 Advancement logic:
-1. If a rule exists for the current station (matching line_type/house_type/sub_type scope):
-   - **TriggerTasks**: advance when all trigger tasks are Completed for this work unit.
-   - **AllTasksAtStation**: advance when all applicable tasks at this station are Completed or Skipped.
-2. If no rule exists: default to AllTasksAtStation.
-3. On advancement:
-   - Auto-pause any InProgress tasks at the current station (reason: "Auto-pausa por avance").
-   - Find next station via `next_station()` logic, skipping stations with no applicable tasks.
-   - Update `current_station_id` on the WorkUnit or PanelUnit.
-   - If no next station exists: mark Completed (or Consumed for panels).
+- Panels: advance when all applicable tasks at the station are Completed or Skipped.
+- Modules: advance when any applicable module task with `advance_trigger=true` is Completed.
+- Stations must provide at least one applicable trigger task for modules to advance.
+- On advancement:
+  - Auto-pause any InProgress tasks at the current station (reason: "Auto-pausa por avance").
+  - Find next station via `next_station()` logic, skipping stations with no applicable tasks.
+  - Update `current_station_id` on the WorkUnit or PanelUnit.
+  - If no next station exists: mark Completed (or Consumed for panels).
 
 ### 1.9 Configuration entities
 
@@ -452,7 +442,8 @@ Notes:
 - Status changes are event-driven (see §1.3 table).
 
 ### 2.4 Advancement
-- Evaluate AdvanceRule for current station → determine if advancement criteria are met.
+- Panels advance when all applicable tasks at the station are Completed or Skipped.
+- Modules advance when any applicable module task with `advance_trigger=true` is Completed.
 - Auto-pause active tasks at current station.
 - Find next station, skipping those with no tasks.
 - If no next station: mark work unit/panel as Completed/Consumed.
@@ -467,7 +458,7 @@ Notes:
 ### 2.6 Skips and carryovers
 - Skipping creates a `TaskException(type=Skip)` at the current station.
 - Skipping pauses any in-progress work on that task instance and records a `TaskPause` reason like "Skipped override: ...".
-- Skipped tasks count as satisfied for advancement.
+- Skipped tasks count as satisfied for panel advancement; module advancement requires trigger task completion.
 - Downstream stations surface skipped tasks as carryover opportunities (computed at runtime, not stored).
 - Completing a carryover task creates a normal `TaskInstance` at the downstream station.
 - Carryovers are optional and do not block auto-advance when a station has no required tasks.
@@ -502,7 +493,6 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 | `WorkerSpecialties` | `WorkerSkill` |
 | `TaskDefinitionAllowedWorkers` | `TaskWorkerRestriction(type=allowed)` |
 | `TaskDefinitionRegularCrew` | `TaskWorkerRestriction(type=regular_crew)` |
-| `ModuleAdvanceRules` | `AdvanceRule` |
 | `ModuleTaskApplicability` | `TaskApplicability` rows |
 | `ModuleTaskExpectedDurations` | `TaskExpectedDuration` |
 | `PanelDefinitions.task_length` | `TaskExpectedDuration` rows |

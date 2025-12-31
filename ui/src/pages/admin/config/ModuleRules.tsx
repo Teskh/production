@@ -4,9 +4,9 @@ import { CheckCircle2, Layers, Ruler, SlidersHorizontal } from 'lucide-react';
 const ModuleRules: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'rules' | 'applicability' | 'durations'>('rules');
 
-  const advanceRules = [
-    { id: 1, station: 'A1', line: 'A', mode: 'All tasks', triggers: 'Auto' },
-    { id: 2, station: 'A2', line: 'A', mode: 'Trigger tasks', triggers: 'QC Check' },
+  const advanceTriggers = [
+    { id: 1, task: 'Module Harness', stationSeq: 1, line: 'A', trigger: true },
+    { id: 2, task: 'Seal & Inspect', stationSeq: 2, line: 'A', trigger: false },
   ];
 
   const applicability = [
@@ -26,16 +26,16 @@ const ModuleRules: React.FC = () => {
           <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
             Product Definition / Module Rules
           </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Advance Rules & Applicability</h1>
+          <h1 className="text-3xl font-display text-[var(--ink)]">Advance Triggers & Applicability</h1>
           <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Configure station advancement logic, applicability scopes, and expected durations.
+            Configure module advance triggers, applicability scopes, and expected durations.
           </p>
         </div>
       </header>
 
       <div className="flex flex-wrap gap-2">
         {[
-          { key: 'rules', label: 'Advance Rules', icon: CheckCircle2 },
+          { key: 'rules', label: 'Advance Triggers', icon: CheckCircle2 },
           { key: 'applicability', label: 'Task Applicability', icon: Layers },
           { key: 'durations', label: 'Expected Durations', icon: Ruler },
         ].map((tab) => (
@@ -57,19 +57,18 @@ const ModuleRules: React.FC = () => {
       {activeTab === 'rules' && (
         <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
-            <h2 className="text-lg font-display text-[var(--ink)]">Advance rule list</h2>
+            <h2 className="text-lg font-display text-[var(--ink)]">Advance trigger list</h2>
             <div className="mt-4 space-y-3">
-              {advanceRules.map((rule) => (
+              {advanceTriggers.map((rule) => (
                 <div
                   key={rule.id}
                   className="flex items-center justify-between rounded-2xl border border-black/5 bg-white px-4 py-4"
                 >
                   <div>
-                    <p className="font-semibold text-[var(--ink)]">
-                      Station {rule.station} / Line {rule.line}
-                    </p>
+                    <p className="font-semibold text-[var(--ink)]">{rule.task}</p>
                     <p className="text-xs text-[var(--ink-muted)]">
-                      Mode: {rule.mode} | Triggers: {rule.triggers}
+                      Line {rule.line} | Station seq: {rule.stationSeq} | Advance trigger:{' '}
+                      {rule.trigger ? 'Yes' : 'No'}
                     </p>
                   </div>
                   <button className="text-xs font-semibold text-[var(--accent)]">Edit</button>
@@ -81,11 +80,18 @@ const ModuleRules: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Edit</p>
-                <h2 className="text-lg font-display text-[var(--ink)]">Advance rule</h2>
+                <h2 className="text-lg font-display text-[var(--ink)]">Advance trigger</h2>
               </div>
               <SlidersHorizontal className="h-5 w-5 text-[var(--ink-muted)]" />
             </div>
             <div className="mt-4 space-y-4">
+              <label className="text-sm text-[var(--ink-muted)]">
+                Task definition
+                <select className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm">
+                  <option>Module Harness</option>
+                  <option>Seal & Inspect</option>
+                </select>
+              </label>
               <label className="text-sm text-[var(--ink-muted)]">
                 Station sequence
                 <input className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm" />
@@ -99,21 +105,14 @@ const ModuleRules: React.FC = () => {
                 </select>
               </label>
               <label className="text-sm text-[var(--ink-muted)]">
-                Mode
+                Advance trigger
                 <select className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm">
-                  <option>AllTasksAtStation</option>
-                  <option>TriggerTasks</option>
+                  <option>No</option>
+                  <option>Yes</option>
                 </select>
               </label>
-              <label className="text-sm text-[var(--ink-muted)]">
-                Trigger tasks
-                <textarea
-                  className="mt-2 min-h-[100px] w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  placeholder="Select tasks for trigger mode."
-                />
-              </label>
               <button className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white">
-                Save rule
+                Save trigger
               </button>
             </div>
           </aside>

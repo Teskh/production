@@ -20,7 +20,6 @@ from app.models.qc import (
 )
 from app.models.stations import Station
 from app.models.tasks import (
-    AdvanceRule,
     TaskApplicability,
     TaskDefinition,
     TaskException,
@@ -41,7 +40,6 @@ from app.models.workers import (
 __all__ = [
     "AdminUser",
     "AdminSession",
-    "AdvanceRule",
     "CommentTemplate",
     "HouseParameter",
     "HouseParameterValue",

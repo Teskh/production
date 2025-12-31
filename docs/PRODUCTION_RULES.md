@@ -128,12 +128,9 @@ When the module is in Magazine and the task starts at the first station of a lin
 
 ### 4.4 Module advancement at a station
 
-Advancement uses AdvanceRule:
-1) If an AdvanceRule exists for the station sequence (scoped by house type/subtype/line),
-   the module advances when all rule trigger tasks are completed for that module.
-2) If no rule applies, the module advances when all required tasks at the station are
-   satisfied (completed or explicitly skipped). If the station has no required tasks,
-   it advances immediately.
+Modules advance only via trigger tasks:
+- Any applicable module task marked as an advance trigger is sufficient to advance.
+- Stations must provide at least one applicable trigger task to allow advancement.
 
 Advancing:
 - Auto-pause any in-progress tasks at the current station (reason: "Auto-pausa por avance").
@@ -177,7 +174,7 @@ Concurrency:
 Skips:
 - Skipping records a station-scoped TaskException(type=Skip) and a reason.
 - Skips pause any active work on that task.
-- Skips count as satisfied for station advancement.
+- Skips count as satisfied for panel advancement; module advancement requires a trigger task.
 
 Permissions:
 - Allowed-worker restrictions are enforced uniformly for panel and module tasks when configured.

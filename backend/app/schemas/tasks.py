@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import AdvanceRuleMode, StationLineType, TaskScope
+from app.models.enums import TaskScope
 
 
 class TaskDefinitionBase(BaseModel):
@@ -9,6 +9,7 @@ class TaskDefinitionBase(BaseModel):
     active: bool = True
     skippable: bool = False
     concurrent_allowed: bool = False
+    advance_trigger: bool = False
     dependencies_json: list[int] | None = None
 
 
@@ -22,6 +23,7 @@ class TaskDefinitionUpdate(BaseModel):
     active: bool | None = None
     skippable: bool | None = None
     concurrent_allowed: bool | None = None
+    advance_trigger: bool | None = None
     dependencies_json: list[int] | None = None
 
 
@@ -86,32 +88,3 @@ class TaskExpectedDurationRead(TaskExpectedDurationBase):
 
     model_config = ConfigDict(from_attributes=True)
 
-
-class AdvanceRuleBase(BaseModel):
-    scope: TaskScope
-    station_sequence_order: int
-    line_type: StationLineType | None = None
-    house_type_id: int | None = None
-    sub_type_id: int | None = None
-    mode: AdvanceRuleMode
-    trigger_task_definition_ids: list[int] | None = None
-
-
-class AdvanceRuleCreate(AdvanceRuleBase):
-    pass
-
-
-class AdvanceRuleUpdate(BaseModel):
-    scope: TaskScope | None = None
-    station_sequence_order: int | None = None
-    line_type: StationLineType | None = None
-    house_type_id: int | None = None
-    sub_type_id: int | None = None
-    mode: AdvanceRuleMode | None = None
-    trigger_task_definition_ids: list[int] | None = None
-
-
-class AdvanceRuleRead(AdvanceRuleBase):
-    id: int
-
-    model_config = ConfigDict(from_attributes=True)

@@ -11,7 +11,8 @@ Checklist for building the application. Update each item to `In progress` or `Do
 ## Minimal Admin Backend + Frontend
 - [X] Status: Done - admin auth (AdminUser + roles) and session handling
 - [X] Status: Done - CRUD APIs for workers, skills, stations, house types/subtypes, panel definitions
-- [X] Status: Done - CRUD APIs for task definitions, applicability, expected durations, advance rules
+- [ ] Status: Not started - CRUD APIs for task definitions, 
+- [ ] Status: Not started - CRUD APIs for task applicability, expected durations, advance rules
 - [X] Status: Done - CRUD APIs for house parameters and per-module parameter values
 - [X] Status: Done - admin UI screens to edit the above (list/detail/edit/import)
 - [X] Status: Done - specialties admin page wired to skills and worker assignments

@@ -48,11 +48,6 @@ class TaskExceptionType(str, Enum):
     CARRYOVER = "Carryover"
 
 
-class AdvanceRuleMode(str, Enum):
-    ALL_TASKS_AT_STATION = "AllTasksAtStation"
-    TRIGGER_TASKS = "TriggerTasks"
-
-
 class RestrictionType(str, Enum):
     ALLOWED = "allowed"
     REGULAR_CREW = "regular_crew"

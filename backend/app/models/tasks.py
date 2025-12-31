@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import AdvanceRuleMode, TaskExceptionType, TaskScope, TaskStatus
+from app.models.enums import TaskExceptionType, TaskScope, TaskStatus
 
 
 class TaskDefinition(Base):
@@ -28,6 +28,7 @@ class TaskDefinition(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     skippable: Mapped[bool] = mapped_column(Boolean, default=False)
     concurrent_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    advance_trigger: Mapped[bool] = mapped_column(Boolean, default=False)
     dependencies_json: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
@@ -143,21 +144,3 @@ class TaskException(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
-
-class AdvanceRule(Base):
-    __tablename__ = "advance_rules"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    scope: Mapped[TaskScope] = mapped_column(Enum(TaskScope))
-    station_sequence_order: Mapped[int] = mapped_column(Integer)
-    line_type: Mapped[str | None] = mapped_column(String(5), nullable=True)
-    house_type_id: Mapped[int | None] = mapped_column(
-        ForeignKey("house_types.id"), nullable=True
-    )
-    sub_type_id: Mapped[int | None] = mapped_column(
-        ForeignKey("house_sub_types.id"), nullable=True
-    )
-    mode: Mapped[AdvanceRuleMode] = mapped_column(Enum(AdvanceRuleMode))
-    trigger_task_definition_ids: Mapped[list[int] | None] = mapped_column(
-        JSONB, nullable=True
-    )
