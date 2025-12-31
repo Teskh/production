@@ -31,9 +31,10 @@ Task execution:
 ## 2) Station sequencing and task applicability
 
 Stations:
-- Each station has a line type (W, M, A, B, C, or auxiliary) and a sequence order.
+- Each station has a role (Panels, Magazine, Assembly, or AUX) and a sequence order.
 - The sequence order defines progression within a line.
-- For assembly lines (A/B/C), the first station is the lowest sequence order for that line.
+- Assembly stations also carry a line type label (1, 2, 3).
+- AUX stations do not participate in the main flow.
 
 Tasks:
 - Tasks are panel-scope or module-scope.
@@ -141,14 +142,14 @@ Advancing:
 
 ## 5) Station content and queues
 
-W stations:
+Panels stations:
 - Show panels whose current station is the station and whose status is In Progress,
   grouped by module.
 
-Magazine station (M1):
+Magazine station:
 - Shows modules in Magazine status with a list of all panels and their statuses.
 
-Assembly stations (A/B/C):
+Assembly stations (line 1/2/3):
 - Show modules in Assembly status whose current station matches the station.
 - Tasks shown at the station respect task applicability rules.
 - The first station in a line also shows Magazine modules eligible to be pulled.
@@ -184,7 +185,7 @@ Permissions:
 
 ## 7) Auxiliary stations
 
-Auxiliary stations are those marked as auxiliary or with a line type outside W/M/A/B/C.
+Auxiliary stations are those with role=AUX.
 Rules:
 - Only module-scope tasks run at auxiliary stations.
 - Dependencies, concurrency, and allowed-worker restrictions apply.

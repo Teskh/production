@@ -98,7 +98,7 @@ class QCCheckInstance(Base):
     related_task_instance_id: Mapped[int | None] = mapped_column(
         ForeignKey("task_instances.id"), nullable=True
     )
-    station_id: Mapped[str | None] = mapped_column(
+    station_id: Mapped[int | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True
     )
     status: Mapped[QCCheckStatus] = mapped_column(Enum(QCCheckStatus))

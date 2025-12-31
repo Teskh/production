@@ -1,5 +1,6 @@
 from app.api.routes import (
     admin_auth,
+    backups,
     geovictoria,
     house_params,
     house_types,
@@ -12,6 +13,7 @@ from app.api.routes import (
 
 __all__ = [
     "admin_auth",
+    "backups",
     "geovictoria",
     "house_params",
     "house_types",

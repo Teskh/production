@@ -19,14 +19,14 @@ type Worker = {
   pin: string | null;
   login_required: boolean;
   active: boolean;
-  assigned_station_ids: string[] | null;
+  assigned_station_ids: number[] | null;
   supervisor_id: number | null;
 };
 
 type Station = {
-  id: string;
+  id: number;
   name: string;
-  line_type: string;
+  line_type: string | null;
   sequence_order: number | null;
   role: string;
 };
@@ -45,7 +45,7 @@ type WorkerDraft = {
   pin: string;
   login_required: boolean;
   active: boolean;
-  assigned_station_ids: string[];
+  assigned_station_ids: number[];
   supervisor_id: number | null;
   skill_ids: number[];
 };
@@ -361,7 +361,7 @@ const Workers: React.FC = () => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
-  const toggleStation = (stationId: string) => {
+  const toggleStation = (stationId: number) => {
     setDraft((prev) => {
       if (!prev) {
         return prev;
@@ -569,7 +569,9 @@ const Workers: React.FC = () => {
             )}
             {filteredWorkers.map((worker, index) => {
               const stationsLabel = worker.assigned_station_ids?.length
-                ? worker.assigned_station_ids.join(', ')
+                ? worker.assigned_station_ids
+                    .map((id) => stations.find((station) => station.id === id)?.name ?? `${id}`)
+                    .join(', ')
                 : 'Unassigned';
               return (
                 <div

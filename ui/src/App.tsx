@@ -36,6 +36,7 @@ import HousePanels from './pages/admin/config/HousePanels';
 import TaskDefs from './pages/admin/config/TaskDefs';
 import PauseDefs from './pages/admin/config/PauseDefs';
 import NoteDefs from './pages/admin/config/NoteDefs';
+import Backups from './pages/admin/config/Backups';
 import QCChecks from './pages/admin/quality/QCChecks';
 
 // Utility Pages
@@ -87,6 +88,7 @@ function App() {
           <Route path="task-defs" element={<TaskDefs />} />
           <Route path="pause-defs" element={<PauseDefs />} />
           <Route path="note-defs" element={<NoteDefs />} />
+          <Route path="backups" element={<Backups />} />
           
           {/* Quality Config */}
           <Route path="qc-checks" element={<QCChecks />} />

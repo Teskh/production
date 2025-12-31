@@ -4,9 +4,8 @@ from app.models.enums import StationLineType, StationRole
 
 
 class StationBase(BaseModel):
-    id: str
     name: str
-    line_type: StationLineType
+    line_type: StationLineType | None = None
     sequence_order: int | None = None
     role: StationRole
 
@@ -23,4 +22,6 @@ class StationUpdate(BaseModel):
 
 
 class StationRead(StationBase):
+    id: int
+
     model_config = ConfigDict(from_attributes=True)

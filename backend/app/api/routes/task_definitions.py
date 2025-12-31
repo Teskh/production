@@ -135,13 +135,29 @@ def set_station_sequence_order(
     )
     if payload.station_sequence_order is None:
         if default_rows:
-            db.query(TaskApplicability).filter(*_default_applicability_query(task_definition_id)).delete()
+            for extra in default_rows[1:]:
+                db.delete(extra)
+            default_rows[0].station_sequence_order = None
+            default_rows[0].applies = True
             db.commit()
+            return TaskStationSequence(station_sequence_order=None)
+        row = TaskApplicability(
+            task_definition_id=task_definition_id,
+            house_type_id=None,
+            sub_type_id=None,
+            module_number=None,
+            panel_definition_id=None,
+            applies=True,
+            station_sequence_order=None,
+        )
+        db.add(row)
+        db.commit()
         return TaskStationSequence(station_sequence_order=None)
     if default_rows:
         for extra in default_rows[1:]:
             db.delete(extra)
         default_rows[0].station_sequence_order = payload.station_sequence_order
+        default_rows[0].applies = True
         db.commit()
         return TaskStationSequence(
             station_sequence_order=default_rows[0].station_sequence_order
@@ -152,6 +168,7 @@ def set_station_sequence_order(
         sub_type_id=None,
         module_number=None,
         panel_definition_id=None,
+        applies=True,
         station_sequence_order=payload.station_sequence_order,
     )
     db.add(row)

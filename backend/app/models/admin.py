@@ -36,7 +36,7 @@ class PauseReason(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    applicable_station_ids: Mapped[list[str] | None] = mapped_column(
+    applicable_station_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -47,7 +47,7 @@ class CommentTemplate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     text: Mapped[str] = mapped_column(String(500))
-    applicable_station_ids: Mapped[list[str] | None] = mapped_column(
+    applicable_station_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True)

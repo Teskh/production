@@ -21,7 +21,7 @@ class Worker(Base):
     pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
     login_required: Mapped[bool] = mapped_column(Boolean, default=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    assigned_station_ids: Mapped[list[str] | None] = mapped_column(
+    assigned_station_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
     supervisor_id: Mapped[int | None] = mapped_column(

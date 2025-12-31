@@ -55,6 +55,7 @@ class TaskApplicabilityBase(BaseModel):
     sub_type_id: int | None = None
     module_number: int | None = None
     panel_definition_id: int | None = None
+    applies: bool = True
     station_sequence_order: int | None = None
 
 
@@ -68,6 +69,7 @@ class TaskApplicabilityUpdate(BaseModel):
     sub_type_id: int | None = None
     module_number: int | None = None
     panel_definition_id: int | None = None
+    applies: bool | None = None
     station_sequence_order: int | None = None
 
 

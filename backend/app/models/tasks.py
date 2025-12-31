@@ -51,6 +51,7 @@ class TaskApplicability(Base):
     panel_definition_id: Mapped[int | None] = mapped_column(
         ForeignKey("panel_definitions.id"), nullable=True
     )
+    applies: Mapped[bool] = mapped_column(Boolean, default=True)
     station_sequence_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
@@ -86,7 +87,7 @@ class TaskInstance(Base):
     panel_unit_id: Mapped[int | None] = mapped_column(
         ForeignKey("panel_units.id"), nullable=True
     )
-    station_id: Mapped[str] = mapped_column(ForeignKey("stations.id"), index=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"), index=True)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.NOT_STARTED
     )
@@ -134,7 +135,7 @@ class TaskException(Base):
     panel_unit_id: Mapped[int | None] = mapped_column(
         ForeignKey("panel_units.id"), nullable=True
     )
-    station_id: Mapped[str] = mapped_column(ForeignKey("stations.id"), index=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"), index=True)
     exception_type: Mapped[TaskExceptionType] = mapped_column(
         Enum(TaskExceptionType)
     )
@@ -143,4 +144,3 @@ class TaskException(Base):
         ForeignKey("workers.id"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)
-

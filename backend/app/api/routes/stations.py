@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.models.enums import StationRole
 from app.models.stations import Station
 from app.schemas.stations import StationCreate, StationRead, StationUpdate
 
@@ -14,8 +15,50 @@ def list_stations(db: Session = Depends(get_db)) -> list[Station]:
     return list(db.execute(select(Station).order_by(Station.id)).scalars())
 
 
+def _validate_station_payload(
+    *,
+    role: StationRole,
+    line_type: str | None,
+    sequence_order: int | None,
+) -> None:
+    if role == StationRole.ASSEMBLY:
+        if line_type is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assembly stations require a line type",
+            )
+    else:
+        if line_type is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Line type is only allowed for assembly stations",
+            )
+    if role == StationRole.AUX:
+        if sequence_order is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Aux stations must not have a sequence order",
+            )
+    else:
+        if sequence_order is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sequence order is required for non-aux stations",
+            )
+        if sequence_order <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Sequence order must be a positive number",
+            )
+
+
 @router.post("/", response_model=StationRead, status_code=status.HTTP_201_CREATED)
 def create_station(payload: StationCreate, db: Session = Depends(get_db)) -> Station:
+    _validate_station_payload(
+        role=payload.role,
+        line_type=payload.line_type.value if payload.line_type else None,
+        sequence_order=payload.sequence_order,
+    )
     station = Station(**payload.model_dump())
     db.add(station)
     db.commit()
@@ -24,7 +67,7 @@ def create_station(payload: StationCreate, db: Session = Depends(get_db)) -> Sta
 
 
 @router.get("/{station_id}", response_model=StationRead)
-def get_station(station_id: str, db: Session = Depends(get_db)) -> Station:
+def get_station(station_id: int, db: Session = Depends(get_db)) -> Station:
     station = db.get(Station, station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
@@ -33,12 +76,21 @@ def get_station(station_id: str, db: Session = Depends(get_db)) -> Station:
 
 @router.put("/{station_id}", response_model=StationRead)
 def update_station(
-    station_id: str, payload: StationUpdate, db: Session = Depends(get_db)
+    station_id: int, payload: StationUpdate, db: Session = Depends(get_db)
 ) -> Station:
     station = db.get(Station, station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    role = updates.get("role", station.role)
+    line_type = updates.get("line_type", station.line_type)
+    sequence_order = updates.get("sequence_order", station.sequence_order)
+    _validate_station_payload(
+        role=role,
+        line_type=line_type.value if line_type else None,
+        sequence_order=sequence_order,
+    )
+    for key, value in updates.items():
         setattr(station, key, value)
     db.commit()
     db.refresh(station)
@@ -46,7 +98,7 @@ def update_station(
 
 
 @router.delete("/{station_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_station(station_id: str, db: Session = Depends(get_db)) -> None:
+def delete_station(station_id: int, db: Session = Depends(get_db)) -> None:
     station = db.get(Station, station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")

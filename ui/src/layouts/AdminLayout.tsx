@@ -13,6 +13,7 @@ import {
   CheckSquare,
   Layers,
   Sparkles,
+  Database,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -57,6 +58,7 @@ const AdminLayout: React.FC = () => {
         { name: 'Task Definitions', path: '/admin/task-defs', icon: ClipboardList },
         { name: 'Pause Definitions', path: '/admin/pause-defs', icon: Settings },
         { name: 'Note Definitions', path: '/admin/note-defs', icon: FileText },
+        { name: 'Backups', path: '/admin/backups', icon: Database },
       ],
     },
     {

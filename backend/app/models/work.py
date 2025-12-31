@@ -35,7 +35,7 @@ class WorkUnit(Base):
     status: Mapped[WorkUnitStatus] = mapped_column(
         Enum(WorkUnitStatus), default=WorkUnitStatus.PLANNED
     )
-    current_station_id: Mapped[str | None] = mapped_column(
+    current_station_id: Mapped[int | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True
     )
 
@@ -56,7 +56,7 @@ class PanelUnit(Base):
     status: Mapped[PanelUnitStatus] = mapped_column(
         Enum(PanelUnitStatus), default=PanelUnitStatus.PLANNED
     )
-    current_station_id: Mapped[str | None] = mapped_column(
+    current_station_id: Mapped[int | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True
     )
 

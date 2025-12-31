@@ -17,17 +17,16 @@ class PanelUnitStatus(str, Enum):
 
 
 class StationLineType(str, Enum):
-    W = "W"
-    M = "M"
-    A = "A"
-    B = "B"
-    C = "C"
-    AUX = "AUX"
+    LINE_1 = "1"
+    LINE_2 = "2"
+    LINE_3 = "3"
 
 
 class StationRole(str, Enum):
-    CORE = "core"
-    AUXILIARY = "auxiliary"
+    PANELS = "Panels"
+    MAGAZINE = "Magazine"
+    ASSEMBLY = "Assembly"
+    AUX = "AUX"
 
 
 class TaskScope(str, Enum):

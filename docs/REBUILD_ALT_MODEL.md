@@ -88,25 +88,33 @@ Status semantics:
 ### 1.3 Stations
 
 `Station`
-- id (e.g., W1, A2, AUX1)
+- id (autoincrement integer)
 - name
-- line_type (W | M | A | B | C | AUX)
-- sequence_order (integer, nullable for auxiliary stations)
-- role (core | auxiliary)
+- role (Panels | Magazine | Assembly | AUX)
+- line_type (1 | 2 | 3, nullable; used only when role = Assembly)
+- sequence_order (integer, nullable for AUX stations)
 
 Notes:
 - Stations are kept simple. No graph abstraction.
-- Flow is implicit: next station = same `line_type` + next higher `sequence_order`.
-- Auxiliary stations (`role = auxiliary`) have `sequence_order = NULL` and don't participate in linear flow.
+- Panels flow by `role = Panels` and ascending `sequence_order`.
+- Magazine is a single station in the flow with `role = Magazine`.
+- Assembly flow uses `role = Assembly` + same `line_type` + ascending `sequence_order`.
+- AUX stations have `sequence_order = NULL` and do not participate in linear flow.
 
 **Advancement logic (in code, not data):**
 
 ```python
 def next_station(current_station):
     """Find the next station in the same line with tasks for this work unit."""
+    if current_station.role == "Assembly":
+        return Station.query.filter(
+            Station.role == "Assembly",
+            Station.line_type == current_station.line_type,
+            Station.sequence_order > current_station.sequence_order,
+        ).order_by(Station.sequence_order).first()
     return Station.query.filter(
-        Station.line_type == current_station.line_type,
-        Station.sequence_order > current_station.sequence_order
+        Station.role == current_station.role,
+        Station.sequence_order > current_station.sequence_order,
     ).order_by(Station.sequence_order).first()
 ```
 
@@ -116,7 +124,7 @@ def next_station(current_station):
 |-------|-----------|---------------|
 | Panel task started | station = W1, module.status = Planned | module.status → Panels |
 | Panel advances | no next W station | panel.status → Completed, module.status → Magazine |
-| Module task started | station.line_type in (A,B,C), station.sequence_order = 1 | module.status → Assembly |
+| Module task started | station.role = Assembly, station.sequence_order = 11 | module.status → Assembly |
 | Module advances | no next station in assembly line | module.status → Completed, all panels → Consumed |
 
 ### 1.4 Tasks and applicability
@@ -138,17 +146,22 @@ def next_station(current_station):
 - sub_type_id (nullable)
 - module_number (nullable)
 - panel_definition_id (nullable)
+- applies (boolean, default true)
 - station_sequence_order (nullable)
 
 Notes:
+- `applies = false` explicitly marks the task as not applicable for the matched scope and stops fallback to broader rules.
 - `station_sequence_order` is required for station-bound tasks. If it is NULL, the task is treated as "unscheduled" and appears only in the "Other tasks" picker, not in station queues.
+- A row with all scope fields NULL is the task definition's default recommended station sequence (and applies everywhere unless overridden).
 
 Resolution order (most specific wins):
-1. panel_definition_id + station_sequence_order
-2. module_number + sub_type_id + station_sequence_order
-3. house_type_id + station_sequence_order
-4. station_sequence_order only
+1. panel_definition_id
+2. house_type_id + module_number (sub_type_id optional; prefer non-null sub_type_id when both match)
+3. house_type_id (sub_type_id optional; prefer non-null sub_type_id when both match)
+4. default row (all scope fields NULL)
 5. (no rows) → task not applicable
+
+If the winning row has `applies = false`, the task is not applicable at that scope. If `applies = true`, use that row's `station_sequence_order` (NULL means unscheduled).
 
 `TaskExpectedDuration`
 - id
@@ -428,7 +441,7 @@ Notes:
 - Both use `TaskInstance`; `scope` field distinguishes them.
 - Panel tasks set `panel_unit_id`; module tasks leave it null.
 - Same dependency, concurrency, pause, completion logic applies to both.
-- Auxiliary stations are just stations with `role=auxiliary`; their tasks don't affect module advancement.
+- AUX stations are just stations with `role=AUX`; their tasks don't affect module advancement.
 
 ### 2.2 Crew logging
 - Starting a task creates one `TaskInstance` and one `TaskParticipation` per worker.
@@ -436,8 +449,10 @@ Notes:
 - Shared completion: finishing sets `completed_at` on the instance and `left_at` on all open participations.
 
 ### 2.3 Station flow
-- Stations are ordered by `line_type` + `sequence_order`.
-- Next station = same line_type, next higher sequence_order, with applicable tasks.
+- Panels flow by `role=Panels` + ascending `sequence_order`.
+- Assembly flow uses `role=Assembly` + same `line_type` + ascending `sequence_order`.
+- Magazine is a single station with `role=Magazine`.
+- Next station is the next applicable station in the same flow.
 - Stations with no applicable tasks are skipped automatically.
 - Status changes are event-driven (see §1.3 table).
 
@@ -481,9 +496,9 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 |---------|-----|
 | `ModuleProductionPlan` | `WorkOrder` + `WorkUnit` (one WorkUnit per module) |
 | `PanelProductionPlan` | `PanelUnit` |
-| `Stations` | `Station` (1:1, minor field renames) |
+| `Stations` | `Station` (new IDs, role/line_type reshaped) |
 | `TaskDefinitions` | `TaskDefinition` + `TaskApplicability` |
-| `TaskDefinitions.station_sequence_order` | `TaskApplicability.station_sequence_order` |
+| `TaskDefinitions.station_sequence_order` | `TaskApplicability.station_sequence_order` (default row) |
 | `TaskDefinitions.specialty_id` | `TaskSkillRequirement` |
 | `TaskLogs` | `TaskInstance(scope=module)` + `TaskParticipation` |
 | `PanelTaskLogs` | `TaskInstance(scope=panel)` + `TaskParticipation` |
@@ -518,12 +533,12 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 ### 3.2 Data migration steps
 
 1. **Migrate stations**
-   - Copy `Stations` to `Station` (fields map directly).
-   - Set `role = 'auxiliary'` where `sequence_order IS NULL` or `line_type` not in (W, M, A, B, C).
+   - Create `Station` rows using the new role/line_type model (Panels, Magazine, Assembly + line 1/2/3, AUX).
+   - AUX stations are those with `sequence_order IS NULL`.
 
 2. **Migrate task definitions**
    - Copy `TaskDefinitions` to `TaskDefinition`.
-   - For each task's `station_sequence_order` + `house_type_id`, create `TaskApplicability` rows.
+   - For each task's `station_sequence_order`, create a default `TaskApplicability` row (all scope fields NULL, `applies = true`).
    - Migrate `specialty_id` to `TaskSkillRequirement` rows.
 
 3. **Migrate work orders and units**
@@ -560,7 +575,7 @@ After migration, verify:
 - All work units have correct status based on their task completion state.
 - Task applicability coverage: all active tasks have at least one applicability rule.
 - Participation counts match original log counts.
-- Station sequence_order values are consistent within each line_type.
+- Station sequence_order values are consistent within each flow (Panels, Magazine, Assembly line 1/2/3).
 
 ---
 
@@ -640,7 +655,7 @@ These are behavior and UX requirements from the legacy spec that are not capture
 - Evidence capture supports image/video upload; camera requires secure context; watermark includes module/panel/check + timestamp.
 
 ### 5.8 Auxiliary stations
-- Aux stations are those with role=auxiliary or line_type not in W/M/A/B/C.
+- Aux stations are those with role=AUX.
 - Aux tasks are module-scope and do not advance module status or current station.
 - Eligible statuses default to Planned and Panels (configurable).
 - Pending tasks are applicable definitions minus completed/skipped tasks.

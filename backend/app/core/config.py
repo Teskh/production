@@ -7,7 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+load_dotenv(BASE_DIR / ".env", override=False)
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,10 @@ class Settings:
     geovictoria_token_ttl_seconds: int = int(
         os.getenv("GEOVICTORIA_TOKEN_TTL_SECONDS", "1200")
     )
+    backup_dir: Path = Path(os.getenv("BACKUP_DIR", str(BASE_DIR / "backups")))
+    backup_admin_db: str = os.getenv("BACKUP_ADMIN_DB", "postgres")
+    pg_dump_path: str = os.getenv("PG_DUMP_PATH", "pg_dump")
+    pg_restore_path: str = os.getenv("PG_RESTORE_PATH", "pg_restore")
 
 
 settings = Settings()
