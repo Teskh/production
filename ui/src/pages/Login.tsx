@@ -35,11 +35,11 @@ const Login: React.FC = () => {
 
   const handleLogin = () => {
     if (isAdmin) {
-      navigate('/admin/dashboard');
+      navigate('/admin');
     } else {
       // Logic to determine where to go next
       // For now, we just go to the station dashboard or worker workspace
-      navigate('/worker/workspace');
+      navigate('/worker/stationWorkspace');
     }
   };
 

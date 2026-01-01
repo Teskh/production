@@ -47,8 +47,9 @@ function App() {
         <Route path="/login" element={<Login />} />
         
         {/* Worker Routes */}
-        <Route path="/station" element={<WorkerLayout />}>
-          <Route index element={<StationWorkspace />} />
+        <Route path="/worker" element={<WorkerLayout />}>
+          <Route index element={<Navigate to="stationWorkspace" replace />} />
+          <Route path="stationWorkspace" element={<StationWorkspace />} />
         </Route>
 
         {/* QC Routes */}
