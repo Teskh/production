@@ -9,6 +9,7 @@ class PanelDefinitionBase(BaseModel):
     panel_code: str
     panel_area: float | None = None
     panel_length_m: float | None = None
+    panel_sequence_number: int | None = None
     applicable_task_ids: list[int] | None = None
     task_durations_json: list[float] | None = None
 
@@ -25,6 +26,7 @@ class PanelDefinitionUpdate(BaseModel):
     panel_code: str | None = None
     panel_area: float | None = None
     panel_length_m: float | None = None
+    panel_sequence_number: int | None = None
     applicable_task_ids: list[int] | None = None
     task_durations_json: list[float] | None = None
 

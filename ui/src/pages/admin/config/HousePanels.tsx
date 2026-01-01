@@ -26,7 +26,7 @@ type PanelDefinition = {
   panel_length_m: number | null;
   applicable_task_ids: number[] | null;
   task_durations_json: Array<number | null> | null;
-  production_order: number | null;
+  panel_sequence_number: number | null;
 };
 
 type TaskScope = 'panel' | 'module';
@@ -141,11 +141,11 @@ const sortSubtypes = (list: HouseSubType[]) =>
 
 const sortPanels = (list: PanelDefinition[]) =>
   [...list].sort((a, b) => {
-    if (a.production_order != null && b.production_order != null) {
-      return a.production_order - b.production_order;
+    if (a.panel_sequence_number != null && b.panel_sequence_number != null) {
+      return a.panel_sequence_number - b.panel_sequence_number;
     }
-    if (a.production_order != null) return -1;
-    if (b.production_order != null) return 1;
+    if (a.panel_sequence_number != null) return -1;
+    if (b.panel_sequence_number != null) return 1;
 
     const codeCompare = a.panel_code.localeCompare(b.panel_code);
     if (codeCompare !== 0) {
@@ -235,6 +235,7 @@ const HousePanels: React.FC = () => {
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [sequenceDraft, setSequenceDraft] = useState<PanelDefinition[]>([]);
   const [sequenceSaving, setSequenceSaving] = useState(false);
+  const [sequenceMessage, setSequenceMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -693,22 +694,24 @@ const HousePanels: React.FC = () => {
   };
 
   const handleOpenSequence = () => {
-    // Sort by current production order (or default) for the editing list
+    // Sort by current panel sequence (or default) for the editing list
     const sorted = [...filteredPanels].sort((a, b) => {
-      if (a.production_order != null && b.production_order != null) {
-        return a.production_order - b.production_order;
+      if (a.panel_sequence_number != null && b.panel_sequence_number != null) {
+        return a.panel_sequence_number - b.panel_sequence_number;
       }
-      if (a.production_order != null) return -1;
-      if (b.production_order != null) return 1;
+      if (a.panel_sequence_number != null) return -1;
+      if (b.panel_sequence_number != null) return 1;
       return a.panel_code.localeCompare(b.panel_code);
     });
     setSequenceDraft(sorted);
+    setSequenceMessage(null);
     setSequenceOpen(true);
   };
 
   const handleCloseSequence = () => {
     setSequenceOpen(false);
     setSequenceDraft([]);
+    setSequenceMessage(null);
   };
 
   const handleMovePanel = (index: number, direction: 'up' | 'down') => {
@@ -727,28 +730,38 @@ const HousePanels: React.FC = () => {
   const handleSaveSequence = async () => {
     if (!selectedHouseTypeId || !selectedModuleNumber) return;
     setSequenceSaving(true);
-    // Simulate backend save by updating local state
-    // In future: await apiRequest(...)
+    setSequenceMessage(null);
 
     const updates = new Map<number, number>();
     sequenceDraft.forEach((panel, index) => {
       updates.set(panel.id, index + 1);
     });
 
-    setPanels((prev) =>
-      prev.map((panel) => {
-        if (updates.has(panel.id)) {
-          return { ...panel, production_order: updates.get(panel.id) ?? null };
-        }
-        return panel;
-      })
-    );
+    try {
+      const updatedPanels = await Promise.all(
+        sequenceDraft.map(async (panel) => {
+          const nextOrder = updates.get(panel.id) ?? null;
+          if (panel.panel_sequence_number === nextOrder) {
+            return panel;
+          }
+          return apiRequest<PanelDefinition>(`/api/panel-definitions/${panel.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ panel_sequence_number: nextOrder }),
+          });
+        })
+      );
 
-    // Mock delay
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    setSequenceSaving(false);
-    handleCloseSequence();
+      setPanels((prev) =>
+        prev.map((panel) => updatedPanels.find((updated) => updated.id === panel.id) ?? panel)
+      );
+      handleCloseSequence();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to save panel sequence.';
+      setSequenceMessage(message);
+    } finally {
+      setSequenceSaving(false);
+    }
   };
 
   const handleSelectHouseType = (houseTypeId: number) => {
@@ -794,9 +807,9 @@ const HousePanels: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {panel.production_order !== null && panel.production_order !== undefined && (
+            {panel.panel_sequence_number !== null && panel.panel_sequence_number !== undefined && (
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
-                Ord {panel.production_order}
+                Ord {panel.panel_sequence_number}
               </span>
             )}
             <span className="rounded-full border border-black/10 px-2 py-1 text-[10px] text-[var(--ink-muted)]">
@@ -1369,6 +1382,12 @@ const HousePanels: React.FC = () => {
                 </table>
               )}
             </div>
+
+            {sequenceMessage && (
+              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {sequenceMessage}
+              </div>
+            )}
 
             <div className="mt-4 flex justify-end gap-2">
               <button

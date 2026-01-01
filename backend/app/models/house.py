@@ -45,6 +45,9 @@ class PanelDefinition(Base):
     panel_code: Mapped[str] = mapped_column(String(100))
     panel_area: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     panel_length_m: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    panel_sequence_number: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     applicable_task_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
