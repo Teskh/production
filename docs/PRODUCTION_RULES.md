@@ -57,7 +57,6 @@ Panel-specific task lists:
 At W1:
 - The station UI offers a recommended "next panel" based on planned sequence.
 - The worker can manually select any eligible panel from the plan list.
-- There is no "next two only" gating.
 
 ### 3.2 Which panel tasks appear at a station
 

@@ -13,6 +13,9 @@ from app.api.routes import (
     stations,
     task_definitions,
     task_rules,
+    worker_sessions,
+    worker_station,
+    worker_tasks,
     workers,
 )
 
@@ -35,3 +38,6 @@ api_router.include_router(
 api_router.include_router(task_definitions.router, prefix="/task-definitions", tags=["task-definitions"])
 api_router.include_router(task_rules.router, prefix="/task-rules", tags=["task-rules"])
 api_router.include_router(production_queue.router, prefix="/production-queue", tags=["production-queue"])
+api_router.include_router(worker_sessions.router, prefix="/worker-sessions", tags=["worker-sessions"])
+api_router.include_router(worker_station.router, prefix="/worker-stations", tags=["worker-stations"])
+api_router.include_router(worker_tasks.router, prefix="/worker-tasks", tags=["worker-tasks"])

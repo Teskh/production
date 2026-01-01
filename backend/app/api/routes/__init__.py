@@ -11,6 +11,9 @@ from app.api.routes import (
     stations,
     task_definitions,
     task_rules,
+    worker_sessions,
+    worker_station,
+    worker_tasks,
     workers,
 )
 
@@ -27,5 +30,8 @@ __all__ = [
     "stations",
     "task_definitions",
     "task_rules",
+    "worker_sessions",
+    "worker_station",
+    "worker_tasks",
     "workers",
 ]

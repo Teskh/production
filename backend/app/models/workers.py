@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -78,3 +80,17 @@ class TaskWorkerRestriction(Base):
     )
     worker_id: Mapped[int] = mapped_column(ForeignKey("workers.id"), index=True)
     restriction_type: Mapped[RestrictionType] = mapped_column(Enum(RestrictionType))
+
+
+class WorkerSession(Base):
+    __tablename__ = "worker_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    worker_id: Mapped[int] = mapped_column(ForeignKey("workers.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    station_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stations.id"), nullable=True
+    )

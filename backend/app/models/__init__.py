@@ -35,6 +35,7 @@ from app.models.workers import (
     TaskWorkerRestriction,
     Worker,
     WorkerSupervisor,
+    WorkerSession,
     WorkerSkill,
 )
 
@@ -73,5 +74,6 @@ __all__ = [
     "WorkUnit",
     "Worker",
     "WorkerSupervisor",
+    "WorkerSession",
     "WorkerSkill",
 ]

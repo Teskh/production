@@ -7,5 +7,7 @@ __all__ = [
     "parameters",
     "stations",
     "tasks",
+    "worker_sessions",
+    "worker_station",
     "workers",
 ]

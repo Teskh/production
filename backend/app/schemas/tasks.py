@@ -1,6 +1,8 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import TaskScope
+from app.models.enums import TaskScope, TaskStatus
 
 
 class TaskDefinitionBase(BaseModel):
@@ -103,5 +105,20 @@ class TaskExpectedDurationUpdate(BaseModel):
 
 class TaskExpectedDurationRead(TaskExpectedDurationBase):
     id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskInstanceRead(BaseModel):
+    id: int
+    task_definition_id: int
+    scope: TaskScope
+    work_unit_id: int
+    panel_unit_id: int | None = None
+    station_id: int
+    status: TaskStatus
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    notes: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
