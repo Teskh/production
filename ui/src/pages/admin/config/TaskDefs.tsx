@@ -1,16 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   Filter,
   ListChecks,
   Plus,
   Search,
   Trash2,
+  Users,
+  X,
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
-type TaskScope = 'panel' | 'module';
+type TaskScope = 'panel' | 'module' | 'aux';
 
 type TaskDefinition = {
   id: number;
@@ -49,6 +53,25 @@ type Worker = {
   first_name: string;
   last_name: string;
   active: boolean;
+};
+
+type Station = {
+  id: number;
+  name: string;
+  role: 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
+  line_type: '1' | '2' | '3' | null;
+  sequence_order: number | null;
+};
+
+type TaskApplicability = {
+  id: number;
+  task_definition_id: number;
+  house_type_id: number | null;
+  sub_type_id: number | null;
+  module_number: number | null;
+  panel_definition_id: number | null;
+  applies: boolean;
+  station_sequence_order: number | null;
 };
 
 type TaskDraft = {
@@ -99,6 +122,34 @@ const sortWorkers = (list: Worker[]) =>
 
 const formatWorkerName = (worker: Worker) => `${worker.first_name} ${worker.last_name}`;
 
+const normalizeStationName = (station: Station) => {
+  const trimmed = station.name.trim();
+  if (!station.line_type) {
+    return trimmed;
+  }
+  const pattern = new RegExp(`^(Linea|Line)\\s*${station.line_type}\\s*-\\s*`, 'i');
+  const normalized = trimmed.replace(pattern, '').trim();
+  return normalized || trimmed;
+};
+
+const parseSequenceValue = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return null;
+  }
+  return parsed;
+};
+
+const isDefaultApplicabilityRow = (row: TaskApplicability) =>
+  row.house_type_id === null &&
+  row.sub_type_id === null &&
+  row.module_number === null &&
+  row.panel_definition_id === null;
+
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
@@ -127,30 +178,40 @@ const TaskDefs: React.FC = () => {
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [applicabilityRows, setApplicabilityRows] = useState<TaskApplicability[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(emptyTaskDraft());
   const [query, setQuery] = useState('');
   const [dependencyQuery, setDependencyQuery] = useState('');
   const [allowedQuery, setAllowedQuery] = useState('');
   const [crewQuery, setCrewQuery] = useState('');
+  const [dependencyDropdownOpen, setDependencyDropdownOpen] = useState(false);
+  const [crewModalOpen, setCrewModalOpen] = useState(false);
+  const [catalogOpenGroups, setCatalogOpenGroups] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const dependencyDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const loadTasks = async () => {
-    const taskData = await apiRequest<TaskDefinition[]>('/api/task-definitions');
+    const [taskData, applicabilityData] = await Promise.all([
+      apiRequest<TaskDefinition[]>('/api/task-definitions'),
+      apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
+    ]);
     const sorted = sortTasks(taskData);
     setTasks(sorted);
+    setApplicabilityRows(applicabilityData);
     if (!sorted.length) {
       setSelectedTaskId(null);
       return;
     }
     setSelectedTaskId((prev) => {
       if (!prev) {
-        return sorted[0].id;
+        return null;
       }
-      return sorted.some((task) => task.id === prev) ? prev : sorted[0].id;
+      return sorted.some((task) => task.id === prev) ? prev : null;
     });
   };
 
@@ -160,11 +221,14 @@ const TaskDefs: React.FC = () => {
       setLoading(true);
       setStatusMessage(null);
       try {
-        const [taskData, skillData, workerData] = await Promise.all([
-          apiRequest<TaskDefinition[]>('/api/task-definitions'),
-          apiRequest<Skill[]>('/api/workers/skills'),
-          apiRequest<Worker[]>('/api/workers'),
-        ]);
+        const [taskData, skillData, workerData, stationData, applicabilityData] =
+          await Promise.all([
+            apiRequest<TaskDefinition[]>('/api/task-definitions'),
+            apiRequest<Skill[]>('/api/workers/skills'),
+            apiRequest<Worker[]>('/api/workers'),
+            apiRequest<Station[]>('/api/stations'),
+            apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
+          ]);
         if (!active) {
           return;
         }
@@ -172,7 +236,9 @@ const TaskDefs: React.FC = () => {
         setTasks(sortedTasks);
         setSkills(sortSkills(skillData));
         setWorkers(sortWorkers(workerData));
-        setSelectedTaskId(sortedTasks.length ? sortedTasks[0].id : null);
+        setStations(stationData);
+        setApplicabilityRows(applicabilityData);
+        setSelectedTaskId(null);
       } catch (error) {
         if (active) {
           const message =
@@ -271,6 +337,102 @@ const TaskDefs: React.FC = () => {
     };
   }, [selectedTaskId]);
 
+  const catalogSequenceLabelByOrder = useMemo(() => {
+    const entries = new Map<number, Set<string>>();
+    stations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      const normalized = normalizeStationName(station);
+      const existing = entries.get(station.sequence_order) ?? new Set<string>();
+      existing.add(normalized);
+      entries.set(station.sequence_order, existing);
+    });
+    const map = new Map<number, string>();
+    entries.forEach((names, sequence) => {
+      map.set(
+        sequence,
+        names.size ? Array.from(names).join(' / ') : `Sequence ${sequence}`
+      );
+    });
+    return map;
+  }, [stations]);
+
+  const auxStationLabelById = useMemo(() => {
+    const map = new Map<number, string>();
+    stations.forEach((station) => {
+      if (station.role !== 'AUX') {
+        return;
+      }
+      map.set(station.id, station.name);
+    });
+    return map;
+  }, [stations]);
+
+  const stationSequenceOptions = useMemo(() => {
+    if (draft.scope === 'aux') {
+      return stations
+        .filter((station) => station.role === 'AUX')
+        .map((station) => ({
+          sequence: station.id,
+          label: station.name,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+    const allowedRoles =
+      draft.scope === 'panel'
+        ? new Set<Station['role']>(['Panels'])
+        : new Set<Station['role']>(['Assembly', 'AUX']);
+    const entries = new Map<number, Set<string>>();
+    stations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      if (!allowedRoles.has(station.role)) {
+        return;
+      }
+      const normalized = normalizeStationName(station);
+      const existing = entries.get(station.sequence_order) ?? new Set<string>();
+      existing.add(normalized);
+      entries.set(station.sequence_order, existing);
+    });
+    return Array.from(entries.entries())
+      .map(([sequence, names]) => ({
+        sequence,
+        label: names.size ? Array.from(names).join(' / ') : `Sequence ${sequence}`,
+      }))
+      .sort((a, b) => a.sequence - b.sequence);
+  }, [draft.scope, stations]);
+
+  const taskSequenceById = useMemo(() => {
+    const map = new Map<number, number | null>();
+    applicabilityRows.forEach((row) => {
+      if (!isDefaultApplicabilityRow(row)) {
+        return;
+      }
+      if (map.has(row.task_definition_id)) {
+        return;
+      }
+      map.set(row.task_definition_id, row.station_sequence_order);
+    });
+    tasks.forEach((task) => {
+      if (!map.has(task.id)) {
+        map.set(task.id, null);
+      }
+    });
+    return map;
+  }, [applicabilityRows, tasks]);
+
+  const taskNameById = useMemo(
+    () => new Map(tasks.map((task) => [task.id, task.name])),
+    [tasks]
+  );
+
+  const workerNameById = useMemo(
+    () => new Map(workers.map((worker) => [worker.id, formatWorkerName(worker)])),
+    [workers]
+  );
+
   const filteredTasks = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) {
@@ -279,18 +441,58 @@ const TaskDefs: React.FC = () => {
     return tasks.filter((task) => task.name.toLowerCase().includes(needle));
   }, [query, tasks]);
 
+  const draftSequenceOrder = useMemo(
+    () => parseSequenceValue(draft.station_sequence_order),
+    [draft.station_sequence_order]
+  );
+
+  const hasSequenceData = applicabilityRows.length > 0;
+
+  const availableDependencyTasks = useMemo(() => {
+    const canFilterBySequence =
+      draft.scope !== 'aux' && draftSequenceOrder !== null && hasSequenceData;
+    return tasks
+      .filter((task) => {
+        if (task.id === draft.id) {
+          return false;
+        }
+        if (task.scope !== draft.scope) {
+          return false;
+        }
+        if (!canFilterBySequence) {
+          return true;
+        }
+        const taskSequence = taskSequenceById.get(task.id) ?? null;
+        if (taskSequence === null) {
+          return false;
+        }
+        return taskSequence <= draftSequenceOrder;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [draft.id, draft.scope, draftSequenceOrder, hasSequenceData, taskSequenceById, tasks]);
+
   const dependencyOptions = useMemo(() => {
     const needle = dependencyQuery.trim().toLowerCase();
-    return tasks.filter((task) => {
-      if (task.id === draft.id) {
-        return false;
-      }
-      if (!needle) {
-        return true;
-      }
-      return task.name.toLowerCase().includes(needle);
-    });
-  }, [dependencyQuery, draft.id, tasks]);
+    if (!needle) {
+      return availableDependencyTasks;
+    }
+    return availableDependencyTasks.filter((task) =>
+      task.name.toLowerCase().includes(needle)
+    );
+  }, [availableDependencyTasks, dependencyQuery]);
+
+  const dependencyHint = useMemo(() => {
+    if (draft.scope === 'aux') {
+      return 'Showing aux tasks. Station assignment does not filter dependencies.';
+    }
+    if (draftSequenceOrder === null) {
+      return `Showing ${draft.scope} tasks. Set a station sequence to filter upstream.`;
+    }
+    if (!hasSequenceData) {
+      return `Showing ${draft.scope} tasks.`;
+    }
+    return `Showing ${draft.scope} tasks at or before sequence ${draftSequenceOrder}.`;
+  }, [draft.scope, draftSequenceOrder, hasSequenceData]);
 
   const filteredAllowedWorkers = useMemo(() => {
     const needle = allowedQuery.trim().toLowerCase();
@@ -307,6 +509,158 @@ const TaskDefs: React.FC = () => {
     }
     return workers.filter((worker) => formatWorkerName(worker).toLowerCase().includes(needle));
   }, [crewQuery, workers]);
+
+  const dependencySummaryLabel = useMemo(() => {
+    if (draft.dependencies_json.length === 0) {
+      return 'No dependencies selected';
+    }
+    const names = draft.dependencies_json.map(
+      (id) => taskNameById.get(id) ?? `Task ${id}`
+    );
+    if (names.length <= 2) {
+      return names.join(', ');
+    }
+    return `${names[0]}, ${names[1]} +${names.length - 2}`;
+  }, [draft.dependencies_json, taskNameById]);
+
+  const crewNames = useMemo(
+    () =>
+      draft.regular_crew_worker_ids.map(
+        (id) => workerNameById.get(id) ?? `Worker ${id}`
+      ),
+    [draft.regular_crew_worker_ids, workerNameById]
+  );
+
+  const crewSummaryLabel = useMemo(() => {
+    if (crewNames.length === 0) {
+      return 'No crew selected';
+    }
+    if (crewNames.length <= 2) {
+      return crewNames.join(', ');
+    }
+    return `${crewNames[0]}, ${crewNames[1]} +${crewNames.length - 2}`;
+  }, [crewNames]);
+
+  const stationSequenceChoices = useMemo(
+    () => stationSequenceOptions,
+    [stationSequenceOptions]
+  );
+
+  const catalogGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { key: string; sequence: number | null; name: string; badge: string; tasks: TaskDefinition[] }
+    >();
+    filteredTasks.forEach((task) => {
+      if (task.scope === 'aux') {
+        const stationId = taskSequenceById.get(task.id) ?? null;
+        const key = stationId === null ? 'aux-unassigned' : `aux-${stationId}`;
+        const name =
+          stationId === null
+            ? 'AUX - Unassigned'
+            : auxStationLabelById.get(stationId) ?? `AUX Station ${stationId}`;
+        const badge = stationId === null ? 'No station' : `Station ID ${stationId}`;
+        const group = groups.get(key);
+        if (group) {
+          group.tasks.push(task);
+          return;
+        }
+        groups.set(key, { key, sequence: stationId, name, badge, tasks: [task] });
+        return;
+      }
+      const sequence = taskSequenceById.get(task.id) ?? null;
+      const key = sequence === null ? 'unscheduled' : `seq-${sequence}`;
+      const name =
+        sequence === null
+          ? 'Unassigned'
+          : catalogSequenceLabelByOrder.get(sequence) ?? `Sequence ${sequence}`;
+      const badge = sequence === null ? 'No sequence' : `Seq ${sequence}`;
+      const group = groups.get(key);
+      if (group) {
+        group.tasks.push(task);
+      } else {
+        groups.set(key, { key, sequence, name, badge, tasks: [task] });
+      }
+    });
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        tasks: sortTasks(group.tasks),
+      }))
+      .sort((a, b) => {
+        const aSeq = a.sequence ?? Number.POSITIVE_INFINITY;
+        const bSeq = b.sequence ?? Number.POSITIVE_INFINITY;
+        if (aSeq !== bSeq) {
+          return aSeq - bSeq;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [auxStationLabelById, catalogSequenceLabelByOrder, filteredTasks, taskSequenceById]);
+
+  useEffect(() => {
+    setCatalogOpenGroups((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      catalogGroups.forEach((group) => {
+        if (!(group.key in next)) {
+          next[group.key] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [catalogGroups]);
+
+  useEffect(() => {
+    if (!dependencyDropdownOpen) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!dependencyDropdownRef.current) {
+        return;
+      }
+      if (!dependencyDropdownRef.current.contains(event.target as Node)) {
+        setDependencyDropdownOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDependencyDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [dependencyDropdownOpen]);
+
+  useEffect(() => {
+    if (stations.length === 0) {
+      return;
+    }
+    const current = parseSequenceValue(draft.station_sequence_order);
+    if (current === null) {
+      return;
+    }
+    const allowed = stationSequenceOptions.some((option) => option.sequence === current);
+    if (!allowed) {
+      setDraft((prev) => ({ ...prev, station_sequence_order: '' }));
+    }
+  }, [draft.station_sequence_order, stationSequenceOptions, stations.length]);
+
+  useEffect(() => {
+    const allowedIds = new Set(availableDependencyTasks.map((task) => task.id));
+    if (allowedIds.size === 0 && draft.dependencies_json.length === 0) {
+      return;
+    }
+    const filtered = draft.dependencies_json.filter((id) => allowedIds.has(id));
+    if (filtered.length === draft.dependencies_json.length) {
+      return;
+    }
+    setDraft((prev) => ({ ...prev, dependencies_json: filtered }));
+  }, [availableDependencyTasks, draft.dependencies_json]);
 
   const updateDraft = (patch: Partial<TaskDraft>) => {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -348,6 +702,13 @@ const TaskDefs: React.FC = () => {
     });
   };
 
+  const toggleCatalogGroup = (key: string) => {
+    setCatalogOpenGroups((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
   const handleAddTask = () => {
     setStatusMessage(null);
     setSelectedTaskId(null);
@@ -359,8 +720,8 @@ const TaskDefs: React.FC = () => {
     if (!trimmed) {
       return null;
     }
-    const parsed = Number(trimmed);
-    if (!Number.isInteger(parsed) || parsed < 1) {
+    const parsed = parseSequenceValue(trimmed);
+    if (parsed === null) {
       throw new Error('Station sequence order must be a positive whole number.');
     }
     return parsed;
@@ -390,8 +751,8 @@ const TaskDefs: React.FC = () => {
       name,
       scope: draft.scope,
       active: draft.active,
-      skippable: draft.skippable,
-      concurrent_allowed: draft.concurrent_allowed,
+      skippable: draft.scope === 'panel' ? draft.skippable : false,
+      concurrent_allowed: draft.scope === 'panel' ? draft.concurrent_allowed : false,
       dependencies_json: draft.dependencies_json,
       advance_trigger: draft.scope === 'module' ? draft.advance_trigger : false,
     };
@@ -469,6 +830,7 @@ const TaskDefs: React.FC = () => {
   const totalTasks = tasks.length;
   const moduleTasks = tasks.filter((task) => task.scope === 'module').length;
   const panelTasks = tasks.filter((task) => task.scope === 'panel').length;
+  const auxTasks = tasks.filter((task) => task.scope === 'aux').length;
 
   return (
     <div className="space-y-6">
@@ -496,7 +858,7 @@ const TaskDefs: React.FC = () => {
             <div>
               <h2 className="text-lg font-display text-[var(--ink)]">Task catalog</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                {totalTasks} total · {panelTasks} panel · {moduleTasks} module
+                {totalTasks} total · {panelTasks} panel · {moduleTasks} module · {auxTasks} aux
               </p>
             </div>
             <div className="flex gap-2">
@@ -520,43 +882,85 @@ const TaskDefs: React.FC = () => {
             <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
               Loading task definitions...
             </div>
-          ) : filteredTasks.length ? (
-            <div className="mt-6 grid gap-3">
-              {filteredTasks.map((task, index) => (
-                <button
-                  key={task.id}
-                  onClick={() => setSelectedTaskId(task.id)}
-                  className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                    selectedTaskId === task.id
-                      ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                      : 'border-black/5 bg-white'
-                  }`}
-                  style={{ animationDelay: `${index * 70}ms` }}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.55)] text-[var(--ink)]">
-                      <ClipboardCheck className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-[var(--ink)]">{task.name}</p>
-                      <p className="text-xs text-[var(--ink-muted)]">
-                        Scope: {task.scope} · {task.skippable ? 'Skippable' : 'Required'} ·{' '}
-                        {task.concurrent_allowed ? 'Concurrent' : 'Solo'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
-                      {task.active ? 'Active' : 'Inactive'}
-                    </span>
-                    {task.scope === 'module' && task.advance_trigger && (
-                      <span className="rounded-full bg-[rgba(47,107,79,0.12)] px-2 py-0.5 text-xs text-[var(--leaf)]">
-                        Advance trigger
+          ) : catalogGroups.length ? (
+            <div className="mt-6 space-y-4">
+              {catalogGroups.map((group) => {
+                const isOpen = catalogOpenGroups[group.key] ?? true;
+                return (
+                  <div
+                    key={group.key}
+                    className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.12)] p-3"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleCatalogGroup(group.key)}
+                      className="flex w-full items-center justify-between gap-4 rounded-2xl bg-white px-3 py-3 text-left"
+                    >
+                      <span className="flex items-center gap-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 text-[var(--ink-muted)]">
+                          {isOpen ? (
+                            <ChevronDown className="h-4 w-4" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" />
+                          )}
+                        </span>
+                        <span>
+                          <p className="font-semibold text-[var(--ink)]">{group.name}</p>
+                          <p className="text-xs text-[var(--ink-muted)]">
+                            {group.badge} · {group.tasks.length} tasks
+                          </p>
+                        </span>
                       </span>
+                    </button>
+
+                    {isOpen && (
+                      <div className="mt-3 grid gap-3">
+                        {group.tasks.map((task, index) => (
+                          <button
+                            key={task.id}
+                            onClick={() => setSelectedTaskId(task.id)}
+                            className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+                              selectedTaskId === task.id
+                                ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
+                                : 'border-black/5 bg-white'
+                            }`}
+                            style={{ animationDelay: `${index * 70}ms` }}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.55)] text-[var(--ink)]">
+                                <ClipboardCheck className="h-5 w-5" />
+                              </div>
+                              <div>
+                                <p className="font-semibold text-[var(--ink)]">{task.name}</p>
+                                <p className="text-xs text-[var(--ink-muted)]">
+                                  Scope: {task.scope}
+                                  {task.scope === 'panel' && (
+                                    <>
+                                      {' '}
+                                      · {task.skippable ? 'Skippable' : 'Required'} ·{' '}
+                                      {task.concurrent_allowed ? 'Concurrent' : 'Solo'}
+                                    </>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end gap-2">
+                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
+                                {task.active ? 'Active' : 'Inactive'}
+                              </span>
+                              {task.scope === 'module' && task.advance_trigger && (
+                                <span className="rounded-full bg-[rgba(47,107,79,0.12)] px-2 py-0.5 text-xs text-[var(--leaf)]">
+                                  Advance trigger
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
-                </button>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
@@ -601,14 +1005,19 @@ const TaskDefs: React.FC = () => {
                         value={draft.scope}
                         onChange={(event) => {
                           const scope = event.target.value as TaskScope;
+                          const isPanel = scope === 'panel';
+                          const isModule = scope === 'module';
                           updateDraft({
                             scope,
-                            advance_trigger: scope === 'module' ? draft.advance_trigger : false,
+                            advance_trigger: isModule ? draft.advance_trigger : false,
+                            skippable: isPanel ? draft.skippable : false,
+                            concurrent_allowed: isPanel ? draft.concurrent_allowed : false,
                           });
                         }}
                       >
                         <option value="panel">panel</option>
                         <option value="module">module</option>
+                        <option value="aux">aux</option>
                       </select>
                     </label>
                     <label className="text-sm text-[var(--ink-muted)]">
@@ -627,17 +1036,23 @@ const TaskDefs: React.FC = () => {
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Station sequence
-                      <input
-                        type="number"
-                        min={1}
+                      {draft.scope === 'aux' ? 'AUX station' : 'Station sequence'}
+                      <select
                         className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                         value={draft.station_sequence_order}
                         onChange={(event) =>
                           updateDraft({ station_sequence_order: event.target.value })
                         }
-                        placeholder="e.g. 1"
-                      />
+                      >
+                        <option value="">Unassigned</option>
+                        {stationSequenceChoices.map((option) => (
+                          <option key={option.sequence} value={String(option.sequence)}>
+                            {draft.scope === 'aux'
+                              ? `${option.label} (ID ${option.sequence})`
+                              : `${option.label} (Seq ${option.sequence})`}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="text-sm text-[var(--ink-muted)]">
                       Specialty
@@ -669,35 +1084,47 @@ const TaskDefs: React.FC = () => {
                   Behavior
                 </p>
                 <div className="mt-3 grid gap-2">
-                  <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-                    <input
-                      type="checkbox"
-                      checked={draft.skippable}
-                      onChange={(event) => updateDraft({ skippable: event.target.checked })}
-                    />{' '}
-                    Skippable
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-                    <input
-                      type="checkbox"
-                      checked={draft.concurrent_allowed}
-                      onChange={(event) =>
-                        updateDraft({ concurrent_allowed: event.target.checked })
-                      }
-                    />{' '}
-                    Concurrent allowed
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-                    <input
-                      type="checkbox"
-                      checked={draft.advance_trigger}
-                      disabled={draft.scope !== 'module'}
-                      onChange={(event) =>
-                        updateDraft({ advance_trigger: event.target.checked })
-                      }
-                    />{' '}
-                    Advance trigger (module-only)
-                  </label>
+                  {draft.scope === 'panel' && (
+                    <>
+                      <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                        <input
+                          type="checkbox"
+                          checked={draft.skippable}
+                          onChange={(event) =>
+                            updateDraft({ skippable: event.target.checked })
+                          }
+                        />{' '}
+                        Skippable
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                        <input
+                          type="checkbox"
+                          checked={draft.concurrent_allowed}
+                          onChange={(event) =>
+                            updateDraft({ concurrent_allowed: event.target.checked })
+                          }
+                        />{' '}
+                        Concurrent allowed
+                      </label>
+                    </>
+                  )}
+                  {draft.scope === 'module' && (
+                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={draft.advance_trigger}
+                        onChange={(event) =>
+                          updateDraft({ advance_trigger: event.target.checked })
+                        }
+                      />{' '}
+                      Advance trigger
+                    </label>
+                  )}
+                  {draft.scope === 'aux' && (
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      No behavior toggles for AUX tasks.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -705,29 +1132,58 @@ const TaskDefs: React.FC = () => {
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
                   Dependencies
                 </p>
-                <label className="mt-3 flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
-                  <Search className="h-3.5 w-3.5" />
-                  <input
-                    placeholder="Filter dependencies"
-                    value={dependencyQuery}
-                    onChange={(event) => setDependencyQuery(event.target.value)}
-                    className="w-full bg-transparent text-xs outline-none"
-                  />
-                </label>
-                <div className="mt-3 max-h-32 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
-                  {dependencyOptions.length ? (
-                    dependencyOptions.map((dep) => (
-                      <label key={dep.id} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={draft.dependencies_json.includes(dep.id)}
-                          onChange={() => toggleDependency(dep.id)}
-                        />
-                        {dep.name}
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-[var(--ink-muted)]">No tasks available.</p>
+                <p className="mt-2 text-xs text-[var(--ink-muted)]">{dependencyHint}</p>
+                <div className="relative mt-3" ref={dependencyDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setDependencyDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-2xl border border-black/10 bg-white px-3 py-2 text-left text-sm text-[var(--ink)]"
+                  >
+                    <span className="truncate">{dependencySummaryLabel}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                        dependencyDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {dependencyDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      <div className="p-3">
+                        <label className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                          <Search className="h-3.5 w-3.5" />
+                          <input
+                            placeholder="Filter dependencies"
+                            value={dependencyQuery}
+                            onChange={(event) => setDependencyQuery(event.target.value)}
+                            className="w-full bg-transparent text-xs outline-none"
+                          />
+                        </label>
+                        <div className="mt-3 max-h-48 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
+                          {availableDependencyTasks.length === 0 ? (
+                            <p className="text-[var(--ink-muted)]">
+                              No eligible tasks for this scope/sequence.
+                            </p>
+                          ) : dependencyOptions.length ? (
+                            <div className="flex flex-col gap-2">
+                              {dependencyOptions.map((dep) => (
+                                <label key={dep.id} className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.dependencies_json.includes(dep.id)}
+                                    onChange={() => toggleDependency(dep.id)}
+                                  />
+                                  <span className="text-[var(--ink)]">{dep.name}</span>
+                                </label>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[var(--ink-muted)]">
+                              No tasks match that search.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -804,35 +1260,20 @@ const TaskDefs: React.FC = () => {
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
                   Favorites list for group starts. This does not restrict who can perform the task.
                 </p>
-                <label className="mt-3 flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
-                  <Search className="h-3.5 w-3.5" />
-                  <input
-                    placeholder="Search crew"
-                    value={crewQuery}
-                    onChange={(event) => setCrewQuery(event.target.value)}
-                    className="w-full bg-transparent text-xs outline-none"
-                  />
-                </label>
-                <div className="mt-2 max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
-                  {filteredCrewWorkers.length ? (
-                    filteredCrewWorkers.map((worker) => (
-                      <label key={worker.id} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={draft.regular_crew_worker_ids.includes(worker.id)}
-                          onChange={() => toggleRegularCrew(worker.id)}
-                        />
-                        <span className="flex-1">{formatWorkerName(worker)}</span>
-                        {!worker.active && (
-                          <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                            Inactive
-                          </span>
-                        )}
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-[var(--ink-muted)]">No workers found.</p>
-                  )}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Selected ({draft.regular_crew_worker_ids.length})
+                    </p>
+                    <p className="text-sm text-[var(--ink)]">{crewSummaryLabel}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCrewModalOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-[var(--ink)]"
+                  >
+                    <Users className="h-4 w-4" /> Manage crew
+                  </button>
                 </div>
               </div>
 
@@ -867,6 +1308,74 @@ const TaskDefs: React.FC = () => {
           </section>
         </aside>
       </div>
+
+      {crewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Regular crew
+                </p>
+                <h3 className="text-lg font-display text-[var(--ink)]">
+                  Select crew members
+                </h3>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  {draft.name || 'New task definition'}
+                </p>
+              </div>
+              <button type="button" onClick={() => setCrewModalOpen(false)}>
+                <X className="h-5 w-5 text-[var(--ink-muted)]" />
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <label className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                <Search className="h-3.5 w-3.5" />
+                <input
+                  placeholder="Search crew"
+                  value={crewQuery}
+                  onChange={(event) => setCrewQuery(event.target.value)}
+                  className="w-full bg-transparent text-xs outline-none"
+                />
+              </label>
+              <div className="mt-3 max-h-64 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
+                {filteredCrewWorkers.length ? (
+                  <div className="flex flex-col gap-2">
+                    {filteredCrewWorkers.map((worker) => (
+                      <label key={worker.id} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={draft.regular_crew_worker_ids.includes(worker.id)}
+                          onChange={() => toggleRegularCrew(worker.id)}
+                        />
+                        <span className="flex-1">{formatWorkerName(worker)}</span>
+                        {!worker.active && (
+                          <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                            Inactive
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[var(--ink-muted)]">No workers found.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setCrewModalOpen(false)}
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

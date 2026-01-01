@@ -32,6 +32,7 @@ class StationRole(str, Enum):
 class TaskScope(str, Enum):
     PANEL = "panel"
     MODULE = "module"
+    AUX = "aux"
 
 
 class TaskStatus(str, Enum):

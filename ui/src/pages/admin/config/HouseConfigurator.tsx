@@ -51,7 +51,7 @@ type PanelDefinition = {
   panel_sequence_number: number | null;
 };
 
-type TaskScope = 'panel' | 'module';
+type TaskScope = 'panel' | 'module' | 'aux';
 
 type TaskDefinition = {
   id: number;
