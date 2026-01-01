@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Grid2X2, Layers, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Grid2X2, Layers, ListOrdered, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -26,6 +26,7 @@ type PanelDefinition = {
   panel_length_m: number | null;
   applicable_task_ids: number[] | null;
   task_durations_json: Array<number | null> | null;
+  production_order: number | null;
 };
 
 type TaskScope = 'panel' | 'module';
@@ -140,6 +141,12 @@ const sortSubtypes = (list: HouseSubType[]) =>
 
 const sortPanels = (list: PanelDefinition[]) =>
   [...list].sort((a, b) => {
+    if (a.production_order != null && b.production_order != null) {
+      return a.production_order - b.production_order;
+    }
+    if (a.production_order != null) return -1;
+    if (b.production_order != null) return 1;
+
     const codeCompare = a.panel_code.localeCompare(b.panel_code);
     if (codeCompare !== 0) {
       return codeCompare;
@@ -224,6 +231,10 @@ const HousePanels: React.FC = () => {
   const [matrixDraft, setMatrixDraft] = useState<Record<number, MatrixPanelState>>({});
   const [matrixSaving, setMatrixSaving] = useState(false);
   const [matrixMessage, setMatrixMessage] = useState<string | null>(null);
+
+  const [sequenceOpen, setSequenceOpen] = useState(false);
+  const [sequenceDraft, setSequenceDraft] = useState<PanelDefinition[]>([]);
+  const [sequenceSaving, setSequenceSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -681,6 +692,65 @@ const HousePanels: React.FC = () => {
     }
   };
 
+  const handleOpenSequence = () => {
+    // Sort by current production order (or default) for the editing list
+    const sorted = [...filteredPanels].sort((a, b) => {
+      if (a.production_order != null && b.production_order != null) {
+        return a.production_order - b.production_order;
+      }
+      if (a.production_order != null) return -1;
+      if (b.production_order != null) return 1;
+      return a.panel_code.localeCompare(b.panel_code);
+    });
+    setSequenceDraft(sorted);
+    setSequenceOpen(true);
+  };
+
+  const handleCloseSequence = () => {
+    setSequenceOpen(false);
+    setSequenceDraft([]);
+  };
+
+  const handleMovePanel = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === sequenceDraft.length - 1) return;
+
+    setSequenceDraft((prev) => {
+      const next = [...prev];
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      const [moved] = next.splice(index, 1);
+      next.splice(newIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleSaveSequence = async () => {
+    if (!selectedHouseTypeId || !selectedModuleNumber) return;
+    setSequenceSaving(true);
+    // Simulate backend save by updating local state
+    // In future: await apiRequest(...)
+
+    const updates = new Map<number, number>();
+    sequenceDraft.forEach((panel, index) => {
+      updates.set(panel.id, index + 1);
+    });
+
+    setPanels((prev) =>
+      prev.map((panel) => {
+        if (updates.has(panel.id)) {
+          return { ...panel, production_order: updates.get(panel.id) ?? null };
+        }
+        return panel;
+      })
+    );
+
+    // Mock delay
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    setSequenceSaving(false);
+    handleCloseSequence();
+  };
+
   const handleSelectHouseType = (houseTypeId: number) => {
     setSelectedHouseTypeId(houseTypeId);
     setSelectedModuleNumber(1);
@@ -724,6 +794,11 @@ const HousePanels: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {panel.production_order !== null && panel.production_order !== undefined && (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                Ord {panel.production_order}
+              </span>
+            )}
             <span className="rounded-full border border-black/10 px-2 py-1 text-[10px] text-[var(--ink-muted)]">
               #{panel.id}
             </span>
@@ -763,6 +838,13 @@ const HousePanels: React.FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
+            onClick={handleOpenSequence}
+            disabled={filteredPanels.length === 0}
+          >
+            <ListOrdered className="h-4 w-4" /> Sequence
+          </button>
           <button
             className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
             onClick={handleOpenMatrix}
@@ -1154,6 +1236,92 @@ const HousePanels: React.FC = () => {
                 disabled={matrixSaving}
               >
                 {matrixSaving ? 'Saving...' : 'Save matrix'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {sequenceOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Sequence</p>
+                <h3 className="text-lg font-display text-[var(--ink)]">Production Order</h3>
+                {selectedHouseType && (
+                  <p className="text-xs text-[var(--ink-muted)]">
+                    {selectedHouseType.name} | Module {selectedModuleNumber}
+                  </p>
+                )}
+              </div>
+              <button onClick={handleCloseSequence}>
+                <X className="h-5 w-5 text-[var(--ink-muted)]" />
+              </button>
+            </div>
+
+            <div className="mt-4 max-h-[60vh] overflow-auto rounded-2xl border border-black/5 bg-white">
+              {sequenceDraft.length === 0 ? (
+                <div className="p-4 text-sm text-[var(--ink-muted)]">No panels to order.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-[rgba(201,215,245,0.4)] text-xs text-[var(--ink-muted)]">
+                    <tr>
+                      <th className="px-4 py-2 text-left w-16">Ord</th>
+                      <th className="px-4 py-2 text-left">Panel Code</th>
+                      <th className="px-4 py-2 text-left">Group</th>
+                      <th className="px-4 py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sequenceDraft.map((panel, index) => (
+                      <tr key={panel.id} className="border-t border-black/5">
+                        <td className="px-4 py-3 font-mono text-[var(--ink-muted)]">
+                          {index + 1}
+                        </td>
+                        <td className="px-4 py-3 font-semibold text-[var(--ink)]">
+                          {panel.panel_code}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--ink-muted)]">{panel.group}</td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              className="rounded p-1 hover:bg-black/5 disabled:opacity-30"
+                              onClick={() => handleMovePanel(index, 'up')}
+                              disabled={index === 0}
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                            </button>
+                            <button
+                              className="rounded p-1 hover:bg-black/5 disabled:opacity-30"
+                              onClick={() => handleMovePanel(index, 'down')}
+                              disabled={index === sequenceDraft.length - 1}
+                            >
+                              <ArrowDown className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-full border border-black/10 px-4 py-2 text-sm"
+                onClick={handleCloseSequence}
+                disabled={sequenceSaving}
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                onClick={handleSaveSequence}
+                disabled={sequenceSaving}
+              >
+                {sequenceSaving ? 'Saving...' : 'Apply Order'}
               </button>
             </div>
           </div>
