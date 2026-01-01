@@ -464,6 +464,30 @@ def station_snapshot(
         else:
             stmt = stmt.where(WorkUnit.current_station_id == station.id)
         rows = list(db.execute(stmt).all())
+        if station.role == StationRole.ASSEMBLY and station.sequence_order is not None:
+            first_station = (
+                db.execute(
+                    select(Station)
+                    .where(Station.role == StationRole.ASSEMBLY)
+                    .where(Station.line_type == station.line_type)
+                    .order_by(Station.sequence_order)
+                    .limit(1)
+                ).scalar_one_or_none()
+            )
+            if first_station and first_station.id == station.id:
+                magazine_rows = list(
+                    db.execute(
+                        select(WorkUnit, WorkOrder, HouseType, HouseSubType)
+                        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+                        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+                        .outerjoin(HouseSubType, WorkOrder.sub_type_id == HouseSubType.id)
+                        .where(WorkUnit.status == WorkUnitStatus.MAGAZINE)
+                    ).all()
+                )
+                existing_ids = {work_unit.id for work_unit, *_ in rows}
+                for row in magazine_rows:
+                    if row[0].id not in existing_ids:
+                        rows.append(row)
         for work_unit, work_order, house_type, sub_type in rows:
             task_instances = list(
                 db.execute(

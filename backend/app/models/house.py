@@ -51,7 +51,7 @@ class PanelDefinition(Base):
     applicable_task_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
-    task_durations_json: Mapped[list[float] | None] = mapped_column(
+    task_durations_json: Mapped[list[float | None] | None] = mapped_column(
         JSONB, nullable=True
     )
 

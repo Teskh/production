@@ -11,7 +11,7 @@ class PanelDefinitionBase(BaseModel):
     panel_length_m: float | None = None
     panel_sequence_number: int | None = None
     applicable_task_ids: list[int] | None = None
-    task_durations_json: list[float] | None = None
+    task_durations_json: list[float | None] | None = None
 
 
 class PanelDefinitionCreate(PanelDefinitionBase):
@@ -28,7 +28,7 @@ class PanelDefinitionUpdate(BaseModel):
     panel_length_m: float | None = None
     panel_sequence_number: int | None = None
     applicable_task_ids: list[int] | None = None
-    task_durations_json: list[float] | None = None
+    task_durations_json: list[float | None] | None = None
 
 
 class PanelDefinitionRead(PanelDefinitionBase):
