@@ -16,4 +16,4 @@
 ## 2026-01-05
 - Production queue scheduling stores `planned_sequence`, `planned_start_datetime`, and `planned_assembly_line` on `work_units` to order modules directly; `work_orders.planned_sequence` is treated as the first module’s sequence for that house.
 - Batch house identifiers are generated from `house_identifier_base` by incrementing any trailing digits (preserving padding); if none exist, the system appends a `-01` style suffix.
-- Assembly line changes are treated as per-house (WorkOrder) assignments, so updating line for any module applies to all modules in that house and is blocked when any module is completed; line values are stored as "1", "2", or "3".
+- Assembly line changes are stored per module (WorkUnit), so different modules in the same house can target different lines; line values are stored as "1", "2", or "3".

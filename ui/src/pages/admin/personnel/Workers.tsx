@@ -896,24 +896,10 @@ const Workers: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={handleAddWorker}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${
-              isWorkerMode
-                ? 'bg-[var(--accent)] text-white'
-                : 'border border-black/10 bg-white text-[var(--ink)]'
-            }`}
+            onClick={isWorkerMode ? handleAddWorker : handleAddSupervisor}
+            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
           >
-            <Plus className="h-4 w-4" /> Add Worker
-          </button>
-          <button
-            onClick={handleAddSupervisor}
-            className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition ${
-              !isWorkerMode
-                ? 'bg-[var(--accent)] text-white'
-                : 'border border-black/10 bg-white text-[var(--ink)]'
-            }`}
-          >
-            <Shield className="h-4 w-4" /> Add Supervisor
+            <Plus className="h-4 w-4" /> {isWorkerMode ? 'Add Worker' : 'Add Supervisor'}
           </button>
         </div>
       </header>
@@ -923,7 +909,7 @@ const Workers: React.FC = () => {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1.3fr_0.9fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-black/5 bg-white/80 p-6 shadow-sm backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>

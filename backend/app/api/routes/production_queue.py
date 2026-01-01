@@ -316,23 +316,13 @@ def _apply_queue_updates(
 
     if "planned_assembly_line" in updates:
         line_value = _normalize_line(updates["planned_assembly_line"])
-        order_ids = {unit.work_order_id for unit in work_units}
-        related_units = list(
-            db.execute(
-                select(WorkUnit).where(WorkUnit.work_order_id.in_(order_ids))
-            ).scalars()
-        )
-        if any(unit.status == WorkUnitStatus.COMPLETED for unit in related_units):
+        if any(unit.status == WorkUnitStatus.COMPLETED for unit in work_units):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot change line for completed items",
             )
-        for unit in related_units:
+        for unit in work_units:
             unit.planned_assembly_line = line_value
-        for order_id in order_ids:
-            order = db.get(WorkOrder, order_id)
-            if order:
-                order.planned_assembly_line = line_value
 
     if "planned_start_datetime" in updates:
         for unit in work_units:

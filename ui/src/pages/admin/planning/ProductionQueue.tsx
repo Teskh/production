@@ -247,7 +247,7 @@ const SubTypeSelector: React.FC<{
   }
 
   return (
-    <div className="flex flex-wrap bg-black/5 rounded-xl p-1 gap-1">
+    <div className="inline-flex flex-wrap bg-black/5 rounded-xl p-1 gap-1">
       {subTypes.map((subType) => {
         const active = currentId === subType.id;
         return (
@@ -261,7 +261,7 @@ const SubTypeSelector: React.FC<{
             title={subType.name}
             className={`
               px-2 h-6 flex items-center justify-center text-[10px] font-semibold rounded-lg
-              transition-all truncate max-w-[96px]
+              transition-all truncate max-w-[88px]
               ${
                 active
                   ? 'bg-white text-[var(--accent)] shadow-sm border border-black/5'
@@ -1071,8 +1071,8 @@ const ProductionQueue: React.FC = () => {
                       </p>
                     </div>
 
-                    <div className="col-span-3 space-y-1.5">
-                      <p className="text-sm font-medium text-[var(--ink)] truncate">
+                    <div className="col-span-3 flex items-center gap-3 min-w-0">
+                      <p className="text-sm font-medium text-[var(--ink)] truncate max-w-[160px]">
                         {item.house_type_name}
                       </p>
                       {subTypes.length > 0 ? (
@@ -1083,7 +1083,7 @@ const ProductionQueue: React.FC = () => {
                         />
                       ) : (
                         item.sub_type_name && (
-                          <p className="text-[11px] text-[var(--ink-muted)]">
+                          <p className="text-[11px] text-[var(--ink-muted)] truncate max-w-[120px]">
                             {item.sub_type_name}
                           </p>
                         )
