@@ -170,7 +170,7 @@ const Backups: React.FC = () => {
   const handleRestore = async (backup: BackupRecord) => {
     const confirmation = window.confirm(
       `Restore "${backup.label || backup.filename}"? ` +
-        'This will create a manual checkpoint backup, restore the snapshot, and swap databases.'
+        'This will create a manual checkpoint backup, restore the snapshot, and switch the primary database.'
     );
     if (!confirmation) {
       return;

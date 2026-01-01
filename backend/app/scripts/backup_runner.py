@@ -1,22 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
-
 from app.services import backups as backup_service
-
-
-def _is_due(settings: dict) -> bool:
-    if not settings.get("enabled"):
-        return False
-    interval_minutes = int(settings.get("interval_minutes") or 0)
-    if interval_minutes <= 0:
-        return False
-    last_backup_at = backup_service.parse_last_backup_at(settings.get("last_backup_at"))
-    if last_backup_at is None:
-        return True
-    elapsed = datetime.now(timezone.utc) - last_backup_at
-    return elapsed.total_seconds() >= interval_minutes * 60
 
 
 def main() -> int:
@@ -26,7 +11,7 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = backup_service.load_backup_settings()
-    if not args.force and not _is_due(settings):
+    if not args.force and not backup_service.is_backup_due(settings):
         print("Backup not due; exiting.")
         return 0
 

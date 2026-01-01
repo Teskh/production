@@ -36,6 +36,12 @@ class Settings:
     backup_admin_db: str = os.getenv("BACKUP_ADMIN_DB", "postgres")
     pg_dump_path: str = os.getenv("PG_DUMP_PATH", "pg_dump")
     pg_restore_path: str = os.getenv("PG_RESTORE_PATH", "pg_restore")
+    backup_scheduler_enabled: bool = (
+        os.getenv("BACKUP_SCHEDULER_ENABLED", "true").lower() == "true"
+    )
+    backup_scheduler_poll_seconds: int = int(
+        os.getenv("BACKUP_SCHEDULER_POLL_SECONDS", "60")
+    )
 
 
 settings = Settings()

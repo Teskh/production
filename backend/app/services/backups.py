@@ -316,6 +316,19 @@ def parse_last_backup_at(value: str | None) -> datetime | None:
     return parsed
 
 
+def is_backup_due(settings_data: dict[str, Any]) -> bool:
+    if not settings_data.get("enabled"):
+        return False
+    interval_minutes = int(settings_data.get("interval_minutes") or 0)
+    if interval_minutes <= 0:
+        return False
+    last_backup_at = parse_last_backup_at(settings_data.get("last_backup_at"))
+    if last_backup_at is None:
+        return True
+    elapsed = datetime.now(timezone.utc) - last_backup_at
+    return elapsed.total_seconds() >= interval_minutes * 60
+
+
 def swap_databases(primary_db: str, secondary_db: str, force_disconnect: bool = False) -> None:
     _validate_db_name(primary_db)
     _validate_db_name(secondary_db)
