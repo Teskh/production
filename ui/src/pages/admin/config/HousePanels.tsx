@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Grid2X2, Layers, ListOrdered, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Grid2X2, Layers, ListOrdered, Pencil, Plus, Trash2, X } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -1122,89 +1122,135 @@ const HousePanels: React.FC = () => {
       )}
 
       {matrixOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
-          <div className="w-full max-w-6xl rounded-3xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm transition-all duration-300">
+          <div className="flex h-full max-h-[90vh] w-full max-w-[95vw] flex-col rounded-3xl bg-white shadow-2xl overflow-hidden ring-1 ring-black/5">
+            <div className="flex items-center justify-between px-8 py-6 border-b border-black/5 bg-white z-20">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Matrix</p>
-                <h3 className="text-lg font-display text-[var(--ink)]">
-                  Task applicability + expected minutes
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)] font-bold">Configuration Matrix</p>
+                <h3 className="text-xl font-display text-[var(--ink)] mt-1">
+                  Task Applicability & Durations
                 </h3>
                 {selectedHouseType && (
-                  <p className="text-xs text-[var(--ink-muted)]">
-                    {selectedHouseType.name} | Module {selectedModuleNumber}
-                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                      {selectedHouseType.name}
+                    </span>
+                    <span className="text-[var(--ink-muted)]">/</span>
+                    <span className="inline-flex items-center rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
+                      Module {selectedModuleNumber}
+                    </span>
+                  </div>
                 )}
               </div>
-              <button onClick={handleCloseMatrix}>
-                <X className="h-5 w-5 text-[var(--ink-muted)]" />
-              </button>
+              <div className="flex items-center gap-4">
+                 <div className="text-right hidden sm:block">
+                    <p className="text-xs text-[var(--ink-muted)]">Total Panels</p>
+                    <p className="font-semibold text-[var(--ink)]">{filteredPanels.length}</p>
+                 </div>
+                 <button 
+                   onClick={handleCloseMatrix}
+                   className="rounded-full p-2 hover:bg-black/5 transition-colors"
+                 >
+                   <X className="h-6 w-6 text-[var(--ink-muted)]" />
+                 </button>
+              </div>
             </div>
 
+            <div className="flex-1 overflow-auto bg-slate-50/50 relative">
             {tasks.length === 0 ? (
-              <div className="mt-4 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
-                No panel tasks are available for this matrix.
+              <div className="flex h-full items-center justify-center p-8">
+                <div className="text-center rounded-2xl border border-dashed border-black/10 bg-white p-8">
+                  <p className="text-sm text-[var(--ink-muted)]">No panel tasks are available for this matrix.</p>
+                </div>
               </div>
             ) : (
-              <div className="mt-4 overflow-auto rounded-2xl border border-black/5">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-[rgba(201,215,245,0.4)] text-xs text-[var(--ink-muted)]">
+              <div className="min-w-fit inline-block w-full">
+                <table className="w-full border-separate border-spacing-0 text-sm">
+                  <thead className="bg-slate-50 z-20 sticky top-0">
                     <tr>
-                      <th className="sticky left-0 z-10 bg-[rgba(201,215,245,0.6)] px-3 py-2 text-left">
-                        Task
+                      <th className="sticky left-0 z-30 w-64 min-w-[16rem] bg-slate-50 px-4 py-4 text-left border-b border-r border-black/5 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-muted)]">Task Definition</span>
                       </th>
                       {filteredPanels.map((panel) => (
-                        <th key={panel.id} className="px-3 py-2 text-left">
-                          <div className="font-semibold text-[var(--ink)]">{panel.panel_code}</div>
-                          {panel.sub_type_id && (
-                            <div className="text-[10px] text-sky-700">
-                              {subtypeNameById.get(panel.sub_type_id) ?? 'Sub-type'}
-                            </div>
-                          )}
+                        <th key={panel.id} className="min-w-[160px] w-40 px-4 py-4 text-left border-b border-black/5 bg-slate-50/95 backdrop-blur-sm">
+                          <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold text-[var(--ink)] text-sm">{panel.panel_code}</span>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-[var(--ink-muted)] font-medium uppercase tracking-wider">
+                                  {panel.group}
+                                </span>
+                                {panel.sub_type_id && (
+                                  <span className="text-[10px] text-blue-600 font-bold">
+                                    {subtypeNameById.get(panel.sub_type_id) ?? 'Sub-type'}
+                                  </span>
+                                )}
+                              </div>
+                          </div>
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {tasks.map((task) => (
-                      <tr key={task.id} className="border-t border-black/5">
-                        <td className="sticky left-0 z-10 bg-white px-3 py-2 text-[var(--ink)]">
-                          <div className="font-semibold">{task.name}</div>
-                          {task.station_sequence_order !== null && (
-                            <div className="text-[10px] text-[var(--ink-muted)]">
-                              Seq {task.station_sequence_order}
-                            </div>
-                          )}
+                  <tbody className="bg-white">
+                    {tasks.map((task, index) => (
+                      <tr key={task.id} className="group hover:bg-slate-50/50 transition-colors">
+                        <td className="sticky left-0 z-10 w-64 min-w-[16rem] bg-white group-hover:bg-slate-50/50 px-4 py-3 border-b border-r border-black/5 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                          <div className="flex flex-col">
+                            <span className="font-medium text-[var(--ink)] text-sm">{task.name}</span>
+                            {task.station_sequence_order !== null && (
+                                <span className="text-[10px] text-[var(--ink-muted)] mt-0.5 font-mono">
+                                  Seq: {String(task.station_sequence_order).padStart(3, '0')}
+                                </span>
+                            )}
+                          </div>
                         </td>
                         {filteredPanels.map((panel) => {
                           const state = matrixDraft[panel.id];
                           const applies = state?.applicable_task_ids.has(task.id) ?? true;
+                          const duration = state?.task_durations[task.id] ?? '';
+                          
                           return (
-                            <td key={panel.id} className="px-3 py-2">
-                              <div className="flex flex-col gap-2">
+                            <td key={panel.id} className="px-3 py-2 border-b border-black/5">
+                              <div 
+                                className={`
+                                  relative flex items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-200
+                                  ${applies 
+                                    ? 'border-blue-200 bg-blue-50/30 shadow-sm' 
+                                    : 'border-transparent bg-slate-50 hover:bg-slate-100 hover:border-slate-200'
+                                  }
+                                `}
+                              >
                                 <button
                                   type="button"
-                                  className={`h-6 rounded-full px-2 text-xs font-semibold text-white transition ${
-                                    applies
-                                      ? 'bg-emerald-500 hover:bg-emerald-600'
-                                      : 'bg-rose-400 hover:bg-rose-500'
-                                  }`}
                                   onClick={() => toggleMatrixApplicability(panel.id, task.id)}
-                                >
-                                  {applies ? 'Applies' : 'Skip'}
-                                </button>
-                                {applies ? (
-                                  <input
-                                    className="w-24 rounded-lg border border-black/10 bg-white px-2 py-1 text-xs"
-                                    placeholder="min"
-                                    value={state?.task_durations[task.id] ?? ''}
-                                    onChange={(event) =>
-                                      updateMatrixDuration(panel.id, task.id, event.target.value)
+                                  className={`
+                                    flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-all duration-200
+                                    ${applies 
+                                      ? 'bg-blue-500 text-white shadow-sm hover:bg-blue-600 hover:scale-105' 
+                                      : 'bg-slate-200 text-slate-400 hover:bg-slate-300 hover:text-slate-500'
                                     }
-                                  />
-                                ) : (
-                                  <span className="text-[10px] text-[var(--ink-muted)]">N/A</span>
-                                )}
+                                  `}
+                                  title={applies ? "Disable task for this panel" : "Enable task for this panel"}
+                                >
+                                  {applies ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : <Plus className="h-3.5 w-3.5" strokeWidth={3} />}
+                                </button>
+                                
+                                <div className={`flex-1 flex items-center gap-1.5 ${!applies && 'opacity-30 grayscale pointer-events-none'}`}>
+                                  {applies ? (
+                                    <>
+                                        <input
+                                            className="w-full min-w-0 bg-transparent text-sm font-semibold text-[var(--ink)] focus:outline-none placeholder:text-slate-300 text-right"
+                                            placeholder="0"
+                                            value={duration}
+                                            onChange={(event) =>
+                                            updateMatrixDuration(panel.id, task.id, event.target.value)
+                                            }
+                                        />
+                                        <span className="text-[10px] text-[var(--ink-muted)] font-medium select-none">min</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 font-medium select-none w-full text-center">N/A</span>
+                                  )}
+                                </div>
                               </div>
                             </td>
                           );
@@ -1215,28 +1261,35 @@ const HousePanels: React.FC = () => {
                 </table>
               </div>
             )}
+            </div>
 
-            {matrixMessage && (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {matrixMessage}
-              </div>
-            )}
-
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                className="rounded-full border border-black/10 px-4 py-2 text-sm"
-                onClick={handleCloseMatrix}
-                disabled={matrixSaving}
-              >
-                Close
-              </button>
-              <button
-                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                onClick={handleSaveMatrix}
-                disabled={matrixSaving}
-              >
-                {matrixSaving ? 'Saving...' : 'Save matrix'}
-              </button>
+            <div className="flex items-center justify-between px-8 py-5 border-t border-black/5 bg-white z-20">
+               <div className="text-xs text-[var(--ink-muted)]">
+                {matrixMessage && (
+                  <span className="text-red-600 font-medium bg-red-50 px-2 py-1 rounded-md">{matrixMessage}</span>
+                )}
+               </div>
+               <div className="flex gap-3">
+                    <button
+                        className="rounded-full border border-black/10 px-6 py-2.5 text-sm font-medium text-[var(--ink)] hover:bg-slate-50 transition-colors disabled:opacity-50"
+                        onClick={handleCloseMatrix}
+                        disabled={matrixSaving}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        className="rounded-full bg-[var(--accent)] px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:shadow-lg hover:bg-[var(--accent)]/90 transition-all disabled:opacity-60 disabled:shadow-none"
+                        onClick={handleSaveMatrix}
+                        disabled={matrixSaving}
+                    >
+                        {matrixSaving ? (
+                            <div className="flex items-center gap-2">
+                                <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                                <span>Saving...</span>
+                            </div>
+                        ) : 'Save Changes'}
+                    </button>
+               </div>
             </div>
           </div>
         </div>
@@ -1269,7 +1322,7 @@ const HousePanels: React.FC = () => {
                     <tr>
                       <th className="px-4 py-2 text-left w-16">Ord</th>
                       <th className="px-4 py-2 text-left">Panel Code</th>
-                      <th className="px-4 py-2 text-left">Group</th>
+                      <th className="px-4 py-2 text-left">Group / Sub-type</th>
                       <th className="px-4 py-2 text-right">Action</th>
                     </tr>
                   </thead>
@@ -1282,7 +1335,16 @@ const HousePanels: React.FC = () => {
                         <td className="px-4 py-3 font-semibold text-[var(--ink)]">
                           {panel.panel_code}
                         </td>
-                        <td className="px-4 py-3 text-[var(--ink-muted)]">{panel.group}</td>
+                        <td className="px-4 py-3 text-[var(--ink-muted)]">
+                          <div className="flex flex-col">
+                            <span className="text-xs">{panel.group}</span>
+                            {panel.sub_type_id && (
+                              <span className="text-[10px] font-bold text-blue-600">
+                                {subtypeNameById.get(panel.sub_type_id)}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end gap-1">
                             <button
