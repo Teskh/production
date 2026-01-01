@@ -18,8 +18,7 @@ import QCLibrary from './pages/qc/QCLibrary';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
-import Workers from './pages/admin/personnel/Workers';
-import Specialties from './pages/admin/personnel/Specialties';
+import Personnel from './pages/admin/personnel/Personnel';
 import AdminTeam from './pages/admin/personnel/AdminTeam';
 import Assistance from './pages/admin/personnel/Assistance';
 import LineStatus from './pages/admin/planning/LineStatus';
@@ -64,8 +63,8 @@ function App() {
           <Route index element={<AdminDashboard />} />
           
           {/* Personnel */}
-          <Route path="workers" element={<Workers />} />
-          <Route path="specialties" element={<Specialties />} />
+          <Route path="workers" element={<Personnel />} />
+          <Route path="specialties" element={<Personnel />} />
           <Route path="team" element={<AdminTeam />} />
           <Route path="assistance" element={<Assistance />} />
           

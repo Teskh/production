@@ -3,9 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.admin import AdminUser
 from app.models.stations import Station
-from app.models.workers import Skill, Worker, WorkerSkill
+from app.models.workers import Skill, Worker, WorkerSkill, WorkerSupervisor
 from app.schemas.workers import (
     SkillAssignment,
     SkillCreate,
@@ -14,6 +13,9 @@ from app.schemas.workers import (
     WorkerAssignment,
     WorkerCreate,
     WorkerRead,
+    WorkerSupervisorCreate,
+    WorkerSupervisorRead,
+    WorkerSupervisorUpdate,
     WorkerSkillRead,
     WorkerUpdate,
 )
@@ -59,6 +61,37 @@ def _ensure_geovictoria_unique(
             )
 
 
+def _ensure_supervisor_geovictoria_unique(
+    db: Session,
+    *,
+    geovictoria_id: str | None,
+    geovictoria_identifier: str | None,
+    supervisor_id: int | None = None,
+) -> None:
+    if geovictoria_id:
+        stmt = select(WorkerSupervisor.id).where(
+            WorkerSupervisor.geovictoria_id == geovictoria_id
+        )
+        if supervisor_id is not None:
+            stmt = stmt.where(WorkerSupervisor.id != supervisor_id)
+        if db.execute(stmt).scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="GeoVictoria ID is already linked to another supervisor",
+            )
+    if geovictoria_identifier:
+        stmt = select(WorkerSupervisor.id).where(
+            WorkerSupervisor.geovictoria_identifier == geovictoria_identifier
+        )
+        if supervisor_id is not None:
+            stmt = stmt.where(WorkerSupervisor.id != supervisor_id)
+        if db.execute(stmt).scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="GeoVictoria identifier is already linked to another supervisor",
+            )
+
+
 @router.get("/", response_model=list[WorkerRead])
 def list_workers(db: Session = Depends(get_db)) -> list[Worker]:
     return list(db.execute(select(Worker).order_by(Worker.last_name, Worker.first_name)).scalars())
@@ -75,7 +108,9 @@ def create_worker(payload: WorkerCreate, db: Session = Depends(get_db)) -> Worke
         geovictoria_id=geovictoria_id,
         geovictoria_identifier=geovictoria_identifier,
     )
-    if payload.supervisor_id is not None and not db.get(AdminUser, payload.supervisor_id):
+    if payload.supervisor_id is not None and not db.get(
+        WorkerSupervisor, payload.supervisor_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Supervisor not found"
         )
@@ -96,6 +131,99 @@ def create_worker(payload: WorkerCreate, db: Session = Depends(get_db)) -> Worke
     db.commit()
     db.refresh(worker)
     return worker
+
+
+@router.get("/supervisors", response_model=list[WorkerSupervisorRead])
+def list_supervisors(db: Session = Depends(get_db)) -> list[WorkerSupervisor]:
+    return list(
+        db.execute(
+            select(WorkerSupervisor).order_by(
+                WorkerSupervisor.last_name, WorkerSupervisor.first_name
+            )
+        ).scalars()
+    )
+
+
+@router.post(
+    "/supervisors", response_model=WorkerSupervisorRead, status_code=status.HTTP_201_CREATED
+)
+def create_supervisor(
+    payload: WorkerSupervisorCreate, db: Session = Depends(get_db)
+) -> WorkerSupervisor:
+    geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
+    geovictoria_identifier = _normalize_geovictoria_value(
+        payload.geovictoria_identifier, "GeoVictoria identifier"
+    )
+    _ensure_supervisor_geovictoria_unique(
+        db,
+        geovictoria_id=geovictoria_id,
+        geovictoria_identifier=geovictoria_identifier,
+    )
+    payload_data = payload.model_dump()
+    payload_data["geovictoria_id"] = geovictoria_id
+    payload_data["geovictoria_identifier"] = geovictoria_identifier
+    supervisor = WorkerSupervisor(**payload_data)
+    db.add(supervisor)
+    db.commit()
+    db.refresh(supervisor)
+    return supervisor
+
+
+@router.get("/supervisors/{supervisor_id}", response_model=WorkerSupervisorRead)
+def get_supervisor(
+    supervisor_id: int, db: Session = Depends(get_db)
+) -> WorkerSupervisor:
+    supervisor = db.get(WorkerSupervisor, supervisor_id)
+    if not supervisor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Supervisor not found"
+        )
+    return supervisor
+
+
+@router.put("/supervisors/{supervisor_id}", response_model=WorkerSupervisorRead)
+def update_supervisor(
+    supervisor_id: int,
+    payload: WorkerSupervisorUpdate,
+    db: Session = Depends(get_db),
+) -> WorkerSupervisor:
+    supervisor = db.get(WorkerSupervisor, supervisor_id)
+    if not supervisor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Supervisor not found"
+        )
+    payload_data = payload.model_dump(exclude_unset=True)
+    if "geovictoria_id" in payload_data:
+        payload_data["geovictoria_id"] = _normalize_geovictoria_value(
+            payload_data.get("geovictoria_id"), "GeoVictoria ID"
+        )
+    if "geovictoria_identifier" in payload_data:
+        payload_data["geovictoria_identifier"] = _normalize_geovictoria_value(
+            payload_data.get("geovictoria_identifier"), "GeoVictoria identifier"
+        )
+    if "geovictoria_id" in payload_data or "geovictoria_identifier" in payload_data:
+        _ensure_supervisor_geovictoria_unique(
+            db,
+            geovictoria_id=payload_data.get("geovictoria_id"),
+            geovictoria_identifier=payload_data.get("geovictoria_identifier"),
+            supervisor_id=supervisor.id,
+        )
+    for key, value in payload_data.items():
+        setattr(supervisor, key, value)
+    db.commit()
+    db.refresh(supervisor)
+    return supervisor
+
+
+@router.delete("/supervisors/{supervisor_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_supervisor(supervisor_id: int, db: Session = Depends(get_db)) -> None:
+    supervisor = db.get(WorkerSupervisor, supervisor_id)
+    if not supervisor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Supervisor not found"
+        )
+    db.delete(supervisor)
+    db.commit()
 
 
 @router.get("/skills", response_model=list[SkillRead])
@@ -200,7 +328,9 @@ def update_worker(worker_id: int, payload: WorkerUpdate, db: Session = Depends(g
             geovictoria_identifier=payload_data.get("geovictoria_identifier"),
             worker_id=worker.id,
         )
-    if payload.supervisor_id is not None and not db.get(AdminUser, payload.supervisor_id):
+    if payload.supervisor_id is not None and not db.get(
+        WorkerSupervisor, payload.supervisor_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Supervisor not found"
         )

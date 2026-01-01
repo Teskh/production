@@ -6,6 +6,21 @@ from app.db.base import Base
 from app.models.enums import RestrictionType
 
 
+class WorkerSupervisor(Base):
+    __tablename__ = "worker_supervisors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    geovictoria_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
+    geovictoria_identifier: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, unique=True
+    )
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+
 class Worker(Base):
     __tablename__ = "workers"
 
@@ -25,7 +40,7 @@ class Worker(Base):
         JSONB, nullable=True
     )
     supervisor_id: Mapped[int | None] = mapped_column(
-        ForeignKey("admin_users.id"), nullable=True
+        ForeignKey("worker_supervisors.id"), nullable=True
     )
 
 

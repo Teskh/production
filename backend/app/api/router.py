@@ -9,6 +9,7 @@ from app.api.routes import (
     house_types,
     panel_definitions,
     pause_reasons,
+    production_queue,
     stations,
     task_definitions,
     task_rules,
@@ -33,3 +34,4 @@ api_router.include_router(
 )
 api_router.include_router(task_definitions.router, prefix="/task-definitions", tags=["task-definitions"])
 api_router.include_router(task_rules.router, prefix="/task-rules", tags=["task-rules"])
+api_router.include_router(production_queue.router, prefix="/production-queue", tags=["production-queue"])

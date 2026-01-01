@@ -25,8 +25,7 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Personnel',
       items: [
-        { name: 'Workers', path: '/admin/workers', icon: Users },
-        { name: 'Specialties', path: '/admin/specialties', icon: Settings },
+        { name: 'Workers & Specialties', path: '/admin/workers', icon: Users },
         { name: 'Admin Team', path: '/admin/team', icon: Users },
         { name: 'Assistance', path: '/admin/assistance', icon: Calendar },
       ],

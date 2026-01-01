@@ -1,46 +1,182 @@
-import React, { useState } from 'react';
-import { 
-  Layers, GripVertical, Calendar, Edit, Trash2, 
-  Plus, CheckCircle, Clock, 
-  ChevronUp, ChevronDown, Search, X, 
-  Settings, Filter
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Calendar,
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Edit,
+  GripVertical,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
 } from 'lucide-react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // --- Types ---
 
-type ProductionStatus = 'planned' | 'panels' | 'magazine' | 'assembly' | 'completed';
-type LineId = 'A' | 'B' | 'C' | null;
+type ProductionStatus = 'Planned' | 'Panels' | 'Magazine' | 'Assembly' | 'Completed';
+type LineId = '1' | '2' | '3' | null;
 
-interface QueueItem {
-  id: string;
-  sequence: number;
-  project: string;
-  house: string;
-  module: string;
-  type: string;
-  subType?: string;
-  line: LineId;
-  startDate: string; 
+type QueueItem = {
+  id: number;
+  work_order_id: number;
+  planned_sequence: number;
+  project_name: string;
+  house_identifier: string;
+  module_number: number;
+  house_type_id: number;
+  house_type_name: string;
+  sub_type_id: number | null;
+  sub_type_name: string | null;
+  planned_start_datetime: string | null;
+  planned_assembly_line: LineId;
   status: ProductionStatus;
-}
+};
 
-// --- Mock Data ---
+type HouseType = {
+  id: number;
+  name: string;
+  number_of_modules: number;
+};
 
-const INITIAL_QUEUE: QueueItem[] = [
-  { id: '101', sequence: 1, project: 'Sunset-Villas', house: 'SV-01', module: 'M-01', type: 'Single Family A', line: 'A', startDate: '12/28', status: 'assembly' },
-  { id: '102', sequence: 2, project: 'Sunset-Villas', house: 'SV-01', module: 'M-02', type: 'Single Family A', line: 'A', startDate: '12/28', status: 'assembly' },
-  { id: '103', sequence: 3, project: 'Sunset-Villas', house: 'SV-02', module: 'M-01', type: 'Single Family B', line: 'B', startDate: '12/29', status: 'magazine' },
-  { id: '104', sequence: 4, project: 'Sunset-Villas', house: 'SV-02', module: 'M-02', type: 'Single Family B', line: 'B', startDate: '12/29', status: 'panels' },
-  { id: '105', sequence: 5, project: 'Maple-Grove', house: 'MG-12', module: 'M-01', type: 'Townhouse L', line: null, startDate: '01/02', status: 'planned' },
-  { id: '106', sequence: 6, project: 'Maple-Grove', house: 'MG-12', module: 'M-02', type: 'Townhouse L', line: null, startDate: '01/02', status: 'planned' },
-  { id: '107', sequence: 7, project: 'Maple-Grove', house: 'MG-13', module: 'M-01', type: 'Townhouse R', line: null, startDate: '01/03', status: 'planned' },
-  { id: '108', sequence: 8, project: 'City-Heights', house: 'CH-05', module: 'M-01', type: 'Urban Condo', line: 'C', startDate: '12/27', status: 'completed' },
-];
+type HouseSubType = {
+  id: number;
+  house_type_id: number;
+  name: string;
+};
+
+type BatchDraft = {
+  project_name: string;
+  house_identifier_base: string;
+  house_type_id: string;
+  sub_type_id: string;
+  quantity: number;
+  planned_start_datetime: string;
+};
+
+// --- Utils ---
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const normalizeSearchValue = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const formatPlannedDate = (value: string | null): string => {
+  if (!value) {
+    return '—';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  const now = new Date();
+  const datePart = date.toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+  });
+  if (date.getFullYear() !== now.getFullYear()) {
+    return `${datePart}/${date.getFullYear()}`;
+  }
+  return datePart;
+};
+
+const formatPlannedTime = (value: string | null): string => {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+};
+
+const toInputDateTime = (value: string | null): string => {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (num: number) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
+};
+
+const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
+  [...list].sort((a, b) => {
+    const aCompleted = a.status === 'Completed';
+    const bCompleted = b.status === 'Completed';
+    if (aCompleted !== bCompleted) {
+      return aCompleted ? 1 : -1;
+    }
+    if (a.planned_sequence !== b.planned_sequence) {
+      return a.planned_sequence - b.planned_sequence;
+    }
+    return a.id - b.id;
+  });
+
+const suggestHouseIdentifierBase = (projectName: string, items: QueueItem[]): string => {
+  const matches = items.filter((item) => item.project_name === projectName);
+  let bestMatch: { prefix: string; number: number; width: number } | null = null;
+  matches.forEach((item) => {
+    const match = item.house_identifier.match(/^(.*?)(\d+)$/);
+    if (!match) {
+      return;
+    }
+    const [, prefix, digits] = match;
+    const number = Number(digits);
+    if (Number.isNaN(number)) {
+      return;
+    }
+    if (!bestMatch || number > bestMatch.number) {
+      bestMatch = { prefix, number, width: digits.length };
+    }
+  });
+  if (!bestMatch) {
+    return '';
+  }
+  const nextNumber = String(bestMatch.number + 1).padStart(bestMatch.width, '0');
+  return `${bestMatch.prefix}${nextNumber}`;
+};
 
 // --- Sub-components ---
 
+type StatusKey = 'planned' | 'panels' | 'magazine' | 'assembly' | 'completed';
+
 const StatusBadge: React.FC<{ status: ProductionStatus }> = ({ status }) => {
-  const styles = {
+  const statusKey = status.toLowerCase() as StatusKey;
+  const styles: Record<StatusKey, string> = {
     planned: 'bg-black/5 text-[var(--ink-muted)] border-black/5',
     panels: 'bg-[rgba(242,98,65,0.1)] text-[var(--accent)] border-[rgba(242,98,65,0.2)]',
     magazine: 'bg-purple-50 text-purple-700 border-purple-100',
@@ -48,7 +184,7 @@ const StatusBadge: React.FC<{ status: ProductionStatus }> = ({ status }) => {
     completed: 'bg-[rgba(47,107,79,0.12)] text-[var(--leaf)] border-[rgba(47,107,79,0.2)]',
   };
 
-  const labels = {
+  const labels: Record<StatusKey, string> = {
     planned: 'Planned',
     panels: 'Panels',
     magazine: 'Magazine',
@@ -57,26 +193,39 @@ const StatusBadge: React.FC<{ status: ProductionStatus }> = ({ status }) => {
   };
 
   return (
-    <span className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold border ${styles[status]}`}>
-      {labels[status]}
+    <span
+      className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold border ${
+        styles[statusKey]
+      }`}
+    >
+      {labels[statusKey]}
     </span>
   );
 };
 
-const LineSelector: React.FC<{ current: LineId, onChange: (l: LineId) => void, disabled?: boolean }> = ({ current, onChange, disabled }) => {
+const LineSelector: React.FC<{
+  current: LineId;
+  onChange: (l: LineId) => void;
+  disabled?: boolean;
+}> = ({ current, onChange, disabled }) => {
   return (
     <div className="flex bg-black/5 rounded-xl p-1 gap-1">
-      {(['A', 'B', 'C'] as const).map(line => (
+      {(['1', '2', '3'] as const).map((line) => (
         <button
           key={line}
           disabled={disabled}
-          onClick={(e) => { e.stopPropagation(); onChange(line); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange(line);
+          }}
           className={`
             w-7 h-7 flex items-center justify-center text-[11px] font-bold rounded-lg
             transition-all
-            ${current === line 
-              ? 'bg-white text-[var(--accent)] shadow-sm border border-black/5' 
-              : 'text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-white/50'}
+            ${
+              current === line
+                ? 'bg-white text-[var(--accent)] shadow-sm border border-black/5'
+                : 'text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-white/50'
+            }
             ${disabled ? 'opacity-30 cursor-not-allowed' : ''}
           `}
         >
@@ -87,38 +236,639 @@ const LineSelector: React.FC<{ current: LineId, onChange: (l: LineId) => void, d
   );
 };
 
+const SubTypeSelector: React.FC<{
+  subTypes: HouseSubType[];
+  currentId: number | null;
+  onToggle: (subTypeId: number) => void;
+  disabled?: boolean;
+}> = ({ subTypes, currentId, onToggle, disabled }) => {
+  if (subTypes.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap bg-black/5 rounded-xl p-1 gap-1">
+      {subTypes.map((subType) => {
+        const active = currentId === subType.id;
+        return (
+          <button
+            key={subType.id}
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle(subType.id);
+            }}
+            title={subType.name}
+            className={`
+              px-2 h-6 flex items-center justify-center text-[10px] font-semibold rounded-lg
+              transition-all truncate max-w-[96px]
+              ${
+                active
+                  ? 'bg-white text-[var(--accent)] shadow-sm border border-black/5'
+                  : 'text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-white/50'
+              }
+              ${disabled ? 'opacity-40 cursor-not-allowed' : ''}
+            `}
+          >
+            {subType.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 // --- Main Component ---
 
 const ProductionQueue: React.FC = () => {
-  const [items, setItems] = useState<QueueItem[]>(INITIAL_QUEUE);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [items, setItems] = useState<QueueItem[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [query, setQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [houseTypes, setHouseTypes] = useState<HouseType[]>([]);
+  const [houseSubTypes, setHouseSubTypes] = useState<Record<number, HouseSubType[]>>({});
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchDraft, setBatchDraft] = useState<BatchDraft>({
+    project_name: '',
+    house_identifier_base: '',
+    house_type_id: '',
+    sub_type_id: '',
+    quantity: 1,
+    planned_start_datetime: '',
+  });
+  const [editIds, setEditIds] = useState<number[]>([]);
+  const [editStartValue, setEditStartValue] = useState('');
+  const [editStartInitial, setEditStartInitial] = useState('');
+  const [editStartCleared, setEditStartCleared] = useState(false);
+  const [editSubTypeValue, setEditSubTypeValue] = useState('keep');
+  const [editSubTypeInitial, setEditSubTypeInitial] = useState('keep');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [draggingIds, setDraggingIds] = useState<number[]>([]);
+  const [dragTarget, setDragTarget] = useState<{
+    id: number;
+    position: 'before' | 'after';
+  } | null>(null);
 
-  const visibleItems = items
-    .filter(i => showCompleted || i.status !== 'completed')
-    .filter(i => {
-      if (!query.trim()) return true;
-      const needle = query.toLowerCase();
-      return i.house.toLowerCase().includes(needle) || 
-             i.project.toLowerCase().includes(needle) ||
-             i.type.toLowerCase().includes(needle);
+  const selectedItems = useMemo(
+    () => items.filter((item) => selectedIds.has(item.id)),
+    [items, selectedIds]
+  );
+
+  const selectedCount = selectedIds.size;
+  const hasCompletedSelected = selectedItems.some((item) => item.status === 'Completed');
+
+  const filteredItems = useMemo(() => {
+    const needle = normalizeSearchValue(query.trim());
+    return items.filter((item) => {
+      if (!showCompleted && item.status === 'Completed') {
+        return false;
+      }
+      if (!needle) {
+        return true;
+      }
+      const haystack = normalizeSearchValue(
+        [item.house_identifier, item.project_name, item.house_type_name, item.sub_type_name]
+          .filter(Boolean)
+          .join(' ')
+      );
+      return haystack.includes(needle);
     });
+  }, [items, showCompleted, query]);
 
-  const handleSelection = (id: string, multi: boolean) => {
-    setSelectedIds(prev => {
-      const next = new Set(multi ? prev : []);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const projectOptions = useMemo(() => {
+    const unique = new Set(items.map((item) => item.project_name).filter(Boolean));
+    return Array.from(unique).sort();
+  }, [items]);
+
+  const selectedHouseType = useMemo(
+    () => houseTypes.find((house) => String(house.id) === batchDraft.house_type_id) || null,
+    [houseTypes, batchDraft.house_type_id]
+  );
+
+  const editHouseTypeId = useMemo(() => {
+    if (!editIds.length) {
+      return null;
+    }
+    const itemsForEdit = items.filter((item) => editIds.includes(item.id));
+    if (!itemsForEdit.length) {
+      return null;
+    }
+    const first = itemsForEdit[0].house_type_id;
+    return itemsForEdit.every((item) => item.house_type_id === first) ? first : null;
+  }, [editIds, items]);
+
+  const editSubTypes = useMemo(() => {
+    if (!editHouseTypeId) {
+      return [];
+    }
+    return houseSubTypes[editHouseTypeId] ?? [];
+  }, [editHouseTypeId, houseSubTypes]);
+
+  const loadQueue = useCallback(async (silent = false) => {
+    try {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setErrorMessage(null);
+      const data = await apiRequest<QueueItem[]>('/api/production-queue');
+      const sorted = sortQueueItems(data);
+      setItems(sorted);
+      setSelectedIds((prev) => {
+        const allowed = new Set(sorted.map((item) => item.id));
+        return new Set([...prev].filter((id) => allowed.has(id)));
+      });
+      setLastUpdated(new Date());
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load queue.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadQueue(false);
+    const interval = window.setInterval(() => {
+      loadQueue(true);
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [loadQueue]);
+
+  useEffect(() => {
+    if (items.length === 0) {
+      return;
+    }
+    const uniqueHouseTypeIds = Array.from(new Set(items.map((item) => item.house_type_id)));
+    uniqueHouseTypeIds.forEach((houseTypeId) => {
+      if (houseSubTypes[houseTypeId]) {
+        return;
+      }
+      const load = async () => {
+        try {
+          const data = await apiRequest<HouseSubType[]>(
+            `/api/house-types/${houseTypeId}/subtypes`
+          );
+          setHouseSubTypes((prev) => ({ ...prev, [houseTypeId]: data }));
+        } catch (error) {
+          setErrorMessage(
+            error instanceof Error ? error.message : 'Unable to load house sub-types.'
+          );
+        }
+      };
+      load();
+    });
+  }, [items, houseSubTypes]);
+
+  useEffect(() => {
+    if (!isAddModalOpen) {
+      return;
+    }
+    setBatchError(null);
+    const load = async () => {
+      try {
+        const data = await apiRequest<HouseType[]>('/api/house-types');
+        setHouseTypes(data);
+      } catch (error) {
+        setBatchError(error instanceof Error ? error.message : 'Unable to load house types.');
+      }
+    };
+    load();
+  }, [isAddModalOpen]);
+
+  useEffect(() => {
+    if (!isAddModalOpen) {
+      return;
+    }
+    if (!batchDraft.project_name || batchDraft.house_identifier_base.trim()) {
+      return;
+    }
+    const suggestion = suggestHouseIdentifierBase(batchDraft.project_name, items);
+    if (!suggestion) {
+      return;
+    }
+    setBatchDraft((prev) => ({
+      ...prev,
+      house_identifier_base: suggestion,
+    }));
+  }, [batchDraft.project_name, batchDraft.house_identifier_base, isAddModalOpen, items]);
+
+  useEffect(() => {
+    const houseTypeId = Number(batchDraft.house_type_id);
+    if (!houseTypeId || houseSubTypes[houseTypeId]) {
+      return;
+    }
+    const load = async () => {
+      try {
+        const data = await apiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
+        setHouseSubTypes((prev) => ({ ...prev, [houseTypeId]: data }));
+      } catch (error) {
+        setBatchError(
+          error instanceof Error ? error.message : 'Unable to load house sub-types.'
+        );
+      }
+    };
+    load();
+  }, [batchDraft.house_type_id, houseSubTypes]);
+
+  useEffect(() => {
+    if (!isEditModalOpen || !editHouseTypeId || houseSubTypes[editHouseTypeId]) {
+      return;
+    }
+    const load = async () => {
+      try {
+        const data = await apiRequest<HouseSubType[]>(`/api/house-types/${editHouseTypeId}/subtypes`);
+        setHouseSubTypes((prev) => ({ ...prev, [editHouseTypeId]: data }));
+      } catch (error) {
+        setEditError(error instanceof Error ? error.message : 'Unable to load house sub-types.');
+      }
+    };
+    load();
+  }, [editHouseTypeId, houseSubTypes, isEditModalOpen]);
+
+  const visibleItems = filteredItems;
+
+  const applySelection = (
+    id: number,
+    index: number,
+    event: React.MouseEvent<HTMLDivElement>
+  ) => {
+    const isToggle = event.metaKey || event.ctrlKey;
+    const isRange = event.shiftKey && lastSelectedIndex !== null;
+
+    setSelectedIds((prev) => {
+      if (isRange && lastSelectedIndex !== null) {
+        const next = new Set(prev);
+        const start = Math.min(lastSelectedIndex, index);
+        const end = Math.max(lastSelectedIndex, index);
+        for (let i = start; i <= end; i += 1) {
+          next.add(visibleItems[i].id);
+        }
+        return next;
+      }
+      const next = new Set(isToggle ? prev : []);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
+    setLastSelectedIndex(index);
   };
 
-  const handleDelete = () => {
-    if (window.confirm(`Remove ${selectedIds.size} items from queue?`)) {
-      setItems(items.filter(i => !selectedIds.has(i.id)));
-      setSelectedIds(new Set());
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setLastSelectedIndex(null);
+  };
+
+  const handleContainerClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-queue-row="true"]')) {
+      return;
+    }
+    clearSelection();
+  };
+
+  const commitReorder = async (nextItems: QueueItem[]) => {
+    const previousItems = items;
+    setItems(nextItems);
+    try {
+      const updated = await apiRequest<QueueItem[]>('/api/production-queue/reorder', {
+        method: 'PUT',
+        body: JSON.stringify({ ordered_ids: nextItems.map((item) => item.id) }),
+      });
+      const sorted = sortQueueItems(updated);
+      setItems(sorted);
+      setSelectedIds((prev) => {
+        const allowed = new Set(sorted.map((item) => item.id));
+        return new Set([...prev].filter((id) => allowed.has(id)));
+      });
+      setErrorMessage(null);
+    } catch (error) {
+      setItems(previousItems);
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to reorder items.');
+    }
+  };
+
+  const reorderActiveItems = (
+    blockIds: number[],
+    targetId: number,
+    position: 'before' | 'after'
+  ) => {
+    const activeItems = items.filter((item) => item.status !== 'Completed');
+    const completedItems = items.filter((item) => item.status === 'Completed');
+    if (blockIds.includes(targetId)) {
+      return;
+    }
+    const block = activeItems.filter((item) => blockIds.includes(item.id));
+    const remaining = activeItems.filter((item) => !blockIds.includes(item.id));
+    const targetIndex = remaining.findIndex((item) => item.id === targetId);
+    if (targetIndex === -1 || block.length === 0) {
+      return;
+    }
+    const insertIndex = position === 'after' ? targetIndex + 1 : targetIndex;
+    const nextActive = [
+      ...remaining.slice(0, insertIndex),
+      ...block,
+      ...remaining.slice(insertIndex),
+    ];
+    const nextItems = [...nextActive, ...completedItems];
+    commitReorder(nextItems);
+  };
+
+  const moveSelectionByOne = (direction: 'up' | 'down', anchorId: number) => {
+    const activeItems = items.filter((item) => item.status !== 'Completed');
+    const completedItems = items.filter((item) => item.status === 'Completed');
+    const anchorItem = activeItems.find((item) => item.id === anchorId);
+    if (!anchorItem) {
+      return;
+    }
+    const selection = selectedIds.has(anchorId)
+      ? activeItems.filter((item) => selectedIds.has(item.id))
+      : [anchorItem];
+    const blockIds = selection.map((item) => item.id);
+    const indices = activeItems
+      .map((item, index) => (blockIds.includes(item.id) ? index : -1))
+      .filter((index) => index >= 0);
+    const minIndex = Math.min(...indices);
+    const maxIndex = Math.max(...indices);
+    if (direction === 'up' && minIndex === 0) {
+      return;
+    }
+    if (direction === 'down' && maxIndex === activeItems.length - 1) {
+      return;
+    }
+    const remaining = activeItems.filter((item) => !blockIds.includes(item.id));
+    const insertIndex = direction === 'up' ? minIndex - 1 : minIndex + 1;
+    const nextActive = [
+      ...remaining.slice(0, insertIndex),
+      ...selection,
+      ...remaining.slice(insertIndex),
+    ];
+    const nextItems = [...nextActive, ...completedItems];
+    commitReorder(nextItems);
+    if (!selectedIds.has(anchorId)) {
+      setSelectedIds(new Set([anchorId]));
+    }
+  };
+
+  const handleDragStart = (
+    event: React.DragEvent<HTMLDivElement>,
+    item: QueueItem,
+    index: number
+  ) => {
+    if (item.status === 'Completed') {
+      event.preventDefault();
+      return;
+    }
+    const nextIds = selectedIds.has(item.id) ? Array.from(selectedIds) : [item.id];
+    if (!selectedIds.has(item.id)) {
+      setSelectedIds(new Set([item.id]));
+      setLastSelectedIndex(index);
+    }
+    setDraggingIds(nextIds);
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (
+    event: React.DragEvent<HTMLDivElement>,
+    itemId: number
+  ) => {
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = event.clientY - bounds.top > bounds.height / 2 ? 'after' : 'before';
+    setDragTarget({ id: itemId, position });
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    targetId: number
+  ) => {
+    event.preventDefault();
+    if (!draggingIds.length) {
+      setDragTarget(null);
+      return;
+    }
+    const position = dragTarget?.position ?? 'before';
+    reorderActiveItems(draggingIds, targetId, position);
+    setDraggingIds([]);
+    setDragTarget(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggingIds([]);
+    setDragTarget(null);
+  };
+
+  const openEditModal = (ids: number[]) => {
+    const uniqueIds = Array.from(new Set(ids));
+    setEditIds(uniqueIds);
+    setEditError(null);
+    setEditStartCleared(false);
+    if (uniqueIds.length === 1) {
+      const item = items.find((queue) => queue.id === uniqueIds[0]);
+      const initialValue = toInputDateTime(item?.planned_start_datetime ?? null);
+      setEditStartValue(initialValue);
+      setEditStartInitial(initialValue);
+      const subtypeValue = item?.sub_type_id ? String(item.sub_type_id) : 'none';
+      setEditSubTypeValue(subtypeValue);
+      setEditSubTypeInitial(subtypeValue);
+    } else {
+      setEditStartValue('');
+      setEditStartInitial('');
+      setEditSubTypeValue('keep');
+      setEditSubTypeInitial('keep');
+    }
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditSave = async () => {
+    if (!editIds.length) {
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      work_unit_ids: editIds,
+    };
+    if (editStartCleared) {
+      payload.planned_start_datetime = null;
+    } else if (editStartValue && editStartValue !== editStartInitial) {
+      payload.planned_start_datetime = editStartValue;
+    }
+    if (editSubTypeValue !== editSubTypeInitial && editSubTypeValue !== 'keep') {
+      payload.sub_type_id = editSubTypeValue === 'none' ? null : Number(editSubTypeValue);
+    }
+    if (Object.keys(payload).length === 1) {
+      setIsEditModalOpen(false);
+      return;
+    }
+    try {
+      setEditSaving(true);
+      setEditError(null);
+      await apiRequest<QueueItem[]>('/api/production-queue/items', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      setIsEditModalOpen(false);
+      await loadQueue(true);
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'Unable to save changes.');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleLineChange = async (line: LineId, anchorId: number) => {
+    if (!line) {
+      return;
+    }
+    const targetIds =
+      selectedCount > 1 && selectedIds.has(anchorId)
+        ? Array.from(selectedIds)
+        : [anchorId];
+    if (targetIds.some((id) => items.find((item) => item.id === id)?.status === 'Completed')) {
+      setErrorMessage('Completed items cannot change line assignments.');
+      return;
+    }
+    try {
+      await apiRequest<QueueItem[]>('/api/production-queue/items', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          work_unit_ids: targetIds,
+          planned_assembly_line: line,
+        }),
+      });
+      setErrorMessage(null);
+      await loadQueue(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update line.');
+    }
+  };
+
+  const handleSubTypeToggle = async (subTypeId: number, anchorId: number) => {
+    const targetIds =
+      selectedCount > 1 && selectedIds.has(anchorId)
+        ? Array.from(selectedIds)
+        : [anchorId];
+    const targetItems = items.filter((item) => targetIds.includes(item.id));
+    if (!targetItems.length) {
+      return;
+    }
+    const houseTypeId = targetItems[0].house_type_id;
+    if (!targetItems.every((item) => item.house_type_id === houseTypeId)) {
+      setErrorMessage('Select items with the same house type to change sub-type.');
+      return;
+    }
+    const shouldClear = targetItems.every((item) => item.sub_type_id === subTypeId);
+    try {
+      await apiRequest<QueueItem[]>('/api/production-queue/items', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          work_unit_ids: targetIds,
+          sub_type_id: shouldClear ? null : subTypeId,
+        }),
+      });
+      setErrorMessage(null);
+      await loadQueue(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update sub-type.');
+    }
+  };
+
+  const handleComplete = async (targetIds: number[]) => {
+    if (!targetIds.length) {
+      return;
+    }
+    try {
+      await apiRequest<QueueItem[]>('/api/production-queue/items', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          work_unit_ids: targetIds,
+          status: 'Completed',
+        }),
+      });
+      await loadQueue(true);
+      clearSelection();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to mark complete.');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedCount) {
+      return;
+    }
+    const confirmation =
+      selectedCount === 1
+        ? 'Remove this item from the queue?'
+        : `Remove ${selectedCount} items from the queue? This cannot be undone.`;
+    if (!window.confirm(confirmation)) {
+      return;
+    }
+    try {
+      await apiRequest<void>('/api/production-queue/items/bulk-delete', {
+        method: 'POST',
+        body: JSON.stringify({ work_unit_ids: Array.from(selectedIds) }),
+      });
+      clearSelection();
+      await loadQueue(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete items.');
+    }
+  };
+
+  const handleBatchCreate = async () => {
+    setBatchError(null);
+    if (!batchDraft.project_name.trim() || !batchDraft.house_identifier_base.trim()) {
+      setBatchError('Project name and house identifier base are required.');
+      return;
+    }
+    if (!batchDraft.house_type_id) {
+      setBatchError('Select a house type to continue.');
+      return;
+    }
+    if (batchDraft.quantity < 1) {
+      setBatchError('Quantity must be at least 1.');
+      return;
+    }
+    try {
+      setBatchSaving(true);
+      await apiRequest<QueueItem[]>('/api/production-queue/batches', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_name: batchDraft.project_name.trim(),
+          house_identifier_base: batchDraft.house_identifier_base.trim(),
+          house_type_id: Number(batchDraft.house_type_id),
+          sub_type_id: batchDraft.sub_type_id ? Number(batchDraft.sub_type_id) : null,
+          quantity: batchDraft.quantity,
+          planned_start_datetime: batchDraft.planned_start_datetime || null,
+        }),
+      });
+      setIsAddModalOpen(false);
+      setBatchDraft({
+        project_name: '',
+        house_identifier_base: '',
+        house_type_id: '',
+        sub_type_id: '',
+        quantity: 1,
+        planned_start_datetime: '',
+      });
+      await loadQueue(true);
+    } catch (error) {
+      setBatchError(error instanceof Error ? error.message : 'Unable to create batch.');
+    } finally {
+      setBatchSaving(false);
     }
   };
 
@@ -131,7 +881,7 @@ const ProductionQueue: React.FC = () => {
           </p>
           <h1 className="text-3xl font-display text-[var(--ink)]">Production Queue</h1>
           <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Manage sequences, assign assembly lines, and monitor module workflow lifecycle.
+            Manage sequences, assign assembly lines, and keep module schedules in sync.
           </p>
         </div>
         <div className="flex gap-2">
@@ -150,22 +900,33 @@ const ProductionQueue: React.FC = () => {
             <div>
               <h2 className="text-lg font-display text-[var(--ink)]">Active Sequence</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                {visibleItems.length} items currently in workflow
+                {items.filter((item) => item.status !== 'Completed').length} active modules
+              </p>
+              <p className="text-[11px] text-[var(--ink-muted)]">
+                Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
               </p>
             </div>
             <div className="flex bg-black/5 rounded-full p-1 ml-4">
-               <button 
-                 onClick={() => setShowCompleted(false)}
-                 className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-all ${!showCompleted ? 'bg-white text-[var(--ink)] shadow-sm' : 'text-[var(--ink-muted)]'}`}
-               >
-                 Active
-               </button>
-               <button 
-                 onClick={() => setShowCompleted(true)}
-                 className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-all ${showCompleted ? 'bg-white text-[var(--ink)] shadow-sm' : 'text-[var(--ink-muted)]'}`}
-               >
-                 All
-               </button>
+              <button
+                onClick={() => setShowCompleted(false)}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-all ${
+                  !showCompleted
+                    ? 'bg-white text-[var(--ink)] shadow-sm'
+                    : 'text-[var(--ink-muted)]'
+                }`}
+              >
+                Active
+              </button>
+              <button
+                onClick={() => setShowCompleted(true)}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-full transition-all ${
+                  showCompleted
+                    ? 'bg-white text-[var(--ink)] shadow-sm'
+                    : 'text-[var(--ink-muted)]'
+                }`}
+              >
+                All
+              </button>
             </div>
           </div>
 
@@ -181,31 +942,86 @@ const ProductionQueue: React.FC = () => {
               />
             </label>
             <div className="h-6 w-px bg-black/10 mx-1" />
-            <button 
-              disabled={selectedIds.size === 0}
+            <button
+              onClick={() => loadQueue(true)}
+              disabled={refreshing}
+              className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] disabled:opacity-40 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              disabled={selectedCount === 0}
               onClick={handleDelete}
               className="p-2 text-[var(--ink-muted)] hover:text-red-500 disabled:opacity-30 transition-colors"
               title="Delete Selected"
             >
               <Trash2 className="h-5 w-5" />
             </button>
-            <button className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]" title="Settings">
-              <Settings className="h-5 w-5" />
-            </button>
           </div>
         </div>
 
-        <div className="space-y-3">
-          {visibleItems.length === 0 && (
+        {errorMessage && (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
+
+        {selectedCount > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--accent)]/20 bg-[rgba(242,98,65,0.06)] px-4 py-3">
+            <span className="text-xs font-semibold text-[var(--ink)]">
+              {selectedCount} selected
+            </span>
+            <button
+              onClick={() => openEditModal(Array.from(selectedIds))}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20"
+            >
+              Edit schedule
+            </button>
+            <button
+              onClick={() => handleComplete(Array.from(selectedIds))}
+              className="rounded-full bg-[var(--leaf)]/10 px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[var(--leaf)]/20 hover:bg-[var(--leaf)]/20"
+            >
+              Mark complete
+            </button>
+            <button
+              onClick={clearSelection}
+              className="rounded-full px-3 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+            >
+              Clear
+            </button>
+            {hasCompletedSelected && (
+              <span className="text-[11px] text-[var(--ink-muted)]">
+                Completed items are locked from line edits.
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-3" onClick={handleContainerClick}>
+          {loading && items.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-12 text-center text-sm text-[var(--ink-muted)]">
+              Loading production queue...
+            </div>
+          )}
+
+          {!loading && visibleItems.length === 0 && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-12 text-center text-sm text-[var(--ink-muted)]">
               No modules found in the production queue.
             </div>
           )}
-          
+
           {visibleItems.map((item, index) => {
             const isSelected = selectedIds.has(item.id);
             const prevItem = index > 0 ? visibleItems[index - 1] : null;
-            const isNewGroup = !prevItem || prevItem.project !== item.project;
+            const isNewGroup = !prevItem || prevItem.project_name !== item.project_name;
+            const subTypes = houseSubTypes[item.house_type_id] ?? [];
+            const dragHighlight =
+              dragTarget?.id === item.id
+                ? dragTarget.position === 'before'
+                  ? 'border-t-2 border-t-[var(--accent)]'
+                  : 'border-b-2 border-b-[var(--accent)]'
+                : '';
 
             return (
               <React.Fragment key={item.id}>
@@ -213,64 +1029,139 @@ const ProductionQueue: React.FC = () => {
                   <div className="pt-4 pb-2">
                     <div className="flex items-center gap-3">
                       <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--ink-muted)]">
-                        Project: {item.project}
+                        Project: {item.project_name}
                       </span>
                       <div className="h-px bg-black/5 flex-1" />
                     </div>
                   </div>
                 )}
 
-                <div 
-                  onClick={(e) => handleSelection(item.id, e.ctrlKey || e.metaKey)}
+                <div
+                  data-queue-row="true"
+                  onClick={(event) => applySelection(item.id, index, event)}
+                  onDragStart={(event) => handleDragStart(event, item, index)}
+                  onDragOver={(event) => handleDragOver(event, item.id)}
+                  onDrop={(event) => handleDrop(event, item.id)}
+                  onDragEnd={handleDragEnd}
+                  draggable={item.status !== 'Completed'}
                   className={`
                     group relative flex items-center p-4 rounded-2xl border transition-all animate-rise select-none cursor-pointer
-                    ${isSelected 
-                      ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.05)] shadow-sm' 
-                      : 'border-black/5 bg-white hover:border-black/10 hover:shadow-sm'
+                    ${
+                      isSelected
+                        ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.05)] shadow-sm'
+                        : 'border-black/5 bg-white hover:border-black/10 hover:shadow-sm'
                     }
-                    ${item.status === 'completed' ? 'opacity-60' : ''}
+                    ${item.status === 'Completed' ? 'opacity-60' : ''}
+                    ${dragHighlight}
                   `}
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <div className="flex items-center mr-6 gap-3">
                     <GripVertical className="h-4 w-4 text-black/10 group-hover:text-black/30" />
-                    <span className="text-xs font-mono font-bold text-black/20 w-4">{index + 1}</span>
+                    <span className="text-xs font-mono font-bold text-black/20 w-8">
+                      {item.planned_sequence}
+                    </span>
                   </div>
 
                   <div className="flex-1 grid grid-cols-12 gap-4 items-center">
                     <div className="col-span-3">
-                      <p className="font-bold text-[var(--ink)]">{item.house}</p>
-                      <p className="text-[11px] text-[var(--ink-muted)]">Module: {item.module}</p>
+                      <p className="font-bold text-[var(--ink)]">{item.house_identifier}</p>
+                      <p className="text-[11px] text-[var(--ink-muted)]">
+                        Module: M-{String(item.module_number).padStart(2, '0')}
+                      </p>
                     </div>
 
-                    <div className="col-span-3">
-                      <p className="text-sm font-medium text-[var(--ink)] truncate">{item.type}</p>
-                      <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className="col-span-3 space-y-1.5">
+                      <p className="text-sm font-medium text-[var(--ink)] truncate">
+                        {item.house_type_name}
+                      </p>
+                      {subTypes.length > 0 ? (
+                        <SubTypeSelector
+                          subTypes={subTypes}
+                          currentId={item.sub_type_id}
+                          onToggle={(subTypeId) => handleSubTypeToggle(subTypeId, item.id)}
+                        />
+                      ) : (
+                        item.sub_type_name && (
+                          <p className="text-[11px] text-[var(--ink-muted)]">
+                            {item.sub_type_name}
+                          </p>
+                        )
+                      )}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditModal([item.id]);
+                        }}
+                        className="flex items-center gap-1.5 text-left"
+                        title={formatPlannedTime(item.planned_start_datetime)}
+                      >
                         <Calendar className="h-3 w-3 text-black/20" />
-                        <span className="text-[11px] text-[var(--ink-muted)]">{item.startDate}</span>
-                      </div>
+                        <span className="text-[11px] text-[var(--ink-muted)]">
+                          {formatPlannedDate(item.planned_start_datetime)}
+                        </span>
+                      </button>
                     </div>
 
                     <div className="col-span-3 flex justify-center">
-                      <LineSelector 
-                        current={item.line} 
-                        onChange={(l) => {
-                          setItems(items.map(i => i.id === item.id ? {...i, line: l} : i));
-                        }}
-                        disabled={item.status === 'completed'}
+                      <LineSelector
+                        current={item.planned_assembly_line}
+                        onChange={(line) => handleLineChange(line, item.id)}
+                        disabled={item.status === 'Completed' || hasCompletedSelected}
                       />
                     </div>
 
-                    <div className="col-span-3 flex items-center justify-end gap-6">
+                    <div className="col-span-3 flex items-center justify-end gap-3">
                       <StatusBadge status={item.status} />
-                      
-                      <div className="flex items-center gap-1 min-w-[70px] justify-end">
-                         <button className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100">
-                           <Edit className="h-4 w-4" />
-                         </button>
-                         <button className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100">
-                           <CheckCircle className="h-4 w-4" />
-                         </button>
+
+                      <div className="flex items-center gap-1 min-w-[110px] justify-end">
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditModal(selectedIds.has(item.id) && selectedCount > 1 ? Array.from(selectedIds) : [item.id]);
+                          }}
+                          className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                          title="Edit schedule"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleComplete(
+                              selectedIds.has(item.id) && selectedCount > 1
+                                ? Array.from(selectedIds)
+                                : [item.id]
+                            );
+                          }}
+                          className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                          title="Mark complete"
+                        >
+                          <CheckCircle className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            moveSelectionByOne('up', item.id);
+                          }}
+                          disabled={item.status === 'Completed'}
+                          className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          <ChevronUp className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            moveSelectionByOne('down', item.id);
+                          }}
+                          disabled={item.status === 'Completed'}
+                          className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -289,53 +1180,245 @@ const ProductionQueue: React.FC = () => {
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Workflow</p>
                 <h2 className="text-xl font-display text-[var(--ink)]">New Production Batch</h2>
               </div>
-              <button onClick={() => setIsAddModalOpen(false)} className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]">
+              <button
+                onClick={() => setIsAddModalOpen(false)}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <div className="px-8 pb-8 space-y-5">
+              {batchError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {batchError}
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Project</label>
-                <select className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20">
-                  <option>Sunset-Villas</option>
-                  <option>Maple-Grove</option>
-                  <option>City-Heights</option>
-                </select>
+                <input
+                  list="project-options"
+                  value={batchDraft.project_name}
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({ ...prev, project_name: event.target.value }))
+                  }
+                  placeholder="Enter project name"
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                />
+                <datalist id="project-options">
+                  {projectOptions.map((name) => (
+                    <option value={name} key={name} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  House Identifier Base
+                </label>
+                <input
+                  value={batchDraft.house_identifier_base}
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      house_identifier_base: event.target.value,
+                    }))
+                  }
+                  placeholder="SV-01"
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Type</label>
-                  <select className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20">
-                     <option>Single Family A</option>
-                     <option>Townhouse L</option>
-                     <option>Urban Condo</option>
+                  <select
+                    value={batchDraft.house_type_id}
+                    onChange={(event) =>
+                      setBatchDraft((prev) => ({
+                        ...prev,
+                        house_type_id: event.target.value,
+                        sub_type_id: '',
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                  >
+                    <option value="">Select type</option>
+                    {houseTypes.map((house) => (
+                      <option key={house.id} value={house.id}>
+                        {house.name} · {house.number_of_modules} modules
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                   <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Quantity</label>
-                   <input type="number" defaultValue={1} className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20" />
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Quantity</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={batchDraft.quantity}
+                    onChange={(event) =>
+                      setBatchDraft((prev) => ({
+                        ...prev,
+                        quantity: Number(event.target.value),
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                  />
                 </div>
               </div>
+              {selectedHouseType && (
+                <p className="text-[11px] text-[var(--ink-muted)]">
+                  {selectedHouseType.number_of_modules} modules per house ·{' '}
+                  {selectedHouseType.number_of_modules * batchDraft.quantity} modules total
+                </p>
+              )}
+
+              {selectedHouseType && (houseSubTypes[selectedHouseType.id]?.length ?? 0) > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Sub-Type</label>
+                  <select
+                    value={batchDraft.sub_type_id}
+                    onChange={(event) =>
+                      setBatchDraft((prev) => ({
+                        ...prev,
+                        sub_type_id: event.target.value,
+                      }))
+                    }
+                    className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                  >
+                    <option value="">None</option>
+                    {(houseSubTypes[selectedHouseType.id] || []).map((subtype) => (
+                      <option key={subtype.id} value={subtype.id}>
+                        {subtype.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Start Date</label>
-                <input type="date" className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20" />
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Start Date/Time</label>
+                <input
+                  type="datetime-local"
+                  value={batchDraft.planned_start_datetime}
+                  onChange={(event) =>
+                    setBatchDraft((prev) => ({
+                      ...prev,
+                      planned_start_datetime: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                />
               </div>
-              
+
               <div className="flex gap-3 pt-4">
-                <button 
+                <button
                   onClick={() => setIsAddModalOpen(false)}
                   className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
                 >
                   Cancel
                 </button>
-                <button 
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+                <button
+                  onClick={handleBatchCreate}
+                  disabled={batchSaving}
+                  className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
                 >
-                  Create Batch
+                  {batchSaving ? 'Creating...' : 'Create Batch'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isEditModalOpen && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-[480px] overflow-hidden border border-black/5 animate-rise">
+            <div className="px-8 py-6 flex justify-between items-center">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Schedule</p>
+                <h2 className="text-xl font-display text-[var(--ink)]">Edit Queue Items</h2>
+                <p className="text-xs text-[var(--ink-muted)] mt-1">{editIds.length} selected</p>
+              </div>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-8 pb-8 space-y-5">
+              {editError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {editError}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Planned Start</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="datetime-local"
+                    value={editStartValue}
+                    onChange={(event) => {
+                      setEditStartCleared(false);
+                      setEditStartValue(event.target.value);
+                    }}
+                    className="flex-1 rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditStartCleared(true);
+                      setEditStartValue('');
+                    }}
+                    className="rounded-full border border-black/10 px-3 py-2 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                  >
+                    Clear
+                  </button>
+                </div>
+                {editIds.length > 1 && (
+                  <p className="text-[11px] text-[var(--ink-muted)]">Leave empty to keep current values.</p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Sub-Type</label>
+                <select
+                  value={editSubTypeValue}
+                  onChange={(event) => setEditSubTypeValue(event.target.value)}
+                  disabled={!editHouseTypeId}
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20 disabled:bg-black/5"
+                >
+                  {editIds.length > 1 && <option value="keep">Keep current</option>}
+                  <option value="none">None</option>
+                  {editSubTypes.map((subtype) => (
+                    <option key={subtype.id} value={subtype.id}>
+                      {subtype.name}
+                    </option>
+                  ))}
+                </select>
+                {!editHouseTypeId && (
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    Select items with the same house type to change sub-type.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleEditSave}
+                  disabled={editSaving}
+                  className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
+                >
+                  {editSaving ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </div>

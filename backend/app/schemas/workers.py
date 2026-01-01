@@ -38,6 +38,33 @@ class WorkerRead(WorkerBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WorkerSupervisorBase(BaseModel):
+    geovictoria_id: str | None = None
+    geovictoria_identifier: str | None = None
+    first_name: str
+    last_name: str
+    pin: str | None = None
+
+
+class WorkerSupervisorCreate(WorkerSupervisorBase):
+    geovictoria_id: str
+    geovictoria_identifier: str
+
+
+class WorkerSupervisorUpdate(BaseModel):
+    geovictoria_id: str | None = None
+    geovictoria_identifier: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    pin: str | None = None
+
+
+class WorkerSupervisorRead(WorkerSupervisorBase):
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SkillBase(BaseModel):
     name: str
 

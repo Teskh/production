@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import Enum, ForeignKey, Integer, String
+from datetime import datetime
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -12,13 +14,16 @@ class WorkOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_name: Mapped[str] = mapped_column(String(200))
+    house_identifier: Mapped[str | None] = mapped_column(String(200), nullable=True)
     house_type_id: Mapped[int] = mapped_column(
         ForeignKey("house_types.id"), index=True
     )
     sub_type_id: Mapped[int | None] = mapped_column(
         ForeignKey("house_sub_types.id"), nullable=True
     )
-    planned_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    planned_sequence: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
     planned_assembly_line: Mapped[str | None] = mapped_column(String(1), nullable=True)
 
     work_units: Mapped[list["WorkUnit"]] = relationship(
@@ -32,6 +37,11 @@ class WorkUnit(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     work_order_id: Mapped[int] = mapped_column(ForeignKey("work_orders.id"), index=True)
     module_number: Mapped[int] = mapped_column(Integer)
+    planned_sequence: Mapped[int] = mapped_column(Integer, index=True)
+    planned_start_datetime: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    planned_assembly_line: Mapped[str | None] = mapped_column(String(1), nullable=True)
     status: Mapped[WorkUnitStatus] = mapped_column(
         Enum(WorkUnitStatus), default=WorkUnitStatus.PLANNED
     )
