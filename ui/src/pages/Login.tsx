@@ -9,6 +9,7 @@ import {
   Shield,
   User,
 } from 'lucide-react';
+import QRCodeScannerModal from '../components/QRCodeScannerModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -96,6 +97,9 @@ const Login: React.FC = () => {
   const [pinChangeDraft, setPinChangeDraft] = useState('');
   const [pinChangeConfirm, setPinChangeConfirm] = useState('');
   const [pinChangeError, setPinChangeError] = useState<string | null>(null);
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
+  const [qrScanValue, setQrScanValue] = useState<string | null>(null);
+  const [qrScanHint, setQrScanHint] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -279,6 +283,23 @@ const Login: React.FC = () => {
     }
   };
 
+  const handleQrDetected = (value: string) => {
+    const normalized = value.trim();
+    if (!normalized) {
+      return;
+    }
+    setQrScanValue(normalized);
+    setLoginError(null);
+    const matchedWorker = workers.find((worker) => String(worker.id) === normalized);
+    if (matchedWorker) {
+      setSelectedWorkerId(matchedWorker.id);
+      setShowAllWorkers(true);
+      setQrScanHint(`Matched ${matchedWorker.first_name} ${matchedWorker.last_name}.`);
+    } else {
+      setQrScanHint('Scan captured. No worker match yet.');
+    }
+  };
+
   const formattedPreview = useMemo(() => {
     return queuePreview.map((item) => {
       const timeLabel = item.planned_start_datetime
@@ -423,10 +444,18 @@ const Login: React.FC = () => {
                       <button
                         className="ml-auto flex items-center text-sm text-blue-600 hover:text-blue-500"
                         type="button"
+                        onClick={() => setQrScannerOpen(true)}
                       >
-                        <QrCode className="mr-1 h-4 w-4" /> Scan Badge (soon)
+                        <QrCode className="mr-1 h-4 w-4" /> Scan Badge
                       </button>
                     </div>
+
+                    {qrScanValue && (
+                      <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                        <span className="font-semibold">Last scan:</span> {qrScanValue}
+                        {qrScanHint ? ` - ${qrScanHint}` : ''}
+                      </div>
+                    )}
                   </div>
 
                   {selectedWorker && selectedWorker.login_required ? (
@@ -508,6 +537,7 @@ const Login: React.FC = () => {
                 setSelectedWorkerId(null);
                 setPin('');
                 setLoginError(null);
+                setQrScannerOpen(false);
               }}
               className="w-full flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
@@ -672,6 +702,12 @@ const Login: React.FC = () => {
           </div>
         </div>
       )}
+
+      <QRCodeScannerModal
+        open={qrScannerOpen && !isAdmin}
+        onClose={() => setQrScannerOpen(false)}
+        onDetected={handleQrDetected}
+      />
     </div>
   );
 };

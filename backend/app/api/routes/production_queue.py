@@ -8,14 +8,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.enums import WorkUnitStatus
-from app.models.house import HouseSubType, HouseType
-from app.models.work import WorkOrder, WorkUnit
+from app.models.enums import PanelUnitStatus, TaskExceptionType, TaskScope, TaskStatus, WorkUnitStatus
+from app.models.house import HouseSubType, HouseType, PanelDefinition
+from app.models.stations import Station
+from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
+from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.schemas.production_queue import (
     ProductionBatchCreate,
     ProductionQueueBulkDelete,
     ProductionQueueBulkUpdate,
     ProductionQueueItem,
+    ProductionQueueModuleStatus,
     ProductionQueueReorder,
     ProductionQueueUpdate,
 )
@@ -47,6 +50,132 @@ def _normalize_line(line: str | None) -> str | None:
             detail="Assembly line must be 1, 2, or 3",
         )
     return coerced
+
+
+def _matches_applicability(
+    row: TaskApplicability,
+    house_type_id: int,
+    sub_type_id: int | None,
+    module_number: int,
+    panel_definition_id: int | None,
+) -> bool:
+    if row.panel_definition_id is not None and row.panel_definition_id != panel_definition_id:
+        return False
+    if row.house_type_id is not None and row.house_type_id != house_type_id:
+        return False
+    if row.sub_type_id is not None and row.sub_type_id != sub_type_id:
+        return False
+    if row.module_number is not None and row.module_number != module_number:
+        return False
+    return True
+
+
+def _applicability_rank(row: TaskApplicability) -> tuple[int, int, int]:
+    if row.panel_definition_id is not None:
+        level = 0
+    elif row.house_type_id is not None and row.module_number is not None:
+        level = 1
+    elif row.house_type_id is not None:
+        level = 2
+    elif (
+        row.house_type_id is None
+        and row.sub_type_id is None
+        and row.module_number is None
+        and row.panel_definition_id is None
+    ):
+        level = 3
+    else:
+        level = 4
+    subtype_rank = 0 if row.sub_type_id is not None else 1
+    return (level, subtype_rank, row.id)
+
+
+def _resolve_applicability(
+    rows: list[TaskApplicability],
+    house_type_id: int,
+    sub_type_id: int | None,
+    module_number: int,
+    panel_definition_id: int | None,
+) -> TaskApplicability | None:
+    matches = [
+        row
+        for row in rows
+        if _matches_applicability(row, house_type_id, sub_type_id, module_number, panel_definition_id)
+    ]
+    if not matches:
+        return None
+    return min(matches, key=_applicability_rank)
+
+
+def _order_task_definitions(
+    task_definitions: list[TaskDefinition],
+    panel_task_order: list[int] | None,
+) -> list[TaskDefinition]:
+    if panel_task_order is None:
+        return sorted(task_definitions, key=lambda task: task.name.lower())
+    order_index = {task_id: idx for idx, task_id in enumerate(panel_task_order)}
+    ordered = [task for task in task_definitions if task.id in order_index]
+    ordered.sort(key=lambda task: order_index[task.id])
+    return ordered
+
+
+def _pending_panel_tasks(
+    station: Station,
+    task_definitions: list[TaskDefinition],
+    applicability_map: dict[int, list[TaskApplicability]],
+    instances: list[TaskInstance],
+    exceptions: list[TaskException],
+    house_type_id: int,
+    sub_type_id: int | None,
+    module_number: int,
+    panel_definition_id: int,
+    panel_task_order: list[int] | None,
+) -> list[dict[str, object]]:
+    instance_map: dict[int, TaskInstance] = {}
+    for instance in instances:
+        existing = instance_map.get(instance.task_definition_id)
+        if not existing or instance.id > existing.id:
+            instance_map[instance.task_definition_id] = instance
+    skipped_task_ids = {
+        exc.task_definition_id
+        for exc in exceptions
+        if exc.exception_type == TaskExceptionType.SKIP
+    }
+    ordered_tasks = _order_task_definitions(task_definitions, panel_task_order)
+    pending: list[dict[str, object]] = []
+    for task in ordered_tasks:
+        applicability = _resolve_applicability(
+            applicability_map.get(task.id, []),
+            house_type_id,
+            sub_type_id,
+            module_number,
+            panel_definition_id,
+        )
+        if not applicability or not applicability.applies:
+            continue
+        station_sequence = applicability.station_sequence_order
+        if (
+            station_sequence is None
+            or station.sequence_order is None
+            or station_sequence != station.sequence_order
+        ):
+            continue
+        status_value = TaskStatus.NOT_STARTED
+        instance = instance_map.get(task.id)
+        if instance:
+            status_value = instance.status
+        if task.id in skipped_task_ids:
+            status_value = TaskStatus.SKIPPED
+        if status_value in (TaskStatus.COMPLETED, TaskStatus.SKIPPED):
+            continue
+        pending.append(
+            {
+                "task_definition_id": task.id,
+                "name": task.name,
+                "status": status_value,
+            }
+        )
+    return pending
 
 
 def _split_identifier_base(base: str) -> tuple[str, int, int]:
@@ -142,6 +271,172 @@ def list_queue(
     include_completed: bool = True, db: Session = Depends(get_db)
 ) -> list[ProductionQueueItem]:
     return _fetch_queue_items(db, include_completed)
+
+
+@router.get("/items/{work_unit_id}/status", response_model=ProductionQueueModuleStatus)
+def module_status(
+    work_unit_id: int, db: Session = Depends(get_db)
+) -> ProductionQueueModuleStatus:
+    row = db.execute(
+        select(WorkUnit, WorkOrder, HouseType, HouseSubType)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+        .outerjoin(HouseSubType, WorkOrder.sub_type_id == HouseSubType.id)
+        .where(WorkUnit.id == work_unit_id)
+    ).one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
+
+    work_unit, work_order, house_type, sub_type = row
+    house_identifier = work_order.house_identifier or f"WO-{work_order.id}"
+
+    module_station = None
+    if work_unit.current_station_id is not None:
+        module_station = db.get(Station, work_unit.current_station_id)
+
+    panel_definitions = list(
+        db.execute(
+            select(PanelDefinition)
+            .where(PanelDefinition.house_type_id == work_order.house_type_id)
+            .where(PanelDefinition.module_sequence_number == work_unit.module_number)
+        ).scalars()
+    )
+    general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
+    if work_order.sub_type_id is not None:
+        specific = [
+            panel_def
+            for panel_def in panel_definitions
+            if panel_def.sub_type_id == work_order.sub_type_id
+        ]
+        panel_definitions = general + specific
+    else:
+        panel_definitions = general
+
+    panel_definitions.sort(
+        key=lambda panel_def: (
+            panel_def.panel_sequence_number or 9999,
+            panel_def.panel_code or "",
+        )
+    )
+
+    panel_units = list(
+        db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
+    )
+    panel_unit_map = {panel_unit.panel_definition_id: panel_unit for panel_unit in panel_units}
+    panel_unit_ids = [panel_unit.id for panel_unit in panel_units]
+
+    station_ids = {
+        panel_unit.current_station_id
+        for panel_unit in panel_units
+        if panel_unit.current_station_id is not None
+    }
+    stations = (
+        list(db.execute(select(Station).where(Station.id.in_(station_ids))).scalars())
+        if station_ids
+        else []
+    )
+    station_map = {station.id: station for station in stations}
+
+    task_definitions = []
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    if station_ids:
+        task_definitions = list(
+            db.execute(
+                select(TaskDefinition)
+                .where(TaskDefinition.active == True)
+                .where(TaskDefinition.scope == TaskScope.PANEL)
+            ).scalars()
+        )
+        if task_definitions:
+            applicability_rows = list(
+                db.execute(
+                    select(TaskApplicability).where(
+                        TaskApplicability.task_definition_id.in_(
+                            [task.id for task in task_definitions]
+                        )
+                    )
+                ).scalars()
+            )
+            for row in applicability_rows:
+                applicability_map.setdefault(row.task_definition_id, []).append(row)
+
+    task_instances: list[TaskInstance] = []
+    task_exceptions: list[TaskException] = []
+    if panel_unit_ids:
+        task_instances = list(
+            db.execute(
+                select(TaskInstance)
+                .where(TaskInstance.work_unit_id == work_unit.id)
+                .where(TaskInstance.panel_unit_id.in_(panel_unit_ids))
+            ).scalars()
+        )
+        task_exceptions = list(
+            db.execute(
+                select(TaskException)
+                .where(TaskException.work_unit_id == work_unit.id)
+                .where(TaskException.panel_unit_id.in_(panel_unit_ids))
+            ).scalars()
+        )
+
+    instance_map: dict[tuple[int, int], list[TaskInstance]] = {}
+    for instance in task_instances:
+        key = (instance.panel_unit_id, instance.station_id)
+        instance_map.setdefault(key, []).append(instance)
+    exception_map: dict[tuple[int, int], list[TaskException]] = {}
+    for exc in task_exceptions:
+        key = (exc.panel_unit_id, exc.station_id)
+        exception_map.setdefault(key, []).append(exc)
+
+    panels = []
+    for panel_def in panel_definitions:
+        panel_unit = panel_unit_map.get(panel_def.id)
+        status_value = panel_unit.status if panel_unit else PanelUnitStatus.PLANNED
+        current_station_id = panel_unit.current_station_id if panel_unit else None
+        current_station = (
+            station_map.get(current_station_id) if current_station_id is not None else None
+        )
+        pending_tasks = []
+        if panel_unit and current_station and task_definitions:
+            pending_tasks = _pending_panel_tasks(
+                current_station,
+                task_definitions,
+                applicability_map,
+                instance_map.get((panel_unit.id, current_station.id), []),
+                exception_map.get((panel_unit.id, current_station.id), []),
+                work_order.house_type_id,
+                work_order.sub_type_id,
+                work_unit.module_number,
+                panel_def.id,
+                panel_def.applicable_task_ids,
+            )
+        panels.append(
+            {
+                "panel_definition_id": panel_def.id,
+                "panel_unit_id": panel_unit.id if panel_unit else None,
+                "panel_code": panel_def.panel_code,
+                "status": status_value,
+                "current_station_id": current_station_id,
+                "current_station_name": current_station.name if current_station else None,
+                "pending_tasks": pending_tasks,
+            }
+        )
+
+    return ProductionQueueModuleStatus(
+        work_unit_id=work_unit.id,
+        work_order_id=work_order.id,
+        project_name=work_order.project_name,
+        house_identifier=house_identifier,
+        module_number=work_unit.module_number,
+        house_type_id=work_order.house_type_id,
+        house_type_name=house_type.name,
+        sub_type_id=work_order.sub_type_id,
+        sub_type_name=sub_type.name if sub_type else None,
+        status=work_unit.status,
+        planned_assembly_line=_coerce_line(work_unit.planned_assembly_line),
+        current_station_id=work_unit.current_station_id,
+        current_station_name=module_station.name if module_station else None,
+        panels=panels,
+    )
 
 
 @router.post("/batches", response_model=list[ProductionQueueItem], status_code=status.HTTP_201_CREATED)

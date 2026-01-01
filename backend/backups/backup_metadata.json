@@ -5,6 +5,9 @@
     },
     "scp_backup_20251231_224418_Manual-restore-checkpoint-for-scp_backup_20251231_221635-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20251231_221635.dump"
+    },
+    "scp_backup_20260101_211023.dump": {
+      "label": null
     }
   }
 }

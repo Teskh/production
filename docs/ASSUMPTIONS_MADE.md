@@ -12,6 +12,9 @@
 ## 2026-01-01
 - Added REST endpoints `GET/POST/PUT/DELETE /api/pause-reasons` and `/api/comment-templates` to manage PauseReason and CommentTemplate config, since docs did not define specific API paths.
 - Added `GET/POST/PUT/DELETE /api/workers/supervisors` and a workers/supervisors roster toggle in the personnel UI to manage the new supervisor table and assignments, since docs did not define the supervisor API/UI behavior.
+- Legacy sqlite import assumes `TaskDefinitions.house_type_id` and `station_id` are not scoping rules; tasks are imported with a single global `TaskApplicability` row using `station_sequence_order`.
+- Legacy panel `task_length` lists are padded or trimmed to match `applicable_tasks` lengths when importing to `panel_definitions.task_durations_json`.
+- Pause/note definitions import uses the legacy `stations` CSV (ignoring `station_id`) and maps station codes via the existing W1/A0 mapping to new station IDs.
 
 ## 2026-01-05
 - Production queue scheduling stores `planned_sequence`, `planned_start_datetime`, and `planned_assembly_line` on `work_units` to order modules directly; `work_orders.planned_sequence` is treated as the first module’s sequence for that house.
@@ -25,4 +28,7 @@
 - Worker inactivity logout uses the documented 45-second idle timeout for all worker sessions because no login-permanence flag exists in the data model yet.
 - Login schedule preview uses `/api/production-queue` as the nearest available backend view until station-specific schedule endpoints are implemented.
 - Skip-reason suggestions reuse pause reasons because no dedicated skip reason configuration exists yet.
-- W1 panel recommendations use subtype-specific panel definitions when available; otherwise they fall back to default (sub_type_id NULL) definitions for that module sequence.
+- W1 panel recommendations include both generic (sub_type_id NULL) and subtype-specific panel definitions for the module sequence.
+
+## 2026-01-07
+- QR login MVP uses the browser `BarcodeDetector` API with `getUserMedia` and a center ROI crop; decoded values are shown in the login UI and only matched to workers when the payload equals a worker ID, with no backend session wiring yet.

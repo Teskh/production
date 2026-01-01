@@ -6,6 +6,7 @@ import {
   ChevronUp,
   Edit,
   GripVertical,
+  Info,
   Plus,
   RefreshCw,
   Search,
@@ -34,6 +35,42 @@ type QueueItem = {
   planned_start_datetime: string | null;
   planned_assembly_line: LineId;
   status: ProductionStatus;
+};
+
+type PanelStatus = 'Planned' | 'InProgress' | 'Completed' | 'Consumed';
+type TaskStatus = 'NotStarted' | 'InProgress' | 'Paused' | 'Completed' | 'Skipped';
+
+type PanelTaskStatus = {
+  task_definition_id: number;
+  name: string;
+  status: TaskStatus;
+};
+
+type PanelStatusDetail = {
+  panel_definition_id: number;
+  panel_unit_id: number | null;
+  panel_code: string | null;
+  status: PanelStatus;
+  current_station_id: number | null;
+  current_station_name: string | null;
+  pending_tasks: PanelTaskStatus[];
+};
+
+type ModuleStatusDetail = {
+  work_unit_id: number;
+  work_order_id: number;
+  project_name: string;
+  house_identifier: string;
+  module_number: number;
+  house_type_id: number;
+  house_type_name: string;
+  sub_type_id: number | null;
+  sub_type_name: string | null;
+  status: ProductionStatus;
+  planned_assembly_line: LineId;
+  current_station_id: number | null;
+  current_station_name: string | null;
+  panels: PanelStatusDetail[];
 };
 
 type HouseType = {
@@ -133,6 +170,9 @@ const toInputDateTime = (value: string | null): string => {
   )}:${pad(date.getMinutes())}`;
 };
 
+const formatStatusLabel = (value: string): string =>
+  value.replace(/([a-z])([A-Z])/g, '$1 $2');
+
 const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
   [...list].sort((a, b) => {
     const aCompleted = a.status === 'Completed';
@@ -201,6 +241,21 @@ const StatusBadge: React.FC<{ status: ProductionStatus }> = ({ status }) => {
       {labels[statusKey]}
     </span>
   );
+};
+
+const panelStatusStyles: Record<PanelStatus, string> = {
+  Planned: 'bg-black/5 text-[var(--ink-muted)] border-black/5',
+  InProgress: 'bg-[rgba(242,98,65,0.1)] text-[var(--accent)] border-[rgba(242,98,65,0.2)]',
+  Completed: 'bg-[rgba(47,107,79,0.12)] text-[var(--leaf)] border-[rgba(47,107,79,0.2)]',
+  Consumed: 'bg-black/10 text-[var(--ink-muted)] border-black/10',
+};
+
+const taskStatusStyles: Record<TaskStatus, string> = {
+  NotStarted: 'bg-black/5 text-[var(--ink-muted)] border-black/5',
+  InProgress: 'bg-blue-50 text-blue-700 border-blue-100',
+  Paused: 'bg-amber-50 text-amber-700 border-amber-100',
+  Completed: 'bg-[rgba(47,107,79,0.12)] text-[var(--leaf)] border-[rgba(47,107,79,0.2)]',
+  Skipped: 'bg-black/10 text-[var(--ink-muted)] border-black/10',
 };
 
 const LineSelector: React.FC<{
@@ -288,6 +343,11 @@ const ProductionQueue: React.FC = () => {
   const [query, setQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<QueueItem | null>(null);
+  const [detailData, setDetailData] = useState<ModuleStatusDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -872,6 +932,34 @@ const ProductionQueue: React.FC = () => {
     }
   };
 
+  const openDetailModal = async (item: QueueItem) => {
+    setDetailItem(item);
+    setIsDetailModalOpen(true);
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetailData(null);
+    try {
+      const data = await apiRequest<ModuleStatusDetail>(
+        `/api/production-queue/items/${item.id}/status`
+      );
+      setDetailData(data);
+    } catch (error) {
+      setDetailError(
+        error instanceof Error ? error.message : 'Unable to load module status.'
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeDetailModal = () => {
+    setIsDetailModalOpen(false);
+    setDetailItem(null);
+    setDetailData(null);
+    setDetailError(null);
+    setDetailLoading(false);
+  };
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -1114,6 +1202,17 @@ const ProductionQueue: React.FC = () => {
 
                     <div className="col-span-3 flex items-center justify-end gap-3">
                       <StatusBadge status={item.status} />
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openDetailModal(item);
+                        }}
+                        className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all"
+                        title="Module status"
+                        type="button"
+                      >
+                        <Info className="h-4 w-4" />
+                      </button>
 
                       <div className="flex items-center gap-1 min-w-[110px] justify-end">
                         <button
@@ -1171,6 +1270,146 @@ const ProductionQueue: React.FC = () => {
           })}
         </div>
       </section>
+
+      {isDetailModalOpen && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-[720px] max-h-[80vh] overflow-hidden border border-black/5 animate-rise">
+            <div className="px-8 py-6 flex justify-between items-start gap-6 border-b border-black/5">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Module status
+                </p>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-display text-[var(--ink)]">
+                    {detailData
+                      ? `${detailData.house_identifier} · M-${String(detailData.module_number).padStart(
+                          2,
+                          '0'
+                        )}`
+                      : detailItem
+                      ? `${detailItem.house_identifier} · M-${String(detailItem.module_number).padStart(
+                          2,
+                          '0'
+                        )}`
+                      : 'Module details'}
+                  </h2>
+                  {detailData && <StatusBadge status={detailData.status} />}
+                  {!detailData && detailItem && <StatusBadge status={detailItem.status} />}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
+                  <span>
+                    {detailData?.project_name ?? detailItem?.project_name ?? '—'}
+                  </span>
+                  <span>·</span>
+                  <span>
+                    {detailData?.house_type_name ?? detailItem?.house_type_name ?? '—'}
+                  </span>
+                  {(detailData?.sub_type_name ?? detailItem?.sub_type_name) && (
+                    <>
+                      <span>·</span>
+                      <span>
+                        {detailData?.sub_type_name ?? detailItem?.sub_type_name}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={closeDetailModal}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-8 py-6 space-y-4 overflow-y-auto max-h-[calc(80vh-140px)]">
+              {detailLoading && (
+                <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                  Loading module status...
+                </div>
+              )}
+
+              {detailError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {detailError}
+                </div>
+              )}
+
+              {detailData && !detailLoading && !detailError && (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ink-muted)]">
+                    <span>
+                      Line {detailData.planned_assembly_line ?? '—'}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      Current station {detailData.current_station_name ?? '—'}
+                    </span>
+                  </div>
+
+                  {detailData.panels.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                      No panels defined for this module.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {detailData.panels.map((panel) => (
+                        <div
+                          key={panel.panel_definition_id}
+                          className="rounded-2xl border border-black/5 bg-white/80 p-4"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <p className="font-semibold text-[var(--ink)]">
+                                {panel.panel_code ?? `Panel ${panel.panel_definition_id}`}
+                              </p>
+                              <p className="text-xs text-[var(--ink-muted)]">
+                                Station {panel.current_station_name ?? '—'}
+                              </p>
+                            </div>
+                            <span
+                              className={`px-2 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold border ${
+                                panelStatusStyles[panel.status]
+                              }`}
+                            >
+                              {formatStatusLabel(panel.status)}
+                            </span>
+                          </div>
+
+                          <div className="mt-3">
+                            {panel.pending_tasks.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {panel.pending_tasks.map((task) => (
+                                  <span
+                                    key={task.task_definition_id}
+                                    className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                      taskStatusStyles[task.status]
+                                    }`}
+                                  >
+                                    {task.name} · {formatStatusLabel(task.status)}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-[var(--ink-muted)]">
+                                {panel.status === 'Completed' || panel.status === 'Consumed'
+                                  ? 'Panel complete.'
+                                  : panel.current_station_name
+                                  ? 'No pending tasks at this station.'
+                                  : 'Not at a station yet.'}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">

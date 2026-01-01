@@ -369,26 +369,18 @@ def station_snapshot(
                         if panel_def.module_sequence_number == work_unit.module_number
                     ]
                     sub_type_id = work_order.sub_type_id
+                    general = [
+                        panel_def for panel_def in candidates if panel_def.sub_type_id is None
+                    ]
                     if sub_type_id is not None:
                         specific = [
                             panel_def
                             for panel_def in candidates
                             if panel_def.sub_type_id == sub_type_id
                         ]
-                        if specific:
-                            candidates = specific
-                        else:
-                            candidates = [
-                                panel_def
-                                for panel_def in candidates
-                                if panel_def.sub_type_id is None
-                            ]
+                        candidates = general + specific
                     else:
-                        candidates = [
-                            panel_def
-                            for panel_def in candidates
-                            if panel_def.sub_type_id is None
-                        ]
+                        candidates = general
                     for panel_def in candidates:
                         panel_unit = panel_unit_map.get((work_unit.id, panel_def.id))
                         if panel_unit and panel_unit.status != PanelUnitStatus.PLANNED:
