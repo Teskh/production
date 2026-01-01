@@ -45,10 +45,8 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Product Definition',
       items: [
-        { name: 'House Types', path: '/admin/house-types', icon: Home },
+        { name: 'House Configuration', path: '/admin/house-config', icon: Home },
         { name: 'House Params', path: '/admin/house-params', icon: Settings },
-        { name: 'House Panels', path: '/admin/house-panels', icon: FileText },
-        { name: 'Module Rules', path: '/admin/rules', icon: Settings },
       ],
     },
     {

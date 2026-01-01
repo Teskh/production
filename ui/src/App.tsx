@@ -29,10 +29,8 @@ import StationFinished from './pages/admin/planning/StationFinished';
 import TaskAnalysis from './pages/admin/planning/TaskAnalysis';
 import PanelMeters from './pages/admin/planning/PanelMeters';
 import Stations from './pages/admin/config/Stations';
-import ModuleRules from './pages/admin/config/ModuleRules';
-import HouseTypes from './pages/admin/config/HouseTypes';
+import HouseConfigurator from './pages/admin/config/HouseConfigurator';
 import HouseParams from './pages/admin/config/HouseParams';
-import HousePanels from './pages/admin/config/HousePanels';
 import TaskDefs from './pages/admin/config/TaskDefs';
 import PauseDefs from './pages/admin/config/PauseDefs';
 import NoteDefs from './pages/admin/config/NoteDefs';
@@ -81,10 +79,11 @@ function App() {
           
           {/* Config */}
           <Route path="stations" element={<Stations />} />
-          <Route path="rules" element={<ModuleRules />} />
-          <Route path="house-types" element={<HouseTypes />} />
+          <Route path="house-config" element={<HouseConfigurator />} />
+          <Route path="rules" element={<Navigate to="/admin/house-config" replace />} />
+          <Route path="house-types" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="house-params" element={<HouseParams />} />
-          <Route path="house-panels" element={<HousePanels />} />
+          <Route path="house-panels" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="task-defs" element={<TaskDefs />} />
           <Route path="pause-defs" element={<PauseDefs />} />
           <Route path="note-defs" element={<NoteDefs />} />
