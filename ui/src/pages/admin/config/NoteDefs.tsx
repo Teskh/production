@@ -1,10 +1,548 @@
-import React from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, MessageSquare, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+type StationRole = 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
+type StationLineType = '1' | '2' | '3';
+
+type Station = {
+  id: number;
+  name: string;
+  role: StationRole;
+  line_type: StationLineType | null;
+  sequence_order: number | null;
+};
+
+type CommentTemplate = {
+  id: number;
+  text: string;
+  applicable_station_ids: number[] | null;
+  active: boolean;
+};
+
+type TemplateDraft = {
+  id?: number;
+  text: string;
+  active: boolean;
+  all_stations: boolean;
+  applicable_station_ids: number[];
+};
+
+const emptyDraft = (): TemplateDraft => ({
+  text: '',
+  active: true,
+  all_stations: true,
+  applicable_station_ids: [],
+});
+
+const buildDraftFromTemplate = (template: CommentTemplate): TemplateDraft => ({
+  id: template.id,
+  text: template.text,
+  active: template.active,
+  all_stations: template.applicable_station_ids === null,
+  applicable_station_ids: template.applicable_station_ids ?? [],
+});
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const normalizeSearch = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const sortTemplates = (list: CommentTemplate[]) =>
+  [...list].sort((a, b) => a.text.localeCompare(b.text));
+
+const sortStations = (list: Station[]) =>
+  [...list].sort((a, b) => {
+    const sequenceCompare =
+      (a.sequence_order ?? Number.POSITIVE_INFINITY) -
+      (b.sequence_order ?? Number.POSITIVE_INFINITY);
+    if (sequenceCompare !== 0) {
+      return sequenceCompare;
+    }
+    return a.name.localeCompare(b.name);
+  });
 
 const NoteDefs: React.FC = () => {
+  const [templates, setTemplates] = useState<CommentTemplate[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<TemplateDraft | null>(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
+  const stationDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      setStatusMessage(null);
+      try {
+        const [templateData, stationData] = await Promise.all([
+          apiRequest<CommentTemplate[]>('/api/comment-templates'),
+          apiRequest<Station[]>('/api/stations'),
+        ]);
+        if (!active) {
+          return;
+        }
+        const sortedTemplates = sortTemplates(templateData);
+        setTemplates(sortedTemplates);
+        setStations(sortStations(stationData));
+        if (sortedTemplates.length > 0) {
+          setSelectedTemplateId(sortedTemplates[0].id);
+          setDraft(buildDraftFromTemplate(sortedTemplates[0]));
+        } else {
+          setSelectedTemplateId(null);
+          setDraft(emptyDraft());
+        }
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to load comment templates.';
+          setStatusMessage(message);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const stationNameById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.name])),
+    [stations]
+  );
+
+  const filteredTemplates = useMemo(() => {
+    const query = normalizeSearch(search.trim());
+    if (!query) {
+      return templates;
+    }
+    return templates.filter((template) => {
+      const stationsLabel =
+        template.applicable_station_ids
+          ?.map((id) => stationNameById.get(id) ?? '')
+          .join(' ') ?? 'all';
+      const haystack = normalizeSearch(`${template.text} ${stationsLabel} ${template.active}`);
+      return haystack.includes(query);
+    });
+  }, [templates, search, stationNameById]);
+
+  const summaryLabel = useMemo(() => {
+    const activeCount = templates.filter((template) => template.active).length;
+    return `${templates.length} templates / ${activeCount} active`;
+  }, [templates]);
+
+  useEffect(() => {
+    if (!stationDropdownOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!stationDropdownRef.current) {
+        return;
+      }
+      if (!stationDropdownRef.current.contains(event.target as Node)) {
+        setStationDropdownOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setStationDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [stationDropdownOpen]);
+
+  const selectTemplate = (template: CommentTemplate) => {
+    setSelectedTemplateId(template.id);
+    setDraft(buildDraftFromTemplate(template));
+    setStatusMessage(null);
+  };
+
+  const handleAddTemplate = () => {
+    setSelectedTemplateId(null);
+    setDraft(emptyDraft());
+    setStatusMessage(null);
+  };
+
+  const updateDraft = (patch: Partial<TemplateDraft>) => {
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  const toggleAllStations = () => {
+    setDraft((prev) => (prev ? { ...prev, all_stations: !prev.all_stations } : prev));
+  };
+
+  const toggleStation = (stationId: number) => {
+    setDraft((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const selected = new Set(prev.applicable_station_ids);
+      if (selected.has(stationId)) {
+        selected.delete(stationId);
+      } else {
+        selected.add(stationId);
+      }
+      return { ...prev, applicable_station_ids: Array.from(selected) };
+    });
+  };
+
+  const buildScopeLabel = (stationIds: number[] | null): string => {
+    if (stationIds === null) {
+      return 'All stations';
+    }
+    if (stationIds.length === 0) {
+      return 'No stations selected';
+    }
+    const names = stationIds.map((id) => stationNameById.get(id) ?? `Station ${id}`);
+    if (names.length <= 2) {
+      return names.join(', ');
+    }
+    return `${names[0]}, ${names[1]} +${names.length - 2}`;
+  };
+
+  const draftStationLabel = useMemo(() => {
+    if (!draft) {
+      return 'All stations';
+    }
+    return draft.all_stations
+      ? 'All stations'
+      : buildScopeLabel(draft.applicable_station_ids);
+  }, [draft, stationNameById]);
+
+  const buildPayload = (current: TemplateDraft) => {
+    const text = current.text.trim();
+    if (!text) {
+      throw new Error('Comment template text is required.');
+    }
+    const stationIds = current.all_stations ? null : current.applicable_station_ids;
+    return {
+      text,
+      active: current.active,
+      applicable_station_ids: stationIds,
+    };
+  };
+
+  const handleSave = async () => {
+    if (!draft) {
+      return;
+    }
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      const payload = buildPayload(draft);
+      let saved: CommentTemplate;
+      if (draft.id) {
+        saved = await apiRequest<CommentTemplate>(`/api/comment-templates/${draft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setTemplates((prev) =>
+          sortTemplates(prev.map((template) => (template.id === saved.id ? saved : template)))
+        );
+      } else {
+        saved = await apiRequest<CommentTemplate>('/api/comment-templates', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setTemplates((prev) => sortTemplates([...prev, saved]));
+      }
+      setSelectedTemplateId(saved.id);
+      setDraft(buildDraftFromTemplate(saved));
+      setStatusMessage('Comment template saved.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to save comment template.';
+      setStatusMessage(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!draft?.id) {
+      return;
+    }
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await apiRequest<void>(`/api/comment-templates/${draft.id}`, { method: 'DELETE' });
+      const updated = templates.filter((template) => template.id !== draft.id);
+      setTemplates(updated);
+      if (updated.length > 0) {
+        selectTemplate(updated[0]);
+      } else {
+        setSelectedTemplateId(null);
+        setDraft(emptyDraft());
+      }
+      setStatusMessage('Comment template removed.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to remove comment template.';
+      setStatusMessage(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderTemplateCard = (template: CommentTemplate, index: number) => {
+    const isSelected = selectedTemplateId === template.id;
+    return (
+      <button
+        key={template.id}
+        onClick={() => selectTemplate(template)}
+        className={`flex flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+          isSelected
+            ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
+            : 'border-black/5 bg-white'
+        }`}
+        style={{ animationDelay: `${index * 60}ms` }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
+              <MessageSquare className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-[var(--ink)]">{template.text}</p>
+              <p className="text-xs text-[var(--ink-muted)]">#{template.id}</p>
+            </div>
+          </div>
+          <span
+            className={`rounded-full border px-2 py-0.5 text-xs ${
+              template.active
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-black/10 text-[var(--ink-muted)]'
+            }`}
+          >
+            {template.active ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+        <p className="text-xs text-[var(--ink-muted)]">
+          {buildScopeLabel(template.applicable_station_ids)}
+        </p>
+      </button>
+    );
+  };
+
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Note Definitions</h1>
-      <p className="text-gray-500">This is a placeholder for the Note Definitions page.</p>
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+            Configuration / Notes
+          </p>
+          <h1 className="text-3xl font-display text-[var(--ink)]">Comment templates</h1>
+          <p className="mt-2 text-sm text-[var(--ink-muted)]">
+            Provide consistent language workers can attach to completed tasks.
+          </p>
+        </div>
+        <button
+          onClick={handleAddTemplate}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+        >
+          <Plus className="h-4 w-4" /> Add template
+        </button>
+      </header>
+
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="order-last rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm xl:order-none">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-display text-[var(--ink)]">Current templates</h2>
+              <p className="text-sm text-[var(--ink-muted)]">{summaryLabel}</p>
+            </div>
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
+              <input
+                type="search"
+                placeholder="Search templates"
+                className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+          </div>
+
+          {loading && (
+            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              Loading comment templates...
+            </div>
+          )}
+          {!loading && filteredTemplates.length === 0 && (
+            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              No comment templates match that search.
+            </div>
+          )}
+
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            {filteredTemplates.map((template, index) => renderTemplateCard(template, index))}
+          </div>
+        </section>
+
+        <aside className="order-first space-y-6 xl:order-none">
+          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Detail
+                </p>
+                <h2 className="text-lg font-display text-[var(--ink)]">
+                  {draft?.id ? `Template #${draft.id}` : 'New comment template'}
+                </h2>
+              </div>
+              <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
+            </div>
+
+            {statusMessage && (
+              <div className="mt-4 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink)]">
+                {statusMessage}
+              </div>
+            )}
+
+            <div className="mt-4 space-y-4">
+              <label className="text-sm text-[var(--ink-muted)]">
+                Template text
+                <textarea
+                  rows={4}
+                  className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                  value={draft?.text ?? ''}
+                  onChange={(event) => updateDraft({ text: event.target.value })}
+                />
+              </label>
+              <label className="text-sm text-[var(--ink-muted)]">
+                Status
+                <select
+                  className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                  value={draft?.active ? 'Active' : 'Inactive'}
+                  onChange={(event) => updateDraft({ active: event.target.value === 'Active' })}
+                >
+                  <option>Active</option>
+                  <option>Inactive</option>
+                </select>
+              </label>
+
+              <div>
+                <p className="text-sm text-[var(--ink-muted)]">Station scope</p>
+                <div className="relative mt-2" ref={stationDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setStationDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-2xl border border-black/10 bg-white px-3 py-2 text-left text-sm text-[var(--ink)]"
+                  >
+                    <span className="truncate">{draftStationLabel}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                        stationDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {stationDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      <div className="border-b border-black/5 px-4 py-2 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={draft?.all_stations ?? true}
+                            onChange={toggleAllStations}
+                          />
+                          <span className="text-[var(--ink)]">All stations</span>
+                        </label>
+                      </div>
+                      {stations.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
+                          No stations available.
+                        </div>
+                      ) : (
+                        <div className="max-h-56 overflow-auto p-3 text-sm">
+                          <div className="flex flex-col gap-2">
+                            {stations.map((station) => (
+                              <label
+                                key={station.id}
+                                className={`flex items-center gap-2 ${
+                                  draft?.all_stations ? 'opacity-60' : ''
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  disabled={draft?.all_stations}
+                                  checked={(draft?.applicable_station_ids ?? []).includes(
+                                    station.id
+                                  )}
+                                  onChange={() => toggleStation(station.id)}
+                                />
+                                <span className="text-[var(--ink)]">{station.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleSave}
+                  disabled={saving || !draft}
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {saving ? 'Saving...' : 'Save template'}
+                </button>
+                {draft?.id && (
+                  <button
+                    onClick={handleDelete}
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                  >
+                    <Trash2 className="h-4 w-4" /> Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 };
