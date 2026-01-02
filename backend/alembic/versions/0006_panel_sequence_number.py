@@ -16,10 +16,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "panel_definitions",
-        sa.Column("panel_sequence_number", sa.Integer(), nullable=True),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("panel_definitions")}
+    if "panel_sequence_number" not in columns:
+        op.add_column(
+            "panel_definitions",
+            sa.Column("panel_sequence_number", sa.Integer(), nullable=True),
+        )
 
 
 def downgrade() -> None:

@@ -58,6 +58,7 @@ type TaskDefinition = {
   name: string;
   scope: TaskScope;
   active: boolean;
+  default_station_sequence: number | null;
 };
 
 type TaskApplicability = {
@@ -266,12 +267,6 @@ const areDurationValuesEqual = (left: string, right: string): boolean => {
   }
   return leftParsed === rightParsed;
 };
-
-const isDefaultApplicabilityRow = (row: TaskApplicability) =>
-  row.house_type_id === null &&
-  row.sub_type_id === null &&
-  row.module_number === null &&
-  row.panel_definition_id === null;
 
 const sortHouseTypes = (types: HouseType[]): HouseType[] =>
   [...types].sort((a, b) => a.name.localeCompare(b.name));
@@ -576,27 +571,13 @@ const HouseConfigurator: React.FC = () => {
     };
   }, []);
 
-  const defaultApplicabilityByTask = useMemo(() => {
-    const map = new Map<number, TaskApplicability>();
-    applicabilityRows.forEach((row) => {
-      if (!isDefaultApplicabilityRow(row)) {
-        return;
-      }
-      const existing = map.get(row.task_definition_id);
-      if (!existing || row.id < existing.id) {
-        map.set(row.task_definition_id, row);
-      }
-    });
-    return map;
-  }, [applicabilityRows]);
-
   const panelTasks = useMemo(() => {
     const panelScoped = taskDefinitions
       .filter((task) => task.scope === 'panel' && task.active)
       .map((task) => ({
         id: task.id,
         name: task.name,
-        station_sequence_order: defaultApplicabilityByTask.get(task.id)?.station_sequence_order ?? null,
+        station_sequence_order: task.default_station_sequence ?? null,
       }))
       .sort((a, b) => {
         const aSeq = a.station_sequence_order ?? Number.POSITIVE_INFINITY;
@@ -607,7 +588,7 @@ const HouseConfigurator: React.FC = () => {
         return a.name.localeCompare(b.name);
       });
     return panelScoped;
-  }, [taskDefinitions, defaultApplicabilityByTask]);
+  }, [taskDefinitions]);
 
   const moduleTasks = useMemo(() => {
     const moduleScoped = taskDefinitions
@@ -615,10 +596,10 @@ const HouseConfigurator: React.FC = () => {
       .map((task) => ({
         id: task.id,
         name: task.name,
-        station_sequence_order: defaultApplicabilityByTask.get(task.id)?.station_sequence_order ?? null,
+        station_sequence_order: task.default_station_sequence ?? null,
       }));
     return sortTasks(moduleScoped);
-  }, [taskDefinitions, defaultApplicabilityByTask]);
+  }, [taskDefinitions]);
 
   const selectedType = useMemo(
     () => houseTypes.find((type) => type.id === selectedTypeId) ?? null,
@@ -810,16 +791,8 @@ const HouseConfigurator: React.FC = () => {
           row.sub_type_id === null &&
           row.panel_definition_id === null
       );
-      const defaultRow = pickRow(
-        taskApplicabilityRows,
-        (row) =>
-          row.house_type_id === null &&
-          row.module_number === null &&
-          row.sub_type_id === null &&
-          row.panel_definition_id === null
-      );
-      const resolvedApplicability = moduleRow ?? houseRow ?? defaultRow ?? null;
-      const applies = resolvedApplicability ? resolvedApplicability.applies : false;
+      const resolvedApplicability = moduleRow ?? houseRow ?? null;
+      const applies = resolvedApplicability ? resolvedApplicability.applies : true;
 
       const taskDurationRows = durationByTask.get(task.id) ?? [];
       const moduleDuration = pickRow(
@@ -1724,62 +1697,7 @@ const HouseConfigurator: React.FC = () => {
     }
   };
 
-  const renderPanelCard = (panel: PanelDefinition, index: number) => {
-    const subtypeLabel = panel.sub_type_id ? subtypeNameById.get(panel.sub_type_id) : null;
-    const hasArea = panel.panel_area !== null && panel.panel_area !== undefined;
-    const hasLength = panel.panel_length_m !== null && panel.panel_length_m !== undefined;
-    return (
-      <div
-        key={panel.id}
-        className="flex flex-col gap-3 rounded-2xl border border-black/5 bg-white px-4 py-4 text-left shadow-sm animate-rise"
-        style={{ animationDelay: `${index * 60}ms` }}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-              <Grid2X2 className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="font-semibold text-[var(--ink)]">{panel.panel_code}</p>
-              <p className="text-xs text-[var(--ink-muted)]">{panel.group}</p>
-              {subtypeLabel && (
-                <span className="mt-1 inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
-                  {subtypeLabel}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {panel.panel_sequence_number !== null && panel.panel_sequence_number !== undefined && (
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
-                Ord {panel.panel_sequence_number}
-              </span>
-            )}
-            <span className="rounded-full border border-black/10 px-2 py-1 text-[10px] text-[var(--ink-muted)]">
-              #{panel.id}
-            </span>
-            <button
-              className="rounded-full border border-black/10 p-2 text-[var(--ink)] hover:border-[var(--accent)]"
-              onClick={() => handleEditPanel(panel)}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              className="rounded-full border border-black/10 p-2 text-[var(--ink)] hover:border-red-400 hover:text-red-500"
-              onClick={() => handleDeletePanel(panel)}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
-          {hasArea && <span>{panel.panel_area} m2</span>}
-          {hasLength && <span>{panel.panel_length_m} m</span>}
-          {!hasArea && !hasLength && <span className="italic">No geometry set</span>}
-        </div>
-      </div>
-    );
-  };
+
 
   return (
     <div className="space-y-8">
@@ -1886,74 +1804,79 @@ const HouseConfigurator: React.FC = () => {
             </div>
 
             {loading && (
-              <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-center text-sm text-[var(--ink-muted)]">
                 Loading house types…
               </div>
             )}
 
             {!loading && filteredHouseTypes.length === 0 && (
-              <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-center text-sm text-[var(--ink-muted)]">
                 No house types match this search.
               </div>
             )}
 
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {filteredHouseTypes.map((type, index) => {
-                const subtypes = subtypesByType[type.id];
-                const preview = subtypes ? subtypes.slice(0, 3) : [];
-                const remainingCount = subtypes ? subtypes.length - preview.length : 0;
-                return (
-                  <button
-                    key={type.id}
-                    onClick={() => handleSelectType(type)}
-                    className={`flex h-full flex-col justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                      selectedTypeId === type.id
-                        ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                        : 'border-black/5 bg-white'
-                    }`}
-                    style={{ animationDelay: `${index * 70}ms` }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.55)] text-[var(--ink)]">
-                        <Home className="h-5 w-5" />
+            <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="divide-y divide-gray-100">
+                {filteredHouseTypes.map((type) => {
+                  const subtypes = subtypesByType[type.id];
+                  const preview = subtypes ? subtypes.slice(0, 3) : [];
+                  const remainingCount = subtypes ? subtypes.length - preview.length : 0;
+                  const isSelected = selectedTypeId === type.id;
+
+                  return (
+                    <button
+                      key={type.id}
+                      onClick={() => handleSelectType(type)}
+                      className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50/50'
+                          : 'bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0 pr-4">
+                        <div className="flex items-center gap-2">
+                          <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+                            {type.name}
+                          </p>
+                          <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                             {type.number_of_modules} mod
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                           {subtypes ? (
+                            subtypes.length > 0 ? (
+                              <>
+                                {preview.map((subtype) => (
+                                  <span
+                                    key={subtype.id}
+                                    className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-gray-50 text-gray-500 border border-gray-100"
+                                  >
+                                    {subtype.name}
+                                  </span>
+                                ))}
+                                {remainingCount > 0 && (
+                                  <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] bg-gray-50 text-gray-400">
+                                    +{remainingCount}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-[10px] text-gray-400 italic">No subtypes</span>
+                            )
+                          ) : (
+                             <span className="text-[10px] text-gray-400">
+                              {loadingSubtypes ? 'Loading...' : '...'}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-base font-semibold text-[var(--ink)]">{type.name}</p>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          {type.number_of_modules} modules
-                        </p>
+                      <div className="flex items-center shrink-0">
+                         {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
                       </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {subtypes ? (
-                        subtypes.length > 0 ? (
-                          <>
-                            {preview.map((subtype) => (
-                              <span
-                                key={subtype.id}
-                                className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]"
-                              >
-                                {subtype.name}
-                              </span>
-                            ))}
-                            {remainingCount > 0 && (
-                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
-                                +{remainingCount} more
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-xs text-[var(--ink-muted)]">No subtypes</span>
-                        )
-                      ) : (
-                        <span className="text-xs text-[var(--ink-muted)]">
-                          {loadingSubtypes ? 'Subtypes loading...' : 'Subtypes unavailable'}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </section>
 
@@ -2202,23 +2125,75 @@ const HouseConfigurator: React.FC = () => {
               {groupedPanels.map((group) => (
                 <section
                   key={group.name}
-                  className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm"
+                  className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden"
                 >
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  <div className="bg-gray-50 px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+                    <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">
                       {group.name}
                     </h3>
-                    <span className="text-xs text-[var(--ink-muted)]">
+                    <span className="text-[10px] text-gray-400">
                       {group.items.length} panels
                     </span>
                   </div>
+                  
                   {group.items.length === 0 ? (
-                    <div className="mt-4 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
+                    <div className="px-4 py-8 text-center text-sm text-gray-500 italic">
                       No panels in this group.
                     </div>
                   ) : (
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      {group.items.map((panel, index) => renderPanelCard(panel, index))}
+                    <div className="divide-y divide-gray-100">
+                      {group.items.map((panel) => {
+                        const subtypeLabel = panel.sub_type_id ? subtypeNameById.get(panel.sub_type_id) : null;
+                        const hasArea = panel.panel_area !== null && panel.panel_area !== undefined;
+                        const hasLength = panel.panel_length_m !== null && panel.panel_length_m !== undefined;
+
+                        return (
+                          <div
+                            key={panel.id}
+                            className="group flex w-full items-center justify-between px-4 py-2.5 text-left bg-white hover:bg-gray-50 transition-colors"
+                          >
+                            <div className="flex-1 min-w-0 pr-4">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-gray-900">
+                                  {panel.panel_code}
+                                </span>
+                                {subtypeLabel && (
+                                  <span className="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                    {subtypeLabel}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-gray-500">
+                                 {hasArea && <span>{panel.panel_area} m²</span>}
+                                 {hasLength && <span>{panel.panel_length_m} m</span>}
+                                 {!hasArea && !hasLength && <span className="italic text-gray-400">No geometry</span>}
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                              {panel.panel_sequence_number !== null && panel.panel_sequence_number !== undefined && (
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-100">
+                                  #{panel.panel_sequence_number}
+                                </span>
+                              )}
+                              <button
+                                className="p-1.5 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50 transition-colors"
+                                onClick={() => handleEditPanel(panel)}
+                                title="Edit panel"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
+                                onClick={() => handleDeletePanel(panel)}
+                                title="Delete panel"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </section>

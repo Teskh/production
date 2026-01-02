@@ -17,6 +17,20 @@ from app.schemas.tasks import (
 router = APIRouter()
 
 
+def _is_default_applicability_scope(
+    house_type_id: int | None,
+    sub_type_id: int | None,
+    module_number: int | None,
+    panel_definition_id: int | None,
+) -> bool:
+    return (
+        house_type_id is None
+        and sub_type_id is None
+        and module_number is None
+        and panel_definition_id is None
+    )
+
+
 @router.get("/applicability", response_model=list[TaskApplicabilityRead])
 def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicability]:
     return list(db.execute(select(TaskApplicability).order_by(TaskApplicability.id)).scalars())
@@ -30,6 +44,16 @@ def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicabi
 def create_task_applicability(
     payload: TaskApplicabilityCreate, db: Session = Depends(get_db)
 ) -> TaskApplicability:
+    if _is_default_applicability_scope(
+        payload.house_type_id,
+        payload.sub_type_id,
+        payload.module_number,
+        payload.panel_definition_id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task applicability overrides require at least one scope field.",
+        )
     if not db.get(TaskDefinition, payload.task_definition_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Task definition not found"
@@ -101,6 +125,20 @@ def update_task_applicability(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Panel definition not found",
             )
+    house_type_id = updates.get("house_type_id", row.house_type_id)
+    sub_type_id = updates.get("sub_type_id", row.sub_type_id)
+    module_number = updates.get("module_number", row.module_number)
+    panel_definition_id = updates.get("panel_definition_id", row.panel_definition_id)
+    if _is_default_applicability_scope(
+        house_type_id,
+        sub_type_id,
+        module_number,
+        panel_definition_id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task applicability overrides require at least one scope field.",
+        )
     for key, value in updates.items():
         setattr(row, key, value)
     db.commit()

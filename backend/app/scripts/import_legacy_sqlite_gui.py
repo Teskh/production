@@ -25,6 +25,7 @@ SECTION_OPTIONS = (
     ("panels", "Panel Definitions"),
     ("pause_reasons", "Pause Reasons"),
     ("comment_templates", "Comment Templates"),
+    ("module_task_templates", "Task Applicability/Durations (module + panel)"),
     ("workers", "Workers"),
     ("specialties", "Specialties/Skills"),
     ("module_production", "Module Production Plan"),

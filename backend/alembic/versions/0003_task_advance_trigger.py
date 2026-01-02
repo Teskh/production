@@ -16,16 +16,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "task_definitions",
-        sa.Column(
-            "advance_trigger",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.false(),
-        ),
-    )
-    op.drop_table("advance_rules")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("task_definitions")}
+    if "advance_trigger" not in columns:
+        op.add_column(
+            "task_definitions",
+            sa.Column(
+                "advance_trigger",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.false(),
+            ),
+        )
+    if inspector.has_table("advance_rules"):
+        op.drop_table("advance_rules")
     op.execute("DROP TYPE IF EXISTS advancerulemode")
 
 

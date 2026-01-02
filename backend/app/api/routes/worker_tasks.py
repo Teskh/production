@@ -35,63 +35,9 @@ from app.schemas.worker_station import (
     TaskSkipRequest,
     TaskStartRequest,
 )
+from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
-
-
-def _matches_applicability(
-    row: TaskApplicability,
-    house_type_id: int,
-    sub_type_id: int | None,
-    module_number: int,
-    panel_definition_id: int | None,
-) -> bool:
-    if row.panel_definition_id is not None and row.panel_definition_id != panel_definition_id:
-        return False
-    if row.house_type_id is not None and row.house_type_id != house_type_id:
-        return False
-    if row.sub_type_id is not None and row.sub_type_id != sub_type_id:
-        return False
-    if row.module_number is not None and row.module_number != module_number:
-        return False
-    return True
-
-
-def _applicability_rank(row: TaskApplicability) -> tuple[int, int, int]:
-    if row.panel_definition_id is not None:
-        level = 0
-    elif row.house_type_id is not None and row.module_number is not None:
-        level = 1
-    elif row.house_type_id is not None:
-        level = 2
-    elif (
-        row.house_type_id is None
-        and row.sub_type_id is None
-        and row.module_number is None
-        and row.panel_definition_id is None
-    ):
-        level = 3
-    else:
-        level = 4
-    subtype_rank = 0 if row.sub_type_id is not None else 1
-    return (level, subtype_rank, row.id)
-
-
-def _resolve_applicability(
-    rows: list[TaskApplicability],
-    house_type_id: int,
-    sub_type_id: int | None,
-    module_number: int,
-    panel_definition_id: int | None,
-) -> TaskApplicability | None:
-    matches = [
-        row
-        for row in rows
-        if _matches_applicability(row, house_type_id, sub_type_id, module_number, panel_definition_id)
-    ]
-    if not matches:
-        return None
-    return min(matches, key=_applicability_rank)
 
 
 def _required_panel_task_ids(
@@ -125,18 +71,19 @@ def _required_panel_task_ids(
     for task in task_defs:
         if panel_task_order is not None and task.id not in panel_task_order:
             continue
-        applicability = _resolve_applicability(
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
             applicability_map.get(task.id, []),
             work_order.house_type_id,
             work_order.sub_type_id,
             work_unit.module_number,
             panel_definition.id,
         )
-        if not applicability or not applicability.applies:
+        if not applies:
             continue
-        if applicability.station_sequence_order is None:
+        if station_sequence_order is None:
             continue
-        if station.sequence_order != applicability.station_sequence_order:
+        if station.sequence_order != station_sequence_order:
             continue
         required_ids.add(task.id)
     return required_ids

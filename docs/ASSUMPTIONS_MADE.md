@@ -40,3 +40,7 @@
 - Legacy module production rows are grouped by project name + house identifier + house type + subtype to create `work_orders`, with `work_units.id` set to the legacy `plan_id` and `work_orders.planned_sequence` set to the smallest module sequence in the group.
 - Panel production rows are imported into `panel_units` during module production import, keyed by the legacy `panel_production_plan_id`.
 - Legacy task logs are grouped by plan + panel + task + station (station_finish preferred, otherwise station_start) into single task instances, with one task participation per log row.
+- Legacy task applicability now uses explicit module rows and panel `applicable_tasks`, and implicit missing pairs are written as `applies = false` when the `module_task_templates` import section is used (skipping global default applicability rows in that case).
+
+## 2026-01-09
+- Task applicability defaults are now implied by `task_definitions` (absence of a scoped `TaskApplicability` row means applies=true), and default-scope applicability rows are no longer used.

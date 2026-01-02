@@ -98,6 +98,44 @@ def _fetch_rows(conn: sqlite3.Connection, query: str) -> list[sqlite3.Row]:
     return list(conn.execute(query))
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone() is not None
+
+
+def _row_value(row: sqlite3.Row, *names: str) -> Any:
+    keys = row.keys()
+    for name in names:
+        if name in keys:
+            return row[name]
+    return None
+
+
+def _legacy_task_station_orders(conn: sqlite3.Connection) -> dict[int, int | None]:
+    orders: dict[int, int | None] = {}
+    if not _table_exists(conn, "TaskDefinitions"):
+        return orders
+    rows = _fetch_rows(
+        conn,
+        """
+        SELECT task_definition_id, station_sequence_order
+        FROM TaskDefinitions
+        """,
+    )
+    for row in rows:
+        task_id = row["task_definition_id"]
+        station_sequence_order = row["station_sequence_order"]
+        if station_sequence_order is not None:
+            try:
+                station_sequence_order = int(station_sequence_order)
+            except (TypeError, ValueError):
+                station_sequence_order = None
+        orders[task_id] = station_sequence_order
+    return orders
+
+
 def _parse_json_list(raw: str | None) -> list[Any] | None:
     if not raw:
         return None
@@ -220,43 +258,64 @@ def _ensure_empty(
         raise RuntimeError(f"{label} is not empty ({count} rows).")
 
 
-def _existing_default_applicability(session: Session) -> set[int]:
-    rows = session.execute(
-        select(TaskApplicability.task_definition_id).where(
-            TaskApplicability.house_type_id.is_(None),
-            TaskApplicability.sub_type_id.is_(None),
-            TaskApplicability.module_number.is_(None),
-            TaskApplicability.panel_definition_id.is_(None),
-        )
-    ).scalars()
-    return set(rows)
-
-
-def _update_default_applicability(
+def _find_task_applicability(
     session: Session,
-    task_id: int,
-    station_sequence_order: int | None,
-) -> TaskApplicability:
-    row = session.execute(
-        select(TaskApplicability).where(
-            TaskApplicability.task_definition_id == task_id,
-            TaskApplicability.house_type_id.is_(None),
-            TaskApplicability.sub_type_id.is_(None),
-            TaskApplicability.module_number.is_(None),
-            TaskApplicability.panel_definition_id.is_(None),
-        )
-    ).scalar_one_or_none()
-    if row:
-        row.station_sequence_order = station_sequence_order
-        row.applies = True
-        return row
-    row = TaskApplicability(
-        task_definition_id=task_id,
-        applies=True,
-        station_sequence_order=station_sequence_order,
+    task_definition_id: int,
+    house_type_id: int | None,
+    sub_type_id: int | None,
+    module_number: int | None,
+    panel_definition_id: int | None,
+) -> TaskApplicability | None:
+    stmt = select(TaskApplicability).where(
+        TaskApplicability.task_definition_id == task_definition_id
     )
-    session.add(row)
-    return row
+    if house_type_id is None:
+        stmt = stmt.where(TaskApplicability.house_type_id.is_(None))
+    else:
+        stmt = stmt.where(TaskApplicability.house_type_id == house_type_id)
+    if sub_type_id is None:
+        stmt = stmt.where(TaskApplicability.sub_type_id.is_(None))
+    else:
+        stmt = stmt.where(TaskApplicability.sub_type_id == sub_type_id)
+    if module_number is None:
+        stmt = stmt.where(TaskApplicability.module_number.is_(None))
+    else:
+        stmt = stmt.where(TaskApplicability.module_number == module_number)
+    if panel_definition_id is None:
+        stmt = stmt.where(TaskApplicability.panel_definition_id.is_(None))
+    else:
+        stmt = stmt.where(TaskApplicability.panel_definition_id == panel_definition_id)
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def _find_task_expected_duration(
+    session: Session,
+    task_definition_id: int,
+    house_type_id: int | None,
+    sub_type_id: int | None,
+    module_number: int | None,
+    panel_definition_id: int | None,
+) -> TaskExpectedDuration | None:
+    stmt = select(TaskExpectedDuration).where(
+        TaskExpectedDuration.task_definition_id == task_definition_id
+    )
+    if house_type_id is None:
+        stmt = stmt.where(TaskExpectedDuration.house_type_id.is_(None))
+    else:
+        stmt = stmt.where(TaskExpectedDuration.house_type_id == house_type_id)
+    if sub_type_id is None:
+        stmt = stmt.where(TaskExpectedDuration.sub_type_id.is_(None))
+    else:
+        stmt = stmt.where(TaskExpectedDuration.sub_type_id == sub_type_id)
+    if module_number is None:
+        stmt = stmt.where(TaskExpectedDuration.module_number.is_(None))
+    else:
+        stmt = stmt.where(TaskExpectedDuration.module_number == module_number)
+    if panel_definition_id is None:
+        stmt = stmt.where(TaskExpectedDuration.panel_definition_id.is_(None))
+    else:
+        stmt = stmt.where(TaskExpectedDuration.panel_definition_id == panel_definition_id)
+    return session.execute(stmt).scalar_one_or_none()
 
 
 def _parse_datetime(raw: str | None) -> datetime | None:
@@ -451,6 +510,9 @@ def _truncate_tables(session: Session, sections: set[str]) -> None:
         session.execute(delete(TaskExpectedDuration))
         session.execute(delete(TaskApplicability))
         session.execute(delete(TaskDefinition))
+    if "module_task_templates" in sections and "tasks" not in sections:
+        session.execute(delete(TaskExpectedDuration))
+        session.execute(delete(TaskApplicability))
 
     if "pause_reasons" in sections:
         session.execute(delete(PauseReason))
@@ -488,6 +550,7 @@ def _import_tasks(
     )
 
     for row in rows:
+        station_sequence_order = row["station_sequence_order"]
         if _bool(row["is_panel_task"]):
             scope = TaskScope.PANEL
         else:
@@ -502,6 +565,7 @@ def _import_tasks(
             concurrent_allowed=_bool(row["concurrent_allowed"]),
             advance_trigger=False,
             dependencies_json=dependencies,
+            default_station_sequence=station_sequence_order,
         )
         _persist(session, task, allow_existing)
         if scope != TaskScope.PANEL:
@@ -511,26 +575,6 @@ def _import_tasks(
 
     session.flush()
 
-    existing_defaults: set[int] = set()
-    if allow_existing:
-        existing_defaults = _existing_default_applicability(session)
-
-    for row in rows:
-        task_id = row["task_definition_id"]
-        station_sequence_order = row["station_sequence_order"]
-        if allow_existing:
-            _update_default_applicability(
-                session, task_id, station_sequence_order
-            )
-            continue
-        if task_id in existing_defaults:
-            continue
-        applicability = TaskApplicability(
-            task_definition_id=task_id,
-            applies=True,
-            station_sequence_order=station_sequence_order,
-        )
-        session.add(applicability)
 
 
 def _import_houses(
@@ -913,6 +957,385 @@ def _import_task_skill_requirements(
         session.add(
             TaskSkillRequirement(
                 task_definition_id=task_id, skill_id=skill_id
+            )
+        )
+
+
+def _import_module_task_applicability(
+    conn: sqlite3.Connection,
+    session: Session,
+    warnings: list[str],
+    allow_existing: bool,
+) -> None:
+    session.flush()
+    if not _table_exists(conn, "ModuleTaskApplicability"):
+        warnings.append("ModuleTaskApplicability table not found; skipping")
+        return
+
+    rows = _fetch_rows(conn, "SELECT * FROM ModuleTaskApplicability")
+    if not rows:
+        return
+
+    module_task_ids = set(
+        session.execute(
+            select(TaskDefinition.id).where(TaskDefinition.scope == TaskScope.MODULE)
+        ).scalars()
+    )
+    if not module_task_ids:
+        warnings.append("module_task_applicability: no module tasks found; skipping")
+        return
+
+    house_types = {
+        row.id: row.number_of_modules
+        for row in session.execute(select(HouseType)).scalars()
+    }
+    if not house_types:
+        warnings.append("module_task_applicability: no house_types found; skipping")
+        return
+
+    sub_type_ids = set(session.execute(select(HouseSubType.id)).scalars())
+    station_orders = _legacy_task_station_orders(conn)
+
+    explicit: dict[tuple[int, int, int, int | None], tuple[bool, int | None]] = {}
+    for row in rows:
+        task_id = _row_value(row, "task_definition_id", "task_id")
+        if task_id is None:
+            warnings.append("module_task_applicability: missing task_definition_id")
+            continue
+        if task_id not in module_task_ids:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                "task not found or not a module task"
+            )
+            continue
+
+        house_type_id = _row_value(row, "house_type_id", "house_type")
+        if house_type_id is None:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                "missing house_type_id"
+            )
+            continue
+        if house_type_id not in house_types:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                f"house_type_id {house_type_id} not found"
+            )
+            continue
+
+        sub_type_id = _row_value(
+            row, "sub_type_id", "house_sub_type_id", "house_subtype_id"
+        )
+        if sub_type_id is not None and sub_type_id not in sub_type_ids:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                f"sub_type_id {sub_type_id} not found; using null sub_type_id"
+            )
+            sub_type_id = None
+
+        module_number = _row_value(
+            row, "module_sequence_number", "module_number", "module_index"
+        )
+        if module_number is None:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                "missing module_number"
+            )
+            continue
+        try:
+            module_number = int(module_number)
+        except (TypeError, ValueError):
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                f"invalid module_number {module_number}"
+            )
+            continue
+
+        if module_number < 1:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                f"invalid module_number {module_number}"
+            )
+            continue
+        max_modules = house_types.get(house_type_id)
+        if max_modules and module_number > max_modules:
+            warnings.append(
+                f"module_task_applicability task_definition_id {task_id}: "
+                f"module_number {module_number} exceeds house_type {house_type_id} "
+                f"module count {max_modules}"
+            )
+
+        applies_raw = _row_value(
+            row, "applies", "is_applicable", "is_active", "active"
+        )
+        applies = _bool(applies_raw) if applies_raw is not None else True
+        station_sequence_order = _row_value(
+            row, "station_sequence_order", "station_sequence", "sequence_order"
+        )
+        if station_sequence_order is not None:
+            try:
+                station_sequence_order = int(station_sequence_order)
+            except (TypeError, ValueError):
+                station_sequence_order = None
+        if station_sequence_order is None:
+            station_sequence_order = station_orders.get(task_id)
+
+        explicit[(task_id, house_type_id, module_number, sub_type_id)] = (
+            applies,
+            station_sequence_order,
+        )
+
+    for house_type_id, module_count in house_types.items():
+        module_numbers = range(1, (module_count or 0) + 1)
+        for module_number in module_numbers:
+            for task_id in module_task_ids:
+                key = (task_id, house_type_id, module_number, None)
+                applies, station_sequence_order = explicit.get(
+                    key,
+                    (False, station_orders.get(task_id)),
+                )
+                if allow_existing:
+                    existing = _find_task_applicability(
+                        session,
+                        task_id,
+                        house_type_id,
+                        None,
+                        module_number,
+                        None,
+                    )
+                    if existing:
+                        existing.applies = applies
+                        existing.station_sequence_order = station_sequence_order
+                        continue
+                session.add(
+                    TaskApplicability(
+                        task_definition_id=task_id,
+                        house_type_id=house_type_id,
+                        sub_type_id=None,
+                        module_number=module_number,
+                        panel_definition_id=None,
+                        applies=applies,
+                        station_sequence_order=station_sequence_order,
+                    )
+                )
+
+    for (task_id, house_type_id, module_number, sub_type_id), (
+        applies,
+        station_sequence_order,
+    ) in explicit.items():
+        if sub_type_id is None:
+            continue
+        if allow_existing:
+            existing = _find_task_applicability(
+                session,
+                task_id,
+                house_type_id,
+                sub_type_id,
+                module_number,
+                None,
+            )
+            if existing:
+                existing.applies = applies
+                existing.station_sequence_order = station_sequence_order
+                continue
+        session.add(
+            TaskApplicability(
+                task_definition_id=task_id,
+                house_type_id=house_type_id,
+                sub_type_id=sub_type_id,
+                module_number=module_number,
+                panel_definition_id=None,
+                applies=applies,
+                station_sequence_order=station_sequence_order,
+            )
+        )
+
+
+def _import_panel_task_applicability(
+    conn: sqlite3.Connection,
+    session: Session,
+    warnings: list[str],
+    allow_existing: bool,
+) -> None:
+    session.flush()
+    if not _table_exists(conn, "PanelDefinitions"):
+        warnings.append("PanelDefinitions table not found; skipping panel applicability")
+        return
+
+    panel_task_ids = set(
+        session.execute(
+            select(TaskDefinition.id).where(TaskDefinition.scope == TaskScope.PANEL)
+        ).scalars()
+    )
+    if not panel_task_ids:
+        warnings.append("panel_task_applicability: no panel tasks found; skipping")
+        return
+
+    panel_definition_ids = set(
+        session.execute(select(PanelDefinition.id)).scalars()
+    )
+    if not panel_definition_ids:
+        warnings.append(
+            "panel_task_applicability: no panel_definitions found; skipping"
+        )
+        return
+
+    station_orders = _legacy_task_station_orders(conn)
+    rows = _fetch_rows(
+        conn,
+        """
+        SELECT panel_definition_id, applicable_tasks
+        FROM PanelDefinitions
+        ORDER BY panel_definition_id
+        """,
+    )
+    for row in rows:
+        panel_definition_id = row["panel_definition_id"]
+        if panel_definition_id not in panel_definition_ids:
+            warnings.append(
+                f"panel_task_applicability panel_definition_id {panel_definition_id}: "
+                "panel_definition not found"
+            )
+            continue
+        applicable_tasks = _parse_int_list(row["applicable_tasks"]) or []
+        applicable_set = set(applicable_tasks)
+        unknown_tasks = applicable_set.difference(panel_task_ids)
+        if unknown_tasks:
+            warnings.append(
+                f"panel_task_applicability panel_definition_id {panel_definition_id}: "
+                f"unknown tasks {sorted(unknown_tasks)}"
+            )
+        for task_id in panel_task_ids:
+            applies = task_id in applicable_set
+            station_sequence_order = station_orders.get(task_id)
+            if allow_existing:
+                existing = _find_task_applicability(
+                    session,
+                    task_id,
+                    None,
+                    None,
+                    None,
+                    panel_definition_id,
+                )
+                if existing:
+                    existing.applies = applies
+                    existing.station_sequence_order = station_sequence_order
+                    continue
+            session.add(
+                TaskApplicability(
+                    task_definition_id=task_id,
+                    house_type_id=None,
+                    sub_type_id=None,
+                    module_number=None,
+                    panel_definition_id=panel_definition_id,
+                    applies=applies,
+                    station_sequence_order=station_sequence_order,
+                )
+            )
+
+
+def _import_module_task_expected_durations(
+    conn: sqlite3.Connection,
+    session: Session,
+    warnings: list[str],
+    allow_existing: bool,
+) -> None:
+    session.flush()
+    if not _table_exists(conn, "ModuleTaskExpectedDurations"):
+        warnings.append("ModuleTaskExpectedDurations table not found; skipping")
+        return
+
+    rows = _fetch_rows(conn, "SELECT * FROM ModuleTaskExpectedDurations")
+    if not rows:
+        return
+
+    task_ids = set(session.execute(select(TaskDefinition.id)).scalars())
+    if not task_ids:
+        warnings.append(
+            "module_task_expected_durations: no task_definitions found; skipping"
+        )
+        return
+
+    house_type_ids = set(session.execute(select(HouseType.id)).scalars())
+    sub_type_ids = set(session.execute(select(HouseSubType.id)).scalars())
+
+    for row in rows:
+        task_id = _row_value(row, "task_definition_id", "task_id")
+        if task_id is None:
+            warnings.append("module_task_expected_durations: missing task_definition_id")
+            continue
+        if task_id not in task_ids:
+            warnings.append(
+                f"module_task_expected_durations task_definition_id {task_id}: "
+                "task not found"
+            )
+            continue
+
+        house_type_id = _row_value(row, "house_type_id", "house_type")
+        if house_type_id is not None and house_type_id not in house_type_ids:
+            warnings.append(
+                f"module_task_expected_durations task_definition_id {task_id}: "
+                f"house_type_id {house_type_id} not found"
+            )
+            continue
+
+        sub_type_id = _row_value(
+            row, "sub_type_id", "house_sub_type_id", "house_subtype_id"
+        )
+        if sub_type_id is not None and sub_type_id not in sub_type_ids:
+            warnings.append(
+                f"module_task_expected_durations task_definition_id {task_id}: "
+                f"sub_type_id {sub_type_id} not found; using null sub_type_id"
+            )
+            sub_type_id = None
+
+        module_number = _row_value(
+            row, "module_sequence_number", "module_number", "module_index"
+        )
+        panel_definition_id = _row_value(row, "panel_definition_id")
+        expected_minutes = _row_value(
+            row,
+            "expected_minutes",
+            "expected_duration",
+            "duration_minutes",
+            "minutes",
+        )
+        if expected_minutes is None:
+            warnings.append(
+                f"module_task_expected_durations task_definition_id {task_id}: "
+                "missing expected_minutes"
+            )
+            continue
+        try:
+            expected_minutes = float(expected_minutes)
+        except (TypeError, ValueError):
+            warnings.append(
+                f"module_task_expected_durations task_definition_id {task_id}: "
+                f"invalid expected_minutes {expected_minutes}"
+            )
+            continue
+
+        if allow_existing:
+            existing = _find_task_expected_duration(
+                session,
+                task_id,
+                house_type_id,
+                sub_type_id,
+                module_number,
+                panel_definition_id,
+            )
+            if existing:
+                existing.expected_minutes = expected_minutes
+                continue
+
+        session.add(
+            TaskExpectedDuration(
+                task_definition_id=task_id,
+                house_type_id=house_type_id,
+                sub_type_id=sub_type_id,
+                module_number=module_number,
+                panel_definition_id=panel_definition_id,
+                expected_minutes=expected_minutes,
             )
         )
 
@@ -1581,6 +2004,16 @@ def _import(
                 _ensure_empty(
                     session, CommentTemplate, "comment_templates", allow_existing
                 )
+            if "module_task_templates" in sections and "tasks" not in sections:
+                _ensure_empty(
+                    session, TaskApplicability, "task_applicability", allow_existing
+                )
+                _ensure_empty(
+                    session,
+                    TaskExpectedDuration,
+                    "task_expected_durations",
+                    allow_existing,
+                )
             if "specialties" in sections:
                 _ensure_empty(session, Skill, "skills", allow_existing)
             if "workers" in sections:
@@ -1610,6 +2043,16 @@ def _import(
             _import_pause_reasons(conn, session, warnings, allow_existing)
         if "comment_templates" in sections:
             _import_comment_templates(conn, session, warnings, allow_existing)
+        if "module_task_templates" in sections:
+            _import_panel_task_applicability(
+                conn, session, warnings, allow_existing
+            )
+            _import_module_task_applicability(
+                conn, session, warnings, allow_existing
+            )
+            _import_module_task_expected_durations(
+                conn, session, warnings, allow_existing
+            )
         if "specialties" in sections:
             _import_specialties(conn, session, allow_existing)
         if "workers" in sections:
@@ -1668,8 +2111,8 @@ def main() -> int:
         default=None,
         help=(
             "Comma-separated sections (tasks,houses,panels,pause_reasons,"
-            "comment_templates,workers,specialties,module_production,task_logs,"
-            "panel_task_logs)."
+            "comment_templates,module_task_templates,workers,specialties,"
+            "module_production,task_logs,panel_task_logs)."
         ),
     )
     parser.add_argument(

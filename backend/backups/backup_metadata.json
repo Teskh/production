@@ -14,6 +14,9 @@
     },
     "scp_backup_20260102_023252_kinda-migrated.dump": {
       "label": "kinda-migrated"
+    },
+    "scp_backup_20260102_183715_pre-new-migration.dump": {
+      "label": "pre-new-migration"
     }
   }
 }

@@ -21,63 +21,9 @@ from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import Worker
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
 from app.schemas.worker_station import StationSnapshot, StationTask, StationWorkItem
+from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
-
-
-def _matches_applicability(
-    row: TaskApplicability,
-    house_type_id: int,
-    sub_type_id: int | None,
-    module_number: int,
-    panel_definition_id: int | None,
-) -> bool:
-    if row.panel_definition_id is not None and row.panel_definition_id != panel_definition_id:
-        return False
-    if row.house_type_id is not None and row.house_type_id != house_type_id:
-        return False
-    if row.sub_type_id is not None and row.sub_type_id != sub_type_id:
-        return False
-    if row.module_number is not None and row.module_number != module_number:
-        return False
-    return True
-
-
-def _applicability_rank(row: TaskApplicability) -> tuple[int, int, int]:
-    if row.panel_definition_id is not None:
-        level = 0
-    elif row.house_type_id is not None and row.module_number is not None:
-        level = 1
-    elif row.house_type_id is not None:
-        level = 2
-    elif (
-        row.house_type_id is None
-        and row.sub_type_id is None
-        and row.module_number is None
-        and row.panel_definition_id is None
-    ):
-        level = 3
-    else:
-        level = 4
-    subtype_rank = 0 if row.sub_type_id is not None else 1
-    return (level, subtype_rank, row.id)
-
-
-def _resolve_applicability(
-    rows: list[TaskApplicability],
-    house_type_id: int,
-    sub_type_id: int | None,
-    module_number: int,
-    panel_definition_id: int | None,
-) -> TaskApplicability | None:
-    matches = [
-        row
-        for row in rows
-        if _matches_applicability(row, house_type_id, sub_type_id, module_number, panel_definition_id)
-    ]
-    if not matches:
-        return None
-    return min(matches, key=_applicability_rank)
 
 
 def _filter_pause_reasons(
@@ -136,16 +82,16 @@ def _build_task_lists(
     other_tasks: list[StationTask] = []
 
     for task in ordered_tasks:
-        applicability = _resolve_applicability(
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
             applicability_map.get(task.id, []),
             house_type_id,
             sub_type_id,
             module_number,
             panel_definition_id,
         )
-        if not applicability or not applicability.applies:
+        if not applies:
             continue
-        station_sequence_order = applicability.station_sequence_order
         is_aux_station = station.role == StationRole.AUX
         is_station_task = (
             station_sequence_order is not None

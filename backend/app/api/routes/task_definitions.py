@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.models.enums import RestrictionType
-from app.models.tasks import TaskApplicability, TaskDefinition
+from app.models.tasks import TaskDefinition
 from app.models.workers import Skill, TaskSkillRequirement, TaskWorkerRestriction, Worker
 from app.schemas.tasks import (
     TaskAllowedWorkers,
@@ -12,7 +12,6 @@ from app.schemas.tasks import (
     TaskDefinitionRead,
     TaskRegularCrew,
     TaskSpecialty,
-    TaskStationSequence,
     TaskDefinitionUpdate,
 )
 
@@ -76,104 +75,6 @@ def delete_task_definition(
         )
     db.delete(task)
     db.commit()
-
-
-def _default_applicability_query(task_definition_id: int):
-    return (
-        TaskApplicability.task_definition_id == task_definition_id,
-        TaskApplicability.house_type_id.is_(None),
-        TaskApplicability.sub_type_id.is_(None),
-        TaskApplicability.module_number.is_(None),
-        TaskApplicability.panel_definition_id.is_(None),
-    )
-
-
-@router.get(
-    "/{task_definition_id}/station-sequence-order",
-    response_model=TaskStationSequence,
-)
-def get_station_sequence_order(
-    task_definition_id: int, db: Session = Depends(get_db)
-) -> TaskStationSequence:
-    task = db.get(TaskDefinition, task_definition_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
-        )
-    row = (
-        db.execute(
-            select(TaskApplicability)
-            .where(*_default_applicability_query(task_definition_id))
-            .order_by(TaskApplicability.id)
-        )
-        .scalars()
-        .first()
-    )
-    return TaskStationSequence(
-        station_sequence_order=row.station_sequence_order if row else None
-    )
-
-
-@router.put(
-    "/{task_definition_id}/station-sequence-order",
-    response_model=TaskStationSequence,
-)
-def set_station_sequence_order(
-    task_definition_id: int,
-    payload: TaskStationSequence,
-    db: Session = Depends(get_db),
-) -> TaskStationSequence:
-    task = db.get(TaskDefinition, task_definition_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
-        )
-    default_rows = list(
-        db.execute(
-            select(TaskApplicability).where(*_default_applicability_query(task_definition_id))
-        ).scalars()
-    )
-    if payload.station_sequence_order is None:
-        if default_rows:
-            for extra in default_rows[1:]:
-                db.delete(extra)
-            default_rows[0].station_sequence_order = None
-            default_rows[0].applies = True
-            db.commit()
-            return TaskStationSequence(station_sequence_order=None)
-        row = TaskApplicability(
-            task_definition_id=task_definition_id,
-            house_type_id=None,
-            sub_type_id=None,
-            module_number=None,
-            panel_definition_id=None,
-            applies=True,
-            station_sequence_order=None,
-        )
-        db.add(row)
-        db.commit()
-        return TaskStationSequence(station_sequence_order=None)
-    if default_rows:
-        for extra in default_rows[1:]:
-            db.delete(extra)
-        default_rows[0].station_sequence_order = payload.station_sequence_order
-        default_rows[0].applies = True
-        db.commit()
-        return TaskStationSequence(
-            station_sequence_order=default_rows[0].station_sequence_order
-        )
-    row = TaskApplicability(
-        task_definition_id=task_definition_id,
-        house_type_id=None,
-        sub_type_id=None,
-        module_number=None,
-        panel_definition_id=None,
-        applies=True,
-        station_sequence_order=payload.station_sequence_order,
-    )
-    db.add(row)
-    db.commit()
-    return TaskStationSequence(station_sequence_order=row.station_sequence_order)
 
 
 @router.get("/{task_definition_id}/specialty", response_model=TaskSpecialty)

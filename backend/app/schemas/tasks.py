@@ -8,6 +8,7 @@ from app.models.enums import TaskScope, TaskStatus
 class TaskDefinitionBase(BaseModel):
     name: str
     scope: TaskScope
+    default_station_sequence: int | None = None
     active: bool = True
     skippable: bool = False
     concurrent_allowed: bool = False
@@ -22,6 +23,7 @@ class TaskDefinitionCreate(TaskDefinitionBase):
 class TaskDefinitionUpdate(BaseModel):
     name: str | None = None
     scope: TaskScope | None = None
+    default_station_sequence: int | None = None
     active: bool | None = None
     skippable: bool | None = None
     concurrent_allowed: bool | None = None
@@ -33,10 +35,6 @@ class TaskDefinitionRead(TaskDefinitionBase):
     id: int
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class TaskStationSequence(BaseModel):
-    station_sequence_order: int | None = None
 
 
 class TaskSpecialty(BaseModel):

@@ -20,15 +20,12 @@ type TaskDefinition = {
   id: number;
   name: string;
   scope: TaskScope;
+  default_station_sequence: number | null;
   active: boolean;
   skippable: boolean;
   concurrent_allowed: boolean;
   dependencies_json: number[] | null;
   advance_trigger: boolean;
-};
-
-type TaskStationSequence = {
-  station_sequence_order: number | null;
 };
 
 type TaskSpecialty = {
@@ -53,6 +50,7 @@ type Worker = {
   first_name: string;
   last_name: string;
   active: boolean;
+  assigned_station_ids?: number[] | null;
 };
 
 type Station = {
@@ -61,17 +59,6 @@ type Station = {
   role: 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
   line_type: '1' | '2' | '3' | null;
   sequence_order: number | null;
-};
-
-type TaskApplicability = {
-  id: number;
-  task_definition_id: number;
-  house_type_id: number | null;
-  sub_type_id: number | null;
-  module_number: number | null;
-  panel_definition_id: number | null;
-  applies: boolean;
-  station_sequence_order: number | null;
 };
 
 type TaskDraft = {
@@ -144,12 +131,6 @@ const parseSequenceValue = (value: string): number | null => {
   return parsed;
 };
 
-const isDefaultApplicabilityRow = (row: TaskApplicability) =>
-  row.house_type_id === null &&
-  row.sub_type_id === null &&
-  row.module_number === null &&
-  row.panel_definition_id === null;
-
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
@@ -179,7 +160,6 @@ const TaskDefs: React.FC = () => {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
-  const [applicabilityRows, setApplicabilityRows] = useState<TaskApplicability[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(emptyTaskDraft());
   const [query, setQuery] = useState('');
@@ -196,13 +176,9 @@ const TaskDefs: React.FC = () => {
   const dependencyDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const loadTasks = async () => {
-    const [taskData, applicabilityData] = await Promise.all([
-      apiRequest<TaskDefinition[]>('/api/task-definitions'),
-      apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
-    ]);
+    const taskData = await apiRequest<TaskDefinition[]>('/api/task-definitions');
     const sorted = sortTasks(taskData);
     setTasks(sorted);
-    setApplicabilityRows(applicabilityData);
     if (!sorted.length) {
       setSelectedTaskId(null);
       return;
@@ -221,14 +197,12 @@ const TaskDefs: React.FC = () => {
       setLoading(true);
       setStatusMessage(null);
       try {
-        const [taskData, skillData, workerData, stationData, applicabilityData] =
-          await Promise.all([
-            apiRequest<TaskDefinition[]>('/api/task-definitions'),
-            apiRequest<Skill[]>('/api/workers/skills'),
-            apiRequest<Worker[]>('/api/workers'),
-            apiRequest<Station[]>('/api/stations'),
-            apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
-          ]);
+        const [taskData, skillData, workerData, stationData] = await Promise.all([
+          apiRequest<TaskDefinition[]>('/api/task-definitions'),
+          apiRequest<Skill[]>('/api/workers/skills'),
+          apiRequest<Worker[]>('/api/workers'),
+          apiRequest<Station[]>('/api/stations'),
+        ]);
         if (!active) {
           return;
         }
@@ -237,7 +211,6 @@ const TaskDefs: React.FC = () => {
         setSkills(sortSkills(skillData));
         setWorkers(sortWorkers(workerData));
         setStations(stationData);
-        setApplicabilityRows(applicabilityData);
         setSelectedTaskId(null);
       } catch (error) {
         if (active) {
@@ -276,7 +249,10 @@ const TaskDefs: React.FC = () => {
       concurrent_allowed: selectedTask.concurrent_allowed,
       dependencies_json: selectedTask.dependencies_json ?? [],
       advance_trigger: selectedTask.advance_trigger,
-      station_sequence_order: '',
+      station_sequence_order:
+        selectedTask.default_station_sequence !== null
+          ? String(selectedTask.default_station_sequence)
+          : '',
       skill_id: null,
       allow_all_workers: true,
       allowed_worker_ids: [],
@@ -293,10 +269,7 @@ const TaskDefs: React.FC = () => {
       setDetailsLoading(true);
       setStatusMessage(null);
       try {
-        const [stationData, specialtyData, allowedData, crewData] = await Promise.all([
-          apiRequest<TaskStationSequence>(
-            `/api/task-definitions/${selectedTaskId}/station-sequence-order`
-          ),
+        const [specialtyData, allowedData, crewData] = await Promise.all([
           apiRequest<TaskSpecialty>(`/api/task-definitions/${selectedTaskId}/specialty`),
           apiRequest<TaskAllowedWorkers>(
             `/api/task-definitions/${selectedTaskId}/allowed-workers`
@@ -310,10 +283,6 @@ const TaskDefs: React.FC = () => {
         const regularCrewIds = crewData.worker_ids ?? [];
         setDraft((prev) => ({
           ...prev,
-          station_sequence_order:
-            stationData.station_sequence_order !== null
-              ? String(stationData.station_sequence_order)
-              : '',
           skill_id: specialtyData.skill_id,
           allow_all_workers: allowedData.worker_ids === null,
           allowed_worker_ids: allowedWorkerIds,
@@ -406,22 +375,11 @@ const TaskDefs: React.FC = () => {
 
   const taskSequenceById = useMemo(() => {
     const map = new Map<number, number | null>();
-    applicabilityRows.forEach((row) => {
-      if (!isDefaultApplicabilityRow(row)) {
-        return;
-      }
-      if (map.has(row.task_definition_id)) {
-        return;
-      }
-      map.set(row.task_definition_id, row.station_sequence_order);
-    });
     tasks.forEach((task) => {
-      if (!map.has(task.id)) {
-        map.set(task.id, null);
-      }
+      map.set(task.id, task.default_station_sequence ?? null);
     });
     return map;
-  }, [applicabilityRows, tasks]);
+  }, [tasks]);
 
   const taskNameById = useMemo(
     () => new Map(tasks.map((task) => [task.id, task.name])),
@@ -446,7 +404,7 @@ const TaskDefs: React.FC = () => {
     [draft.station_sequence_order]
   );
 
-  const hasSequenceData = applicabilityRows.length > 0;
+  const hasSequenceData = tasks.some((task) => task.default_station_sequence !== null);
 
   const availableDependencyTasks = useMemo(() => {
     const canFilterBySequence =
@@ -502,13 +460,47 @@ const TaskDefs: React.FC = () => {
     return workers.filter((worker) => formatWorkerName(worker).toLowerCase().includes(needle));
   }, [allowedQuery, workers]);
 
-  const filteredCrewWorkers = useMemo(() => {
-    const needle = crewQuery.trim().toLowerCase();
-    if (!needle) {
-      return workers;
+  const crewPriorityStationIds = useMemo(() => {
+    const parsed = parseSequenceValue(draft.station_sequence_order);
+    if (!parsed) {
+      return new Set<number>();
     }
-    return workers.filter((worker) => formatWorkerName(worker).toLowerCase().includes(needle));
-  }, [crewQuery, workers]);
+    if (draft.scope === 'aux') {
+      return new Set<number>([parsed]);
+    }
+    const allowedRoles =
+      draft.scope === 'panel'
+        ? new Set<Station['role']>(['Panels'])
+        : new Set<Station['role']>(['Assembly', 'AUX']);
+    const matches = stations.filter(
+      (station) => station.sequence_order === parsed && allowedRoles.has(station.role)
+    );
+    return new Set(matches.map((station) => station.id));
+  }, [draft.scope, draft.station_sequence_order, stations]);
+
+  const filteredCrewWorkers = useMemo(() => {
+    const activeWorkers = workers.filter((worker) => worker.active);
+    const needle = crewQuery.trim().toLowerCase();
+    const matching = needle
+      ? activeWorkers.filter((worker) =>
+          formatWorkerName(worker).toLowerCase().includes(needle)
+        )
+      : activeWorkers;
+    if (crewPriorityStationIds.size === 0) {
+      return matching;
+    }
+    const prioritized: Worker[] = [];
+    const others: Worker[] = [];
+    matching.forEach((worker) => {
+      const assigned = worker.assigned_station_ids ?? [];
+      if (assigned.some((stationId) => crewPriorityStationIds.has(stationId))) {
+        prioritized.push(worker);
+      } else {
+        others.push(worker);
+      }
+    });
+    return [...prioritized, ...others];
+  }, [crewQuery, crewPriorityStationIds, workers]);
 
   const dependencySummaryLabel = useMemo(() => {
     if (draft.dependencies_json.length === 0) {
@@ -750,6 +742,7 @@ const TaskDefs: React.FC = () => {
     const payload = {
       name,
       scope: draft.scope,
+      default_station_sequence: stationSequence,
       active: draft.active,
       skippable: draft.scope === 'panel' ? draft.skippable : false,
       concurrent_allowed: draft.scope === 'panel' ? draft.concurrent_allowed : false,
@@ -772,13 +765,6 @@ const TaskDefs: React.FC = () => {
 
       const allowedWorkerIds = draft.allow_all_workers ? null : draft.allowed_worker_ids;
       await Promise.all([
-        apiRequest<TaskStationSequence>(
-          `/api/task-definitions/${saved.id}/station-sequence-order`,
-          {
-            method: 'PUT',
-            body: JSON.stringify({ station_sequence_order: stationSequence }),
-          }
-        ),
         apiRequest<TaskSpecialty>(`/api/task-definitions/${saved.id}/specialty`, {
           method: 'PUT',
           body: JSON.stringify({ skill_id: draft.skill_id }),

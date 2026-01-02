@@ -16,10 +16,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "task_applicability",
-        sa.Column("applies", sa.Boolean(), nullable=False, server_default=sa.true()),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("task_applicability")}
+    if "applies" not in columns:
+        op.add_column(
+            "task_applicability",
+            sa.Column(
+                "applies",
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.true(),
+            ),
+        )
 
 
 def downgrade() -> None:

@@ -25,6 +25,9 @@ class TaskDefinition(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     scope: Mapped[TaskScope] = mapped_column(Enum(TaskScope))
+    default_station_sequence: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     skippable: Mapped[bool] = mapped_column(Boolean, default=False)
     concurrent_allowed: Mapped[bool] = mapped_column(Boolean, default=False)

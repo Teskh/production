@@ -16,28 +16,33 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "worker_supervisors",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("geovictoria_id", sa.String(length=64), nullable=True, unique=True),
-        sa.Column(
-            "geovictoria_identifier", sa.String(length=32), nullable=True, unique=True
-        ),
-        sa.Column("first_name", sa.String(length=100), nullable=False),
-        sa.Column("last_name", sa.String(length=100), nullable=False),
-        sa.Column("pin", sa.String(length=10), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("worker_supervisors"):
+        op.create_table(
+            "worker_supervisors",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("geovictoria_id", sa.String(length=64), nullable=True, unique=True),
+            sa.Column(
+                "geovictoria_identifier", sa.String(length=32), nullable=True, unique=True
+            ),
+            sa.Column("first_name", sa.String(length=100), nullable=False),
+            sa.Column("last_name", sa.String(length=100), nullable=False),
+            sa.Column("pin", sa.String(length=10), nullable=True),
+            sa.PrimaryKeyConstraint("id"),
+        )
     op.execute(
         "ALTER TABLE workers DROP CONSTRAINT IF EXISTS workers_supervisor_id_fkey"
     )
-    op.create_foreign_key(
-        "workers_supervisor_id_fkey",
-        "workers",
-        "worker_supervisors",
-        ["supervisor_id"],
-        ["id"],
-    )
+    existing_fks = {fk["name"] for fk in inspector.get_foreign_keys("workers")}
+    if "workers_supervisor_id_fkey" not in existing_fks:
+        op.create_foreign_key(
+            "workers_supervisor_id_fkey",
+            "workers",
+            "worker_supervisors",
+            ["supervisor_id"],
+            ["id"],
+        )
 
 
 def downgrade() -> None:
