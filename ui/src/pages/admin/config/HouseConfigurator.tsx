@@ -204,20 +204,36 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   return (await response.json()) as T;
 };
 
+const COUNT_LABELS: Record<string, string> = {
+  sub_types: 'Subtypes',
+  panel_definitions: 'Panel definitions',
+  panel_units: 'Panel units',
+  parameter_values: 'Parameter values',
+  work_orders: 'Work orders',
+  work_units: 'Work units',
+  task_applicability: 'Task applicability',
+  task_expected_durations: 'Task expected durations',
+  task_instances: 'Task instances',
+  task_participations: 'Task participations',
+  task_pauses: 'Task pauses',
+  task_exceptions: 'Task exceptions',
+  qc_applicability: 'QC applicability',
+  qc_check_instances: 'QC check instances',
+  qc_executions: 'QC executions',
+  qc_evidence: 'QC evidence',
+  qc_rework_tasks: 'QC rework tasks',
+  qc_notifications: 'QC notifications',
+};
+
 const parseCascadeWarning = (message: string) => {
-  const match = message.match(
-    /sub_types=(\d+), panel_definitions=(\d+), panel_units=(\d+), parameter_values=(\d+)/
-  );
-  if (!match) {
+  const matches = [...message.matchAll(/([a-z_]+)=(\d+)/g)];
+  if (matches.length === 0) {
     return null;
   }
-  const [, subTypes, panelDefinitions, panelUnits, parameterValues] = match;
-  return {
-    subTypes: Number(subTypes),
-    panelDefinitions: Number(panelDefinitions),
-    panelUnits: Number(panelUnits),
-    parameterValues: Number(parameterValues),
-  };
+  return matches.map((match) => ({
+    key: match[1],
+    value: Number(match[2]),
+  }));
 };
 
 const formatOptionalNumber = (value: number | null | undefined): string =>
@@ -1016,12 +1032,15 @@ const HouseConfigurator: React.FC = () => {
       const message = error instanceof Error ? error.message : 'Failed to remove house type.';
       const counts = parseCascadeWarning(message);
       if (counts) {
+        const lines = counts
+          .filter((entry) => entry.value > 0)
+          .map(
+            (entry) =>
+              `${COUNT_LABELS[entry.key] ?? entry.key}: ${entry.value}`
+          );
         const confirmMessage = [
           'This house type has dependent records:',
-          `Subtypes: ${counts.subTypes}`,
-          `Panel definitions: ${counts.panelDefinitions}`,
-          `Panel units: ${counts.panelUnits}`,
-          `Parameter values: ${counts.parameterValues}`,
+          ...lines,
           'Delete anyway?',
         ].join('\n');
         if (!window.confirm(confirmMessage)) {

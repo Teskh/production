@@ -39,6 +39,7 @@ def admin_login(
         httponly=True,
         samesite="lax",
         max_age=int((expires_at - utc_now()).total_seconds()),
+        path="/",
     )
     return admin
 
@@ -58,7 +59,7 @@ def admin_logout(
         if session and session.revoked_at is None:
             session.revoked_at = utc_now()
             db.commit()
-    response.delete_cookie(ADMIN_SESSION_COOKIE)
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
 
 
 @router.get("/me", response_model=AdminUserRead)

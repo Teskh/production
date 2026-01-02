@@ -16,6 +16,9 @@
 - Legacy panel `task_length` lists are padded or trimmed to match `applicable_tasks` lengths when importing to `panel_definitions.task_durations_json`.
 - Pause/note definitions import uses the legacy `stations` CSV (ignoring `station_id`) and maps station codes via the existing W1/A0 mapping to new station IDs.
 
+## 2026-01-02
+- Force-deleting a house type cascades through related production/config data (work orders/units, panel units, task/QC history, applicability/duration rules, parameter values) so the delete can complete without leaving orphaned rows.
+
 ## 2026-01-05
 - Production queue scheduling stores `planned_sequence`, `planned_start_datetime`, and `planned_assembly_line` on `work_units` to order modules directly; `work_orders.planned_sequence` is treated as the first module’s sequence for that house.
 - Batch house identifiers are generated from `house_identifier_base` by incrementing any trailing digits (preserving padding); if none exist, the system appends a `-01` style suffix.

@@ -47,6 +47,7 @@ def worker_login(
         httponly=True,
         samesite="lax",
         max_age=int((expires_at - utc_now()).total_seconds()),
+        path="/",
     )
     return WorkerSessionRead(
         worker=worker,
@@ -67,7 +68,7 @@ def worker_logout(
     if token:
         session.revoked_at = utc_now()
         db.commit()
-    response.delete_cookie(WORKER_SESSION_COOKIE)
+    response.delete_cookie(WORKER_SESSION_COOKIE, path="/")
 
 
 @router.get("/me", response_model=WorkerSessionRead)
