@@ -25,6 +25,11 @@ SECTION_OPTIONS = (
     ("panels", "Panel Definitions"),
     ("pause_reasons", "Pause Reasons"),
     ("comment_templates", "Comment Templates"),
+    ("workers", "Workers"),
+    ("specialties", "Specialties/Skills"),
+    ("module_production", "Module Production Plan"),
+    ("task_logs", "Task Logs (module)"),
+    ("panel_task_logs", "Panel Task Logs"),
 )
 
 
@@ -128,7 +133,7 @@ def _run_web_ui(host: str, port: int) -> None:
     state: dict[str, Any] = {
         "sqlite_path": str(DEFAULT_SQLITE),
         "mode": "report",
-        "sections": [key for key, _ in SECTION_OPTIONS],
+        "sections": list(legacy.DEFAULT_SECTIONS),
         "allow_existing": False,
         "truncate": False,
         "output": "",
