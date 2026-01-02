@@ -5,6 +5,7 @@ node_modules/
 /.pnp
 .pnp.js
 
+
 # testing
 /coverage
 
@@ -47,3 +48,6 @@ frontend/build/
 *data_dump_excluding_stations.sql
 qc_media_gallery/
 docs/references/
+
+# backups
+*.dump
