@@ -324,42 +324,31 @@ const NoteDefs: React.FC = () => {
     }
   };
 
-  const renderTemplateCard = (template: CommentTemplate, index: number) => {
+  const renderTemplateRow = (template: CommentTemplate) => {
     const isSelected = selectedTemplateId === template.id;
     return (
       <button
         key={template.id}
         onClick={() => selectTemplate(template)}
-        className={`flex flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+        className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
           isSelected
-            ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-            : 'border-black/5 bg-white'
+            ? 'bg-blue-50/50'
+            : 'bg-white hover:bg-gray-50'
         }`}
-        style={{ animationDelay: `${index * 60}ms` }}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-              <MessageSquare className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-lg font-semibold text-[var(--ink)]">{template.text}</p>
-              <p className="text-xs text-[var(--ink-muted)]">#{template.id}</p>
-            </div>
-          </div>
-          <span
-            className={`rounded-full border px-2 py-0.5 text-xs ${
-              template.active
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                : 'border-black/10 text-[var(--ink-muted)]'
-            }`}
-          >
-            {template.active ? 'Active' : 'Inactive'}
-          </span>
+        <div className="min-w-0 flex-1 pr-3">
+          <p className={`truncate text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>{template.text}</p>
+          <p className="truncate text-xs text-gray-500">
+            {buildScopeLabel(template.applicable_station_ids)}
+          </p>
         </div>
-        <p className="text-xs text-[var(--ink-muted)]">
-          {buildScopeLabel(template.applicable_station_ids)}
-        </p>
+        <div className="flex shrink-0 items-center gap-3">
+          <span
+            className={`inline-flex h-2 w-2 rounded-full ${
+              template.active ? 'bg-emerald-500' : 'bg-gray-300'
+            }`}
+          />
+        </div>
       </button>
     );
   };
@@ -378,25 +367,25 @@ const NoteDefs: React.FC = () => {
         </div>
         <button
           onClick={handleAddTemplate}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--accent)]/90"
         >
           <Plus className="h-4 w-4" /> Add template
         </button>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="order-last rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm xl:order-none">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
+        <section className="order-last rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden xl:order-none">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Current templates</h2>
-              <p className="text-sm text-[var(--ink-muted)]">{summaryLabel}</p>
+              <h2 className="text-sm font-semibold text-gray-900">Current templates</h2>
+              <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
             <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search templates"
-                className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                placeholder="Search..."
+                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -404,18 +393,18 @@ const NoteDefs: React.FC = () => {
           </div>
 
           {loading && (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
               Loading comment templates...
             </div>
           )}
           {!loading && filteredTemplates.length === 0 && (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
               No comment templates match that search.
             </div>
           )}
 
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
-            {filteredTemplates.map((template, index) => renderTemplateCard(template, index))}
+          <div className="divide-y divide-gray-100">
+            {filteredTemplates.map((template) => renderTemplateRow(template))}
           </div>
         </section>
 

@@ -312,56 +312,57 @@ const Specialties: React.FC = () => {
               </p>
             </div>
             <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search skills"
-                className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                placeholder="Search..."
+                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
           </div>
 
-          <div className="mt-6 space-y-3">
-            {filteredSkills.length === 0 && !loading && (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+          <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            {filteredSkills.length === 0 && !loading ? (
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
                 {skills.length === 0 && !query
                   ? 'No specialties created yet.'
                   : 'No specialties match your search.'}
               </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {filteredSkills.map((skill) => {
+                  const workerCount = assignmentMap.get(skill.id)?.length ?? 0;
+                  const isSelected = selectedSkillId === skill.id;
+                  
+                  return (
+                    <button
+                      key={skill.id}
+                      onClick={() => {
+                        setStatusMessage(null);
+                        setSelectedSkillId(skill.id);
+                      }}
+                      className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50/50'
+                          : 'bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div>
+                         <p className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>{skill.name}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <span className="text-xs text-gray-500">
+                           {workerCount} workers
+                         </span>
+                         <ChevronRight className={`h-4 w-4 text-gray-300 transition-colors ${isSelected ? 'text-blue-300' : 'group-hover:text-gray-400'}`} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             )}
-            {filteredSkills.map((skill, index) => {
-              const workerCount = assignmentMap.get(skill.id)?.length ?? 0;
-              return (
-                <button
-                  key={skill.id}
-                  onClick={() => {
-                    setStatusMessage(null);
-                    setSelectedSkillId(skill.id);
-                  }}
-                  className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                    selectedSkillId === skill.id
-                      ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                      : 'border-black/5 bg-white'
-                  }`}
-                  style={{ animationDelay: `${index * 70}ms` }}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-                      <Layers className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-[var(--ink)]">{skill.name}</p>
-                      <p className="text-xs text-[var(--ink-muted)]">
-                        {workerCount} workers assigned
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
-                </button>
-              );
-            })}
           </div>
         </section>
 

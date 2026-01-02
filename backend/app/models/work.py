@@ -71,3 +71,4 @@ class PanelUnit(Base):
     )
 
     work_unit: Mapped["WorkUnit"] = relationship(back_populates="panel_units")
+    panel_definition: Mapped["PanelDefinition"] = relationship(back_populates="panel_units")

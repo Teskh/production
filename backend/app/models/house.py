@@ -20,6 +20,9 @@ class HouseType(Base):
     panel_definitions: Mapped[list["PanelDefinition"]] = relationship(
         back_populates="house_type", cascade="all, delete-orphan"
     )
+    parameter_values: Mapped[list["HouseParameterValue"]] = relationship(
+        back_populates="house_type", cascade="all, delete-orphan"
+    )
 
 
 class HouseSubType(Base):
@@ -56,6 +59,9 @@ class PanelDefinition(Base):
     )
 
     house_type: Mapped["HouseType"] = relationship(back_populates="panel_definitions")
+    panel_units: Mapped[list["PanelUnit"]] = relationship(
+        back_populates="panel_definition", cascade="all, delete-orphan"
+    )
 
 
 class HouseParameter(Base):
@@ -81,3 +87,5 @@ class HouseParameterValue(Base):
         ForeignKey("house_sub_types.id"), nullable=True
     )
     value: Mapped[float] = mapped_column(Numeric(12, 4))
+
+    house_type: Mapped["HouseType"] = relationship(back_populates="parameter_values")

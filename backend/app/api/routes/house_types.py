@@ -1,9 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.house import HouseSubType, HouseType
+from app.models.house import HouseParameterValue, HouseSubType, HouseType, PanelDefinition
+from app.models.work import PanelUnit
 from app.schemas.houses import (
     HouseSubTypeCreate,
     HouseSubTypeRead,
@@ -53,10 +56,56 @@ def update_house_type(
 
 
 @router.delete("/{house_type_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_house_type(house_type_id: int, db: Session = Depends(get_db)) -> None:
+def delete_house_type(
+    house_type_id: int, force: bool = False, db: Session = Depends(get_db)
+) -> None:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="House type not found")
+    sub_type_count = db.scalar(
+        select(func.count()).where(HouseSubType.house_type_id == house_type_id)
+    )
+    panel_definition_count = db.scalar(
+        select(func.count()).where(PanelDefinition.house_type_id == house_type_id)
+    )
+    panel_unit_count = db.scalar(
+        select(func.count())
+        .select_from(PanelUnit)
+        .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+        .where(PanelDefinition.house_type_id == house_type_id)
+    )
+    parameter_value_count = db.scalar(
+        select(func.count()).where(HouseParameterValue.house_type_id == house_type_id)
+    )
+    cascade_total = (
+        (sub_type_count or 0)
+        + (panel_definition_count or 0)
+        + (panel_unit_count or 0)
+        + (parameter_value_count or 0)
+    )
+    if cascade_total > 0 and not force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "House type has dependent records. "
+                f"sub_types={sub_type_count or 0}, "
+                f"panel_definitions={panel_definition_count or 0}, "
+                f"panel_units={panel_unit_count or 0}, "
+                f"parameter_values={parameter_value_count or 0}. "
+                "Retry with ?force=true to delete anyway."
+            ),
+        )
+    if cascade_total > 0:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Deleting house_type_id=%s with cascading data: sub_types=%s, "
+            "panel_definitions=%s, panel_units=%s, parameter_values=%s",
+            house_type_id,
+            sub_type_count or 0,
+            panel_definition_count or 0,
+            panel_unit_count or 0,
+            parameter_value_count or 0,
+        )
     db.delete(house_type)
     db.commit()
 

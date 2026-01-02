@@ -186,12 +186,38 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
+    if (text) {
+      try {
+        const data = JSON.parse(text) as { detail?: string };
+        if (data?.detail) {
+          throw new Error(data.detail);
+        }
+      } catch {
+        // Fall through to the raw text.
+      }
+    }
     throw new Error(text || `Request failed (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+};
+
+const parseCascadeWarning = (message: string) => {
+  const match = message.match(
+    /sub_types=(\d+), panel_definitions=(\d+), panel_units=(\d+), parameter_values=(\d+)/
+  );
+  if (!match) {
+    return null;
+  }
+  const [, subTypes, panelDefinitions, panelUnits, parameterValues] = match;
+  return {
+    subTypes: Number(subTypes),
+    panelDefinitions: Number(panelDefinitions),
+    panelUnits: Number(panelUnits),
+    parameterValues: Number(parameterValues),
+  };
 };
 
 const formatOptionalNumber = (value: number | null | undefined): string =>
@@ -988,6 +1014,47 @@ const HouseConfigurator: React.FC = () => {
       setTypeStatusMessage('House type removed.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to remove house type.';
+      const counts = parseCascadeWarning(message);
+      if (counts) {
+        const confirmMessage = [
+          'This house type has dependent records:',
+          `Subtypes: ${counts.subTypes}`,
+          `Panel definitions: ${counts.panelDefinitions}`,
+          `Panel units: ${counts.panelUnits}`,
+          `Parameter values: ${counts.parameterValues}`,
+          'Delete anyway?',
+        ].join('\n');
+        if (!window.confirm(confirmMessage)) {
+          setTypeStatusMessage('Deletion cancelled.');
+          return;
+        }
+        try {
+          await apiRequest<void>(`/api/house-types/${draft.id}?force=true`, {
+            method: 'DELETE',
+          });
+          const remaining = sortHouseTypes(houseTypes.filter((item) => item.id !== draft.id));
+          setHouseTypes(remaining);
+          setSubtypesByType((prev) => {
+            const next = { ...prev };
+            delete next[draft.id as number];
+            return next;
+          });
+          if (remaining.length > 0) {
+            handleSelectType(remaining[0]);
+          } else {
+            setSelectedTypeId(null);
+            setSelectedModuleNumber(null);
+            setDraft(emptyDraft());
+          }
+          setTypeStatusMessage('House type removed.');
+          return;
+        } catch (forceError) {
+          const forceMessage =
+            forceError instanceof Error ? forceError.message : 'Failed to remove house type.';
+          setTypeStatusMessage(forceMessage);
+          return;
+        }
+      }
       setTypeStatusMessage(message);
     } finally {
       setSavingType(false);

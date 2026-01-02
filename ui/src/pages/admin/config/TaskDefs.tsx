@@ -879,80 +879,76 @@ const TaskDefs: React.FC = () => {
           </div>
 
           {loading ? (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
               Loading task definitions...
             </div>
           ) : catalogGroups.length ? (
-            <div className="mt-6 space-y-4">
+            <div className="space-y-4">
               {catalogGroups.map((group) => {
                 const isOpen = catalogOpenGroups[group.key] ?? true;
                 return (
                   <div
                     key={group.key}
-                    className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.12)] p-3"
+                    className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
                   >
                     <button
                       type="button"
                       onClick={() => toggleCatalogGroup(group.key)}
-                      className="flex w-full items-center justify-between gap-4 rounded-2xl bg-white px-3 py-3 text-left"
+                      className="flex w-full items-center justify-between bg-gray-50/50 px-4 py-2 text-left hover:bg-gray-100 transition-colors"
                     >
-                      <span className="flex items-center gap-3">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-black/10 text-[var(--ink-muted)]">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-5 w-5 items-center justify-center rounded text-gray-400">
                           {isOpen ? (
-                            <ChevronDown className="h-4 w-4" />
+                            <ChevronDown className="h-3.5 w-3.5" />
                           ) : (
-                            <ChevronRight className="h-4 w-4" />
+                            <ChevronRight className="h-3.5 w-3.5" />
                           )}
                         </span>
-                        <span>
-                          <p className="font-semibold text-[var(--ink)]">{group.name}</p>
-                          <p className="text-xs text-[var(--ink-muted)]">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">{group.name}</p>
+                          <p className="text-[10px] text-gray-500">
                             {group.badge} · {group.tasks.length} tasks
                           </p>
-                        </span>
-                      </span>
+                        </div>
+                      </div>
                     </button>
 
                     {isOpen && (
-                      <div className="mt-3 grid gap-3">
-                        {group.tasks.map((task, index) => (
+                      <div className="divide-y divide-gray-100">
+                        {group.tasks.map((task) => (
                           <button
                             key={task.id}
                             onClick={() => setSelectedTaskId(task.id)}
-                            className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+                            className={`flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
                               selectedTaskId === task.id
-                                ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                                : 'border-black/5 bg-white'
+                                ? 'bg-blue-50/50'
+                                : 'bg-white hover:bg-gray-50'
                             }`}
-                            style={{ animationDelay: `${index * 70}ms` }}
                           >
-                            <div className="flex items-center gap-4">
-                              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.55)] text-[var(--ink)]">
-                                <ClipboardCheck className="h-5 w-5" />
-                              </div>
-                              <div>
-                                <p className="font-semibold text-[var(--ink)]">{task.name}</p>
-                                <p className="text-xs text-[var(--ink-muted)]">
-                                  Scope: {task.scope}
-                                  {task.scope === 'panel' && (
-                                    <>
-                                      {' '}
-                                      · {task.skippable ? 'Skippable' : 'Required'} ·{' '}
-                                      {task.concurrent_allowed ? 'Concurrent' : 'Solo'}
-                                    </>
-                                  )}
-                                </p>
+                            <div className="min-w-0 flex-1 pr-3">
+                              <p className={`truncate text-sm font-medium ${selectedTaskId === task.id ? 'text-blue-900' : 'text-gray-900'}`}>{task.name}</p>
+                              <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                                <span className="uppercase tracking-wider">{task.scope}</span>
+                                {task.scope === 'panel' && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{task.skippable ? 'Skip OK' : 'Required'}</span>
+                                  </>
+                                )}
+                                {task.scope === 'module' && task.advance_trigger && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="text-emerald-600 font-medium">Trigger</span>
+                                  </>
+                                )}
                               </div>
                             </div>
-                            <div className="flex flex-col items-end gap-2">
-                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
-                                {task.active ? 'Active' : 'Inactive'}
-                              </span>
-                              {task.scope === 'module' && task.advance_trigger && (
-                                <span className="rounded-full bg-[rgba(47,107,79,0.12)] px-2 py-0.5 text-xs text-[var(--leaf)]">
-                                  Advance trigger
-                                </span>
-                              )}
+                            <div className="shrink-0">
+                               <span
+                                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                                  task.active ? 'bg-emerald-500' : 'bg-gray-300'
+                                }`}
+                              />
                             </div>
                           </button>
                         ))}
@@ -963,7 +959,7 @@ const TaskDefs: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
               No tasks match this search.
             </div>
           )}
@@ -1158,15 +1154,15 @@ const TaskDefs: React.FC = () => {
                             className="w-full bg-transparent text-xs outline-none"
                           />
                         </label>
-                        <div className="mt-3 max-h-48 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
+                        <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-2 text-xs">
                           {availableDependencyTasks.length === 0 ? (
                             <p className="text-[var(--ink-muted)]">
                               No eligible tasks for this scope/sequence.
                             </p>
                           ) : dependencyOptions.length ? (
-                            <div className="flex flex-col gap-2">
+                            <div className="flex flex-col gap-1.5">
                               {dependencyOptions.map((dep) => (
-                                <label key={dep.id} className="flex items-center gap-2">
+                                <label key={dep.id} className="flex items-center gap-2 py-0.5">
                                   <input
                                     type="checkbox"
                                     checked={draft.dependencies_json.includes(dep.id)}
@@ -1228,23 +1224,25 @@ const TaskDefs: React.FC = () => {
                         className="w-full bg-transparent text-xs outline-none"
                       />
                     </label>
-                    <div className="max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
+                    <div className="max-h-40 overflow-auto rounded-xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-2 text-xs">
                       {filteredAllowedWorkers.length ? (
-                        filteredAllowedWorkers.map((worker) => (
-                          <label key={worker.id} className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={draft.allowed_worker_ids.includes(worker.id)}
-                              onChange={() => toggleAllowedWorker(worker.id)}
-                            />
-                            <span className="flex-1">{formatWorkerName(worker)}</span>
-                            {!worker.active && (
-                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                                Inactive
-                              </span>
-                            )}
-                          </label>
-                        ))
+                        <div className="flex flex-col gap-1.5">
+                          {filteredAllowedWorkers.map((worker) => (
+                            <label key={worker.id} className="flex items-center gap-2 py-0.5">
+                              <input
+                                type="checkbox"
+                                checked={draft.allowed_worker_ids.includes(worker.id)}
+                                onChange={() => toggleAllowedWorker(worker.id)}
+                              />
+                              <span className="flex-1">{formatWorkerName(worker)}</span>
+                              {!worker.active && (
+                                <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                                  Inactive
+                                </span>
+                              )}
+                            </label>
+                          ))}
+                        </div>
                       ) : (
                         <p className="text-[var(--ink-muted)]">No workers found.</p>
                       )}
@@ -1260,19 +1258,19 @@ const TaskDefs: React.FC = () => {
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
                   Favorites list for group starts. This does not restrict who can perform the task.
                 </p>
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3">
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
                       Selected ({draft.regular_crew_worker_ids.length})
                     </p>
-                    <p className="text-sm text-[var(--ink)]">{crewSummaryLabel}</p>
+                    <p className="text-sm font-medium text-[var(--ink)]">{crewSummaryLabel}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setCrewModalOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-[var(--ink)]"
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm"
                   >
-                    <Users className="h-4 w-4" /> Manage crew
+                    <Users className="h-3.5 w-3.5" /> Manage
                   </button>
                 </div>
               </div>

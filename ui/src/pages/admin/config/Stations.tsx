@@ -322,33 +322,30 @@ const Stations: React.FC = () => {
     }
   };
 
-  const renderStationCard = (station: Station, index: number) => {
+  const renderStationRow = (station: Station) => {
     const isSelected = selectedStationId === station.id;
     const sequenceLabel = station.sequence_order !== null ? `Seq ${station.sequence_order}` : 'Seq n/a';
+    
     return (
       <button
         key={station.id}
         onClick={() => selectStation(station)}
-        className={`flex flex-col gap-3 rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
+        className={`group flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
           isSelected
-            ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-            : 'border-black/5 bg-white'
+            ? 'bg-blue-50/50'
+            : 'bg-white hover:bg-gray-50'
         }`}
-        style={{ animationDelay: `${index * 60}ms` }}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[rgba(201,215,245,0.6)] text-[var(--ink)]">
-              <MapPin className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="text-lg font-semibold text-[var(--ink)]">{station.name}</p>
-              <p className="text-xs text-[var(--ink-muted)]">#{station.id}</p>
-            </div>
-          </div>
-          <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
-            {sequenceLabel}
-          </span>
+        <div className="flex items-center gap-3">
+          <p className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>{station.name}</p>
+        </div>
+        <div className="flex items-center gap-3">
+           {station.role !== 'AUX' && (
+            <span className="text-xs text-gray-500 font-mono">
+              {sequenceLabel}
+            </span>
+           )}
+           {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
         </div>
       </button>
     );
@@ -368,25 +365,25 @@ const Stations: React.FC = () => {
         </div>
         <button
           onClick={handleAddStation}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--accent)]/90"
         >
           <Plus className="h-4 w-4" /> Add station
         </button>
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="order-last rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm xl:order-none">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
+        <section className="order-last rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden xl:order-none">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Active stations</h2>
-              <p className="text-sm text-[var(--ink-muted)]">{summaryLabel}</p>
+              <h2 className="text-sm font-semibold text-gray-900">Active stations</h2>
+              <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
             <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search stations"
-                className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
+                placeholder="Search..."
+                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -394,120 +391,96 @@ const Stations: React.FC = () => {
           </div>
 
           {loading && (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
               Loading stations…
             </div>
           )}
           {!loading && filteredStations.length === 0 && (
-            <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
               No stations match that search.
             </div>
           )}
 
-          <div className="mt-6 space-y-8">
-            {(groupedStations.panels.length > 0 || !search.trim()) && (
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Panels</h3>
-                  <span className="text-xs text-[var(--ink-muted)]">{groupedStations.panels.length} stations</span>
+          {!loading && (
+            <div className="divide-y divide-gray-100">
+              {(groupedStations.panels.length > 0 || !search.trim()) && (
+                <div>
+                   <div className="bg-gray-50 px-4 py-2 border-y border-gray-100 first:border-t-0">
+                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Panels</h3>
+                   </div>
+                   <div className="divide-y divide-gray-100">
+                     {groupedStations.panels.length === 0 ? (
+                        <div className="px-4 py-3 text-xs text-gray-400 italic">No panel stations yet.</div>
+                     ) : (
+                        groupedStations.panels.map(renderStationRow)
+                     )}
+                   </div>
                 </div>
-                {groupedStations.panels.length === 0 ? (
-                  <div className="mt-3 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
-                    No panel stations yet.
-                  </div>
-                ) : (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    {groupedStations.panels.map((station, index) => renderStationCard(station, index))}
-                  </div>
-                )}
-              </div>
-            )}
+              )}
 
-            {(groupedStations.magazine.length > 0 || !search.trim()) && (
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Magazine</h3>
-                  <span className="text-xs text-[var(--ink-muted)]">{groupedStations.magazine.length} stations</span>
+              {(groupedStations.magazine.length > 0 || !search.trim()) && (
+                <div>
+                   <div className="bg-gray-50 px-4 py-2 border-y border-gray-100">
+                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Magazine</h3>
+                   </div>
+                   <div className="divide-y divide-gray-100">
+                     {groupedStations.magazine.length === 0 ? (
+                        <div className="px-4 py-3 text-xs text-gray-400 italic">No magazine stations yet.</div>
+                     ) : (
+                        groupedStations.magazine.map(renderStationRow)
+                     )}
+                   </div>
                 </div>
-                {groupedStations.magazine.length === 0 ? (
-                  <div className="mt-3 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
-                    No magazine stations yet.
-                  </div>
-                ) : (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    {groupedStations.magazine.map((station, index) => renderStationCard(station, index))}
-                  </div>
-                )}
-              </div>
-            )}
+              )}
 
-            {(groupedStations.assemblyLines['1'].length > 0 ||
-              groupedStations.assemblyLines['2'].length > 0 ||
-              groupedStations.assemblyLines['3'].length > 0 ||
-              groupedStations.assemblyOther.length > 0 ||
-              !search.trim()) && (
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Assembly</h3>
-                  <span className="text-xs text-[var(--ink-muted)]">
-                    {groupedStations.assemblyLines['1'].length +
-                      groupedStations.assemblyLines['2'].length +
-                      groupedStations.assemblyLines['3'].length +
-                      groupedStations.assemblyOther.length}{' '}
-                    stations
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-4 lg:grid-cols-3">
-                  {(['1', '2', '3'] as StationLineType[]).map((line) => (
-                    <div key={line} className="space-y-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                        Line {line}
-                      </p>
-                      {groupedStations.assemblyLines[line].length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
-                          No stations on this line.
-                        </div>
-                      ) : (
-                        <div className="grid gap-3">
-                          {groupedStations.assemblyLines[line].map((station, index) =>
-                            renderStationCard(station, index)
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {groupedStations.assemblyOther.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                      Assembly (Unassigned line)
-                    </p>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {groupedStations.assemblyOther.map((station, index) => renderStationCard(station, index))}
-                    </div>
+              {(groupedStations.assemblyLines['1'].length > 0 ||
+                groupedStations.assemblyLines['2'].length > 0 ||
+                groupedStations.assemblyLines['3'].length > 0 ||
+                groupedStations.assemblyOther.length > 0 ||
+                !search.trim()) && (
+                <div>
+                  <div className="bg-gray-50 px-4 py-2 border-y border-gray-100">
+                     <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Assembly</h3>
                   </div>
-                )}
-              </div>
-            )}
+                  <div className="divide-y divide-gray-100">
+                    {(['1', '2', '3'] as StationLineType[]).map((line) => (
+                      <div key={line} className="divide-y divide-gray-100">
+                         {groupedStations.assemblyLines[line].length > 0 && (
+                            <div className="bg-gray-50/50 px-4 py-1.5 border-y border-gray-50">
+                               <span className="text-[10px] font-medium text-gray-400">Line {line}</span>
+                            </div>
+                         )}
+                         {groupedStations.assemblyLines[line].map(renderStationRow)}
+                      </div>
+                    ))}
+                    {groupedStations.assemblyOther.length > 0 && (
+                      <div className="divide-y divide-gray-100">
+                         <div className="bg-gray-50/50 px-4 py-1.5 border-y border-gray-50">
+                            <span className="text-[10px] font-medium text-gray-400">Unassigned Line</span>
+                         </div>
+                         {groupedStations.assemblyOther.map(renderStationRow)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
-            {(groupedStations.aux.length > 0 || !search.trim()) && (
-              <div>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">AUX</h3>
-                  <span className="text-xs text-[var(--ink-muted)]">{groupedStations.aux.length} stations</span>
+              {(groupedStations.aux.length > 0 || !search.trim()) && (
+                <div>
+                   <div className="bg-gray-50 px-4 py-2 border-y border-gray-100">
+                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">AUX</h3>
+                   </div>
+                   <div className="divide-y divide-gray-100">
+                     {groupedStations.aux.length === 0 ? (
+                        <div className="px-4 py-3 text-xs text-gray-400 italic">No AUX stations yet.</div>
+                     ) : (
+                        groupedStations.aux.map(renderStationRow)
+                     )}
+                   </div>
                 </div>
-                {groupedStations.aux.length === 0 ? (
-                  <div className="mt-3 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-4 text-sm text-[var(--ink-muted)]">
-                    No AUX stations yet.
-                  </div>
-                ) : (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    {groupedStations.aux.map((station, index) => renderStationCard(station, index))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </section>
 
         <aside className="order-first space-y-6 xl:order-none">

@@ -967,29 +967,31 @@ const Workers: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-6 space-y-3">
+          <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             {isWorkerMode && workers.length === 0 && !loading && (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
                 No workers found. Add the first worker to get started.
               </div>
             )}
             {isWorkerMode && workers.length > 0 && filteredWorkers.length === 0 && !loading && (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
                 No workers match that search.
               </div>
             )}
             {!isWorkerMode && supervisors.length === 0 && !loading && (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
                 No supervisors found. Add the first supervisor to get started.
               </div>
             )}
             {!isWorkerMode && supervisors.length > 0 && filteredSupervisors.length === 0 && !loading && (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="px-4 py-8 text-center text-sm text-gray-500">
                 No supervisors match that search.
               </div>
             )}
+            
+            <div className="divide-y divide-gray-100">
             {isWorkerMode &&
-              filteredWorkers.map((worker, index) => {
+              filteredWorkers.map((worker) => {
                 const stationsLabel = worker.assigned_station_ids?.length
                   ? worker.assigned_station_ids
                       .map((id) => stationNameById.get(id) ?? 'Unknown station')
@@ -999,106 +1001,88 @@ const Workers: React.FC = () => {
                   worker.supervisor_id != null
                     ? supervisorNameById.get(worker.supervisor_id) ?? 'Unknown supervisor'
                     : 'Unassigned';
+                const isSelected = selectedWorkerId === worker.id;
+
                 return (
                   <div
                     key={worker.id}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                      selectedWorkerId === worker.id
-                        ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                        : 'border-black/5 bg-white'
+                    className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
+                      isSelected
+                        ? 'bg-blue-50/50'
+                        : 'bg-white hover:bg-gray-50'
                     }`}
-                    style={{ animationDelay: `${index * 80}ms` }}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--sky)] text-[var(--ink)]">
-                        <Users className="h-5 w-5" />
+                    <div className="flex-1 min-w-0 pr-4">
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+                           {worker.first_name} {worker.last_name}
+                        </p>
+                        {!worker.active && (
+                           <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                             Inactive
+                           </span>
+                        )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-[var(--ink)]">
-                            {worker.first_name} {worker.last_name}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setStatusMessage(null);
-                              setSelectedWorkerId(worker.id);
-                            }}
-                            className="rounded-full border border-black/10 px-2 py-0.5 text-xs font-semibold text-[var(--ink)] hover:bg-black/5"
-                          >
-                            Edit
-                          </button>
-                          {worker.active && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(47,107,79,0.15)] px-2 py-0.5 text-xs text-[var(--leaf)]">
-                              <BadgeCheck className="h-3 w-3" /> Active
-                            </span>
-                          )}
-                          {!worker.active && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
-                              Inactive
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          Stations: {stationsLabel}
-                        </p>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          Supervisor: {supervisorLabel}
-                        </p>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          RUT: {worker.geovictoria_identifier || 'Unlinked'}
-                        </p>
+                      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                         <span className="truncate">Stations: {stationsLabel}</span>
+                         <span className="truncate">Sup: {supervisorLabel}</span>
+                         <span className="truncate text-gray-400">RUT: {worker.geovictoria_identifier || 'Unlinked'}</span>
                       </div>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                    <div className="flex items-center gap-3 shrink-0">
+                      <button
+                         type="button"
+                         onClick={() => {
+                           setStatusMessage(null);
+                           setSelectedWorkerId(worker.id);
+                         }}
+                         className={`rounded-full px-2.5 py-1 text-xs font-medium border transition-colors ${isSelected ? 'bg-white border-blue-200 text-blue-700 shadow-sm' : 'bg-gray-50 border-gray-200 text-gray-600 group-hover:bg-white group-hover:border-gray-300'}`}
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </div>
                 );
               })}
             {!isWorkerMode &&
-              filteredSupervisors.map((supervisor, index) => {
+              filteredSupervisors.map((supervisor) => {
                 const crewCount = supervisorCrewCounts.get(supervisor.id) ?? 0;
+                const isSelected = selectedSupervisorId === supervisor.id;
+                
                 return (
                   <div
                     key={supervisor.id}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition hover:shadow-sm animate-rise ${
-                      selectedSupervisorId === supervisor.id
-                        ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)]'
-                        : 'border-black/5 bg-white'
+                    className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
+                      isSelected
+                         ? 'bg-blue-50/50'
+                         : 'bg-white hover:bg-gray-50'
                     }`}
-                    style={{ animationDelay: `${index * 80}ms` }}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(47,107,79,0.12)] text-[var(--leaf)]">
-                        <Shield className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold text-[var(--ink)]">
-                            {supervisor.first_name} {supervisor.last_name}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setStatusMessage(null);
-                              setSelectedSupervisorId(supervisor.id);
-                            }}
-                            className="rounded-full border border-black/10 px-2 py-0.5 text-xs font-semibold text-[var(--ink)] hover:bg-black/5"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          Crew: {crewCount} workers
-                        </p>
-                        <p className="text-xs text-[var(--ink-muted)]">
-                          RUT: {supervisor.geovictoria_identifier || 'Unlinked'}
-                        </p>
-                      </div>
+                    <div className="flex-1 min-w-0 pr-4">
+                       <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+                         {supervisor.first_name} {supervisor.last_name}
+                       </p>
+                       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                          <span>Crew: {crewCount} workers</span>
+                          <span className="truncate text-gray-400">RUT: {supervisor.geovictoria_identifier || 'Unlinked'}</span>
+                       </div>
                     </div>
-                    <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                    <div className="flex items-center gap-3 shrink-0">
+                      <button
+                         type="button"
+                         onClick={() => {
+                           setStatusMessage(null);
+                           setSelectedSupervisorId(supervisor.id);
+                         }}
+                         className={`rounded-full px-2.5 py-1 text-xs font-medium border transition-colors ${isSelected ? 'bg-white border-blue-200 text-blue-700 shadow-sm' : 'bg-gray-50 border-gray-200 text-gray-600 group-hover:bg-white group-hover:border-gray-300'}`}
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </div>
                 );
               })}
+            </div>
           </div>
         </section>
 

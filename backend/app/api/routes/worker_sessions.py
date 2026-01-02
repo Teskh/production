@@ -13,6 +13,7 @@ from app.schemas.worker_sessions import (
 router = APIRouter()
 
 _IDLE_TIMEOUT_SECONDS = 45
+_DEFAULT_PIN = "1111"
 
 
 @router.post("/login", response_model=WorkerSessionRead)
@@ -50,7 +51,7 @@ def worker_login(
     return WorkerSessionRead(
         worker=worker,
         station_id=session.station_id,
-        require_pin_change=worker.pin == "1111",
+        require_pin_change=worker.login_required and worker.pin == _DEFAULT_PIN,
         idle_timeout_seconds=_IDLE_TIMEOUT_SECONDS,
     )
 
@@ -82,7 +83,7 @@ def worker_me(
     return WorkerSessionRead(
         worker=worker,
         station_id=session.station_id,
-        require_pin_change=worker.pin == "1111",
+        require_pin_change=worker.login_required and worker.pin == _DEFAULT_PIN,
         idle_timeout_seconds=_IDLE_TIMEOUT_SECONDS,
     )
 
@@ -101,6 +102,6 @@ def update_station(
     return WorkerSessionRead(
         worker=worker,
         station_id=session.station_id,
-        require_pin_change=worker.pin == "1111",
+        require_pin_change=worker.login_required and worker.pin == _DEFAULT_PIN,
         idle_timeout_seconds=_IDLE_TIMEOUT_SECONDS,
     )
