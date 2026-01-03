@@ -327,6 +327,19 @@ Advancement logic:
 - applicable_station_ids (json array, nullable)
 - active (boolean)
 
+`QCCheckCategory`
+- id
+- name
+- parent_id (nullable, for subcategories)
+- active (boolean)
+- sort_order (nullable)
+
+`QCSeverityLevel`
+- id
+- name (e.g., Low | Medium | High)
+- sort_order (nullable)
+- active (boolean)
+
 `AdminUser`
 - id
 - first_name
@@ -343,8 +356,15 @@ Advancement logic:
 - guidance_text (nullable)
 - version (integer, for tracking changes)
 - kind (triggered | manual_template)
+- category_id (nullable, FK to QCCheckCategory)
 - created_by_user_id (nullable, for manual templates)
 - archived_at (nullable)
+
+`QCCheckSeverityOption`
+- id
+- check_definition_id
+- severity_level_id
+- is_default (boolean)
 
 `QCTrigger`
 - id
@@ -378,6 +398,7 @@ Advancement logic:
 - related_task_instance_id (nullable)
 - station_id (nullable)
 - status (Open | Closed)
+- severity_level_id (nullable, set when an execution fails)
 - sampling_selected (boolean)
 - sampling_probability (float)
 - opened_by_user_id (nullable)
@@ -392,6 +413,27 @@ Advancement logic:
 - measurement_json (nullable)
 - performed_by_user_id
 - performed_at
+
+`QCFailureModeDefinition`
+- id
+- check_definition_id (nullable, for shared/global modes)
+- name
+- description (nullable)
+- default_severity_level_id (nullable, FK to QCSeverityLevel)
+- default_rework_description (nullable)
+- require_evidence (boolean)
+- require_measurement (boolean)
+- active (boolean)
+- created_by_user_id (nullable)
+- archived_at (nullable)
+
+`QCExecutionFailureMode`
+- id
+- execution_id
+- failure_mode_definition_id (nullable)
+- other_text (nullable, for ad-hoc)
+- measurement_json (nullable)
+- notes (nullable)
 
 `QCEvidence`
 - id
@@ -432,6 +474,8 @@ Notes:
   - Manual checks bypass sampling: set `sampling_selected = true` and `sampling_probability = 1.0`.
 - `opened_by_user_id` records the QC user for manual checks; triggered checks can leave it null or set to a system user.
 - `QCApplicability` can still scope manual templates; ad hoc checks bypass applicability filters.
+- `QCCheckSeverityOption` defines which severity levels are selectable per check definition; ad hoc checks can use all active `QCSeverityLevel` entries.
+- `QCFailureModeDefinition.default_severity_level_id` is used to preselect a severity when a failure mode is chosen; on Fail outcomes, set `QCCheckInstance.severity_level_id`.
 
 ---
 

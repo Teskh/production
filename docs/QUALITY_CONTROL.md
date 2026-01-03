@@ -7,10 +7,13 @@
 
 ## Core concepts
 - Check definitions: named checks with descriptions, active state, and sampling settings.
-- Triggers: events that can open a check (task completion)
+- Check categories: hierarchical grouping for QC check definitions (category + optional subcategory).
+- Triggers: events that can open a check (task completion or station entry).
 - Applicability rules: scope checks by house type, module number, and optional subtype.
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
+- Failure modes: predefined reasons for a failed check, each with a default severity and optional defaults for rework/evidence.
+- Severity: chosen on a failed check from the check's allowed severity levels, prefilled by failure mode defaults.
 - Evidence: photos or videos attached to an execution.
 - Rework tasks: corrective work created from failed checks.
 - Worker notifications: alerts for the worker whose work triggered the failed check.
@@ -25,6 +28,8 @@
 
 ## Check lifecycle
 - Open checks are executed by QC staff with an outcome and notes.
+- Failed outcomes require selecting a severity level from the check's configured severity options.
+- Failed outcomes can select one or more failure modes; defaults are used only as prefill.
 - Pass/waive/skip closes the check and auto-completes any open rework for it.
 - Fail marks the check failed, creates a rework task, and alerts the original worker.
 - A check cannot be re-executed while its rework is open or in progress.
@@ -53,6 +58,7 @@
 ### QC execution
 - Split layout: guidance/reference media on top, actions and evidence below.
 - Notes entry uses a focused modal panel.
+- Failure mode selection and severity picker appear when failing a check.
 - Fast pass/fail actions; rework blocks re-execution until resolved.
 
 ### QC library (history)
@@ -64,6 +70,33 @@
 - QC alert badge near the worker identity; modal shows failures, notes, evidence, and rework status.
 - Notifications are informational and do not block task actions.
 - Station view surfaces rework tasks with clear status coloring and start/pause/complete controls.
+
+## Minimal UI requirements
+### QC dashboard
+- Pending checks list with status, module/panel context, and station/line.
+- Rework list with status and quick navigation to execution.
+- Station/line overview to spot concentration of open checks/rework.
+- QC identity indicator and in-page login prompt.
+- Auto-refresh at a fixed interval.
+
+### QC execution
+- Guidance/reference media area.
+- Evidence gallery (captured and uploaded).
+- Outcome actions: pass, fail, waive, skip.
+- Failure mode picker and severity selector (required on fail).
+- Notes entry.
+- Clear block when rework is open/in progress.
+
+### QC library (history)
+- Module list with summary counts.
+- Filters for project and production status.
+- Toggle for unfulfilled items.
+- Module detail overlay with checks, outcomes, evidence, and rework history.
+
+### Worker station touchpoints
+- QC notification badge near worker identity.
+- Notification modal with check details, notes, evidence, and rework status.
+- Rework task banner with start/pause/complete controls.
 
 ## Integration with production flow
 - Checks can be tied to module tasks or panel tasks for traceability.
