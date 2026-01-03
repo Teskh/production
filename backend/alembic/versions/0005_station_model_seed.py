@@ -66,6 +66,13 @@ def _remap_station_id(table: str, column: str) -> None:
 
 
 def _remap_station_id_array(table: str, column: str) -> None:
+    array_source = (
+        f"CASE "
+        f"WHEN jsonb_typeof({table}.{column}) = 'array' THEN {table}.{column} "
+        f"WHEN jsonb_typeof({table}.{column}) IN ('string', 'number') "
+        f"THEN jsonb_build_array({table}.{column}) "
+        f"ELSE '[]'::jsonb END"
+    )
     cases = []
     for legacy_id, new_id in _STATION_ID_MAP.items():
         cases.append(f"WHEN value = '{legacy_id}' THEN {new_id}")
@@ -78,7 +85,7 @@ def _remap_station_id_array(table: str, column: str) -> None:
             SELECT jsonb_agg(mapped_id)
             FROM (
                 SELECT {case_sql} AS mapped_id
-                FROM jsonb_array_elements_text({table}.{column}) AS value
+                FROM jsonb_array_elements_text({array_source}) AS value
             ) mapped
             WHERE mapped_id IS NOT NULL
         )
@@ -120,6 +127,13 @@ def upgrade() -> None:
         ("pause_reasons", "applicable_station_ids"),
         ("comment_templates", "applicable_station_ids"),
     ):
+        array_source = (
+            f"CASE "
+            f"WHEN jsonb_typeof({table}.{column}) = 'array' THEN {table}.{column} "
+            f"WHEN jsonb_typeof({table}.{column}) IN ('string', 'number') "
+            f"THEN jsonb_build_array({table}.{column}) "
+            f"ELSE '[]'::jsonb END"
+        )
         legacy_ids = conn.execute(
             sa.text(
                 f"""
@@ -128,7 +142,7 @@ def upgrade() -> None:
                 WHERE {column} IS NOT NULL
                 AND EXISTS (
                     SELECT 1
-                    FROM jsonb_array_elements_text({table}.{column}) AS value
+                    FROM jsonb_array_elements_text({array_source}) AS value
                     WHERE value = ANY(:legacy_ids)
                 )
                 LIMIT 1
