@@ -17,6 +17,9 @@
     },
     "scp_backup_20260102_183715_pre-new-migration.dump": {
       "label": "pre-new-migration"
+    },
+    "scp_backup_20260103_152607_properly_migrated.dump": {
+      "label": "properly_migrated"
     }
   }
 }

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowRight,
   Calendar,
   Lock,
   MapPin,
@@ -86,7 +85,10 @@ const Login: React.FC = () => {
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
   const [showStationPicker, setShowStationPicker] = useState(false);
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
-  const [pin, setPin] = useState('');
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinModalWorkerId, setPinModalWorkerId] = useState<number | null>(null);
+  const [pinModalValue, setPinModalValue] = useState('');
+  const [pinModalError, setPinModalError] = useState<string | null>(null);
   const [showAllWorkers, setShowAllWorkers] = useState(false);
   const [adminFirstName, setAdminFirstName] = useState('');
   const [adminLastName, setAdminLastName] = useState('');
@@ -173,7 +175,6 @@ const Login: React.FC = () => {
     setSelectedStationId(stationId);
     storeStationContext(stationId);
     setSelectedWorkerId(null);
-    setPin('');
     setShowAllWorkers(false);
     setShowStationPicker(false);
   };
@@ -207,38 +208,42 @@ const Login: React.FC = () => {
     setPinChangeOpen(true);
   };
 
-  const handleWorkerLogin = async () => {
-    if (!selectedWorker) {
-      setLoginError('Select your name to continue.');
-      return;
-    }
+  const handleWorkerLogin = async (worker: Worker, workerPin?: string | null) => {
     if (!selectedStationId) {
       setLoginError('Select a station before starting your shift.');
       return;
     }
-    if (selectedWorker.login_required && !pin) {
+    if (worker.login_required && !workerPin) {
       setLoginError('PIN is required for this worker.');
       return;
     }
     setSubmitting(true);
     setLoginError(null);
+    setPinModalError(null);
     try {
       const response = await apiRequest<WorkerSessionResponse>('/api/worker-sessions/login', {
         method: 'POST',
         body: JSON.stringify({
-          worker_id: selectedWorker.id,
-          pin: selectedWorker.login_required ? pin : null,
+          worker_id: worker.id,
+          pin: worker.login_required ? workerPin : null,
           station_id: selectedStationId,
         }),
       });
       if (response.require_pin_change) {
-        openPinChange(selectedWorker.id);
+        setPinModalOpen(false);
+        setPinModalWorkerId(null);
+        setPinModalValue('');
+        openPinChange(worker.id);
         return;
       }
+      setPinModalOpen(false);
+      setPinModalWorkerId(null);
+      setPinModalValue('');
       navigate('/worker/stationWorkspace');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Worker login failed.';
       setLoginError(message);
+      setPinModalError(message);
     } finally {
       setSubmitting(false);
     }
@@ -295,9 +300,61 @@ const Login: React.FC = () => {
       setSelectedWorkerId(matchedWorker.id);
       setShowAllWorkers(true);
       setQrScanHint(`Matched ${matchedWorker.first_name} ${matchedWorker.last_name}.`);
+      handleWorkerSelection(matchedWorker.id);
     } else {
       setQrScanHint('Scan captured. No worker match yet.');
     }
+  };
+
+  const openPinModal = (workerId: number) => {
+    setPinModalWorkerId(workerId);
+    setPinModalValue('');
+    setPinModalError(null);
+    setPinModalOpen(true);
+  };
+
+  const closePinModal = () => {
+    setPinModalOpen(false);
+    setPinModalWorkerId(null);
+    setPinModalValue('');
+    setPinModalError(null);
+  };
+
+  const handleWorkerSelection = (workerId: number) => {
+    if (submitting) {
+      return;
+    }
+    const worker = workers.find((item) => item.id === workerId);
+    if (!worker) {
+      return;
+    }
+    setSelectedWorkerId(workerId);
+    setLoginError(null);
+    if (!selectedStationId) {
+      setLoginError('Select a station before starting your shift.');
+      return;
+    }
+    if (worker.login_required) {
+      openPinModal(workerId);
+      return;
+    }
+    void handleWorkerLogin(worker, null);
+  };
+
+  const handlePinSubmit = async () => {
+    if (!pinModalWorkerId) {
+      return;
+    }
+    const worker = workers.find((item) => item.id === pinModalWorkerId);
+    if (!worker) {
+      setPinModalError('Worker not found.');
+      return;
+    }
+    if (!pinModalValue.trim()) {
+      setPinModalError('PIN is required for this worker.');
+      return;
+    }
+    await handleWorkerLogin(worker, pinModalValue.trim());
   };
 
   const formattedPreview = useMemo(() => {
@@ -382,7 +439,12 @@ const Login: React.FC = () => {
                           id="worker"
                           className="block w-full rounded-md border border-gray-300 bg-white py-3 pl-3 pr-10 text-base focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                           value={selectedWorkerId ?? ''}
-                          onChange={(event) => setSelectedWorkerId(Number(event.target.value))}
+                          onChange={(event) => {
+                            const workerId = Number(event.target.value);
+                            if (!Number.isNaN(workerId)) {
+                              handleWorkerSelection(workerId);
+                            }
+                          }}
                         >
                           <option value="" disabled>
                             Select your name
@@ -402,7 +464,7 @@ const Login: React.FC = () => {
                         {availableWorkers.map((worker) => (
                           <button
                             key={worker.id}
-                            onClick={() => setSelectedWorkerId(worker.id)}
+                            onClick={() => handleWorkerSelection(worker.id)}
                             className={`w-full rounded-md border px-4 py-3 text-left transition-colors flex items-center justify-between ${
                               selectedWorkerId === worker.id
                                 ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
@@ -458,30 +520,6 @@ const Login: React.FC = () => {
                     )}
                   </div>
 
-                  {selectedWorker && selectedWorker.login_required ? (
-                    <div>
-                      <label htmlFor="pin" className="block text-sm font-medium text-gray-700">
-                        PIN Code
-                      </label>
-                      <div className="mt-1 relative rounded-md shadow-sm">
-                        <input
-                          type="password"
-                          id="pin"
-                          className="block w-full rounded-md border border-gray-300 py-3 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                          placeholder="Enter PIN"
-                          value={pin}
-                          onChange={(event) => setPin(event.target.value)}
-                        />
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                          <Lock className="h-5 w-5 text-gray-400" />
-                        </div>
-                      </div>
-                    </div>
-                  ) : selectedWorker ? (
-                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-                      PIN not required for this worker.
-                    </div>
-                  ) : null}
                 </>
               ) : (
                 <>
@@ -515,18 +553,19 @@ const Login: React.FC = () => {
                 </>
               )}
 
-              <div>
-                <button
-                  onClick={isAdmin ? handleAdminLogin : handleWorkerLogin}
-                  disabled={submitting}
-                  className={`w-full flex justify-center items-center py-3 px-4 rounded-md text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-                    submitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                  }`}
-                >
-                  {isAdmin ? 'Log in as Admin' : 'Start Shift'}
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </button>
-              </div>
+              {isAdmin && (
+                <div>
+                  <button
+                    onClick={handleAdminLogin}
+                    disabled={submitting}
+                    className={`w-full flex justify-center items-center py-3 px-4 rounded-md text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                      submitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                    }`}
+                  >
+                    Log in as Admin
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -535,7 +574,7 @@ const Login: React.FC = () => {
               onClick={() => {
                 setIsAdmin(!isAdmin);
                 setSelectedWorkerId(null);
-                setPin('');
+                closePinModal();
                 setLoginError(null);
                 setQrScannerOpen(false);
               }}
@@ -646,6 +685,61 @@ const Login: React.FC = () => {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pinModalOpen && pinModalWorkerId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-gray-500/70" onClick={closePinModal} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900">PIN required</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Enter the PIN for{' '}
+              {selectedWorker
+                ? `${selectedWorker.first_name} ${selectedWorker.last_name}`
+                : 'this worker'}{' '}
+              to continue.
+            </p>
+            {pinModalError && (
+              <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                {pinModalError}
+              </div>
+            )}
+            <div className="mt-4">
+              <label htmlFor="pin-modal" className="block text-sm font-medium text-gray-700">
+                PIN Code
+              </label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <input
+                  type="password"
+                  id="pin-modal"
+                  className="block w-full rounded-md border border-gray-300 py-3 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                  placeholder="Enter PIN"
+                  value={pinModalValue}
+                  onChange={(event) => setPinModalValue(event.target.value)}
+                  autoFocus
+                />
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={closePinModal}
+                className="flex-1 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePinSubmit}
+                className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                disabled={submitting}
+              >
+                Sign in
+              </button>
             </div>
           </div>
         </div>

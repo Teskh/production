@@ -14,6 +14,7 @@ import clsx from 'clsx';
 import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const MAX_W1_PLANNED = 10;
 
 type Worker = {
   id: number;
@@ -131,7 +132,7 @@ const StationWorkspace: React.FC = () => {
   const [idleTimeoutMs, setIdleTimeoutMs] = useState<number | null>(null);
   const [showStationPicker, setShowStationPicker] = useState(false);
   const [activeModal, setActiveModal] = useState<
-    'pause' | 'skip' | 'finish' | 'comments' | 'crew' | 'other_tasks' | null
+    'pause' | 'skip' | 'comments' | 'crew' | 'other_tasks' | null
   >(null);
   const [selectedTask, setSelectedTask] = useState<StationTask | null>(null);
   const [selectedTaskWorkItem, setSelectedTaskWorkItem] = useState<StationWorkItem | null>(null);
@@ -142,6 +143,7 @@ const StationWorkspace: React.FC = () => {
   const [crewWorkers, setCrewWorkers] = useState<Worker[]>([]);
   const [crewSelection, setCrewSelection] = useState<number[]>([]);
   const [crewQuery, setCrewQuery] = useState('');
+  const [regularCrewByTaskId, setRegularCrewByTaskId] = useState<Record<number, number[]>>({});
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
 
@@ -156,27 +158,49 @@ const StationWorkspace: React.FC = () => {
   );
 
   const workItems = snapshot?.work_items ?? [];
-  const isW1 =
-    selectedStation?.role === 'Panels' && selectedStation.sequence_order === 1;
-  const recommendedItem = isW1 ? workItems.find((item) => item.recommended) ?? null : null;
-  const inProgressItems = isW1
-    ? workItems.filter(
-        (item) => item.status === 'InProgress' && item.id !== recommendedItem?.id
-      )
-    : workItems;
-  const plannedItems = isW1
-    ? workItems.filter(
-        (item) => item.status === 'Planned' && item.id !== recommendedItem?.id
-      )
-    : [];
-  const otherItems = isW1
-    ? workItems.filter(
-        (item) =>
-          item.status !== 'Planned' &&
-          item.status !== 'InProgress' &&
-          item.id !== recommendedItem?.id
-      )
-    : [];
+  const isW1 = selectedStation?.role === 'Panels' && selectedStation.sequence_order === 1;
+  const { recommendedItem, inProgressItems, plannedItems, otherItems, plannedTotalCount } =
+    useMemo(() => {
+      if (!isW1) {
+        return {
+          recommendedItem: null,
+          inProgressItems: workItems,
+          plannedItems: [],
+          otherItems: [],
+          plannedTotalCount: 0,
+        };
+      }
+      let recommended: StationWorkItem | null = null;
+      const inProgress: StationWorkItem[] = [];
+      const planned: StationWorkItem[] = [];
+      const other: StationWorkItem[] = [];
+      let plannedCount = 0;
+      for (const item of workItems) {
+        if (item.recommended && !recommended) {
+          recommended = item;
+          continue;
+        }
+        if (item.status === 'InProgress') {
+          inProgress.push(item);
+          continue;
+        }
+        if (item.status === 'Planned') {
+          plannedCount += 1;
+          if (planned.length < MAX_W1_PLANNED) {
+            planned.push(item);
+          }
+          continue;
+        }
+        other.push(item);
+      }
+      return {
+        recommendedItem: recommended,
+        inProgressItems: inProgress,
+        plannedItems: planned,
+        otherItems: other,
+        plannedTotalCount: plannedCount,
+      };
+    }, [isW1, workItems]);
 
   const pauseReasons = snapshot?.pause_reasons ?? [];
   const commentTemplates = snapshot?.comment_templates ?? [];
@@ -301,6 +325,57 @@ const StationWorkspace: React.FC = () => {
     };
   }, [handleLogout, idleTimeoutMs, worker]);
 
+  const taskDefinitionIds = useMemo(() => {
+    const ids = new Set<number>();
+    snapshot?.work_items.forEach((item) => {
+      item.tasks.forEach((task) => {
+        ids.add(task.task_definition_id);
+      });
+    });
+    return Array.from(ids);
+  }, [snapshot]);
+
+  useEffect(() => {
+    if (taskDefinitionIds.length === 0) {
+      return;
+    }
+    const missingIds = taskDefinitionIds.filter(
+      (id) => regularCrewByTaskId[id] === undefined
+    );
+    if (missingIds.length === 0) {
+      return;
+    }
+    let active = true;
+    const loadRegularCrew = async () => {
+      const results = await Promise.all(
+        missingIds.map(async (id) => {
+          try {
+            const data = await apiRequest<TaskRegularCrewResponse>(
+              `/api/task-definitions/${id}/regular-crew`
+            );
+            return { id, crew: data.worker_ids ?? [] };
+          } catch {
+            return { id, crew: [] };
+          }
+        })
+      );
+      if (!active) {
+        return;
+      }
+      setRegularCrewByTaskId((prev) => {
+        const next = { ...prev };
+        results.forEach(({ id, crew }) => {
+          next[id] = crew;
+        });
+        return next;
+      });
+    };
+    loadRegularCrew();
+    return () => {
+      active = false;
+    };
+  }, [taskDefinitionIds, regularCrewByTaskId]);
+
   const statusBadge = (status: string) => {
     const styles: Record<string, string> = {
       NotStarted: 'bg-gray-100 text-gray-600 border-gray-200',
@@ -321,7 +396,7 @@ const StationWorkspace: React.FC = () => {
   };
 
   const openModal = (
-    modal: 'pause' | 'skip' | 'finish' | 'comments' | 'crew',
+    modal: 'pause' | 'skip' | 'comments' | 'crew',
     task: StationTask,
     workItem: StationWorkItem
   ) => {
@@ -416,8 +491,8 @@ const StationWorkspace: React.FC = () => {
     }
   };
 
-  const handleComplete = async () => {
-    if (!selectedTask?.task_instance_id) {
+  const handleComplete = async (task: StationTask) => {
+    if (!task.task_instance_id) {
       return;
     }
     setSubmitting(true);
@@ -425,19 +500,17 @@ const StationWorkspace: React.FC = () => {
       await apiRequest('/api/worker-tasks/complete', {
         method: 'POST',
         body: JSON.stringify({
-          task_instance_id: selectedTask.task_instance_id,
-          notes: commentDraft.trim() ? commentDraft.trim() : null,
+          task_instance_id: task.task_instance_id,
+          notes: null,
         }),
       });
       await refreshSnapshot();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to complete task.';
-      setCommentError(message);
-      return;
+      setError(message);
     } finally {
       setSubmitting(false);
     }
-    closeModal();
   };
 
   const handleSkip = async (customReason?: string) => {
@@ -497,6 +570,10 @@ const StationWorkspace: React.FC = () => {
   };
 
   const handleCrewOpen = async (task: StationTask, workItem: StationWorkItem) => {
+    const regularCrew = regularCrewByTaskId[task.task_definition_id];
+    if (!regularCrew || regularCrew.length === 0) {
+      return;
+    }
     openModal('crew', task, workItem);
     if (crewWorkers.length === 0) {
       try {
@@ -506,15 +583,8 @@ const StationWorkspace: React.FC = () => {
         setCrewWorkers([]);
       }
     }
-    try {
-      const regularCrew = await apiRequest<TaskRegularCrewResponse>(
-        `/api/task-definitions/${task.task_definition_id}/regular-crew`
-      );
-      const baseSelection = new Set([worker?.id, ...(regularCrew.worker_ids ?? [])].filter(Boolean));
-      setCrewSelection(Array.from(baseSelection) as number[]);
-    } catch {
-      setCrewSelection(worker?.id ? [worker.id] : []);
-    }
+    const baseSelection = new Set([worker?.id, ...regularCrew].filter(Boolean));
+    setCrewSelection(Array.from(baseSelection) as number[]);
   };
 
   const filteredCrew = useMemo(() => {
@@ -691,6 +761,11 @@ const StationWorkspace: React.FC = () => {
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
                       Panels available to start
                     </p>
+                    {plannedTotalCount > plannedItems.length && (
+                      <p className="text-[11px] text-gray-400">
+                        Showing next {plannedItems.length} of {plannedTotalCount} panels.
+                      </p>
+                    )}
                     {plannedItems.map((item) => (
                       <button
                         key={item.id}
@@ -859,7 +934,7 @@ const StationWorkspace: React.FC = () => {
                                 <Pause className="h-4 w-4" /> Pause
                               </button>
                               <button
-                                onClick={() => openModal('finish', task, selectedWorkItem)}
+                                onClick={() => handleComplete(task)}
                                 className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700"
                               >
                                 <CheckSquare className="h-4 w-4" /> Finish
@@ -875,7 +950,7 @@ const StationWorkspace: React.FC = () => {
                                 <Play className="h-4 w-4" /> Resume
                               </button>
                               <button
-                                onClick={() => openModal('finish', task, selectedWorkItem)}
+                                onClick={() => handleComplete(task)}
                                 className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
                               >
                                 <CheckSquare className="h-4 w-4" /> Finish
@@ -900,12 +975,14 @@ const StationWorkspace: React.FC = () => {
                               </button>
                             </>
                           )}
-                          <button
-                            onClick={() => handleCrewOpen(task, selectedWorkItem)}
-                            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700"
-                          >
-                            <Users className="h-4 w-4" /> Crew
-                          </button>
+                          {(regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
+                            <button
+                              onClick={() => handleCrewOpen(task, selectedWorkItem)}
+                              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-500 hover:text-gray-700"
+                            >
+                              <Users className="h-4 w-4" /> Crew
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1069,58 +1146,6 @@ const StationWorkspace: React.FC = () => {
                 disabled={submitting}
               >
                 Skip task
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeModal === 'finish' && selectedTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-900/40" onClick={closeModal} />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
-            <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
-              <X className="h-5 w-5" />
-            </button>
-            <h3 className="text-lg font-semibold text-gray-900">Finish task</h3>
-            <p className="mt-1 text-sm text-gray-500">Attach notes before completing.</p>
-            {commentError && (
-              <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                {commentError}
-              </div>
-            )}
-            {commentTemplates.length > 0 && (
-              <div className="mt-4 grid grid-cols-1 gap-2">
-                {commentTemplates.map((template) => (
-                  <button
-                    key={template.id}
-                    onClick={() => setCommentDraft(template.text)}
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700 hover:border-blue-400 hover:bg-blue-50"
-                  >
-                    {template.text}
-                  </button>
-                ))}
-              </div>
-            )}
-            <textarea
-              className="mt-4 w-full h-32 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm focus:border-blue-500 focus:outline-none"
-              placeholder="Add completion notes (optional)"
-              value={commentDraft}
-              onChange={(event) => setCommentDraft(event.target.value)}
-            />
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={closeModal}
-                className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleComplete}
-                className="flex-1 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
-                disabled={submitting}
-              >
-                Complete task
               </button>
             </div>
           </div>
