@@ -37,6 +37,20 @@ type Worker = {
   login_required: boolean;
 };
 
+const firstNamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.split(/\s+/)[0] ?? '';
+};
+
+const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string => {
+  const first = firstNamePart(worker.first_name);
+  const last = firstNamePart(worker.last_name);
+  return [first, last].filter(Boolean).join(' ');
+};
+
 type Station = {
   id: number;
   name: string;
@@ -244,6 +258,11 @@ const StationWorkspace: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const autoFocusAppliedRef = useRef(false);
+  const lastSelectedWorkItemRef = useRef<{
+    work_unit_id: number;
+    panel_unit_id: number | null;
+    panel_definition_id: number | null;
+  } | null>(null);
 
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? null,
@@ -254,6 +273,17 @@ const StationWorkspace: React.FC = () => {
     () => snapshot?.work_items.find((item) => item.id === selectedWorkItemId) ?? null,
     [snapshot, selectedWorkItemId]
   );
+
+  useEffect(() => {
+    if (!selectedWorkItem) {
+      return;
+    }
+    lastSelectedWorkItemRef.current = {
+      work_unit_id: selectedWorkItem.work_unit_id,
+      panel_unit_id: selectedWorkItem.panel_unit_id,
+      panel_definition_id: selectedWorkItem.panel_definition_id,
+    };
+  }, [selectedWorkItem]);
 
   const contextLabel = useMemo(
     () => getContextLabel(stationContext, stations),
@@ -532,10 +562,40 @@ const StationWorkspace: React.FC = () => {
       setSelectedWorkItemId(null);
       return;
     }
-    const exists = snapshot.work_items.some((item) => item.id === selectedWorkItemId);
-    if (!exists) {
-      setSelectedWorkItemId(snapshot.work_items.length === 1 ? snapshot.work_items[0].id : null);
+    if (!selectedWorkItemId) {
+      if (snapshot.work_items.length === 1) {
+        setSelectedWorkItemId(snapshot.work_items[0].id);
+      }
+      return;
     }
+    const exists = snapshot.work_items.some((item) => item.id === selectedWorkItemId);
+    if (exists) {
+      return;
+    }
+    const lastSelected = lastSelectedWorkItemRef.current;
+    if (lastSelected) {
+      const fallback = snapshot.work_items.find((item) => {
+        if (lastSelected.panel_unit_id) {
+          return item.panel_unit_id === lastSelected.panel_unit_id;
+        }
+        if (
+          lastSelected.panel_definition_id &&
+          item.panel_definition_id === lastSelected.panel_definition_id &&
+          item.work_unit_id === lastSelected.work_unit_id
+        ) {
+          return true;
+        }
+        return (
+          item.work_unit_id === lastSelected.work_unit_id &&
+          item.panel_unit_id === lastSelected.panel_unit_id
+        );
+      });
+      if (fallback) {
+        setSelectedWorkItemId(fallback.id);
+        return;
+      }
+    }
+    setSelectedWorkItemId(snapshot.work_items.length === 1 ? snapshot.work_items[0].id : null);
   }, [snapshot, selectedWorkItemId]);
 
   useEffect(() => {
@@ -706,6 +766,44 @@ const StationWorkspace: React.FC = () => {
       </span>
     );
   };
+
+  const renderWorkItemDetails = (item: StationWorkItem) => {
+    const hasPanel = Boolean(item.panel_code);
+    return (
+      <>
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold uppercase text-gray-400">
+            {item.house_identifier} - M{item.module_number}
+          </div>
+          {statusBadge(item.status)}
+        </div>
+        {hasPanel ? (
+          <>
+            <div className="mt-2 text-base font-semibold text-gray-900">
+              Panel {item.panel_code}
+            </div>
+            <div className="text-xs text-gray-600">{item.project_name}</div>
+          </>
+        ) : (
+          <div className="mt-2 text-sm font-semibold text-gray-900">{item.project_name}</div>
+        )}
+        <div className="mt-1 text-xs text-gray-500">
+          {item.house_type_name}
+          {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
+        </div>
+      </>
+    );
+  };
+
+  const renderWorkItemButton = (item: StationWorkItem, className: string) => (
+    <button
+      key={item.id}
+      onClick={() => setSelectedWorkItemId(item.id)}
+      className={clsx('w-full rounded-xl border px-4 py-3 text-left transition-all', className)}
+    >
+      {renderWorkItemDetails(item)}
+    </button>
+  );
 
   const openModal = (
     modal: 'pause' | 'skip' | 'comments' | 'crew',
@@ -1020,7 +1118,7 @@ const StationWorkspace: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
             <span>
-              {worker ? `${worker.first_name} ${worker.last_name}` : 'Worker'}
+              {worker ? formatWorkerDisplayName(worker) : 'Worker'}
             </span>
             <button
               onClick={handleLogout}
@@ -1029,23 +1127,17 @@ const StationWorkspace: React.FC = () => {
               <ArrowLeft className="h-4 w-4" /> Conclude
             </button>
           </div>
-          {stationContext && stationContext.kind !== 'station' && (
+          {!selectedStationId && (
             <button
-              onClick={() => setShowStationPicker(true)}
+              onClick={() => {
+                setStationPickerMode(modeFromContext(stationContext));
+                setShowContextPicker(true);
+              }}
               className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
             >
-              Change station
+              Station config
             </button>
           )}
-          <button
-            onClick={() => {
-              setStationPickerMode(modeFromContext(stationContext));
-              setShowContextPicker(true);
-            }}
-            className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-          >
-            Station config
-          </button>
           <button
             className="relative inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600"
             disabled
@@ -1079,9 +1171,6 @@ const StationWorkspace: React.FC = () => {
               Refresh
             </button>
           </div>
-          <p className="mt-1 text-xs text-gray-500">
-            {workItems.length} items queued
-          </p>
           <div className="mt-4 space-y-3">
             {snapshotLoading && (
               <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
@@ -1099,31 +1188,12 @@ const StationWorkspace: React.FC = () => {
                     <p className="text-[11px] uppercase tracking-[0.3em] text-blue-500 font-semibold">
                       Recommended next panel
                     </p>
-                    <button
-                      key={recommendedItem.id}
-                      onClick={() => setSelectedWorkItemId(recommendedItem.id)}
-                      className={clsx(
-                        'w-full rounded-xl border px-4 py-3 text-left transition-all',
-                        selectedWorkItemId === recommendedItem.id
-                          ? 'border-blue-500 bg-blue-50/70 shadow-sm'
-                          : 'border-blue-200 bg-blue-50/40 hover:bg-blue-50'
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold uppercase text-gray-400">
-                          {recommendedItem.house_identifier} - M{recommendedItem.module_number}
-                        </div>
-                        {statusBadge(recommendedItem.status)}
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-gray-900">
-                        {recommendedItem.project_name}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {recommendedItem.house_type_name}
-                        {recommendedItem.sub_type_name ? ` - ${recommendedItem.sub_type_name}` : ''}
-                        {recommendedItem.panel_code ? ` - ${recommendedItem.panel_code}` : ''}
-                      </div>
-                    </button>
+                    {renderWorkItemButton(
+                      recommendedItem,
+                      selectedWorkItemId === recommendedItem.id
+                        ? 'border-blue-500 bg-blue-50/70 shadow-sm'
+                        : 'border-blue-200 bg-blue-50/40 hover:bg-blue-50'
+                    )}
                   </div>
                 )}
                 {isW1 && inProgressItems.length > 0 && (
@@ -1131,33 +1201,14 @@ const StationWorkspace: React.FC = () => {
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
                       Panels in progress
                     </p>
-                    {inProgressItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedWorkItemId(item.id)}
-                        className={clsx(
-                          'w-full rounded-xl border px-4 py-3 text-left transition-all',
-                          selectedWorkItemId === item.id
-                            ? 'border-blue-500 bg-blue-50/70 shadow-sm'
-                            : 'border-gray-200 hover:bg-gray-50'
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold uppercase text-gray-400">
-                            {item.house_identifier} - M{item.module_number}
-                          </div>
-                          {statusBadge(item.status)}
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-gray-900">
-                          {item.project_name}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {item.house_type_name}
-                          {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
-                          {item.panel_code ? ` - ${item.panel_code}` : ''}
-                        </div>
-                      </button>
-                    ))}
+                    {inProgressItems.map((item) =>
+                      renderWorkItemButton(
+                        item,
+                        selectedWorkItemId === item.id
+                          ? 'border-blue-500 bg-blue-50/70 shadow-sm'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      )
+                    )}
                   </div>
                 )}
                 {isW1 && plannedItems.length > 0 && (
@@ -1170,33 +1221,14 @@ const StationWorkspace: React.FC = () => {
                         Showing next {plannedItems.length} of {plannedTotalCount} panels.
                       </p>
                     )}
-                    {plannedItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedWorkItemId(item.id)}
-                        className={clsx(
-                          'w-full rounded-xl border px-4 py-3 text-left transition-all',
-                          selectedWorkItemId === item.id
-                            ? 'border-blue-500 bg-blue-50/70 shadow-sm'
-                            : 'border-gray-200 hover:bg-gray-50'
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold uppercase text-gray-400">
-                            {item.house_identifier} - M{item.module_number}
-                          </div>
-                          {statusBadge(item.status)}
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-gray-900">
-                          {item.project_name}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {item.house_type_name}
-                          {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
-                          {item.panel_code ? ` - ${item.panel_code}` : ''}
-                        </div>
-                      </button>
-                    ))}
+                    {plannedItems.map((item) =>
+                      renderWorkItemButton(
+                        item,
+                        selectedWorkItemId === item.id
+                          ? 'border-blue-500 bg-blue-50/70 shadow-sm'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      )
+                    )}
                   </div>
                 )}
                 {isW1 && otherItems.length > 0 && (
@@ -1204,63 +1236,25 @@ const StationWorkspace: React.FC = () => {
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
                       Other items
                     </p>
-                    {otherItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => setSelectedWorkItemId(item.id)}
-                        className={clsx(
-                          'w-full rounded-xl border px-4 py-3 text-left transition-all',
-                          selectedWorkItemId === item.id
-                            ? 'border-blue-500 bg-blue-50/70 shadow-sm'
-                            : 'border-gray-200 hover:bg-gray-50'
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold uppercase text-gray-400">
-                            {item.house_identifier} - M{item.module_number}
-                          </div>
-                          {statusBadge(item.status)}
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-gray-900">
-                          {item.project_name}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {item.house_type_name}
-                          {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
-                          {item.panel_code ? ` - ${item.panel_code}` : ''}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {!isW1 &&
-                  workItems.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setSelectedWorkItemId(item.id)}
-                      className={clsx(
-                        'w-full rounded-xl border px-4 py-3 text-left transition-all',
+                    {otherItems.map((item) =>
+                      renderWorkItemButton(
+                        item,
                         selectedWorkItemId === item.id
                           ? 'border-blue-500 bg-blue-50/70 shadow-sm'
                           : 'border-gray-200 hover:bg-gray-50'
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold uppercase text-gray-400">
-                          {item.house_identifier} - M{item.module_number}
-                        </div>
-                        {statusBadge(item.status)}
-                      </div>
-                      <div className="mt-2 text-sm font-semibold text-gray-900">
-                        {item.project_name}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {item.house_type_name}
-                        {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
-                        {item.panel_code ? ` - ${item.panel_code}` : ''}
-                      </div>
-                    </button>
-                  ))}
+                      )
+                    )}
+                  </div>
+                )}
+                {!isW1 &&
+                  workItems.map((item) =>
+                    renderWorkItemButton(
+                      item,
+                      selectedWorkItemId === item.id
+                        ? 'border-blue-500 bg-blue-50/70 shadow-sm'
+                        : 'border-gray-200 hover:bg-gray-50'
+                    )
+                  )}
               </>
             )}
           </div>
@@ -1276,6 +1270,11 @@ const StationWorkspace: React.FC = () => {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900">Tasks for station</h2>
+                  {selectedWorkItem.panel_code && (
+                    <div className="mt-1 text-lg font-semibold text-gray-900">
+                      Panel {selectedWorkItem.panel_code}
+                    </div>
+                  )}
                   <p className="text-sm text-gray-500">
                     {selectedWorkItem.project_name} - {selectedWorkItem.house_identifier} -
                     Module {selectedWorkItem.module_number}
@@ -1797,7 +1796,7 @@ const StationWorkspace: React.FC = () => {
                     checked={crewSelection.includes(crewWorker.id)}
                     onChange={() => toggleCrewWorker(crewWorker.id)}
                   />
-                  {crewWorker.first_name} {crewWorker.last_name}
+                  {formatWorkerDisplayName(crewWorker)}
                 </label>
               ))}
               {filteredCrew.length === 0 && (

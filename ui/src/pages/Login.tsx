@@ -47,6 +47,20 @@ type Worker = {
   assigned_station_ids: number[] | null;
 };
 
+const firstNamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.split(/\s+/)[0] ?? '';
+};
+
+const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string => {
+  const first = firstNamePart(worker.first_name);
+  const last = firstNamePart(worker.last_name);
+  return [first, last].filter(Boolean).join(' ');
+};
+
 type ProductionQueueItem = {
   id: number;
   project_name: string;
@@ -481,7 +495,7 @@ const Login: React.FC = () => {
     if (matchedWorker) {
       setSelectedWorkerId(matchedWorker.id);
       setShowAllWorkers(true);
-      setQrScanHint(`Matched ${matchedWorker.first_name} ${matchedWorker.last_name}.`);
+      setQrScanHint(`Matched ${formatWorkerDisplayName(matchedWorker)}.`);
       handleWorkerSelection(matchedWorker.id);
     } else {
       setQrScanHint('Scan captured. No worker match yet.');
@@ -655,7 +669,7 @@ const Login: React.FC = () => {
                           </option>
                           {availableWorkers.map((worker) => (
                             <option key={worker.id} value={worker.id}>
-                              {worker.first_name} {worker.last_name}
+                              {formatWorkerDisplayName(worker)}
                             </option>
                           ))}
                         </select>
@@ -680,7 +694,7 @@ const Login: React.FC = () => {
                                 selectedWorkerId === worker.id ? 'text-blue-900' : 'text-gray-900'
                               }`}
                             >
-                              {worker.first_name} {worker.last_name}
+                              {formatWorkerDisplayName(worker)}
                             </span>
                             {selectedWorkerId === worker.id && (
                               <span className="h-2 w-2 rounded-full bg-blue-500" />
@@ -1012,7 +1026,7 @@ const Login: React.FC = () => {
             <p className="mt-2 text-sm text-gray-500">
               Enter the PIN for{' '}
               {selectedWorker
-                ? `${selectedWorker.first_name} ${selectedWorker.last_name}`
+                ? formatWorkerDisplayName(selectedWorker)
                 : 'this worker'}{' '}
               to continue.
             </p>
