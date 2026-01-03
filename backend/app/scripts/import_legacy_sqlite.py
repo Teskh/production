@@ -941,6 +941,12 @@ def _import_task_skill_requirements(
 
     task_ids = set(session.execute(select(TaskDefinition.id)).scalars())
     skill_ids = set(session.execute(select(Skill.id)).scalars())
+    if not task_ids:
+        warnings.append("task_skill_requirements: no tasks found; skipping")
+        return
+    if not skill_ids:
+        warnings.append("task_skill_requirements: no skills found; skipping")
+        return
     seen: set[tuple[int, int]] = set()
     existing: set[tuple[int, int]] = set()
     if allow_existing:
@@ -2083,7 +2089,7 @@ def _import(
 
         if "workers" in sections:
             _import_worker_skills(conn, session, warnings, allow_existing)
-        if "specialties" in sections and "tasks" in sections:
+        if "specialties" in sections or "tasks" in sections:
             _import_task_skill_requirements(
                 conn, session, warnings, allow_existing
             )

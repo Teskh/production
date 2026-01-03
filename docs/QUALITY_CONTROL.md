@@ -7,7 +7,7 @@
 
 ## Core concepts
 - Check definitions: named checks with descriptions, active state, and sampling settings.
-- Triggers: events that can open a check (task completion or station entry).
+- Triggers: events that can open a check (task completion)
 - Applicability rules: scope checks by house type, module number, and optional subtype.
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
