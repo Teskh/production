@@ -819,8 +819,8 @@ const TaskDefs: React.FC = () => {
   const auxTasks = tasks.filter((task) => task.scope === 'aux').length;
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <div className="flex flex-col lg:h-[calc(100vh-8rem)]">
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between mb-6 shrink-0">
         <div>
           <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
             Configuration / Task Definitions
@@ -838,8 +838,8 @@ const TaskDefs: React.FC = () => {
         </button>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] flex-1 min-h-0">
+        <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm lg:overflow-auto">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-display text-[var(--ink)]">Task catalog</h2>
@@ -951,7 +951,7 @@ const TaskDefs: React.FC = () => {
           )}
         </section>
 
-        <aside className="space-y-6">
+        <aside className="space-y-6 lg:overflow-auto">
           <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
