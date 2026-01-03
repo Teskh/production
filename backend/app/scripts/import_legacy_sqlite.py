@@ -136,6 +136,17 @@ def _legacy_task_station_orders(conn: sqlite3.Connection) -> dict[int, int | Non
     return orders
 
 
+def _task_default_station_sequences(session: Session) -> dict[int, int | None]:
+    return dict(
+        session.execute(
+            select(
+                TaskDefinition.id,
+                TaskDefinition.default_station_sequence,
+            )
+        ).all()
+    )
+
+
 def _parse_json_list(raw: str | None) -> list[Any] | None:
     if not raw:
         return None
@@ -551,6 +562,11 @@ def _import_tasks(
 
     for row in rows:
         station_sequence_order = row["station_sequence_order"]
+        if station_sequence_order is not None:
+            try:
+                station_sequence_order = int(station_sequence_order)
+            except (TypeError, ValueError):
+                station_sequence_order = None
         if _bool(row["is_panel_task"]):
             scope = TaskScope.PANEL
         else:
@@ -848,30 +864,31 @@ def _import_worker_skills(
     allow_existing: bool,
 ) -> None:
     session.flush()
-    rows = _fetch_rows(
-        conn,
-        """
-        SELECT worker_id, specialty_id
-        FROM WorkerSpecialties
-        ORDER BY worker_specialty_id
-        """,
-    )
-
-    rows += _fetch_rows(
-        conn,
-        """
-        SELECT worker_id, specialty_id
-        FROM Workers
-        WHERE specialty_id IS NOT NULL
-        ORDER BY worker_id
-        """,
-    )
+    rows: list[sqlite3.Row] = []
+    if _table_exists(conn, "Workers"):
+        try:
+            rows += _fetch_rows(
+                conn,
+                """
+                SELECT worker_id, specialty_id
+                FROM Workers
+                WHERE specialty_id IS NOT NULL
+                ORDER BY worker_id
+                """,
+            )
+        except sqlite3.Error as exc:
+            warnings.append(f"worker_specialties: failed to read Workers.specialty_id ({exc})")
+    else:
+        warnings.append("worker_specialties: Workers table not found; skipping")
 
     if not rows:
         return
 
     worker_ids = set(session.execute(select(Worker.id)).scalars())
     skill_ids = set(session.execute(select(Skill.id)).scalars())
+    if not skill_ids:
+        warnings.append("worker_specialties: no skills found; skipping")
+        return
     seen: set[tuple[int, int]] = set()
     existing: set[tuple[int, int]] = set()
     if allow_existing:
@@ -994,7 +1011,7 @@ def _import_module_task_applicability(
         return
 
     sub_type_ids = set(session.execute(select(HouseSubType.id)).scalars())
-    station_orders = _legacy_task_station_orders(conn)
+    default_sequences = _task_default_station_sequences(session)
 
     explicit: dict[tuple[int, int, int, int | None], tuple[bool, int | None]] = {}
     for row in rows:
@@ -1078,7 +1095,7 @@ def _import_module_task_applicability(
             except (TypeError, ValueError):
                 station_sequence_order = None
         if station_sequence_order is None:
-            station_sequence_order = station_orders.get(task_id)
+            station_sequence_order = default_sequences.get(task_id)
 
         explicit[(task_id, house_type_id, module_number, sub_type_id)] = (
             applies,
@@ -1091,9 +1108,9 @@ def _import_module_task_applicability(
             for task_id in module_task_ids:
                 key = (task_id, house_type_id, module_number, None)
                 applies, station_sequence_order = explicit.get(
-                    key,
-                    (False, station_orders.get(task_id)),
-                )
+                key,
+                (False, default_sequences.get(task_id)),
+            )
                 if allow_existing:
                     existing = _find_task_applicability(
                         session,
@@ -1180,7 +1197,7 @@ def _import_panel_task_applicability(
         )
         return
 
-    station_orders = _legacy_task_station_orders(conn)
+    default_sequences = _task_default_station_sequences(session)
     rows = _fetch_rows(
         conn,
         """
@@ -1207,7 +1224,7 @@ def _import_panel_task_applicability(
             )
         for task_id in panel_task_ids:
             applies = task_id in applicable_set
-            station_sequence_order = station_orders.get(task_id)
+            station_sequence_order = default_sequences.get(task_id)
             if allow_existing:
                 existing = _find_task_applicability(
                     session,
@@ -2064,7 +2081,7 @@ def _import(
         if "panel_task_logs" in sections:
             _import_panel_task_logs(conn, session, warnings, allow_existing)
 
-        if "specialties" in sections and "workers" in sections:
+        if "workers" in sections:
             _import_worker_skills(conn, session, warnings, allow_existing)
         if "specialties" in sections and "tasks" in sections:
             _import_task_skill_requirements(

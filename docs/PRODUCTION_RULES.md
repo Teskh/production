@@ -39,6 +39,7 @@ Stations:
 Tasks:
 - Tasks are panel-scope or module-scope.
 - Task applicability is resolved via TaskApplicability with most-specific-wins rules.
+- If no scoped applicability row matches, the task applies and uses `TaskDefinition.default_station_sequence`.
 - Tasks require a station_sequence_order to appear in a station queue.
 - Tasks with no station_sequence_order are treated as "unscheduled" and appear only in the
   "Other tasks" picker.

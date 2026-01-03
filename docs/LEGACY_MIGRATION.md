@@ -10,6 +10,7 @@ different legacy sqlite files.
 - If you import from multiple legacy DBs, decide which DB is the "source of truth"
   for overlapping config (house types, panels, task definitions). The last import
   wins when using "Allow existing rows (merge/upsert)".
+- Default station sequences are stored on `TaskDefinition.default_station_sequence`; the import does not create default-scope task applicability rows.
 - For a fresh database you can leave "Allow existing rows" unchecked in the first
   pass. Use it in later passes when merging data from a second DB.
 

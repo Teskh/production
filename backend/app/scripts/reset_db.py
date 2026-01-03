@@ -100,9 +100,9 @@ def _seed_stations(force: bool = False) -> None:
         {"id": 8, "name": "Mesa 4", "role": StationRole.PANELS, "line_type": None, "sequence_order": 8},
         {"id": 9, "name": "Puente 4", "role": StationRole.PANELS, "line_type": None, "sequence_order": 9},
         {"id": 10, "name": "Magazine", "role": StationRole.MAGAZINE, "line_type": None, "sequence_order": 10},
-        {"id": 11, "name": "Linea 1 - Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_1, "sequence_order": 11},
-        {"id": 12, "name": "Linea 2 - Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_2, "sequence_order": 11},
-        {"id": 13, "name": "Linea 3 - Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_3, "sequence_order": 11},
+        {"id": 11, "name": "Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_1, "sequence_order": 11},
+        {"id": 12, "name": "Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_2, "sequence_order": 11},
+        {"id": 13, "name": "Armado", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_3, "sequence_order": 11},
         {"id": 14, "name": "Estacion 1", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_1, "sequence_order": 12},
         {"id": 15, "name": "Estacion 1", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_2, "sequence_order": 12},
         {"id": 16, "name": "Estacion 1", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_3, "sequence_order": 12},
@@ -121,7 +121,7 @@ def _seed_stations(force: bool = False) -> None:
         {"id": 29, "name": "Estacion 6", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_1, "sequence_order": 17},
         {"id": 30, "name": "Estacion 6", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_2, "sequence_order": 17},
         {"id": 31, "name": "Estacion 6", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_3, "sequence_order": 17},
-        {"id": 32, "name": "Sheathing Prep Saw", "role": StationRole.AUX, "line_type": None, "sequence_order": None},
+        {"id": 32, "name": "Precorte Holzma", "role": StationRole.AUX, "line_type": None, "sequence_order": None},
     ]
     session = SessionLocal()
     try:

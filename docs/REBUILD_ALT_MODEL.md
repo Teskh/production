@@ -138,6 +138,7 @@ def next_station(current_station):
 - concurrent_allowed (boolean)
 - advance_trigger (boolean, module-only; true advances the module on completion)
 - dependencies_json (list of task_definition_ids)
+- default_station_sequence (nullable)
 
 `TaskApplicability`
 - id
@@ -152,14 +153,13 @@ def next_station(current_station):
 Notes:
 - `applies = false` explicitly marks the task as not applicable for the matched scope and stops fallback to broader rules.
 - `station_sequence_order` is required for station-bound tasks. If it is NULL, the task is treated as "unscheduled" and appears only in the "Other tasks" picker, not in station queues.
-- A row with all scope fields NULL is the task definition's default recommended station sequence (and applies everywhere unless overridden).
+- Applicability rows are overrides only. If no scoped row matches, the task applies and uses `TaskDefinition.default_station_sequence` (which may be NULL).
 
 Resolution order (most specific wins):
 1. panel_definition_id
 2. house_type_id + module_number (sub_type_id optional; prefer non-null sub_type_id when both match)
 3. house_type_id (sub_type_id optional; prefer non-null sub_type_id when both match)
-4. default row (all scope fields NULL)
-5. (no rows) → task not applicable
+4. (no matching rows) → task applies using `TaskDefinition.default_station_sequence`
 
 If the winning row has `applies = false`, the task is not applicable at that scope. If `applies = true`, use that row's `station_sequence_order` (NULL means unscheduled).
 
@@ -498,7 +498,7 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 | `PanelProductionPlan` | `PanelUnit` |
 | `Stations` | `Station` (new IDs, role/line_type reshaped) |
 | `TaskDefinitions` | `TaskDefinition` + `TaskApplicability` |
-| `TaskDefinitions.station_sequence_order` | `TaskApplicability.station_sequence_order` (default row) |
+| `TaskDefinitions.station_sequence_order` | `TaskDefinition.default_station_sequence` |
 | `TaskDefinitions.specialty_id` | `TaskSkillRequirement` |
 | `TaskLogs` | `TaskInstance(scope=module)` + `TaskParticipation` |
 | `PanelTaskLogs` | `TaskInstance(scope=panel)` + `TaskParticipation` |
@@ -538,7 +538,8 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 
 2. **Migrate task definitions**
    - Copy `TaskDefinitions` to `TaskDefinition`.
-   - For each task's `station_sequence_order`, create a default `TaskApplicability` row (all scope fields NULL, `applies = true`).
+   - Store each task's `station_sequence_order` on `TaskDefinition.default_station_sequence`.
+   - Do not create default-scope `TaskApplicability` rows; only migrate scoped applicability rules.
    - Migrate `specialty_id` to `TaskSkillRequirement` rows.
 
 3. **Migrate work orders and units**
@@ -573,7 +574,7 @@ For rebuild performance, cache task *templates* (applicability + expected durati
 
 After migration, verify:
 - All work units have correct status based on their task completion state.
-- Task applicability coverage: all active tasks have at least one applicability rule.
+- Task applicability coverage: scoped overrides exist where needed; absence of rows implies applies=true using `TaskDefinition.default_station_sequence`.
 - Participation counts match original log counts.
 - Station sequence_order values are consistent within each flow (Panels, Magazine, Assembly line 1/2/3).
 

@@ -121,6 +121,7 @@ type MatrixPanelState = {
 type TaskRuleState = {
   applies: boolean;
   expectedMinutes: string;
+  stationSequence: number | null;
   applicabilityRowId: number | null;
   durationRowId: number | null;
 };
@@ -128,6 +129,7 @@ type TaskRuleState = {
 type TaskRuleBaseline = {
   applies: boolean;
   expectedMinutes: string;
+  stationSequence: number | null;
 };
 
 type StationGroup = {
@@ -712,6 +714,61 @@ const HouseConfigurator: React.FC = () => {
     return map;
   }, [stations]);
 
+  const moduleStationOptions = useMemo(() => {
+    const entries = new Map<number, { names: Set<string>; lineTypes: Set<string> }>();
+    stations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      if (station.role !== 'Assembly') {
+        return;
+      }
+      const entry =
+        entries.get(station.sequence_order) ?? { names: new Set(), lineTypes: new Set() };
+      entry.names.add(station.name);
+      if (station.line_type) {
+        entry.lineTypes.add(station.line_type);
+      }
+      entries.set(station.sequence_order, entry);
+    });
+    moduleTasks.forEach((task) => {
+      if (task.station_sequence_order === null) {
+        return;
+      }
+      if (!entries.has(task.station_sequence_order)) {
+        entries.set(task.station_sequence_order, { names: new Set(), lineTypes: new Set() });
+      }
+    });
+    return Array.from(entries.entries())
+      .map(([sequence, info]) => {
+        const names = Array.from(info.names);
+        const lineTypes = Array.from(info.lineTypes);
+        const title = names.length > 0 ? names.join(' / ') : `Seq ${sequence}`;
+        const metaParts: string[] = [];
+        if (lineTypes.length > 0) {
+          metaParts.push(`Line ${lineTypes.join('/')}`);
+        }
+        if (names.length > 0) {
+          metaParts.unshift(`Seq ${sequence}`);
+        }
+        return {
+          sequence,
+          label:
+            metaParts.length > 0 ? `${title} (${metaParts.join(' · ')})` : title,
+        };
+      })
+      .sort((a, b) => a.sequence - b.sequence);
+  }, [moduleTasks, stations]);
+
+  const moduleTaskSequenceById = useMemo(() => {
+    const map = new Map<number, number | null>();
+    moduleTasks.forEach((task) => {
+      const state = moduleDraftByTask[task.id];
+      map.set(task.id, state ? state.stationSequence : task.station_sequence_order);
+    });
+    return map;
+  }, [moduleDraftByTask, moduleTasks]);
+
   const stationGroups = useMemo(() => {
     const groups = new Map<string, StationGroup>();
     const buildGroupInfo = (sequence: number | null) => {
@@ -736,7 +793,7 @@ const HouseConfigurator: React.FC = () => {
     };
 
     moduleTasks.forEach((task) => {
-      const sequence = task.station_sequence_order;
+      const sequence = moduleTaskSequenceById.get(task.id) ?? task.station_sequence_order;
       const key = sequence === null ? 'unscheduled' : `seq-${sequence}`;
       const existing = groups.get(key);
       if (existing) {
@@ -761,7 +818,7 @@ const HouseConfigurator: React.FC = () => {
       }
       return a.title.localeCompare(b.title);
     });
-  }, [moduleTasks, stationInfoBySequence]);
+  }, [moduleTaskSequenceById, moduleTasks, stationInfoBySequence]);
 
   useEffect(() => {
     if (!selectedTypeId || !selectedModuleNumber) {
@@ -793,6 +850,11 @@ const HouseConfigurator: React.FC = () => {
       );
       const resolvedApplicability = moduleRow ?? houseRow ?? null;
       const applies = resolvedApplicability ? resolvedApplicability.applies : true;
+      const resolvedStationSequence = moduleRow
+        ? moduleRow.station_sequence_order
+        : houseRow
+        ? houseRow.station_sequence_order
+        : task.station_sequence_order;
 
       const taskDurationRows = durationByTask.get(task.id) ?? [];
       const moduleDuration = pickRow(
@@ -825,10 +887,11 @@ const HouseConfigurator: React.FC = () => {
       nextDraft[task.id] = {
         applies,
         expectedMinutes,
+        stationSequence: resolvedStationSequence,
         applicabilityRowId: moduleRow?.id ?? null,
         durationRowId: moduleDuration?.id ?? null,
       };
-      nextBaseline[task.id] = { applies, expectedMinutes };
+      nextBaseline[task.id] = { applies, expectedMinutes, stationSequence: resolvedStationSequence };
     });
 
     setModuleDraftByTask(nextDraft);
@@ -850,6 +913,9 @@ const HouseConfigurator: React.FC = () => {
         return false;
       }
       if (draftState.applies !== baseline.applies) {
+        return true;
+      }
+      if (draftState.stationSequence !== baseline.stationSequence) {
         return true;
       }
       return !areDurationValuesEqual(draftState.expectedMinutes, baseline.expectedMinutes);
@@ -1508,6 +1574,7 @@ const HouseConfigurator: React.FC = () => {
           next[task.id] = {
             applies: baseline.applies,
             expectedMinutes: baseline.expectedMinutes,
+            stationSequence: baseline.stationSequence,
             applicabilityRowId: null,
             durationRowId: null,
           };
@@ -1517,6 +1584,7 @@ const HouseConfigurator: React.FC = () => {
           ...current,
           applies: baseline.applies,
           expectedMinutes: baseline.expectedMinutes,
+          stationSequence: baseline.stationSequence,
         };
       });
       return next;
@@ -1552,6 +1620,23 @@ const HouseConfigurator: React.FC = () => {
         [taskId]: {
           ...current,
           expectedMinutes: value,
+        },
+      };
+    });
+    setModuleSaveMessage(null);
+  };
+
+  const updateModuleStationSequence = (taskId: number, sequence: number | null) => {
+    setModuleDraftByTask((prev) => {
+      const current = prev[taskId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [taskId]: {
+          ...current,
+          stationSequence: sequence,
         },
       };
     });
@@ -1599,13 +1684,19 @@ const HouseConfigurator: React.FC = () => {
         continue;
       }
 
-      if (draftState.applies !== baseline.applies) {
+      const appliesChanged = draftState.applies !== baseline.applies;
+      const stationChanged = draftState.stationSequence !== baseline.stationSequence;
+
+      if (appliesChanged || stationChanged) {
         const existing = moduleApplicability.get(task.id);
         if (existing) {
           requests.push(
             apiRequest(`/api/task-rules/applicability/${existing.id}`, {
               method: 'PUT',
-              body: JSON.stringify({ applies: draftState.applies }),
+              body: JSON.stringify({
+                applies: draftState.applies,
+                station_sequence_order: draftState.stationSequence,
+              }),
             })
           );
         } else {
@@ -1619,7 +1710,7 @@ const HouseConfigurator: React.FC = () => {
                 module_number: selectedModuleNumber,
                 panel_definition_id: null,
                 applies: draftState.applies,
-                station_sequence_order: task.station_sequence_order,
+                station_sequence_order: draftState.stationSequence,
               }),
             })
           );
@@ -2332,9 +2423,10 @@ const HouseConfigurator: React.FC = () => {
                   <table className="w-full table-fixed text-sm">
                     <thead className="bg-[rgba(201,215,245,0.3)] text-xs text-[var(--ink-muted)]">
                       <tr>
-                        <th className="w-1/2 px-4 py-3 text-left">Task</th>
-                        <th className="w-1/4 px-4 py-3 text-left">Applies</th>
-                        <th className="w-1/4 px-4 py-3 text-left">Expected minutes</th>
+                        <th className="w-[38%] px-4 py-3 text-left">Task</th>
+                        <th className="w-[26%] px-4 py-3 text-left">Station</th>
+                        <th className="w-[18%] px-4 py-3 text-left">Applies</th>
+                        <th className="w-[18%] px-4 py-3 text-left">Expected minutes</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2343,19 +2435,51 @@ const HouseConfigurator: React.FC = () => {
                         if (!state) {
                           return null;
                         }
+                        const defaultSequence = task.station_sequence_order;
+                        const usesDefaultStation = state.stationSequence === defaultSequence;
                         return (
                           <tr key={task.id} className="border-t border-black/5">
-                            <td className="w-1/2 px-4 py-3 font-medium text-[var(--ink)]">
-                              <div className="flex flex-col">
-                                <span>{task.name}</span>
-                                {task.station_sequence_order !== null && (
-                                  <span className="text-[10px] text-[var(--ink-muted)] font-mono">
-                                    Seq {String(task.station_sequence_order).padStart(3, '0')}
-                                  </span>
-                                )}
+                            <td className="w-[38%] px-4 py-3 font-medium text-[var(--ink)]">
+                              {task.name}
+                            </td>
+                            <td className="w-[26%] px-4 py-3">
+                              <div className="flex flex-col gap-1">
+                                <select
+                                  className="w-full rounded-lg border border-black/10 bg-white px-2 py-1 text-sm"
+                                  value={
+                                    state.stationSequence !== null
+                                      ? String(state.stationSequence)
+                                      : ''
+                                  }
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    updateModuleStationSequence(
+                                      task.id,
+                                      value ? Number(value) : null
+                                    );
+                                  }}
+                                >
+                                  <option value="">Unassigned</option>
+                                  {moduleStationOptions.map((option) => (
+                                    <option key={option.sequence} value={option.sequence}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span
+                                  className={`text-[10px] ${
+                                    usesDefaultStation
+                                      ? 'text-[var(--ink-muted)]'
+                                      : 'text-amber-600'
+                                  }`}
+                                >
+                                  {usesDefaultStation
+                                    ? 'Default station'
+                                    : 'Override for this selection'}
+                                </span>
                               </div>
                             </td>
-                            <td className="w-1/4 px-4 py-3">
+                            <td className="w-[18%] px-4 py-3">
                               <button
                                 type="button"
                                 onClick={() => toggleModuleApplies(task.id)}
@@ -2381,7 +2505,7 @@ const HouseConfigurator: React.FC = () => {
                                 {state.applies ? 'Applies' : 'Not applicable'}
                               </button>
                             </td>
-                            <td className="w-1/4 px-4 py-3">
+                            <td className="w-[18%] px-4 py-3">
                               {state.applies ? (
                                 <div className="flex items-center gap-2">
                                   <input
