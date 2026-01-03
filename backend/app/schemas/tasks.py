@@ -120,3 +120,12 @@ class TaskInstanceRead(BaseModel):
     notes: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class WorkerActiveTaskRead(BaseModel):
+    task_instance_id: int
+    station_id: int
+    work_unit_id: int
+    panel_unit_id: int | None = None
+    status: TaskStatus
+    started_at: datetime | None = None

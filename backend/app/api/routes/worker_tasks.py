@@ -26,9 +26,10 @@ from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import Worker
-from app.schemas.tasks import TaskInstanceRead
+from app.schemas.tasks import TaskInstanceRead, WorkerActiveTaskRead
 from app.schemas.worker_station import (
     TaskCompleteRequest,
+    TaskJoinRequest,
     TaskNoteRequest,
     TaskPauseRequest,
     TaskResumeRequest,
@@ -97,6 +98,50 @@ def _get_task_instance(instance_id: int, db: Session) -> TaskInstance:
     return instance
 
 
+def _has_active_nonconcurrent_task(
+    db: Session, worker_id: int, exclude_instance_id: int | None = None
+) -> bool:
+    stmt = (
+        select(TaskParticipation.task_instance_id)
+        .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+        .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+        .where(TaskParticipation.worker_id == worker_id)
+        .where(TaskParticipation.left_at.is_(None))
+        .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        .where(TaskDefinition.concurrent_allowed == False)
+    )
+    if exclude_instance_id is not None:
+        stmt = stmt.where(TaskParticipation.task_instance_id != exclude_instance_id)
+    return db.execute(stmt).first() is not None
+
+
+@router.get("/active", response_model=list[WorkerActiveTaskRead])
+def list_active_tasks(
+    worker: Worker = Depends(get_current_worker), db: Session = Depends(get_db)
+) -> list[WorkerActiveTaskRead]:
+    instances = list(
+        db.execute(
+            select(TaskInstance)
+            .join(TaskParticipation, TaskParticipation.task_instance_id == TaskInstance.id)
+            .where(TaskParticipation.worker_id == worker.id)
+            .where(TaskParticipation.left_at.is_(None))
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+            .order_by(TaskInstance.started_at.desc(), TaskInstance.id.desc())
+        ).scalars()
+    )
+    return [
+        WorkerActiveTaskRead(
+            task_instance_id=instance.id,
+            station_id=instance.station_id,
+            work_unit_id=instance.work_unit_id,
+            panel_unit_id=instance.panel_unit_id,
+            status=instance.status,
+            started_at=instance.started_at,
+        )
+        for instance in instances
+    ]
+
+
 @router.post("/start", response_model=TaskInstanceRead, status_code=status.HTTP_201_CREATED)
 def start_task(
     payload: TaskStartRequest,
@@ -108,6 +153,15 @@ def start_task(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
     if task_def.scope != payload.scope:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task scope mismatch")
+    worker_ids = payload.worker_ids or [worker.id]
+    unique_worker_ids = sorted(set(worker_ids))
+    if not task_def.concurrent_allowed:
+        for worker_id in unique_worker_ids:
+            if _has_active_nonconcurrent_task(db, worker_id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="One or more workers already have an active task",
+                )
     station = db.get(Station, payload.station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
@@ -203,8 +257,6 @@ def start_task(
     db.add(instance)
     db.flush()
 
-    worker_ids = payload.worker_ids or [worker.id]
-    unique_worker_ids = sorted(set(worker_ids))
     if unique_worker_ids:
         existing_workers = list(
             db.execute(select(Worker.id).where(Worker.id.in_(unique_worker_ids))).scalars()
@@ -222,6 +274,45 @@ def start_task(
                 joined_at=utc_now(),
             )
         )
+    db.commit()
+    db.refresh(instance)
+    return instance
+
+
+@router.post("/join", response_model=TaskInstanceRead)
+def join_task(
+    payload: TaskJoinRequest,
+    db: Session = Depends(get_db),
+    worker: Worker = Depends(get_current_worker),
+) -> TaskInstance:
+    instance = _get_task_instance(payload.task_instance_id, db)
+    if instance.status == TaskStatus.COMPLETED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
+    task_def = db.get(TaskDefinition, instance.task_definition_id)
+    if not task_def:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
+    if not task_def.concurrent_allowed and _has_active_nonconcurrent_task(
+        db, worker.id, exclude_instance_id=instance.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Worker already has an active task",
+        )
+    existing = db.execute(
+        select(TaskParticipation)
+        .where(TaskParticipation.task_instance_id == instance.id)
+        .where(TaskParticipation.worker_id == worker.id)
+        .where(TaskParticipation.left_at.is_(None))
+    ).scalar_one_or_none()
+    if existing:
+        return instance
+    db.add(
+        TaskParticipation(
+            task_instance_id=instance.id,
+            worker_id=worker.id,
+            joined_at=utc_now(),
+        )
+    )
     db.commit()
     db.refresh(instance)
     return instance
@@ -259,6 +350,14 @@ def resume_task(
     instance = _get_task_instance(payload.task_instance_id, db)
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
+    task_def = db.get(TaskDefinition, instance.task_definition_id)
+    if task_def and not task_def.concurrent_allowed and _has_active_nonconcurrent_task(
+        db, worker.id, exclude_instance_id=instance.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Worker already has an active task",
+        )
     instance.status = TaskStatus.IN_PROGRESS
     pause = db.execute(
         select(TaskPause)
@@ -281,6 +380,17 @@ def complete_task(
     worker: Worker = Depends(get_current_worker),
 ) -> TaskInstance:
     instance = _get_task_instance(payload.task_instance_id, db)
+    active_participation = db.execute(
+        select(TaskParticipation)
+        .where(TaskParticipation.task_instance_id == instance.id)
+        .where(TaskParticipation.worker_id == worker.id)
+        .where(TaskParticipation.left_at.is_(None))
+    ).scalar_one_or_none()
+    if not active_participation:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Worker is not participating in this task",
+        )
     if instance.status == TaskStatus.COMPLETED:
         return instance
     instance.status = TaskStatus.COMPLETED

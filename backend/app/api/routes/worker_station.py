@@ -16,7 +16,13 @@ from app.models.enums import (
 )
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.stations import Station
-from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
+from app.models.tasks import (
+    TaskApplicability,
+    TaskDefinition,
+    TaskException,
+    TaskInstance,
+    TaskParticipation,
+)
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import Worker
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
@@ -477,9 +483,36 @@ def station_snapshot(
 
     work_items.sort(key=lambda item: (item.project_name, item.house_identifier, item.module_number))
 
+    active_participation_ids = set(
+        db.execute(
+            select(TaskParticipation.task_instance_id)
+            .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+            .where(TaskParticipation.worker_id == _worker.id)
+            .where(TaskParticipation.left_at.is_(None))
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        ).scalars()
+    )
+    active_nonconcurrent_ids = set(
+        db.execute(
+            select(TaskParticipation.task_instance_id)
+            .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+            .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+            .where(TaskParticipation.worker_id == _worker.id)
+            .where(TaskParticipation.left_at.is_(None))
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+            .where(TaskDefinition.concurrent_allowed == False)
+        ).scalars()
+    )
+    if active_participation_ids:
+        for item in work_items:
+            for task in item.tasks + item.other_tasks:
+                if task.task_instance_id in active_participation_ids:
+                    task.current_worker_participating = True
+
     return StationSnapshot(
         station=station,
         work_items=work_items,
         pause_reasons=_filter_pause_reasons(pause_reasons, station.id),
         comment_templates=_filter_comment_templates(comment_templates, station.id),
+        worker_active_nonconcurrent_task_instance_ids=sorted(active_nonconcurrent_ids),
     )

@@ -10,7 +10,7 @@ keeping business rules in `docs/PRODUCTION_RULES.md` and structural concepts in
 ## 0) Goals (why this doc exists)
 
 - Preserve legacy strengths: station-context UX, auto-focus to active work, W1 manual selection,
-  carryovers/backlog visibility, QC/rework overlays, crew/group start, AUX dual-mode, materials view.
+  carryovers/backlog visibility, QC/rework overlays, crew/group start, AUX dual-mode.
 - Reduce duplication: treat “panel vs module vs auxiliary” as variants of the same
   **Station → Work Item → Task Actions** pattern.
 - Keep logic lean: UI orchestrates selection and displays constraints; backend enforces rules.
@@ -94,7 +94,6 @@ In UX terms, a task can be:
 
 - **Work list pane:** panels/modules/aux items relevant to the station (plus rework banner above it)
 - **Task pane:** tasks for the selected work item (plus “other task” affordance where applicable)
-- **Materials card:** shown when a task is selected (or when materials are loading)
 
 Responsive behavior is implementation-defined; the UX must still support:
 - Fast switching between “work list” and “task view”
@@ -173,7 +172,6 @@ After any action, refresh the station snapshot:
   - Tasks at this station
   - Tasks skipped earlier (carryover suggestions, visually distinct)
   - Completed tasks remain visible with a completion badge (operator visibility is valuable on W)
-- Selecting a task drives the materials card.
 
 **Navigation**
 - In single-column layouts, provide a back affordance to the work list.

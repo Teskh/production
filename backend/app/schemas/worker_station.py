@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.enums import TaskScope, TaskStatus
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
@@ -20,6 +20,7 @@ class StationTask(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     notes: str | None = None
+    current_worker_participating: bool = False
 
 
 class StationWorkItem(BaseModel):
@@ -45,6 +46,7 @@ class StationSnapshot(BaseModel):
     work_items: list[StationWorkItem]
     pause_reasons: list[PauseReasonRead]
     comment_templates: list[CommentTemplateRead]
+    worker_active_nonconcurrent_task_instance_ids: list[int] = Field(default_factory=list)
 
 
 class TaskStartRequest(BaseModel):
@@ -61,6 +63,10 @@ class TaskPauseRequest(BaseModel):
     task_instance_id: int
     reason_id: int | None = None
     reason_text: str | None = None
+
+
+class TaskJoinRequest(BaseModel):
+    task_instance_id: int
 
 
 class TaskResumeRequest(BaseModel):
