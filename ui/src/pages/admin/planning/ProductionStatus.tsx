@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { 
   ArrowRight, Layers, GripVertical, 
   Calendar, Edit
 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const ProductionStatus: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   // Mock Plan Data
   const upcomingPlan = [
     { id: '1', batch: 'Batch-A', type: 'Type X', count: 12 },
@@ -12,24 +14,28 @@ const ProductionStatus: React.FC = () => {
     { id: '3', batch: 'Batch-C', type: 'Type X', count: 15 },
   ];
 
+  useEffect(() => {
+    setHeader({
+      title: 'Estado y planificacion de produccion',
+      kicker: 'Planificacion / Produccion',
+    });
+  }, [setHeader]);
+
   return (
     <div className="flex flex-col h-full space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-800">Production Status & Planning</h1>
-        <div className="space-x-2">
-          <button className="px-4 py-2 bg-white border border-gray-300 rounded shadow-sm text-sm font-medium hover:bg-gray-50">
-            Export Report
-          </button>
-          <button className="px-4 py-2 bg-blue-600 text-white rounded shadow-sm text-sm font-medium hover:bg-blue-700">
-            + Add Batch
-          </button>
-        </div>
+      <div className="flex justify-end items-center space-x-2">
+        <button className="px-4 py-2 bg-white border border-gray-300 rounded shadow-sm text-sm font-medium hover:bg-gray-50">
+          Exportar reporte
+        </button>
+        <button className="px-4 py-2 bg-blue-600 text-white rounded shadow-sm text-sm font-medium hover:bg-blue-700">
+          + Agregar lote
+        </button>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 flex-1 overflow-hidden">
         {/* Left: Station Layout Visualization */}
         <div className="flex-1 bg-white p-6 rounded-lg shadow-sm border border-gray-200 overflow-y-auto">
-          <h3 className="text-lg font-semibold text-gray-700 mb-6">Line Status</h3>
+          <h3 className="text-lg font-semibold text-gray-700 mb-6">Estado de linea</h3>
           
           <div className="relative border-2 border-dashed border-gray-200 rounded-xl p-8 min-h-[400px]">
              {/* Mock Layout */}
@@ -42,7 +48,7 @@ const ProductionStatus: React.FC = () => {
                </div>
 
                <div className="col-span-3 grid grid-cols-3 gap-4">
-                 {['Station 1', 'Station 2', 'Station 3'].map((st, i) => (
+                 {['Estacion 1', 'Estacion 2', 'Estacion 3'].map((st, i) => (
                    <div key={st} className="flex items-center space-x-2">
                       <div className="flex-1 h-32 bg-gray-50 border border-gray-300 rounded-lg p-3 relative">
                         <span className="text-xs font-bold uppercase text-gray-400 block mb-2">{st}</span>
@@ -59,7 +65,7 @@ const ProductionStatus: React.FC = () => {
              </div>
              
              <div className="absolute bottom-4 left-0 right-0 text-center text-sm text-gray-400 italic">
-               Live view updated 1 min ago
+               Vista en vivo actualizada hace 1 min
              </div>
           </div>
         </div>
@@ -67,8 +73,8 @@ const ProductionStatus: React.FC = () => {
         {/* Right: Upcoming Plan (Drag & Drop Simulation) */}
         <div className="w-full lg:w-96 bg-gray-50 p-4 rounded-lg border border-gray-200 flex flex-col">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold text-gray-700">Production Queue</h3>
-            <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">3 Batches</span>
+            <h3 className="font-semibold text-gray-700">Cola de produccion</h3>
+            <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">3 lotes</span>
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto">
@@ -83,7 +89,7 @@ const ProductionStatus: React.FC = () => {
                 <div className="flex-1">
                   <div className="flex justify-between mb-1">
                     <span className="font-bold text-sm text-gray-900">{item.batch}</span>
-                    <span className="text-xs font-mono bg-blue-50 text-blue-700 px-1 rounded">{item.count} panels</span>
+                    <span className="text-xs font-mono bg-blue-50 text-blue-700 px-1 rounded">{item.count} paneles</span>
                   </div>
                   <div className="flex items-center text-xs text-gray-500">
                     <Layers className="w-3 h-3 mr-1" />
@@ -101,7 +107,7 @@ const ProductionStatus: React.FC = () => {
 
           <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
             <button className="w-full py-2 text-sm text-blue-600 bg-blue-50 rounded hover:bg-blue-100 flex items-center justify-center">
-              <Calendar className="w-4 h-4 mr-2" /> Schedule for Later
+              <Calendar className="w-4 h-4 mr-2" /> Programar para despues
             </button>
           </div>
         </div>

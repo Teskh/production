@@ -96,7 +96,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -233,7 +233,7 @@ const Login: React.FC = () => {
           persistSpecificStationId(null);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load login data.';
+        const message = error instanceof Error ? error.message : 'No se pudo cargar la informacion de inicio de sesion.';
         setStatusMessage(message);
       } finally {
         setLoading(false);
@@ -263,14 +263,14 @@ const Login: React.FC = () => {
 
   const shouldUseDropdown = showAllWorkers || availableWorkers.length > WORKER_THRESHOLD;
 
-  const stationLabel = selectedStation ? formatStationLabel(selectedStation) : 'No station selected';
+  const stationLabel = selectedStation ? formatStationLabel(selectedStation) : 'Sin estacion seleccionada';
   const contextLabel = useMemo(
     () => getContextLabel(stationContext, stations),
     [stationContext, stations]
   );
   const stationSelectionLabel = selectedStation
     ? formatStationLabel(selectedStation)
-    : 'Select station';
+    : 'Selecciona estacion';
 
   const assemblySequenceOrders = useMemo(
     () => getAssemblySequenceOrders(stations),
@@ -283,11 +283,11 @@ const Login: React.FC = () => {
       mode: StationPickerMode;
       context: StationContext | null;
     }> = [
-      { label: 'Specific station', mode: { kind: 'station_list' }, context: null },
+      { label: 'Estacion especifica', mode: { kind: 'station_list' }, context: null },
     ];
     if (stations.some((station) => station.role === 'Panels')) {
       options.push({
-        label: 'Panel line',
+        label: 'Linea de paneles',
         mode: { kind: 'panel_line' },
         context: { kind: 'panel_line' },
       });
@@ -297,14 +297,14 @@ const Login: React.FC = () => {
         (item) => item.role === 'Assembly' && item.sequence_order === order
       );
       options.push({
-        label: station ? `Assembly - ${station.name}` : `Assembly sequence ${order}`,
+        label: station ? `Ensamble - ${station.name}` : `Secuencia de ensamble ${order}`,
         mode: { kind: 'assembly_sequence', sequenceOrder: order },
         context: { kind: 'assembly_sequence', sequenceOrder: order },
       });
     });
     if (stations.some((station) => station.role === 'AUX')) {
       options.push({
-        label: 'Auxiliary',
+        label: 'Auxiliar',
         mode: { kind: 'aux' },
         context: { kind: 'aux' },
       });
@@ -389,7 +389,7 @@ const Login: React.FC = () => {
       });
       navigate('/admin');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Admin login failed.';
+      const message = error instanceof Error ? error.message : 'Fallo el inicio de sesion de admin.';
       setLoginError(message);
     } finally {
       setSubmitting(false);
@@ -406,11 +406,11 @@ const Login: React.FC = () => {
 
   const handleWorkerLogin = async (worker: Worker, workerPin?: string | null) => {
     if (!selectedStationId) {
-      setLoginError('Select a station before starting your shift.');
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
       return;
     }
     if (worker.login_required && !workerPin) {
-      setLoginError('PIN is required for this worker.');
+      setLoginError('Se requiere PIN para este trabajador.');
       return;
     }
     setSubmitting(true);
@@ -437,7 +437,7 @@ const Login: React.FC = () => {
       setPinModalValue('');
       navigate('/worker/stationWorkspace');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Worker login failed.';
+      const message = error instanceof Error ? error.message : 'Fallo el inicio de sesion del trabajador.';
       setLoginError(message);
       setPinModalError(message);
     } finally {
@@ -450,11 +450,11 @@ const Login: React.FC = () => {
       return;
     }
     if (pinChangeDraft.trim().length < 4) {
-      setPinChangeError('New PIN must be at least 4 digits.');
+      setPinChangeError('El nuevo PIN debe tener al menos 4 digitos.');
       return;
     }
     if (pinChangeDraft !== pinChangeConfirm) {
-      setPinChangeError('PIN entries do not match.');
+      setPinChangeError('Los PIN no coinciden.');
       return;
     }
     setSubmitting(true);
@@ -477,7 +477,7 @@ const Login: React.FC = () => {
       setPinChangeOpen(false);
       navigate('/worker/stationWorkspace');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update PIN.';
+      const message = error instanceof Error ? error.message : 'No se pudo actualizar el PIN.';
       setPinChangeError(message);
     } finally {
       setSubmitting(false);
@@ -495,10 +495,10 @@ const Login: React.FC = () => {
     if (matchedWorker) {
       setSelectedWorkerId(matchedWorker.id);
       setShowAllWorkers(true);
-      setQrScanHint(`Matched ${formatWorkerDisplayName(matchedWorker)}.`);
+      setQrScanHint(`Coincide con ${formatWorkerDisplayName(matchedWorker)}.`);
       handleWorkerSelection(matchedWorker.id);
     } else {
-      setQrScanHint('Scan captured. No worker match yet.');
+      setQrScanHint('Escaneo capturado. Aun no hay coincidencia de trabajador.');
     }
   };
 
@@ -527,7 +527,7 @@ const Login: React.FC = () => {
     setSelectedWorkerId(workerId);
     setLoginError(null);
     if (!selectedStationId) {
-      setLoginError('Select a station before starting your shift.');
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
       return;
     }
     if (worker.login_required) {
@@ -543,11 +543,11 @@ const Login: React.FC = () => {
     }
     const worker = workers.find((item) => item.id === pinModalWorkerId);
     if (!worker) {
-      setPinModalError('Worker not found.');
+      setPinModalError('Trabajador no encontrado.');
       return;
     }
     if (!pinModalValue.trim()) {
-      setPinModalError('PIN is required for this worker.');
+      setPinModalError('Se requiere PIN para este trabajador.');
       return;
     }
     await handleWorkerLogin(worker, pinModalValue.trim());
@@ -578,12 +578,12 @@ const Login: React.FC = () => {
         <div className="mx-auto w-full max-w-sm lg:w-96">
           <div className="mb-8">
             <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
-              {isAdmin ? 'Admin Portal' : 'Worker Sign In'}
+              {isAdmin ? 'Portal de Admin' : 'Ingreso de Trabajador'}
             </h2>
             <p className="mt-2 text-sm text-gray-600">
               {isAdmin
-                ? 'Enter your credentials to manage the system.'
-                : 'Confirm the station and select your identity to begin.'}
+                ? 'Ingresa tus credenciales para administrar el sistema.'
+                : 'Confirma la estacion y selecciona tu identidad para comenzar.'}
             </p>
           </div>
 
@@ -601,7 +601,7 @@ const Login: React.FC = () => {
 
           {loading ? (
             <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
-              Loading station roster...
+              Cargando lista de estaciones...
             </div>
           ) : (
             <div className="space-y-6">
@@ -609,7 +609,7 @@ const Login: React.FC = () => {
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">
-                      Station Context
+                      Contexto de estacion
                     </label>
                     <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-600">
                       <div className="flex items-start gap-2">
@@ -620,7 +620,7 @@ const Login: React.FC = () => {
                           </span>
                           {stationContext && stationContext.kind !== 'station' && (
                             <span className="text-xs text-gray-500">
-                              Station: {stationSelectionLabel}
+                              Estacion: {stationSelectionLabel}
                             </span>
                           )}
                         </div>
@@ -631,7 +631,7 @@ const Login: React.FC = () => {
                             onClick={() => setShowStationPicker(true)}
                             className="text-xs font-semibold uppercase text-blue-600 hover:text-blue-800"
                           >
-                            Select station
+                            Seleccionar estacion
                           </button>
                         )}
                         <button
@@ -641,7 +641,7 @@ const Login: React.FC = () => {
                           }}
                           className="text-xs font-semibold uppercase text-gray-500 hover:text-gray-700"
                         >
-                          Config
+                          Configurar
                         </button>
                       </div>
                     </div>
@@ -649,7 +649,7 @@ const Login: React.FC = () => {
 
                   <div>
                     <label htmlFor="worker" className="block text-sm font-medium text-gray-700 mb-2">
-                      Who are you?
+                      Quien eres?
                     </label>
                     {shouldUseDropdown ? (
                       <div className="relative">
@@ -665,7 +665,7 @@ const Login: React.FC = () => {
                           }}
                         >
                           <option value="" disabled>
-                            Select your name
+                            Selecciona tu nombre
                           </option>
                           {availableWorkers.map((worker) => (
                             <option key={worker.id} value={worker.id}>
@@ -710,14 +710,14 @@ const Login: React.FC = () => {
                           onClick={() => setShowAllWorkers(true)}
                           className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
                         >
-                          Not in your station? Log in
+                          No estas en tu estacion? Inicia sesion
                         </button>
                       ) : (
                         <button
                           onClick={() => setShowAllWorkers(false)}
                           className="text-sm text-gray-500 hover:text-gray-700 hover:underline"
                         >
-                          Show station workers only
+                          Mostrar solo trabajadores de la estacion
                         </button>
                       )}
 
@@ -726,13 +726,13 @@ const Login: React.FC = () => {
                         type="button"
                         onClick={() => setQrScannerOpen(true)}
                       >
-                        <QrCode className="mr-1 h-4 w-4" /> Scan Badge
+                        <QrCode className="mr-1 h-4 w-4" /> Escanear gafete
                       </button>
                     </div>
 
                     {qrScanValue && (
                       <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                        <span className="font-semibold">Last scan:</span> {qrScanValue}
+                        <span className="font-semibold">Ultimo escaneo:</span> {qrScanValue}
                         {qrScanHint ? ` - ${qrScanHint}` : ''}
                       </div>
                     )}
@@ -742,7 +742,7 @@ const Login: React.FC = () => {
               ) : (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">First name</label>
+                    <label className="block text-sm font-medium text-gray-700">Nombre</label>
                     <input
                       type="text"
                       className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
@@ -751,7 +751,7 @@ const Login: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Last name</label>
+                    <label className="block text-sm font-medium text-gray-700">Apellido</label>
                     <input
                       type="text"
                       className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
@@ -780,7 +780,7 @@ const Login: React.FC = () => {
                       submitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
                     }`}
                   >
-                    Log in as Admin
+                    Entrar como Admin
                   </button>
                 </div>
               )}
@@ -799,7 +799,7 @@ const Login: React.FC = () => {
               className="w-full flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
               <Shield className="w-4 h-4 mr-2 text-gray-500" />
-              {isAdmin ? 'Switch to Worker Login' : 'Admin Login'}
+              {isAdmin ? 'Cambiar a ingreso de trabajador' : 'Ingreso Admin'}
             </button>
           </div>
         </div>
@@ -809,12 +809,12 @@ const Login: React.FC = () => {
         <div className="mb-8">
           <h3 className="text-xl font-bold flex items-center mb-2">
             <Calendar className="w-6 h-6 mr-2 text-blue-400" />
-            Production Queue Preview
+            Vista previa de la cola de produccion
           </h3>
           <p className="text-slate-400">
             {selectedStation
-              ? `Upcoming modules for ${stationLabel}`
-              : 'Upcoming modules from the plan'}
+              ? `Proximos modulos para ${stationLabel}`
+              : 'Proximos modulos del plan'}
           </p>
         </div>
 
@@ -823,13 +823,13 @@ const Login: React.FC = () => {
             <thead className="bg-slate-800">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  Time
+                  Hora
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  Module
+                  Modulo
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  House Type
+                  Tipo de casa
                 </th>
               </tr>
             </thead>
@@ -837,7 +837,7 @@ const Login: React.FC = () => {
               {formattedPreview.length === 0 ? (
                 <tr>
                   <td colSpan={3} className="px-6 py-4 text-sm text-slate-300">
-                    No upcoming modules yet.
+                    Aun no hay modulos proximos.
                   </td>
                 </tr>
               ) : (
@@ -874,9 +874,9 @@ const Login: React.FC = () => {
                     <MapPin className="h-6 w-6 text-blue-600" />
                   </div>
                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Station context</h3>
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">Contexto de estacion</h3>
                     <p className="mt-2 text-sm text-gray-500">
-                      Set the kiosk context, then pick the station for this session.
+                      Define el contexto del kiosco y luego elige la estacion para esta sesion.
                     </p>
                     <div className="mt-4 space-y-2">
                       {contextOptions.map((option) => {
@@ -906,7 +906,7 @@ const Login: React.FC = () => {
                     {stationPickerMode.kind === 'station_list' ? (
                       <div className="mt-5">
                         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                          Stations
+                          Estaciones
                         </p>
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           {stationPickerStations.map((station) => (
@@ -922,20 +922,20 @@ const Login: React.FC = () => {
                               <span className="font-semibold block">{station.name}</span>
                               <span className="text-xs text-gray-500">
                                 {station.role}
-                                {station.line_type ? ` - Line ${station.line_type}` : ''}
+                                {station.line_type ? ` - Linea ${station.line_type}` : ''}
                               </span>
                             </button>
                           ))}
                           {stationPickerStations.length === 0 && (
                             <div className="rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                              No stations available for this context.
+                              No hay estaciones disponibles para este contexto.
                             </div>
                           )}
                         </div>
                       </div>
                     ) : (
                       <div className="mt-5 rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                        Station selection happens after choosing the context.
+                        La seleccion de estacion ocurre despues de elegir el contexto.
                       </div>
                     )}
                   </div>
@@ -948,7 +948,7 @@ const Login: React.FC = () => {
                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto"
                     onClick={() => setShowContextPicker(false)}
                   >
-                    Cancel
+                    Cancelar
                   </button>
                 </div>
               )}
@@ -975,9 +975,9 @@ const Login: React.FC = () => {
                     <MapPin className="h-6 w-6 text-blue-600" />
                   </div>
                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Select station</h3>
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">Seleccionar estacion</h3>
                     <p className="mt-2 text-sm text-gray-500">
-                      Choose the station for this login session.
+                      Elige la estacion para esta sesion.
                     </p>
                     <div className="mt-4 grid grid-cols-1 gap-2">
                       {sessionStations.map((station) => (
@@ -989,13 +989,13 @@ const Login: React.FC = () => {
                           <span className="font-semibold block">{station.name}</span>
                           <span className="text-xs text-gray-500">
                             {station.role}
-                            {station.line_type ? ` - Line ${station.line_type}` : ''}
+                            {station.line_type ? ` - Linea ${station.line_type}` : ''}
                           </span>
                         </button>
                       ))}
                       {sessionStations.length === 0 && (
                         <div className="rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                          No stations available for this context.
+                          No hay estaciones disponibles para este contexto.
                         </div>
                       )}
                     </div>
@@ -1009,7 +1009,7 @@ const Login: React.FC = () => {
                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto"
                     onClick={() => setShowStationPicker(false)}
                   >
-                    Cancel
+                    Cancelar
                   </button>
                 </div>
               )}
@@ -1022,13 +1022,13 @@ const Login: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-gray-500/70" onClick={closePinModal} />
           <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-semibold text-gray-900">PIN required</h3>
+            <h3 className="text-lg font-semibold text-gray-900">PIN requerido</h3>
             <p className="mt-2 text-sm text-gray-500">
-              Enter the PIN for{' '}
+              Ingresa el PIN de{' '}
               {selectedWorker
                 ? formatWorkerDisplayName(selectedWorker)
-                : 'this worker'}{' '}
-              to continue.
+                : 'este trabajador'}{' '}
+              para continuar.
             </p>
             {pinModalError && (
               <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
@@ -1037,14 +1037,14 @@ const Login: React.FC = () => {
             )}
             <div className="mt-4">
               <label htmlFor="pin-modal" className="block text-sm font-medium text-gray-700">
-                PIN Code
+                Codigo PIN
               </label>
               <div className="mt-1 relative rounded-md shadow-sm">
                 <input
                   type="password"
                   id="pin-modal"
                   className="block w-full rounded-md border border-gray-300 py-3 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                  placeholder="Enter PIN"
+                  placeholder="Ingresa PIN"
                   value={pinModalValue}
                   onChange={(event) => setPinModalValue(event.target.value)}
                   autoFocus
@@ -1059,14 +1059,14 @@ const Login: React.FC = () => {
                 onClick={closePinModal}
                 className="flex-1 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={handlePinSubmit}
                 className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                 disabled={submitting}
               >
-                Sign in
+                Entrar
               </button>
             </div>
           </div>
@@ -1077,9 +1077,9 @@ const Login: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div className="absolute inset-0 bg-gray-500/70" />
           <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-semibold text-gray-900">PIN change required</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Cambio de PIN requerido</h3>
             <p className="mt-2 text-sm text-gray-500">
-              Your account is still using the default PIN. Please set a new one to continue.
+              Tu cuenta aun usa el PIN predeterminado. Define uno nuevo para continuar.
             </p>
             {pinChangeError && (
               <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
@@ -1088,7 +1088,7 @@ const Login: React.FC = () => {
             )}
             <div className="mt-4 space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700">New PIN</label>
+                <label className="block text-sm font-medium text-gray-700">Nuevo PIN</label>
                 <input
                   type="password"
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
@@ -1097,7 +1097,7 @@ const Login: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Confirm PIN</label>
+                <label className="block text-sm font-medium text-gray-700">Confirmar PIN</label>
                 <input
                   type="password"
                   className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
@@ -1111,14 +1111,14 @@ const Login: React.FC = () => {
                 onClick={() => setPinChangeOpen(false)}
                 className="flex-1 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={handlePinUpdate}
                 className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                 disabled={submitting}
               >
-                Update PIN
+                Actualizar PIN
               </button>
             </div>
           </div>

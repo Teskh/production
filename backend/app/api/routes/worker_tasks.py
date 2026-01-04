@@ -8,6 +8,7 @@ from app.api.deps import get_current_worker, get_db
 from app.core.security import utc_now
 from app.models.enums import (
     PanelUnitStatus,
+    RestrictionType,
     StationRole,
     TaskExceptionType,
     TaskScope,
@@ -25,7 +26,7 @@ from app.models.tasks import (
 from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
-from app.models.workers import Worker
+from app.models.workers import TaskWorkerRestriction, Worker
 from app.schemas.tasks import TaskInstanceRead, WorkerActiveTaskRead
 from app.schemas.worker_station import (
     TaskCompleteRequest,
@@ -115,6 +116,48 @@ def _has_active_nonconcurrent_task(
     return db.execute(stmt).first() is not None
 
 
+def _allowed_worker_ids(db: Session, task_definition_id: int) -> set[int] | None:
+    allowed_ids = set(
+        db.execute(
+            select(TaskWorkerRestriction.worker_id)
+            .where(TaskWorkerRestriction.task_definition_id == task_definition_id)
+            .where(TaskWorkerRestriction.restriction_type == RestrictionType.ALLOWED)
+        ).scalars()
+    )
+    return allowed_ids if allowed_ids else None
+
+
+def _dependencies_satisfied(
+    db: Session,
+    task_def: TaskDefinition,
+    work_unit_id: int,
+    panel_unit_id: int | None,
+    scope: TaskScope,
+) -> bool:
+    dependencies = task_def.dependencies_json
+    if dependencies is None:
+        return True
+    if not isinstance(dependencies, list):
+        return False
+    if not dependencies:
+        return True
+    if scope == TaskScope.PANEL:
+        if panel_unit_id is None:
+            return False
+        panel_clause = TaskInstance.panel_unit_id == panel_unit_id
+    else:
+        panel_clause = TaskInstance.panel_unit_id.is_(None)
+    completed_ids = set(
+        db.execute(
+            select(TaskInstance.task_definition_id)
+            .where(TaskInstance.work_unit_id == work_unit_id)
+            .where(panel_clause)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+        ).scalars()
+    )
+    return all(dependency_id in completed_ids for dependency_id in dependencies)
+
+
 @router.get("/active", response_model=list[WorkerActiveTaskRead])
 def list_active_tasks(
     worker: Worker = Depends(get_current_worker), db: Session = Depends(get_db)
@@ -162,6 +205,13 @@ def start_task(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="One or more workers already have an active task",
                 )
+    allowed_worker_ids = _allowed_worker_ids(db, task_def.id)
+    if allowed_worker_ids is not None:
+        if any(worker_id not in allowed_worker_ids for worker_id in unique_worker_ids):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="One or more workers are not allowed for this task",
+            )
     station = db.get(Station, payload.station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
@@ -186,6 +236,17 @@ def start_task(
                     detail="Panel is already in progress at another station",
                 )
             panel_definition_id = panel_unit.panel_definition_id
+            if not _dependencies_satisfied(
+                db,
+                task_def,
+                payload.work_unit_id,
+                panel_unit_id,
+                payload.scope,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Task dependencies not satisfied",
+                )
             if panel_unit.status == PanelUnitStatus.PLANNED:
                 panel_unit.status = PanelUnitStatus.IN_PROGRESS
                 panel_unit.current_station_id = payload.station_id
@@ -196,6 +257,17 @@ def start_task(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Panel definition is required",
+                )
+            if not _dependencies_satisfied(
+                db,
+                task_def,
+                payload.work_unit_id,
+                None,
+                payload.scope,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Task dependencies not satisfied",
                 )
             panel_unit = PanelUnit(
                 work_unit_id=payload.work_unit_id,
@@ -211,6 +283,17 @@ def start_task(
     else:
         panel_unit_id = None
         panel_definition_id = None
+        if not _dependencies_satisfied(
+            db,
+            task_def,
+            payload.work_unit_id,
+            None,
+            payload.scope,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Task dependencies not satisfied",
+            )
         if task_def.scope == TaskScope.MODULE and station.role == StationRole.ASSEMBLY:
             if work_unit.status != WorkUnitStatus.ASSEMBLY:
                 first_station = (
@@ -291,6 +374,12 @@ def join_task(
     task_def = db.get(TaskDefinition, instance.task_definition_id)
     if not task_def:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
+    allowed_worker_ids = _allowed_worker_ids(db, task_def.id)
+    if allowed_worker_ids is not None and worker.id not in allowed_worker_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Worker is not allowed for this task",
+        )
     if not task_def.concurrent_allowed and _has_active_nonconcurrent_task(
         db, worker.id, exclude_instance_id=instance.id
     ):
@@ -351,6 +440,13 @@ def resume_task(
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
     task_def = db.get(TaskDefinition, instance.task_definition_id)
+    if task_def:
+        allowed_worker_ids = _allowed_worker_ids(db, task_def.id)
+        if allowed_worker_ids is not None and worker.id not in allowed_worker_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Worker is not allowed for this task",
+            )
     if task_def and not task_def.concurrent_allowed and _has_active_nonconcurrent_task(
         db, worker.id, exclude_instance_id=instance.id
     ):

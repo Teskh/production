@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -145,7 +146,7 @@ const PANEL_GROUPS = [
   'Paneles de Cielo',
   'Paneles Perimetrales',
   'Tabiques Interiores',
-  'Vigas Caj\u00f3n',
+  'Vigas Cajon',
   'Otros',
   'Multiwalls',
 ];
@@ -199,7 +200,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
         // Fall through to the raw text.
       }
     }
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -208,24 +209,24 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 };
 
 const COUNT_LABELS: Record<string, string> = {
-  sub_types: 'Subtypes',
-  panel_definitions: 'Panel definitions',
-  panel_units: 'Panel units',
-  parameter_values: 'Parameter values',
-  work_orders: 'Work orders',
-  work_units: 'Work units',
-  task_applicability: 'Task applicability',
-  task_expected_durations: 'Task expected durations',
-  task_instances: 'Task instances',
-  task_participations: 'Task participations',
-  task_pauses: 'Task pauses',
-  task_exceptions: 'Task exceptions',
-  qc_applicability: 'QC applicability',
-  qc_check_instances: 'QC check instances',
-  qc_executions: 'QC executions',
-  qc_evidence: 'QC evidence',
-  qc_rework_tasks: 'QC rework tasks',
-  qc_notifications: 'QC notifications',
+  sub_types: 'Subtipos',
+  panel_definitions: 'Definiciones de panel',
+  panel_units: 'Unidades de panel',
+  parameter_values: 'Valores de parametros',
+  work_orders: 'Ordenes de trabajo',
+  work_units: 'Unidades de trabajo',
+  task_applicability: 'Aplicabilidad de tareas',
+  task_expected_durations: 'Duraciones esperadas de tareas',
+  task_instances: 'Instancias de tareas',
+  task_participations: 'Participaciones de tareas',
+  task_pauses: 'Pausas de tareas',
+  task_exceptions: 'Excepciones de tareas',
+  qc_applicability: 'Aplicabilidad de QC',
+  qc_check_instances: 'Instancias de verificacion QC',
+  qc_executions: 'Ejecuciones QC',
+  qc_evidence: 'Evidencia QC',
+  qc_rework_tasks: 'Tareas de retrabajo QC',
+  qc_notifications: 'Notificaciones QC',
 };
 
 const parseCascadeWarning = (message: string) => {
@@ -387,6 +388,7 @@ const sortTasks = (list: ModuleTask[]) =>
   });
 
 const HouseConfigurator: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [activeTab, setActiveTab] = useState<'house-types' | 'panels' | 'module-tasks'>(
     'house-types'
   );
@@ -433,6 +435,13 @@ const HouseConfigurator: React.FC = () => {
   const [moduleSaving, setModuleSaving] = useState(false);
   const [moduleSaveMessage, setModuleSaveMessage] = useState<string | null>(null);
   const [moduleSaveError, setModuleSaveError] = useState(false);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Estudio de configuracion de casas',
+      kicker: 'Definicion de producto / Configuracion de casas',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -504,7 +513,7 @@ const HouseConfigurator: React.FC = () => {
           });
           setSubtypesByType(nextMap);
           if (failed) {
-            setSubtypeMessage('Some subtype lists failed to load.');
+            setSubtypeMessage('No se pudieron cargar algunas listas de subtipos.');
           }
           setLoadingSubtypes(false);
         } else {
@@ -513,42 +522,42 @@ const HouseConfigurator: React.FC = () => {
           setSelectedModuleNumber(null);
           setDraft(emptyDraft());
           setSubtypesByType({});
-          messageParts.push('House types failed to load.');
+          messageParts.push('No se pudieron cargar los tipos de casa.');
         }
 
         if (panelResult.status === 'fulfilled') {
           setPanels(panelResult.value);
         } else {
           setPanels([]);
-          messageParts.push('Panel definitions failed to load.');
+          messageParts.push('No se pudieron cargar las definiciones de panel.');
         }
 
         if (taskResult.status === 'fulfilled') {
           setTaskDefinitions(taskResult.value);
         } else {
           setTaskDefinitions([]);
-          messageParts.push('Task definitions failed to load.');
+          messageParts.push('No se pudieron cargar las definiciones de tareas.');
         }
 
         if (applicabilityResult.status === 'fulfilled') {
           setApplicabilityRows(applicabilityResult.value);
         } else {
           setApplicabilityRows([]);
-          messageParts.push('Task applicability rules failed to load.');
+          messageParts.push('No se pudieron cargar las reglas de aplicabilidad de tareas.');
         }
 
         if (durationResult.status === 'fulfilled') {
           setDurationRows(durationResult.value);
         } else {
           setDurationRows([]);
-          messageParts.push('Task duration rules failed to load.');
+          messageParts.push('No se pudieron cargar las reglas de duracion de tareas.');
         }
 
         if (stationResult.status === 'fulfilled') {
           setStations(stationResult.value);
         } else {
           setStations([]);
-          messageParts.push('Stations failed to load.');
+          messageParts.push('No se pudieron cargar las estaciones.');
         }
 
         if (messageParts.length > 0) {
@@ -557,7 +566,9 @@ const HouseConfigurator: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load house configuration.';
+            error instanceof Error
+              ? error.message
+              : 'No se pudo cargar la configuracion de casas.';
           setStatusMessage(message);
         }
       } finally {
@@ -743,18 +754,18 @@ const HouseConfigurator: React.FC = () => {
       .map(([sequence, info]) => {
         const names = Array.from(info.names);
         const lineTypes = Array.from(info.lineTypes);
-        const title = names.length > 0 ? names.join(' / ') : `Seq ${sequence}`;
+        const title = names.length > 0 ? names.join(' / ') : `Sec ${sequence}`;
         const metaParts: string[] = [];
         if (lineTypes.length > 0) {
-          metaParts.push(`Line ${lineTypes.join('/')}`);
+          metaParts.push(`Linea ${lineTypes.join('/')}`);
         }
         if (names.length > 0) {
-          metaParts.unshift(`Seq ${sequence}`);
+          metaParts.unshift(`Sec ${sequence}`);
         }
         return {
           sequence,
           label:
-            metaParts.length > 0 ? `${title} (${metaParts.join(' · ')})` : title,
+            metaParts.length > 0 ? `${title} (${metaParts.join(' / ')})` : title,
         };
       })
       .sort((a, b) => a.sequence - b.sequence);
@@ -774,17 +785,17 @@ const HouseConfigurator: React.FC = () => {
     const buildGroupInfo = (sequence: number | null) => {
       if (sequence === null) {
         return {
-          title: 'Other tasks',
-          subtitle: 'Unscheduled or auxiliary work',
+          title: 'Otras tareas',
+          subtitle: 'Trabajo sin programar o auxiliar',
         };
       }
       const info = stationInfoBySequence.get(sequence);
       const names = info ? Array.from(new Set(info.names)) : [];
       const lineTypes = info ? Array.from(new Set(info.lineTypes)) : [];
-      const title = names.length > 0 ? names.join(' / ') : `Sequence ${sequence}`;
-      const subtitleParts = [`Seq ${sequence}`];
+      const title = names.length > 0 ? names.join(' / ') : `Secuencia ${sequence}`;
+      const subtitleParts = [`Sec ${sequence}`];
       if (lineTypes.length > 0) {
-        subtitleParts.push(`Line ${lineTypes.join('/')}`);
+        subtitleParts.push(`Linea ${lineTypes.join('/')}`);
       }
       return {
         title,
@@ -929,7 +940,7 @@ const HouseConfigurator: React.FC = () => {
       const data = await apiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
       setSubtypesByType((prev) => ({ ...prev, [houseTypeId]: sortSubtypes(data) }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load subtypes.';
+      const message = error instanceof Error ? error.message : 'No se pudieron cargar los subtipos.';
       setSubtypeMessage(message);
     } finally {
       setLoadingSubtypes(false);
@@ -989,15 +1000,15 @@ const HouseConfigurator: React.FC = () => {
   const buildHousePayload = (current: HouseTypeDraft) => {
     const name = current.name.trim();
     if (!name) {
-      throw new Error('House type name is required.');
+      throw new Error('Se requiere el nombre del tipo de casa.');
     }
     const modulesValue = current.number_of_modules.trim();
     const modules = Number(modulesValue);
     if (!modulesValue) {
-      throw new Error('Number of modules is required.');
+      throw new Error('Se requiere el numero de modulos.');
     }
     if (!Number.isInteger(modules) || modules <= 0) {
-      throw new Error('Number of modules must be a positive whole number.');
+      throw new Error('El numero de modulos debe ser un numero entero positivo.');
     }
     return { name, number_of_modules: modules };
   };
@@ -1032,9 +1043,9 @@ const HouseConfigurator: React.FC = () => {
         return prev;
       });
       setDraft(buildDraftFromHouseType(saved));
-      setTypeStatusMessage('House type saved.');
+      setTypeStatusMessage('Tipo de casa guardado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save house type.';
+      const message = error instanceof Error ? error.message : 'No se pudo guardar el tipo de casa.';
       setTypeStatusMessage(message);
     } finally {
       setSavingType(false);
@@ -1045,7 +1056,7 @@ const HouseConfigurator: React.FC = () => {
     if (!draft.id) {
       return;
     }
-    if (!window.confirm('Delete this house type?')) {
+    if (!window.confirm('Eliminar este tipo de casa?')) {
       return;
     }
     setSavingType(true);
@@ -1066,9 +1077,10 @@ const HouseConfigurator: React.FC = () => {
         setSelectedModuleNumber(null);
         setDraft(emptyDraft());
       }
-      setTypeStatusMessage('House type removed.');
+      setTypeStatusMessage('Tipo de casa eliminado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to remove house type.';
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar el tipo de casa.';
       const counts = parseCascadeWarning(message);
       if (counts) {
         const lines = counts
@@ -1078,12 +1090,12 @@ const HouseConfigurator: React.FC = () => {
               `${COUNT_LABELS[entry.key] ?? entry.key}: ${entry.value}`
           );
         const confirmMessage = [
-          'This house type has dependent records:',
+          'Este tipo de casa tiene registros dependientes:',
           ...lines,
-          'Delete anyway?',
+          'Eliminar de todos modos?',
         ].join('\n');
         if (!window.confirm(confirmMessage)) {
-          setTypeStatusMessage('Deletion cancelled.');
+          setTypeStatusMessage('Eliminacion cancelada.');
           return;
         }
         try {
@@ -1104,11 +1116,13 @@ const HouseConfigurator: React.FC = () => {
             setSelectedModuleNumber(null);
             setDraft(emptyDraft());
           }
-          setTypeStatusMessage('House type removed.');
+          setTypeStatusMessage('Tipo de casa eliminado.');
           return;
         } catch (forceError) {
           const forceMessage =
-            forceError instanceof Error ? forceError.message : 'Failed to remove house type.';
+            forceError instanceof Error
+              ? forceError.message
+              : 'No se pudo eliminar el tipo de casa.';
           setTypeStatusMessage(forceMessage);
           return;
         }
@@ -1129,7 +1143,7 @@ const HouseConfigurator: React.FC = () => {
     }
     const name = newSubtypeName.trim();
     if (!name) {
-      setSubtypeMessage('Subtype name is required.');
+      setSubtypeMessage('Se requiere el nombre del subtipo.');
       return;
     }
     setSavingSubtype(true);
@@ -1144,9 +1158,9 @@ const HouseConfigurator: React.FC = () => {
         [selectedTypeId]: sortSubtypes([...(prev[selectedTypeId] ?? []), created]),
       }));
       setNewSubtypeName('');
-      setSubtypeMessage('Subtype added.');
+      setSubtypeMessage('Subtipo agregado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to add subtype.';
+      const message = error instanceof Error ? error.message : 'No se pudo agregar el subtipo.';
       setSubtypeMessage(message);
     } finally {
       setSavingSubtype(false);
@@ -1156,7 +1170,7 @@ const HouseConfigurator: React.FC = () => {
   const handleSaveSubtype = async (subtype: HouseSubType) => {
     const draftName = (subtypeDrafts[subtype.id] ?? subtype.name).trim();
     if (!draftName) {
-      setSubtypeMessage('Subtype name is required.');
+      setSubtypeMessage('Se requiere el nombre del subtipo.');
       return;
     }
     if (draftName === subtype.name) {
@@ -1180,9 +1194,9 @@ const HouseConfigurator: React.FC = () => {
         delete next[subtype.id];
         return next;
       });
-      setSubtypeMessage('Subtype updated.');
+      setSubtypeMessage('Subtipo actualizado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update subtype.';
+      const message = error instanceof Error ? error.message : 'No se pudo actualizar el subtipo.';
       setSubtypeMessage(message);
     } finally {
       setSavingSubtype(false);
@@ -1190,7 +1204,7 @@ const HouseConfigurator: React.FC = () => {
   };
 
   const handleDeleteSubtype = async (subtype: HouseSubType) => {
-    if (!window.confirm('Delete this subtype?')) {
+    if (!window.confirm('Eliminar este subtipo?')) {
       return;
     }
     setSavingSubtype(true);
@@ -1208,9 +1222,9 @@ const HouseConfigurator: React.FC = () => {
         delete next[subtype.id];
         return next;
       });
-      setSubtypeMessage('Subtype removed.');
+      setSubtypeMessage('Subtipo eliminado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to remove subtype.';
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar el subtipo.';
       setSubtypeMessage(message);
     } finally {
       setSavingSubtype(false);
@@ -1241,14 +1255,14 @@ const HouseConfigurator: React.FC = () => {
   };
 
   const handleDeletePanel = async (panel: PanelDefinition) => {
-    if (!window.confirm(`Delete panel ${panel.panel_code}? This cannot be undone.`)) {
+    if (!window.confirm(`Eliminar panel ${panel.panel_code}? Esto no se puede deshacer.`)) {
       return;
     }
     try {
       await apiRequest<void>(`/api/panel-definitions/${panel.id}`, { method: 'DELETE' });
       setPanels((prev) => prev.filter((item) => item.id !== panel.id));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to delete panel.';
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar el panel.';
       setStatusMessage(message);
     }
   };
@@ -1270,7 +1284,7 @@ const HouseConfigurator: React.FC = () => {
     });
 
     if (durationList.some((value) => value === 'invalid')) {
-      return { error: 'Expected minutes must be a non-negative number.' } as const;
+      return { error: 'Los minutos esperados deben ser un numero no negativo.' } as const;
     }
 
     const normalizedDurations = durationList as Array<number | null>;
@@ -1294,21 +1308,21 @@ const HouseConfigurator: React.FC = () => {
 
     const panelCode = panelDraft.panel_code.trim();
     if (!panelCode) {
-      setPanelMessage('Panel code is required.');
+      setPanelMessage('Se requiere el codigo de panel.');
       setPanelSaving(false);
       return;
     }
 
     const areaValue = parseOptionalNumber(panelDraft.panel_area);
     if (areaValue === 'invalid') {
-      setPanelMessage('Area must be a non-negative number.');
+      setPanelMessage('El area debe ser un numero no negativo.');
       setPanelSaving(false);
       return;
     }
 
     const lengthValue = parseOptionalNumber(panelDraft.panel_length_m);
     if (lengthValue === 'invalid') {
-      setPanelMessage('Length must be a non-negative number.');
+      setPanelMessage('La longitud debe ser un numero no negativo.');
       setPanelSaving(false);
       return;
     }
@@ -1352,7 +1366,7 @@ const HouseConfigurator: React.FC = () => {
       });
       handleClosePanelModal();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save panel.';
+      const message = error instanceof Error ? error.message : 'No se pudo guardar el panel.';
       setPanelMessage(message);
     } finally {
       setPanelSaving(false);
@@ -1465,7 +1479,7 @@ const HouseConfigurator: React.FC = () => {
       );
       handleCloseMatrix();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save matrix.';
+      const message = error instanceof Error ? error.message : 'No se pudo guardar la matriz.';
       setMatrixMessage(message);
     } finally {
       setMatrixSaving(false);
@@ -1534,7 +1548,8 @@ const HouseConfigurator: React.FC = () => {
       );
       handleCloseSequence();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save panel sequence.';
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la secuencia de paneles.';
       setSequenceMessage(message);
     } finally {
       setSequenceSaving(false);
@@ -1726,7 +1741,7 @@ const HouseConfigurator: React.FC = () => {
       }
       const parsed = parseOptionalNumber(draftState.expectedMinutes);
       if (parsed === 'invalid') {
-        setModuleSaveMessage('Expected minutes must be a non-negative number.');
+        setModuleSaveMessage('Los minutos esperados deben ser un numero no negativo.');
         setModuleSaveError(true);
         setModuleSaving(false);
         return;
@@ -1767,7 +1782,7 @@ const HouseConfigurator: React.FC = () => {
     }
 
     if (requests.length === 0) {
-      setModuleSaveMessage('No changes to save.');
+      setModuleSaveMessage('No hay cambios para guardar.');
       setModuleSaveError(false);
       setModuleSaving(false);
       return;
@@ -1776,11 +1791,11 @@ const HouseConfigurator: React.FC = () => {
     try {
       await Promise.all(requests);
       await refreshModuleRules();
-      setModuleSaveMessage('Changes saved.');
+      setModuleSaveMessage('Cambios guardados.');
       setModuleSaveError(false);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save module rules.';
+        error instanceof Error ? error.message : 'No se pudieron guardar las reglas del modulo.';
       setModuleSaveMessage(message);
       setModuleSaveError(true);
     } finally {
@@ -1792,17 +1807,6 @@ const HouseConfigurator: React.FC = () => {
 
   return (
     <div className="space-y-8">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Product Definition / House Configuration
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">House Configuration Studio</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            1) Define house types + subtypes, 2) set up panels, 3) confirm module task rules.
-          </p>
-        </div>
-      </header>
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-full border border-black/10 bg-white p-1 text-xs font-semibold">
@@ -1816,7 +1820,7 @@ const HouseConfigurator: React.FC = () => {
             }`}
           >
             <Home className="h-3.5 w-3.5" />
-            House types
+            Tipos de casa
           </button>
           <button
             type="button"
@@ -1828,7 +1832,7 @@ const HouseConfigurator: React.FC = () => {
             }`}
           >
             <Grid2X2 className="h-3.5 w-3.5" />
-            Panels
+            Paneles
           </button>
           <button
             type="button"
@@ -1840,16 +1844,16 @@ const HouseConfigurator: React.FC = () => {
             }`}
           >
             <Layers className="h-3.5 w-3.5" />
-            Module tasks
+            Tareas de modulo
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
           <span className="rounded-full border border-black/10 bg-white px-3 py-1">
-            {selectedType ? selectedType.name : 'Pick a house type'}
+            {selectedType ? selectedType.name : 'Elija un tipo de casa'}
           </span>
           {selectedType && (
             <span className="rounded-full border border-black/10 bg-white px-3 py-1">
-              {selectedModuleNumber ? `Module ${selectedModuleNumber}` : 'Select a module'}
+              {selectedModuleNumber ? `Modulo ${selectedModuleNumber}` : 'Seleccione un modulo'}
             </span>
           )}
         </div>
@@ -1867,11 +1871,11 @@ const HouseConfigurator: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Step 1
+                  Paso 1
                 </p>
-                <h2 className="text-lg font-display text-[var(--ink)]">House types & subtypes</h2>
+                <h2 className="text-lg font-display text-[var(--ink)]">Tipos de casa y subtipos</h2>
                 <p className="text-sm text-[var(--ink-muted)]">
-                  {houseTypes.length} house types in the library
+                  {houseTypes.length} tipos de casa en la biblioteca
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1879,7 +1883,7 @@ const HouseConfigurator: React.FC = () => {
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
                   <input
                     type="search"
-                    placeholder="Search house types"
+                    placeholder="Buscar tipos de casa"
                     className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
@@ -1889,20 +1893,20 @@ const HouseConfigurator: React.FC = () => {
                   onClick={handleAddHouseType}
                   className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
                 >
-                  <Plus className="h-4 w-4" /> New house type
+                  <Plus className="h-4 w-4" /> Nuevo tipo de casa
                 </button>
               </div>
             </div>
 
             {loading && (
               <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-center text-sm text-[var(--ink-muted)]">
-                Loading house types…
+                Cargando tipos de casa...
               </div>
             )}
 
             {!loading && filteredHouseTypes.length === 0 && (
               <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-center text-sm text-[var(--ink-muted)]">
-                No house types match this search.
+                No hay tipos de casa que coincidan con esta busqueda.
               </div>
             )}
 
@@ -1952,11 +1956,11 @@ const HouseConfigurator: React.FC = () => {
                                 )}
                               </>
                             ) : (
-                              <span className="text-[10px] text-gray-400 italic">No subtypes</span>
+                              <span className="text-[10px] text-gray-400 italic">Sin subtipos</span>
                             )
                           ) : (
                              <span className="text-[10px] text-gray-400">
-                              {loadingSubtypes ? 'Loading...' : '...'}
+                              {loadingSubtypes ? 'Cargando...' : '...'}
                             </span>
                           )}
                         </div>
@@ -1979,7 +1983,7 @@ const HouseConfigurator: React.FC = () => {
                     Detail
                   </p>
                   <h2 className="text-lg font-display text-[var(--ink)]">
-                    {selectedType ? selectedType.name : 'New house type'}
+                    {selectedType ? selectedType.name : 'Nuevo tipo de casa'}
                   </h2>
                 </div>
                 <Sparkles className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -1987,7 +1991,7 @@ const HouseConfigurator: React.FC = () => {
 
               <div className="mt-4 space-y-4">
                 <label className="text-sm text-[var(--ink-muted)]">
-                  House type name
+                  Nombre del tipo de casa
                   <input
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={draft.name}
@@ -1995,7 +1999,7 @@ const HouseConfigurator: React.FC = () => {
                   />
                 </label>
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Number of modules
+                  Numero de modulos
                   <input
                     type="number"
                     min={1}
@@ -2008,12 +2012,12 @@ const HouseConfigurator: React.FC = () => {
                 </label>
                 <div>
                   <div className="flex items-center justify-between">
-                    <p className="text-sm text-[var(--ink-muted)]">Subtypes</p>
+                    <p className="text-sm text-[var(--ink-muted)]">Subtipos</p>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <input
                       className="min-w-[12rem] flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                      placeholder="Subtype name"
+                      placeholder="Nombre de subtipo"
                       value={newSubtypeName}
                       onChange={(event) => setNewSubtypeName(event.target.value)}
                       disabled={!selectedTypeId || savingSubtype}
@@ -2023,23 +2027,23 @@ const HouseConfigurator: React.FC = () => {
                       disabled={!selectedTypeId || savingSubtype}
                       className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-[var(--ink)] disabled:opacity-60"
                     >
-                      <Plus className="h-3 w-3" /> Add subtype
+                      <Plus className="h-3 w-3" /> Agregar subtipo
                     </button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {!selectedTypeId && (
                       <div className="rounded-2xl border border-dashed border-black/10 px-3 py-2 text-xs text-[var(--ink-muted)]">
-                        Save the house type to manage subtypes.
+                        Guarde el tipo de casa para administrar subtipos.
                       </div>
                     )}
                     {selectedTypeId && loadingSubtypes && selectedSubtypes.length === 0 && (
                       <div className="rounded-2xl border border-dashed border-black/10 px-3 py-2 text-xs text-[var(--ink-muted)]">
-                        Loading subtypes...
+                        Cargando subtipos...
                       </div>
                     )}
                     {selectedTypeId && !loadingSubtypes && selectedSubtypes.length === 0 && (
                       <div className="rounded-2xl border border-dashed border-black/10 px-3 py-2 text-xs text-[var(--ink-muted)]">
-                        No subtypes configured.
+                        No hay subtipos configurados.
                       </div>
                     )}
                     {selectedSubtypes.map((subtype) => {
@@ -2065,14 +2069,14 @@ const HouseConfigurator: React.FC = () => {
                               disabled={!canSave || savingSubtype}
                               className="text-xs font-semibold text-[var(--accent)] disabled:opacity-60"
                             >
-                              Save
+                              Guardar
                             </button>
                             <button
                               onClick={() => handleDeleteSubtype(subtype)}
                               disabled={savingSubtype}
                               className="text-xs text-[var(--ink-muted)] disabled:opacity-60"
                             >
-                              Remove
+                              Eliminar
                             </button>
                           </div>
                         </div>
@@ -2098,14 +2102,14 @@ const HouseConfigurator: React.FC = () => {
                     disabled={savingType}
                     className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                   >
-                    {savingType ? 'Saving...' : 'Save house type'}
+                    {savingType ? 'Guardando...' : 'Guardar tipo de casa'}
                   </button>
                   <button
                     onClick={handleDeleteHouseType}
                     disabled={savingType || !draft.id}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
                   >
-                    <Trash2 className="h-4 w-4" /> Delete
+                    <Trash2 className="h-4 w-4" /> Eliminar
                   </button>
                 </div>
               </div>
@@ -2119,11 +2123,11 @@ const HouseConfigurator: React.FC = () => {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                Step 2
-              </p>
-              <h2 className="text-lg font-display text-[var(--ink)]">Panels per module</h2>
+                  Paso 2
+                </p>
+              <h2 className="text-lg font-display text-[var(--ink)]">Paneles por modulo</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                Add panel definitions, group them, and set panel-level task applicability.
+                Agregue definiciones de panel, agrupe y configure aplicabilidad a nivel de panel.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2132,21 +2136,21 @@ const HouseConfigurator: React.FC = () => {
                 onClick={handleOpenSequence}
                 disabled={filteredPanels.length === 0}
               >
-                <ListOrdered className="h-4 w-4" /> Sequence
+                <ListOrdered className="h-4 w-4" /> Secuencia
               </button>
               <button
               className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
               onClick={handleOpenMatrix}
               disabled={filteredPanels.length === 0}
             >
-              <Layers className="h-4 w-4" /> Task matrix
+              <Layers className="h-4 w-4" /> Matriz de tareas
             </button>
               <button
                 className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 onClick={handleAddPanel}
                 disabled={!selectedTypeId || !selectedModuleNumber}
               >
-                <Plus className="h-4 w-4" /> Add panel
+                <Plus className="h-4 w-4" /> Agregar panel
               </button>
             </div>
           </div>
@@ -2165,7 +2169,7 @@ const HouseConfigurator: React.FC = () => {
               }}
               disabled={houseTypes.length === 0}
             >
-              {!selectedTypeId && <option value="">Select house type</option>}
+              {!selectedTypeId && <option value="">Seleccionar tipo de casa</option>}
               {houseTypes.map((houseType) => (
                 <option key={houseType.id} value={houseType.id}>
                   {houseType.name}
@@ -2178,36 +2182,36 @@ const HouseConfigurator: React.FC = () => {
               onChange={(event) => handleSelectModule(Number(event.target.value))}
               disabled={!selectedTypeId}
             >
-              {!selectedModuleNumber && <option value="">Select module</option>}
+              {!selectedModuleNumber && <option value="">Seleccionar modulo</option>}
               {availableModules.map((moduleNumber) => (
                 <option key={moduleNumber} value={moduleNumber}>
-                  Module {moduleNumber}
+                  Modulo {moduleNumber}
                 </option>
               ))}
             </select>
             {selectedType && selectedModuleNumber && (
               <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
                 <Layers className="h-4 w-4" />
-                {selectedType.name} / Module {selectedModuleNumber}
+                {selectedType.name} / Modulo {selectedModuleNumber}
               </div>
             )}
           </div>
 
           {loading && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              Loading panel definitions...
+              Cargando definiciones de panel...
             </div>
           )}
 
           {!loading && !selectedTypeId && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm italic text-[var(--ink-muted)]">
-              Select a house type above to begin managing panel definitions.
+              Seleccione un tipo de casa arriba para comenzar a administrar definiciones de panel.
             </div>
           )}
 
           {!loading && selectedTypeId && filteredPanels.length === 0 && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              No panels are defined for this module yet.
+              Aun no hay paneles definidos para este modulo.
             </div>
           )}
 
@@ -2223,13 +2227,13 @@ const HouseConfigurator: React.FC = () => {
                       {group.name}
                     </h3>
                     <span className="text-[10px] text-gray-400">
-                      {group.items.length} panels
+                      {group.items.length} paneles
                     </span>
                   </div>
                   
                   {group.items.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-gray-500 italic">
-                      No panels in this group.
+                      No hay paneles en este grupo.
                     </div>
                   ) : (
                     <div className="divide-y divide-gray-100">
@@ -2255,9 +2259,11 @@ const HouseConfigurator: React.FC = () => {
                                 )}
                               </div>
                               <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-gray-500">
-                                 {hasArea && <span>{panel.panel_area} m²</span>}
+                                 {hasArea && <span>{panel.panel_area} m2</span>}
                                  {hasLength && <span>{panel.panel_length_m} m</span>}
-                                 {!hasArea && !hasLength && <span className="italic text-gray-400">No geometry</span>}
+                                 {!hasArea && !hasLength && (
+                                   <span className="italic text-gray-400">Sin geometria</span>
+                                 )}
                               </div>
                             </div>
                             
@@ -2270,14 +2276,14 @@ const HouseConfigurator: React.FC = () => {
                               <button
                                 className="p-1.5 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50 transition-colors"
                                 onClick={() => handleEditPanel(panel)}
-                                title="Edit panel"
+                                title="Editar panel"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
                                 onClick={() => handleDeletePanel(panel)}
-                                title="Delete panel"
+                                title="Eliminar panel"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -2299,11 +2305,11 @@ const HouseConfigurator: React.FC = () => {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                Step 3
-              </p>
-              <h2 className="text-lg font-display text-[var(--ink)]">Module task rules</h2>
+                  Paso 3
+                </p>
+              <h2 className="text-lg font-display text-[var(--ink)]">Reglas de tareas de modulo</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                Confirm which module tasks apply and set expected minutes for the selected module.
+                Confirme que tareas de modulo aplican y establezca minutos esperados para el modulo seleccionado.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -2312,7 +2318,7 @@ const HouseConfigurator: React.FC = () => {
                 onClick={handleResetModuleRules}
                 disabled={!moduleHasChanges || moduleSaving}
               >
-                <RefreshCcw className="h-4 w-4" /> Reset
+                <RefreshCcw className="h-4 w-4" /> Restablecer
               </button>
               <button
                 className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
@@ -2322,7 +2328,7 @@ const HouseConfigurator: React.FC = () => {
                 }
               >
                 <Save className="h-4 w-4" />
-                {moduleSaving ? 'Saving...' : 'Save changes'}
+                {moduleSaving ? 'Guardando...' : 'Guardar cambios'}
               </button>
             </div>
           </div>
@@ -2341,7 +2347,7 @@ const HouseConfigurator: React.FC = () => {
               }}
               disabled={houseTypes.length === 0}
             >
-              {!selectedTypeId && <option value="">Select house type</option>}
+              {!selectedTypeId && <option value="">Seleccionar tipo de casa</option>}
               {houseTypes.map((houseType) => (
                 <option key={houseType.id} value={houseType.id}>
                   {houseType.name}
@@ -2354,17 +2360,17 @@ const HouseConfigurator: React.FC = () => {
               onChange={(event) => handleSelectModule(Number(event.target.value))}
               disabled={!selectedTypeId}
             >
-              {!selectedModuleNumber && <option value="">Select module</option>}
+              {!selectedModuleNumber && <option value="">Seleccionar modulo</option>}
               {availableModules.map((moduleNumber) => (
                 <option key={moduleNumber} value={moduleNumber}>
-                  Module {moduleNumber}
+                  Modulo {moduleNumber}
                 </option>
               ))}
             </select>
             {selectedType && selectedModuleNumber && (
               <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
                 <Layers className="h-4 w-4" />
-                {selectedType.name} / Module {selectedModuleNumber}
+                {selectedType.name} / Modulo {selectedModuleNumber}
               </div>
             )}
           </div>
@@ -2383,19 +2389,19 @@ const HouseConfigurator: React.FC = () => {
 
           {loading && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              Loading module task rules...
+              Cargando reglas de tareas de modulo...
             </div>
           )}
 
           {!loading && !selectedTypeId && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm italic text-[var(--ink-muted)]">
-              Select a house type above to begin managing module task rules.
+              Seleccione un tipo de casa arriba para comenzar a administrar reglas de tareas de modulo.
             </div>
           )}
 
           {!loading && selectedTypeId && moduleTasks.length === 0 && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              No active module tasks are defined yet.
+              Aun no hay tareas de modulo activas definidas.
             </div>
           )}
 
@@ -2409,13 +2415,13 @@ const HouseConfigurator: React.FC = () => {
                   <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                     <div>
                       <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                        Station group
+                        Grupo de estacion
                       </p>
                       <h3 className="text-lg font-display text-[var(--ink)]">{group.title}</h3>
                       <p className="text-xs text-[var(--ink-muted)]">{group.subtitle}</p>
                     </div>
                     <span className="text-xs text-[var(--ink-muted)]">
-                      {group.tasks.length} tasks
+                      {group.tasks.length} tareas
                     </span>
                   </div>
 
@@ -2423,10 +2429,10 @@ const HouseConfigurator: React.FC = () => {
                   <table className="w-full table-fixed text-sm">
                     <thead className="bg-[rgba(201,215,245,0.3)] text-xs text-[var(--ink-muted)]">
                       <tr>
-                        <th className="w-[38%] px-4 py-3 text-left">Task</th>
-                        <th className="w-[26%] px-4 py-3 text-left">Station</th>
-                        <th className="w-[18%] px-4 py-3 text-left">Applies</th>
-                        <th className="w-[18%] px-4 py-3 text-left">Expected minutes</th>
+                        <th className="w-[38%] px-4 py-3 text-left">Tarea</th>
+                        <th className="w-[26%] px-4 py-3 text-left">Estacion</th>
+                        <th className="w-[18%] px-4 py-3 text-left">Aplica</th>
+                        <th className="w-[18%] px-4 py-3 text-left">Minutos esperados</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2459,7 +2465,7 @@ const HouseConfigurator: React.FC = () => {
                                     );
                                   }}
                                 >
-                                  <option value="">Unassigned</option>
+                                  <option value="">Sin asignar</option>
                                   {moduleStationOptions.map((option) => (
                                     <option key={option.sequence} value={option.sequence}>
                                       {option.label}
@@ -2474,8 +2480,8 @@ const HouseConfigurator: React.FC = () => {
                                   }`}
                                 >
                                   {usesDefaultStation
-                                    ? 'Default station'
-                                    : 'Override for this selection'}
+                                    ? 'Estacion por defecto'
+                                    : 'Reemplazo para esta seleccion'}
                                 </span>
                               </div>
                             </td>
@@ -2502,7 +2508,7 @@ const HouseConfigurator: React.FC = () => {
                                       <Plus className="h-3 w-3" strokeWidth={3} />
                                     )}
                                   </span>
-                                {state.applies ? 'Applies' : 'Not applicable'}
+                                  {state.applies ? 'Aplica' : 'No aplica'}
                               </button>
                             </td>
                             <td className="w-[18%] px-4 py-3">
@@ -2542,11 +2548,11 @@ const HouseConfigurator: React.FC = () => {
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Panel</p>
                 <h3 className="text-lg font-display text-[var(--ink)]">
-                  {panelDraft.id ? `Edit ${panelDraft.panel_code}` : 'Add panel'}
+                  {panelDraft.id ? `Editar ${panelDraft.panel_code}` : 'Agregar panel'}
                 </h3>
                 {selectedType && (
                   <p className="text-xs text-[var(--ink-muted)]">
-                    {selectedType.name} | Module {selectedModuleNumber}
+                    {selectedType.name} | Modulo {selectedModuleNumber}
                   </p>
                 )}
               </div>
@@ -2558,7 +2564,7 @@ const HouseConfigurator: React.FC = () => {
             <div className="mt-5 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
               <div className="space-y-4">
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Group
+                  Grupo
                   <select
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={panelDraft.group}
@@ -2576,7 +2582,7 @@ const HouseConfigurator: React.FC = () => {
                   </select>
                 </label>
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Panel code
+                  Codigo de panel
                   <input
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={panelDraft.panel_code}
@@ -2601,7 +2607,7 @@ const HouseConfigurator: React.FC = () => {
                     />
                   </label>
                   <label className="text-sm text-[var(--ink-muted)]">
-                    Length (m)
+                    Longitud (m)
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={panelDraft.panel_length_m}
@@ -2614,7 +2620,7 @@ const HouseConfigurator: React.FC = () => {
                   </label>
                 </div>
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Sub-type
+                  Subtipo
                   <select
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={panelDraft.sub_type_id ?? ''}
@@ -2631,7 +2637,7 @@ const HouseConfigurator: React.FC = () => {
                       )
                     }
                   >
-                    <option value="">General (no sub-type)</option>
+                    <option value="">General (sin subtipo)</option>
                     {selectedSubtypes.map((subtype) => (
                       <option key={subtype.id} value={subtype.id}>
                         {subtype.name}
@@ -2645,17 +2651,17 @@ const HouseConfigurator: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                      Applicability
+                      Aplicabilidad
                     </p>
                     <h4 className="text-sm font-semibold text-[var(--ink)]">
-                      Panel tasks ({panelTasks.length})
+                      Tareas de panel ({panelTasks.length})
                     </h4>
                   </div>
                   <Layers className="h-4 w-4 text-[var(--ink-muted)]" />
                 </div>
                 {panelTasks.length === 0 && (
                   <p className="mt-3 text-sm text-[var(--ink-muted)]">
-                    No panel tasks are defined yet.
+                    Aun no hay tareas de panel definidas.
                   </p>
                 )}
                 {panelTasks.length > 0 && (
@@ -2700,14 +2706,14 @@ const HouseConfigurator: React.FC = () => {
                 onClick={handleClosePanelModal}
                 disabled={panelSaving}
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 onClick={handleSavePanel}
                 disabled={panelSaving}
               >
-                {panelSaving ? 'Saving...' : 'Save panel'}
+                {panelSaving ? 'Guardando...' : 'Guardar panel'}
               </button>
             </div>
           </div>
@@ -2720,10 +2726,10 @@ const HouseConfigurator: React.FC = () => {
             <div className="flex items-center justify-between border-b border-black/5 bg-white px-8 py-6 z-20">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Configuration Matrix
+                  Matriz de configuracion
                 </p>
                 <h3 className="mt-1 text-xl font-display text-[var(--ink)]">
-                  Task Applicability & Durations
+                  Aplicabilidad de tareas y duraciones
                 </h3>
                 {selectedType && (
                   <div className="mt-2 flex items-center gap-2">
@@ -2732,14 +2738,14 @@ const HouseConfigurator: React.FC = () => {
                     </span>
                     <span className="text-[var(--ink-muted)]">/</span>
                     <span className="inline-flex items-center rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-700/10">
-                      Module {selectedModuleNumber}
+                      Modulo {selectedModuleNumber}
                     </span>
                   </div>
                 )}
               </div>
               <div className="flex items-center gap-4">
                 <div className="hidden text-right sm:block">
-                  <p className="text-xs text-[var(--ink-muted)]">Total Panels</p>
+                  <p className="text-xs text-[var(--ink-muted)]">Paneles totales</p>
                   <p className="font-semibold text-[var(--ink)]">{filteredPanels.length}</p>
                 </div>
                 <button
@@ -2756,7 +2762,7 @@ const HouseConfigurator: React.FC = () => {
                 <div className="flex h-full items-center justify-center p-8">
                   <div className="rounded-2xl border border-dashed border-black/10 bg-white p-8 text-center">
                     <p className="text-sm text-[var(--ink-muted)]">
-                      No panel tasks are available for this matrix.
+                      No hay tareas de panel disponibles para esta matriz.
                     </p>
                   </div>
                 </div>
@@ -2767,7 +2773,7 @@ const HouseConfigurator: React.FC = () => {
                       <tr>
                         <th className="sticky left-0 z-30 w-64 min-w-[16rem] border-b border-r border-black/5 bg-slate-50 px-4 py-4 text-left shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
                           <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
-                            Task Definition
+                            Definicion de tarea
                           </span>
                         </th>
                         {filteredPanels.map((panel) => (
@@ -2785,7 +2791,7 @@ const HouseConfigurator: React.FC = () => {
                                 </span>
                                 {panel.sub_type_id && (
                                   <span className="text-[10px] font-bold text-blue-600">
-                                    {subtypeNameById.get(panel.sub_type_id) ?? 'Sub-type'}
+                                    {subtypeNameById.get(panel.sub_type_id) ?? 'Subtipo'}
                                   </span>
                                 )}
                               </div>
@@ -2804,7 +2810,7 @@ const HouseConfigurator: React.FC = () => {
                               </span>
                               {task.station_sequence_order !== null && (
                                 <span className="mt-0.5 text-[10px] font-mono text-[var(--ink-muted)]">
-                                  Seq: {String(task.station_sequence_order).padStart(3, '0')}
+                                  Sec: {String(task.station_sequence_order).padStart(3, '0')}
                                 </span>
                               )}
                             </div>
@@ -2833,8 +2839,8 @@ const HouseConfigurator: React.FC = () => {
                                     }`}
                                     title={
                                       applies
-                                        ? 'Disable task for this panel'
-                                        : 'Enable task for this panel'
+                                        ? 'Deshabilitar tarea para este panel'
+                                        : 'Habilitar tarea para este panel'
                                     }
                                   >
                                     {applies ? (
@@ -2895,7 +2901,7 @@ const HouseConfigurator: React.FC = () => {
                   onClick={handleCloseMatrix}
                   disabled={matrixSaving}
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   className="rounded-full bg-[var(--accent)] px-6 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:bg-[var(--accent)]/90 hover:shadow-lg disabled:opacity-60 disabled:shadow-none"
@@ -2908,7 +2914,7 @@ const HouseConfigurator: React.FC = () => {
                       <span>Saving...</span>
                     </div>
                   ) : (
-                    'Save Changes'
+                    'Guardar cambios'
                   )}
                 </button>
               </div>
@@ -2922,11 +2928,11 @@ const HouseConfigurator: React.FC = () => {
           <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Sequence</p>
-                <h3 className="text-lg font-display text-[var(--ink)]">Production Order</h3>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Secuencia</p>
+                <h3 className="text-lg font-display text-[var(--ink)]">Orden de produccion</h3>
                 {selectedType && (
                   <p className="text-xs text-[var(--ink-muted)]">
-                    {selectedType.name} | Module {selectedModuleNumber}
+                    {selectedType.name} | Modulo {selectedModuleNumber}
                   </p>
                 )}
               </div>
@@ -2937,15 +2943,15 @@ const HouseConfigurator: React.FC = () => {
 
             <div className="mt-4 max-h-[60vh] overflow-auto rounded-2xl border border-black/5 bg-white">
               {sequenceDraft.length === 0 ? (
-                <div className="p-4 text-sm text-[var(--ink-muted)]">No panels to order.</div>
+                <div className="p-4 text-sm text-[var(--ink-muted)]">No hay paneles para ordenar.</div>
               ) : (
                 <table className="w-full text-sm">
                   <thead className="bg-[rgba(201,215,245,0.4)] text-xs text-[var(--ink-muted)]">
                     <tr>
-                      <th className="w-16 px-4 py-2 text-left">Ord</th>
-                      <th className="px-4 py-2 text-left">Panel Code</th>
-                      <th className="px-4 py-2 text-left">Group / Sub-type</th>
-                      <th className="px-4 py-2 text-right">Action</th>
+                      <th className="w-16 px-4 py-2 text-left">Orden</th>
+                      <th className="px-4 py-2 text-left">Codigo de panel</th>
+                      <th className="px-4 py-2 text-left">Grupo / Subtipo</th>
+                      <th className="px-4 py-2 text-right">Accion</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3002,14 +3008,14 @@ const HouseConfigurator: React.FC = () => {
                 onClick={handleCloseSequence}
                 disabled={sequenceSaving}
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 onClick={handleSaveSequence}
                 disabled={sequenceSaving}
               >
-                {sequenceSaving ? 'Saving...' : 'Apply Order'}
+                {sequenceSaving ? 'Guardando...' : 'Aplicar orden'}
               </button>
             </div>
           </div>

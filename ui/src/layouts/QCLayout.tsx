@@ -7,8 +7,8 @@ const QCLayout: React.FC = () => {
   const location = useLocation();
 
   const navItems = [
-    { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
-    { name: 'Library', path: '/qc/library', icon: List },
+    { name: 'Panel', path: '/qc', icon: LayoutGrid },
+    { name: 'Biblioteca', path: '/qc/library', icon: List },
   ];
 
   return (
@@ -17,7 +17,7 @@ const QCLayout: React.FC = () => {
         <div className="flex items-center space-x-6">
           <div className="flex items-center font-bold text-lg">
             <ClipboardCheck className="w-6 h-6 mr-2 text-emerald-400" />
-            QC Station
+            Estacion QC
           </div>
           
           <nav className="flex space-x-1">
@@ -40,10 +40,10 @@ const QCLayout: React.FC = () => {
         </div>
 
         <div className="flex items-center space-x-4">
-          <span className="text-sm text-slate-400">QC Inspector: Sarah Smith</span>
+          <span className="text-sm text-slate-400">Inspector de QC: Sarah Smith</span>
           <button className="flex items-center text-sm text-slate-300 hover:text-white">
             <LogOut className="w-4 h-4 mr-1" />
-            Logout
+            Salir
           </button>
         </div>
       </header>

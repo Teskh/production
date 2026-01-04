@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const AdminTeam: React.FC = () => {
+  const { setHeader } = useAdminHeader();
+
+  useEffect(() => {
+    setHeader({
+      title: 'Gestion del equipo admin',
+      kicker: 'Personal / Equipo admin',
+    });
+  }, [setHeader]);
+
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Admin Team Management</h1>
-      <p className="text-gray-500">This is a placeholder for the Admin Team Management page.</p>
+      <p className="text-gray-500">
+        Este es un marcador para la pagina de gestion del equipo admin.
+      </p>
     </div>
   );
 };

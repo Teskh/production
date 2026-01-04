@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, CloudUpload, Database, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -47,7 +48,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -82,6 +83,7 @@ const formatDate = (value: string | null): string => {
 };
 
 const Backups: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [settings, setSettings] = useState<BackupSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<BackupSettings | null>(null);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
@@ -92,6 +94,13 @@ const Backups: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Centro de control de copias',
+      kicker: 'Configuracion / Resiliencia',
+    });
+  }, [setHeader]);
 
   const refresh = async (showSpinner = true) => {
     if (showSpinner) {
@@ -107,7 +116,8 @@ const Backups: React.FC = () => {
       setSettingsDraft(settingsData);
       setBackups(backupsData);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load backups.';
+      const message =
+        error instanceof Error ? error.message : 'No se pudieron cargar las copias de seguridad.';
       setStatusMessage(message);
     } finally {
       if (showSpinner) {
@@ -126,10 +136,10 @@ const Backups: React.FC = () => {
       return '--';
     }
     if (!settings.enabled) {
-      return 'Automation paused';
+      return 'Automatizacion en pausa';
     }
     if (!settings.last_backup_at) {
-      return 'Runs on scheduler start';
+      return 'Se ejecuta al iniciar el programador';
     }
     const last = new Date(settings.last_backup_at);
     if (Number.isNaN(last.getTime())) {
@@ -154,13 +164,15 @@ const Backups: React.FC = () => {
         return next;
       });
       if (response.pruned.length > 0) {
-        setStatusMessage(`Backup created. Pruned ${response.pruned.length} older backups.`);
+        setStatusMessage(
+          `Copia creada. Se depuraron ${response.pruned.length} copias antiguas.`
+        );
       } else {
-        setStatusMessage('Backup created successfully.');
+        setStatusMessage('Copia creada correctamente.');
       }
       setBackupLabel('');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Backup creation failed.';
+      const message = error instanceof Error ? error.message : 'Fallo la creacion de la copia.';
       setStatusMessage(message);
     } finally {
       setCreating(false);
@@ -169,8 +181,8 @@ const Backups: React.FC = () => {
 
   const handleRestore = async (backup: BackupRecord) => {
     const confirmation = window.confirm(
-      `Restore "${backup.label || backup.filename}"? ` +
-        'This will create a manual checkpoint backup, restore the snapshot, and switch the primary database.'
+      `Restaurar "${backup.label || backup.filename}"? ` +
+        'Esto creara una copia de control manual, restaurara la instantanea y cambiara la base primaria.'
     );
     if (!confirmation) {
       return;
@@ -184,11 +196,11 @@ const Backups: React.FC = () => {
       });
       await refresh(false);
       setStatusMessage(
-        `Restore complete. Previous primary is now "${response.archived_db}". ` +
-          `Checkpoint saved as "${response.checkpoint_backup.filename}".`
+        `Restauracion completa. La primaria anterior ahora es "${response.archived_db}". ` +
+          `Control guardado como "${response.checkpoint_backup.filename}".`
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Restore failed.';
+      const message = error instanceof Error ? error.message : 'Fallo la restauracion.';
       setStatusMessage(message);
     } finally {
       setRestoring(null);
@@ -212,9 +224,10 @@ const Backups: React.FC = () => {
       });
       setSettings(updated);
       setSettingsDraft(updated);
-      setStatusMessage('Backup schedule updated.');
+      setStatusMessage('Programacion de copias actualizada.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update schedule.';
+      const message =
+        error instanceof Error ? error.message : 'No se pudo actualizar la programacion.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -223,35 +236,24 @@ const Backups: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Configuration / Resilience
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Backup Control Center</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Run manual snapshots, restore clean cutovers, and rotate retention safely.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => refresh()}
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-            disabled={refreshing}
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-          <button
-            onClick={handleCreateBackup}
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
-            disabled={creating}
-          >
-            <CloudUpload className="h-4 w-4" />
-            {creating ? 'Creating...' : 'Create backup'}
-          </button>
-        </div>
-      </header>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          onClick={() => refresh()}
+          className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+          disabled={refreshing}
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          Actualizar
+        </button>
+        <button
+          onClick={handleCreateBackup}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+          disabled={creating}
+        >
+          <CloudUpload className="h-4 w-4" />
+          {creating ? 'Creando...' : 'Crear copia'}
+        </button>
+      </div>
 
       {statusMessage && (
         <div className="rounded-2xl border border-black/5 bg-white/90 px-4 py-3 text-sm text-[var(--ink-muted)] shadow-sm">
@@ -268,14 +270,14 @@ const Backups: React.FC = () => {
                   <Database className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-display text-[var(--ink)]">Manual backup</h2>
+                  <h2 className="text-lg font-display text-[var(--ink)]">Copia manual</h2>
                   <p className="text-xs text-[var(--ink-muted)]">
-                    Capture a snapshot immediately with an optional label.
+                    Captura una instantanea al instante con una etiqueta opcional.
                   </p>
                 </div>
               </div>
               <div className="text-right text-xs text-[var(--ink-muted)]">
-                <div>Last backup</div>
+                <div>Ultima copia</div>
                 <div className="font-semibold text-[var(--ink)]">
                   {settings ? formatDate(settings.last_backup_at) : '--'}
                 </div>
@@ -284,10 +286,10 @@ const Backups: React.FC = () => {
 
             <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto]">
               <label className="text-sm text-[var(--ink-muted)]">
-                Snapshot label
+                Etiqueta de instantanea
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  placeholder="e.g. Pre-maintenance rollout"
+                  placeholder="ej. despliegue pre-mantenimiento"
                   value={backupLabel}
                   onChange={(event) => setBackupLabel(event.target.value)}
                 />
@@ -297,23 +299,27 @@ const Backups: React.FC = () => {
                 className="mt-6 inline-flex items-center justify-center rounded-2xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
                 disabled={creating}
               >
-                {creating ? 'Working...' : 'Run backup'}
+                {creating ? 'Trabajando...' : 'Ejecutar copia'}
               </button>
             </div>
 
             <div className="mt-5 grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-black/5 bg-[rgba(242,98,65,0.08)] px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Backups</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Copias</p>
                 <p className="mt-2 text-lg font-semibold text-[var(--ink)]">{backups.length}</p>
               </div>
               <div className="rounded-2xl border border-black/5 bg-[rgba(47,107,79,0.08)] px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Retention</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Retencion
+                </p>
                 <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                  {settings ? settings.retention_count : '--'} files
+                  {settings ? settings.retention_count : '--'} archivos
                 </p>
               </div>
               <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.6)] px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Next run</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Proxima ejecucion
+                </p>
                 <p className="mt-2 text-sm font-semibold text-[var(--ink)]">{nextRun}</p>
               </div>
             </div>
@@ -326,9 +332,9 @@ const Backups: React.FC = () => {
                   <HardDrive className="h-5 w-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-display text-[var(--ink)]">Backup history</h2>
+                  <h2 className="text-lg font-display text-[var(--ink)]">Historial de copias</h2>
                   <p className="text-xs text-[var(--ink-muted)]">
-                    Latest snapshots stored in the backup vault.
+                    Ultimas instantaneas guardadas en la boveda de copias.
                   </p>
                 </div>
               </div>
@@ -337,23 +343,27 @@ const Backups: React.FC = () => {
                 className="text-xs font-semibold text-[var(--accent)]"
                 disabled={refreshing}
               >
-                {refreshing ? 'Refreshing...' : 'Reload'}
+                {refreshing ? 'Actualizando...' : 'Recargar'}
               </button>
             </div>
 
             <div className="mt-4 overflow-hidden rounded-2xl border border-black/5">
               <div className="grid grid-cols-[1.4fr_0.8fr_0.6fr_0.6fr] bg-[rgba(15,27,45,0.04)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                <span>Snapshot</span>
-                <span>Created</span>
-                <span>Size</span>
-                <span className="text-right">Restore</span>
+                <span>Instantanea</span>
+                <span>Creado</span>
+                <span>Tamano</span>
+                <span className="text-right">Restaurar</span>
               </div>
               <div className="divide-y divide-black/5">
                 {loading && (
-                  <div className="px-4 py-4 text-sm text-[var(--ink-muted)]">Loading backups...</div>
+                  <div className="px-4 py-4 text-sm text-[var(--ink-muted)]">
+                    Cargando copias...
+                  </div>
                 )}
                 {!loading && backups.length === 0 && (
-                  <div className="px-4 py-4 text-sm text-[var(--ink-muted)]">No backups yet.</div>
+                  <div className="px-4 py-4 text-sm text-[var(--ink-muted)]">
+                    Aun no hay copias.
+                  </div>
                 )}
                 {backups.map((backup) => {
                   const isRestorable = backup.filename.endsWith('.dump');
@@ -364,7 +374,7 @@ const Backups: React.FC = () => {
                     >
                       <div>
                         <p className="font-semibold text-[var(--ink)]">
-                          {backup.label || 'Untitled snapshot'}
+                          {backup.label || 'Instantanea sin titulo'}
                         </p>
                         <p className="text-xs text-[var(--ink-muted)] font-mono">{backup.filename}</p>
                       </div>
@@ -380,9 +390,9 @@ const Backups: React.FC = () => {
                         >
                           {isRestorable
                             ? restoring === backup.filename
-                              ? 'Restoring...'
-                              : 'Restore'
-                            : 'Unsupported'}
+                              ? 'Restaurando...'
+                              : 'Restaurar'
+                            : 'No compatible'}
                         </button>
                       </div>
                     </div>
@@ -400,9 +410,11 @@ const Backups: React.FC = () => {
                 <Clock className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-[var(--ink)]">Automatic backups</h3>
+                <h3 className="text-base font-semibold text-[var(--ink)]">
+                  Copias automaticas
+                </h3>
                 <p className="text-xs text-[var(--ink-muted)]">
-                  Set cadence and retention limits for scheduled runs.
+                  Define frecuencia y limites de retencion para ejecuciones programadas.
                 </p>
               </div>
             </div>
@@ -419,11 +431,11 @@ const Backups: React.FC = () => {
                     )
                   }
                 />
-                <span className="text-[var(--ink)]">Enable scheduled backups</span>
+                <span className="text-[var(--ink)]">Habilitar copias programadas</span>
               </label>
 
               <label className="text-sm text-[var(--ink-muted)]">
-                Interval (minutes)
+                Intervalo (minutos)
                 <input
                   type="number"
                   min={1}
@@ -443,7 +455,7 @@ const Backups: React.FC = () => {
               </label>
 
               <label className="text-sm text-[var(--ink-muted)]">
-                Retain last N backups
+                Conservar las ultimas N copias
                 <input
                   type="number"
                   min={1}
@@ -467,7 +479,7 @@ const Backups: React.FC = () => {
                 className="w-full rounded-2xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save schedule'}
+                {saving ? 'Guardando...' : 'Guardar programacion'}
               </button>
             </div>
           </section>
@@ -476,11 +488,11 @@ const Backups: React.FC = () => {
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-[var(--ink-muted)]" />
               <div>
-                <h3 className="text-sm font-semibold text-[var(--ink)]">Operational notes</h3>
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Notas operativas</h3>
                 <p className="text-xs text-[var(--ink-muted)]">
-                  Restore creates a manual checkpoint backup, reloads the snapshot, and switches the
-                  primary database (disconnects active sessions). Keep `pg_dump` + `pg_restore`
-                  available on the server.
+                  Restaurar crea una copia de control manual, recarga la instantanea y cambia la
+                  base primaria (desconecta sesiones activas). Mantener `pg_dump` + `pg_restore`
+                  disponibles en el servidor.
                 </p>
               </div>
             </div>

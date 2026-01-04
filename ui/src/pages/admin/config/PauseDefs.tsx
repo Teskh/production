@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, PauseCircle, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -60,7 +61,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -89,6 +90,7 @@ const sortStations = (list: Station[]) =>
   });
 
 const PauseDefs: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [reasons, setReasons] = useState<PauseReason[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedReasonId, setSelectedReasonId] = useState<number | null>(null);
@@ -99,6 +101,13 @@ const PauseDefs: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Motivos de pausa',
+      kicker: 'Configuracion / Pausas',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -126,7 +135,7 @@ const PauseDefs: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load pause reasons.';
+            error instanceof Error ? error.message : 'No se pudieron cargar los motivos de pausa.';
           setStatusMessage(message);
         }
       } finally {
@@ -163,7 +172,7 @@ const PauseDefs: React.FC = () => {
 
   const summaryLabel = useMemo(() => {
     const activeCount = reasons.filter((reason) => reason.active).length;
-    return `${reasons.length} reasons / ${activeCount} active`;
+    return `${reasons.length} motivos / ${activeCount} activos`;
   }, [reasons]);
 
   useEffect(() => {
@@ -228,12 +237,12 @@ const PauseDefs: React.FC = () => {
 
   const buildScopeLabel = (stationIds: number[] | null): string => {
     if (stationIds === null) {
-      return 'All stations';
+      return 'Todas las estaciones';
     }
     if (stationIds.length === 0) {
-      return 'No stations selected';
+      return 'No hay estaciones seleccionadas';
     }
-    const names = stationIds.map((id) => stationNameById.get(id) ?? `Station ${id}`);
+    const names = stationIds.map((id) => stationNameById.get(id) ?? `Estacion ${id}`);
     if (names.length <= 2) {
       return names.join(', ');
     }
@@ -242,17 +251,17 @@ const PauseDefs: React.FC = () => {
 
   const draftStationLabel = useMemo(() => {
     if (!draft) {
-      return 'All stations';
+      return 'Todas las estaciones';
     }
     return draft.all_stations
-      ? 'All stations'
+      ? 'Todas las estaciones'
       : buildScopeLabel(draft.applicable_station_ids);
   }, [draft, stationNameById]);
 
   const buildPayload = (current: PauseDraft) => {
     const name = current.name.trim();
     if (!name) {
-      throw new Error('Pause reason name is required.');
+      throw new Error('Se requiere el nombre del motivo de pausa.');
     }
     const stationIds = current.all_stations ? null : current.applicable_station_ids;
     return {
@@ -288,10 +297,10 @@ const PauseDefs: React.FC = () => {
       }
       setSelectedReasonId(saved.id);
       setDraft(buildDraftFromReason(saved));
-      setStatusMessage('Pause reason saved.');
+      setStatusMessage('Motivo de pausa guardado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save pause reason.';
+        error instanceof Error ? error.message : 'No se pudo guardar el motivo de pausa.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -314,10 +323,10 @@ const PauseDefs: React.FC = () => {
         setSelectedReasonId(null);
         setDraft(emptyDraft());
       }
-      setStatusMessage('Pause reason removed.');
+      setStatusMessage('Motivo de pausa eliminado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to remove pause reason.';
+        error instanceof Error ? error.message : 'No se pudo eliminar el motivo de pausa.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -341,7 +350,7 @@ const PauseDefs: React.FC = () => {
             <p className={`truncate text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>{reason.name}</p>
             {!reason.active && (
               <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                Inactive
+                Inactivo
               </span>
             )}
           </div>
@@ -362,36 +371,27 @@ const PauseDefs: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Configuration / Pauses
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Pause reasons</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Keep a clean, consistent list of reasons workers can select when pausing tasks.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleAddReason}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--accent)]/90"
         >
-          <Plus className="h-4 w-4" /> Add reason
+          <Plus className="h-4 w-4" /> Agregar motivo
         </button>
-      </header>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
         <section className="order-last rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden xl:order-none">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Current reasons</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Motivos actuales</h2>
               <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search..."
+                placeholder="Buscar..."
                 className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -401,12 +401,12 @@ const PauseDefs: React.FC = () => {
 
           {loading && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              Loading pause reasons...
+              Cargando motivos de pausa...
             </div>
           )}
           {!loading && filteredReasons.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              No pause reasons match that search.
+              No hay motivos de pausa que coincidan con esa busqueda.
             </div>
           )}
 
@@ -420,10 +420,10 @@ const PauseDefs: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Detail
+                  Detalle
                 </p>
                 <h2 className="text-lg font-display text-[var(--ink)]">
-                  {draft?.id ? `Reason #${draft.id}` : 'New pause reason'}
+                  {draft?.id ? `Motivo #${draft.id}` : 'Nuevo motivo de pausa'}
                 </h2>
               </div>
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -437,7 +437,7 @@ const PauseDefs: React.FC = () => {
 
             <div className="mt-4 space-y-4">
               <label className="text-sm text-[var(--ink-muted)]">
-                Reason name
+                Nombre del motivo
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                   value={draft?.name ?? ''}
@@ -445,19 +445,19 @@ const PauseDefs: React.FC = () => {
                 />
               </label>
               <label className="text-sm text-[var(--ink-muted)]">
-                Status
+                Estado
                 <select
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  value={draft?.active ? 'Active' : 'Inactive'}
-                  onChange={(event) => updateDraft({ active: event.target.value === 'Active' })}
+                  value={draft?.active ? 'Activo' : 'Inactivo'}
+                  onChange={(event) => updateDraft({ active: event.target.value === 'Activo' })}
                 >
-                  <option>Active</option>
-                  <option>Inactive</option>
+                  <option>Activo</option>
+                  <option>Inactivo</option>
                 </select>
               </label>
 
               <div>
-                <p className="text-sm text-[var(--ink-muted)]">Station scope</p>
+                <p className="text-sm text-[var(--ink-muted)]">Alcance de estaciones</p>
                 <div className="relative mt-2" ref={stationDropdownRef}>
                   <button
                     type="button"
@@ -480,12 +480,12 @@ const PauseDefs: React.FC = () => {
                             checked={draft?.all_stations ?? true}
                             onChange={toggleAllStations}
                           />
-                          <span className="text-[var(--ink)]">All stations</span>
+                          <span className="text-[var(--ink)]">Todas las estaciones</span>
                         </label>
                       </div>
                       {stations.length === 0 ? (
                         <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
-                          No stations available.
+                          No hay estaciones disponibles.
                         </div>
                       ) : (
                         <div className="max-h-56 overflow-auto p-3 text-sm">
@@ -522,7 +522,7 @@ const PauseDefs: React.FC = () => {
                   disabled={saving || !draft}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? 'Saving...' : 'Save reason'}
+                  {saving ? 'Guardando...' : 'Guardar motivo'}
                 </button>
                 {draft?.id && (
                   <button
@@ -530,7 +530,7 @@ const PauseDefs: React.FC = () => {
                     disabled={saving}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
                   >
-                    <Trash2 className="h-4 w-4" /> Remove
+                    <Trash2 className="h-4 w-4" /> Eliminar
                   </button>
                 )}
               </div>

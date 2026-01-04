@@ -9,6 +9,7 @@ import {
   Shield,
   Users,
 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -186,7 +187,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -195,6 +196,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 };
 
 const Workers: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [rosterMode, setRosterMode] = useState<RosterMode>('workers');
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [supervisors, setSupervisors] = useState<WorkerSupervisor[]>([]);
@@ -221,6 +223,13 @@ const Workers: React.FC = () => {
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const isWorkerMode = rosterMode === 'workers';
+
+  useEffect(() => {
+    setHeader({
+      title: 'Directorio de trabajadores',
+      kicker: 'Personal / Trabajadores',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -250,7 +259,8 @@ const Workers: React.FC = () => {
         setSupervisorDraft(emptySupervisorDraft());
       } catch (error) {
         if (active) {
-          const message = error instanceof Error ? error.message : 'Failed to load workers.';
+          const message =
+            error instanceof Error ? error.message : 'No se pudieron cargar los trabajadores.';
           setStatusMessage(message);
         }
       } finally {
@@ -282,7 +292,7 @@ const Workers: React.FC = () => {
           const message =
             error instanceof Error
               ? error.message
-              : 'Failed to load GeoVictoria workers.';
+              : 'No se pudieron cargar los trabajadores de GeoVictoria.';
           setGeoError(message);
         }
       } finally {
@@ -347,7 +357,7 @@ const Workers: React.FC = () => {
           const message =
             error instanceof Error
               ? error.message
-              : 'Failed to search GeoVictoria.';
+              : 'No se pudo buscar en GeoVictoria.';
           setGeoError(message);
           setGeoSuggestions([]);
         }
@@ -401,7 +411,9 @@ const Workers: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load worker skills.';
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar las habilidades del trabajador.';
           setStatusMessage(message);
         }
       }
@@ -537,18 +549,20 @@ const Workers: React.FC = () => {
   );
 
   const stationSubtitle = (station: Station) =>
-    station.role === 'Assembly' && station.line_type ? `línea ${station.line_type}` : null;
+    station.role === 'Assembly' && station.line_type ? `linea ${station.line_type}` : null;
 
   const assignedStationNames = useMemo(() => {
     if (!draft?.assigned_station_ids) {
       return [];
     }
-    return draft.assigned_station_ids.map((id) => stationNameById.get(id) ?? 'Unknown station');
+    return draft.assigned_station_ids.map(
+      (id) => stationNameById.get(id) ?? 'Estacion desconocida'
+    );
   }, [draft?.assigned_station_ids, stationNameById]);
 
   const assignedStationLabel = useMemo(() => {
     if (assignedStationNames.length === 0) {
-      return 'No stations selected';
+      return 'Sin estaciones seleccionadas';
     }
     if (assignedStationNames.length <= 2) {
       return assignedStationNames.join(', ');
@@ -621,7 +635,7 @@ const Workers: React.FC = () => {
 
   const handleGeoSelect = (worker: GeoVictoriaWorker) => {
     if (!worker.geovictoria_id || !worker.identifier) {
-      setGeoError('GeoVictoria selection is missing an identifier.');
+      setGeoError('La seleccion de GeoVictoria no tiene identificador.');
       return;
     }
     setGeoSelected(worker);
@@ -678,11 +692,13 @@ const Workers: React.FC = () => {
       return;
     }
     if (!working.first_name.trim() || !working.last_name.trim()) {
-      setStatusMessage('First and last name are required.');
+      setStatusMessage('Nombre y apellido son obligatorios.');
       return;
     }
     if (!working.geovictoria_id.trim() || !working.geovictoria_identifier.trim()) {
-      setStatusMessage('GeoVictoria link is required before saving a worker.');
+      setStatusMessage(
+        'El enlace de GeoVictoria es obligatorio antes de guardar un trabajador.'
+      );
       return;
     }
     setSaving(true);
@@ -720,9 +736,10 @@ const Workers: React.FC = () => {
         return sortWorkers(next);
       });
       setSelectedWorkerId(savedWorker.id);
-      setStatusMessage('Changes saved.');
+      setStatusMessage('Cambios guardados.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save changes.';
+      const message =
+        error instanceof Error ? error.message : 'No se pudieron guardar los cambios.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -739,7 +756,9 @@ const Workers: React.FC = () => {
       return;
     }
     if (!working.geovictoria_id.trim() || !working.geovictoria_identifier.trim()) {
-      setStatusMessage('GeoVictoria link is required before saving a supervisor.');
+      setStatusMessage(
+        'El enlace de GeoVictoria es obligatorio antes de guardar un supervisor.'
+      );
       return;
     }
     setSaving(true);
@@ -774,10 +793,10 @@ const Workers: React.FC = () => {
         return sortSupervisors(next);
       });
       setSelectedSupervisorId(savedSupervisor.id);
-      setStatusMessage('Supervisor saved.');
+      setStatusMessage('Supervisor guardado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save supervisor.';
+        error instanceof Error ? error.message : 'No se pudo guardar el supervisor.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -815,11 +834,11 @@ const Workers: React.FC = () => {
 
   const geoLink = (
     <div>
-      <p className="text-sm text-[var(--ink-muted)]">GeoVictoria link</p>
+      <p className="text-sm text-[var(--ink-muted)]">Enlace GeoVictoria</p>
       <div className="relative mt-2">
         <input
           className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-          placeholder="Search by name or RUT"
+          placeholder="Buscar por nombre o RUT"
           value={geoQuery}
           onChange={(event) => setGeoQuery(event.target.value)}
         />
@@ -827,7 +846,7 @@ const Workers: React.FC = () => {
           <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
             {filteredGeoSuggestions.map((item, index) => {
               const name = [item.first_name, item.last_name].filter(Boolean).join(' ');
-              const identifier = item.identifier ?? 'Missing RUT';
+              const identifier = item.identifier ?? 'RUT faltante';
               const key = item.geovictoria_id ?? item.identifier ?? `${index}`;
               return (
                 <button
@@ -837,7 +856,7 @@ const Workers: React.FC = () => {
                   className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm text-[var(--ink)] hover:bg-black/5"
                 >
                   <div>
-                    <p className="font-semibold">{name || 'Unknown worker'}</p>
+                    <p className="font-semibold">{name || 'Trabajador desconocido'}</p>
                     <p className="text-xs text-[var(--ink-muted)]">{identifier}</p>
                   </div>
                   <ChevronRight className="h-4 w-4 text-[var(--ink-muted)]" />
@@ -849,11 +868,11 @@ const Workers: React.FC = () => {
       </div>
       {geoLoading && (
         <p className="mt-2 text-xs text-[var(--ink-muted)]">
-          Loading GeoVictoria roster...
+          Cargando listado de GeoVictoria...
         </p>
       )}
       {geoSearchLoading && !geoLoading && (
-        <p className="mt-2 text-xs text-[var(--ink-muted)]">Searching GeoVictoria...</p>
+        <p className="mt-2 text-xs text-[var(--ink-muted)]">Buscando en GeoVictoria...</p>
       )}
       {geoError && <p className="mt-2 text-xs text-[var(--accent)]">{geoError}</p>}
       {geoSelected && (
@@ -863,10 +882,10 @@ const Workers: React.FC = () => {
               <p className="font-semibold text-[var(--ink)]">
                 {[geoSelected.first_name, geoSelected.last_name]
                   .filter(Boolean)
-                  .join(' ') || 'GeoVictoria worker'}
+                  .join(' ') || 'Trabajador de GeoVictoria'}
               </p>
               <p className="text-[var(--ink-muted)]">
-                RUT: {geoSelected.identifier ?? 'Unknown'}
+                RUT: {geoSelected.identifier ?? 'Desconocido'}
               </p>
             </div>
             <button
@@ -874,7 +893,7 @@ const Workers: React.FC = () => {
               onClick={clearGeoSelection}
               className="rounded-full border border-black/10 px-3 py-1 text-[10px] font-semibold text-[var(--ink)]"
             >
-              Clear
+              Limpiar
             </button>
           </div>
         </div>
@@ -884,25 +903,15 @@ const Workers: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Personnel / Workers
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Worker Directory</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Create, assign, and manage operator profiles with station coverage and skills.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={isWorkerMode ? handleAddWorker : handleAddSupervisor}
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
-          >
-            <Plus className="h-4 w-4" /> {isWorkerMode ? 'Add Worker' : 'Add Supervisor'}
-          </button>
-        </div>
-      </header>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          onClick={isWorkerMode ? handleAddWorker : handleAddSupervisor}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
+        >
+          <Plus className="h-4 w-4" />{' '}
+          {isWorkerMode ? 'Agregar trabajador' : 'Agregar supervisor'}
+        </button>
+      </div>
       {statusMessage && (
         <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-2 text-sm text-[var(--ink-muted)]">
           {statusMessage}
@@ -914,14 +923,14 @@ const Workers: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-display text-[var(--ink)]">
-                {isWorkerMode ? 'Active Crew' : 'Supervisor Roster'}
+                {isWorkerMode ? 'Equipo activo' : 'Lista de supervisores'}
               </h2>
               <p className="text-sm text-[var(--ink-muted)]">
                 {loading
-                  ? 'Loading operators...'
+                  ? 'Cargando operadores...'
                   : isWorkerMode
-                  ? `${activeCount} active of ${workers.length} total`
-                  : `${supervisors.length} supervisors on file`}
+                  ? `${activeCount} activos de ${workers.length} total`
+                  : `${supervisors.length} supervisores registrados`}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -933,7 +942,7 @@ const Workers: React.FC = () => {
                     isWorkerMode ? 'bg-black/5 text-[var(--ink)]' : ''
                   }`}
                 >
-                  Workers
+                  Trabajadores
                 </button>
                 <button
                   type="button"
@@ -942,14 +951,14 @@ const Workers: React.FC = () => {
                     !isWorkerMode ? 'bg-black/5 text-[var(--ink)]' : ''
                   }`}
                 >
-                  Supervisors
+                  Supervisores
                 </button>
               </div>
               <label className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
                 <input
                   type="search"
-                  placeholder={isWorkerMode ? 'Search worker' : 'Search supervisor'}
+                  placeholder={isWorkerMode ? 'Buscar trabajador' : 'Buscar supervisor'}
                   className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
                   value={rosterSearchValue}
                   onChange={(event) =>
@@ -961,7 +970,7 @@ const Workers: React.FC = () => {
               </label>
               {isWorkerMode && (
                 <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm">
-                  <Filter className="h-4 w-4" /> Filters
+                  <Filter className="h-4 w-4" /> Filtros
                 </button>
               )}
             </div>
@@ -970,22 +979,22 @@ const Workers: React.FC = () => {
           <div className="mt-6 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             {isWorkerMode && workers.length === 0 && !loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
-                No workers found. Add the first worker to get started.
+                No se encontraron trabajadores. Agrega el primer trabajador para empezar.
               </div>
             )}
             {isWorkerMode && workers.length > 0 && filteredWorkers.length === 0 && !loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
-                No workers match that search.
+                No hay trabajadores que coincidan con la busqueda.
               </div>
             )}
             {!isWorkerMode && supervisors.length === 0 && !loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
-                No supervisors found. Add the first supervisor to get started.
+                No se encontraron supervisores. Agrega el primer supervisor para empezar.
               </div>
             )}
             {!isWorkerMode && supervisors.length > 0 && filteredSupervisors.length === 0 && !loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
-                No supervisors match that search.
+                No hay supervisores que coincidan con la busqueda.
               </div>
             )}
             
@@ -994,13 +1003,13 @@ const Workers: React.FC = () => {
               filteredWorkers.map((worker) => {
                 const stationsLabel = worker.assigned_station_ids?.length
                   ? worker.assigned_station_ids
-                      .map((id) => stationNameById.get(id) ?? 'Unknown station')
+                      .map((id) => stationNameById.get(id) ?? 'Estacion desconocida')
                       .join(', ')
-                  : 'Unassigned';
+                  : 'Sin asignar';
                 const supervisorLabel =
                   worker.supervisor_id != null
-                    ? supervisorNameById.get(worker.supervisor_id) ?? 'Unknown supervisor'
-                    : 'Unassigned';
+                    ? supervisorNameById.get(worker.supervisor_id) ?? 'Supervisor desconocido'
+                    : 'Sin asignar';
                 const isSelected = selectedWorkerId === worker.id;
 
                 return (
@@ -1019,14 +1028,16 @@ const Workers: React.FC = () => {
                         </p>
                         {!worker.active && (
                            <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                             Inactive
+                             Inactivo
                            </span>
                         )}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
-                         <span className="truncate">Stations: {stationsLabel}</span>
+                         <span className="truncate">Estaciones: {stationsLabel}</span>
                          <span className="truncate">Sup: {supervisorLabel}</span>
-                         <span className="truncate text-gray-400">RUT: {worker.geovictoria_identifier || 'Unlinked'}</span>
+                         <span className="truncate text-gray-400">
+                           RUT: {worker.geovictoria_identifier || 'Sin vincular'}
+                         </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
@@ -1038,7 +1049,7 @@ const Workers: React.FC = () => {
                          }}
                          className={`rounded-full px-2.5 py-1 text-xs font-medium border transition-colors ${isSelected ? 'bg-white border-blue-200 text-blue-700 shadow-sm' : 'bg-gray-50 border-gray-200 text-gray-600 group-hover:bg-white group-hover:border-gray-300'}`}
                       >
-                        Edit
+                        Editar
                       </button>
                     </div>
                   </div>
@@ -1063,8 +1074,10 @@ const Workers: React.FC = () => {
                          {supervisor.first_name} {supervisor.last_name}
                        </p>
                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
-                          <span>Crew: {crewCount} workers</span>
-                          <span className="truncate text-gray-400">RUT: {supervisor.geovictoria_identifier || 'Unlinked'}</span>
+                          <span>Equipo: {crewCount} trabajadores</span>
+                          <span className="truncate text-gray-400">
+                            RUT: {supervisor.geovictoria_identifier || 'Sin vincular'}
+                          </span>
                        </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
@@ -1076,7 +1089,7 @@ const Workers: React.FC = () => {
                          }}
                          className={`rounded-full px-2.5 py-1 text-xs font-medium border transition-colors ${isSelected ? 'bg-white border-blue-200 text-blue-700 shadow-sm' : 'bg-gray-50 border-gray-200 text-gray-600 group-hover:bg-white group-hover:border-gray-300'}`}
                       >
-                        Edit
+                        Editar
                       </button>
                     </div>
                   </div>
@@ -1092,16 +1105,16 @@ const Workers: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    Detail + Edit
+                    Detalle + Edicion
                   </p>
                   <h2 className="text-lg font-display text-[var(--ink)]">
                     {draft
-                      ? `${draft.first_name || 'New'} ${draft.last_name || 'Worker'}`
-                      : 'New worker'}
+                      ? `${draft.first_name || 'Nuevo'} ${draft.last_name || 'Trabajador'}`
+                      : 'Nuevo trabajador'}
                   </h2>
                 </div>
                 <span className="rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)]">
-                  {draft?.id ? `Editing ${draft.id}` : 'New'}
+                  {draft?.id ? `Editando ${draft.id}` : 'Nuevo'}
                 </span>
               </div>
 
@@ -1110,7 +1123,7 @@ const Workers: React.FC = () => {
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="text-sm text-[var(--ink-muted)]">
-                    First name
+                    Nombre
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={draft?.first_name ?? ''}
@@ -1118,7 +1131,7 @@ const Workers: React.FC = () => {
                     />
                   </label>
                   <label className="text-sm text-[var(--ink-muted)]">
-                    Last name
+                    Apellido
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={draft?.last_name ?? ''}
@@ -1137,16 +1150,16 @@ const Workers: React.FC = () => {
                     />
                   </label>
                   <label className="text-sm text-[var(--ink-muted)]">
-                    Status
+                    Estado
                     <select
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                      value={draft?.active ? 'Active' : 'Inactive'}
+                      value={draft?.active ? 'Activo' : 'Inactivo'}
                       onChange={(event) =>
-                        updateDraft({ active: event.target.value === 'Active' })
+                        updateDraft({ active: event.target.value === 'Activo' })
                       }
                     >
-                      <option>Active</option>
-                      <option>Inactive</option>
+                      <option>Activo</option>
+                      <option>Inactivo</option>
                     </select>
                   </label>
                 </div>
@@ -1157,7 +1170,7 @@ const Workers: React.FC = () => {
                     checked={draft?.login_required ?? false}
                     onChange={(event) => updateDraft({ login_required: event.target.checked })}
                   />
-                  Login required (PIN)
+                  Inicio de sesion requerido (PIN)
                 </label>
 
                 <label className="text-sm text-[var(--ink-muted)]">
@@ -1174,7 +1187,7 @@ const Workers: React.FC = () => {
                     }
                     disabled={supervisors.length === 0}
                   >
-                    <option value="">Unassigned</option>
+                    <option value="">Sin asignar</option>
                     {supervisors.map((supervisor) => (
                       <option key={supervisor.id} value={supervisor.id}>
                         {supervisor.first_name} {supervisor.last_name}
@@ -1184,12 +1197,12 @@ const Workers: React.FC = () => {
                 </label>
                 {supervisors.length === 0 && (
                   <p className="text-xs text-[var(--ink-muted)]">
-                    No supervisors on file yet.
+                    Aun no hay supervisores registrados.
                   </p>
                 )}
 
                 <div>
-                  <p className="text-sm text-[var(--ink-muted)]">Assigned stations</p>
+                  <p className="text-sm text-[var(--ink-muted)]">Estaciones asignadas</p>
                   <div className="relative mt-2" ref={stationDropdownRef}>
                     <button
                       type="button"
@@ -1207,7 +1220,7 @@ const Workers: React.FC = () => {
                       <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
                         {orderedStations.length === 0 ? (
                           <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
-                            No stations available.
+                            No hay estaciones disponibles.
                           </div>
                         ) : (
                           <div className="max-h-56 overflow-auto p-3 text-sm">
@@ -1240,7 +1253,7 @@ const Workers: React.FC = () => {
                 </div>
 
                 <div>
-                  <p className="text-sm text-[var(--ink-muted)]">Skill coverage</p>
+                  <p className="text-sm text-[var(--ink-muted)]">Cobertura de habilidades</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {skills.map((skill) => (
                       <label
@@ -1269,13 +1282,13 @@ const Workers: React.FC = () => {
                     disabled={!canSave}
                     className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Save changes
+                    Guardar cambios
                   </button>
                   <button
                     onClick={() => void handleDisable()}
                     className="rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
                   >
-                    Disable worker
+                    Desactivar trabajador
                   </button>
                 </div>
               </div>
@@ -1285,18 +1298,18 @@ const Workers: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    Detail + Edit
+                    Detalle + Edicion
                   </p>
                   <h2 className="text-lg font-display text-[var(--ink)]">
                     {supervisorDraft
-                      ? `${supervisorDraft.first_name || 'New'} ${
+                      ? `${supervisorDraft.first_name || 'Nuevo'} ${
                           supervisorDraft.last_name || 'Supervisor'
                         }`
-                      : 'New supervisor'}
+                      : 'Nuevo supervisor'}
                   </h2>
                 </div>
                 <span className="rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)]">
-                  {supervisorDraft?.id ? `Editing ${supervisorDraft.id}` : 'New'}
+                  {supervisorDraft?.id ? `Editando ${supervisorDraft.id}` : 'Nuevo'}
                 </span>
               </div>
 
@@ -1305,7 +1318,7 @@ const Workers: React.FC = () => {
 
                 <div className="grid gap-3 md:grid-cols-2">
                   <label className="text-sm text-[var(--ink-muted)]">
-                    First name
+                    Nombre
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={supervisorDraft?.first_name ?? ''}
@@ -1315,7 +1328,7 @@ const Workers: React.FC = () => {
                     />
                   </label>
                   <label className="text-sm text-[var(--ink-muted)]">
-                    Last name
+                    Apellido
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={supervisorDraft?.last_name ?? ''}
@@ -1341,7 +1354,7 @@ const Workers: React.FC = () => {
                     disabled={!canSave}
                     className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Save supervisor
+                    Guardar supervisor
                   </button>
                 </div>
               </div>

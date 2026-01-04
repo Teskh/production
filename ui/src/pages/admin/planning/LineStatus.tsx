@@ -1,22 +1,29 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArrowRight, ArrowDown, Box, Settings } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const LineStatus: React.FC = () => {
+  const { setHeader } = useAdminHeader();
+
+  useEffect(() => {
+    setHeader({
+      title: 'Estado de linea',
+      kicker: 'Planificacion / Produccion',
+    });
+  }, [setHeader]);
+
   return (
     <div className="flex flex-col h-full space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-800">Line Status</h1>
-        <div className="space-x-2">
-          <button className="px-4 py-2 bg-white border border-gray-300 rounded shadow-sm text-sm font-medium hover:bg-gray-50">
-            Export Report
-          </button>
-        </div>
+      <div className="flex justify-end items-center">
+        <button className="px-4 py-2 bg-white border border-gray-300 rounded shadow-sm text-sm font-medium hover:bg-gray-50">
+          Exportar reporte
+        </button>
       </div>
 
       <div className="flex flex-col xl:flex-row gap-6">
         {/* Main Process Flow */}
         <div className="flex-1 bg-white p-6 rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
-          <h3 className="text-lg font-semibold text-gray-700 mb-8">Production Line Map</h3>
+          <h3 className="text-lg font-semibold text-gray-700 mb-8">Mapa de linea de produccion</h3>
           
           <div className="min-w-[800px] flex flex-col items-center space-y-12">
             
@@ -24,11 +31,11 @@ const LineStatus: React.FC = () => {
             <div className="w-full max-w-5xl relative">
               {/* Row 1: Left to Right */}
               <div className="flex justify-between items-center mb-4 px-24">
-                {['Panel St 1', 'Panel St 2', 'Panel St 3'].map((name, i) => (
+                {['Est Panel 1', 'Est Panel 2', 'Est Panel 3'].map((name, i) => (
                   <React.Fragment key={name}>
                     <div className="w-56 h-32 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
                       <span className="text-xs font-bold uppercase text-blue-800 mb-1">{name}</span>
-                      <span className="text-xs text-gray-500">Running</span>
+                      <span className="text-xs text-gray-500">En marcha</span>
                       {i === 1 && (
                          <div className="absolute -top-3 -right-3 w-6 h-6 bg-green-500 rounded-full border-2 border-white flex items-center justify-center text-white text-xs font-bold">
                            2
@@ -46,11 +53,11 @@ const LineStatus: React.FC = () => {
               
               {/* Row 2: Right to Left */}
               <div className="flex justify-between items-center mt-12 px-24 flex-row-reverse">
-                {['Panel St 4', 'Panel St 5', 'Panel St 6'].map((name, i) => (
+                {['Est Panel 4', 'Est Panel 5', 'Est Panel 6'].map((name, i) => (
                   <React.Fragment key={name}>
                     <div className="w-56 h-32 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center relative shadow-sm hover:shadow-md transition-shadow">
                       <span className="text-xs font-bold uppercase text-blue-800 mb-1">{name}</span>
-                      <span className="text-xs text-gray-500">Running</span>
+                      <span className="text-xs text-gray-500">En marcha</span>
                     </div>
                     {/* Arrow between stations (Reversed for R->L flow visualization) */}
                     {i < 2 && <ArrowRight className="text-gray-300 w-8 h-8 rotate-180" />}
@@ -92,15 +99,15 @@ const LineStatus: React.FC = () => {
 
             {/* 3. Assembly Lines */}
             <div className="w-full max-w-5xl flex justify-between gap-8">
-              {['Assembly Line 1', 'Assembly Line 2', 'Assembly Line 3'].map((name) => (
+              {['Linea de ensamblaje 1', 'Linea de ensamblaje 2', 'Linea de ensamblaje 3'].map((name) => (
                 <div key={name} className="flex-1 min-w-[300px] bg-green-50 border border-green-200 rounded-lg p-4 min-h-[240px] relative flex flex-col items-center">
                   <h4 className="font-bold text-green-900 text-center mb-4">{name}</h4>
                   <div className="w-full space-y-2">
                     <div className="bg-white p-2 rounded border border-green-100 text-xs shadow-sm">
-                      Status: <span className="text-green-600 font-semibold">Active</span>
+                      Estado: <span className="text-green-600 font-semibold">Activo</span>
                     </div>
                     <div className="bg-white p-2 rounded border border-green-100 text-xs shadow-sm">
-                      Current: Batch-A
+                      Actual: Lote-A
                     </div>
                   </div>
                 </div>
@@ -114,15 +121,15 @@ const LineStatus: React.FC = () => {
           <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 h-full">
             <h3 className="text-lg font-semibold text-gray-700 mb-6 flex items-center">
               <Settings className="w-5 h-5 mr-2" />
-              Auxiliary Stations
+              Estaciones auxiliares
             </h3>
             
             <div className="space-y-4">
-              {['Pre-Assembly Prep', 'Custom Finishing', 'Repair Bay', 'Quality Lab'].map((st) => (
+              {['Prep pre-ensamblaje', 'Acabado personalizado', 'Area de reparacion', 'Laboratorio de calidad'].map((st) => (
                 <div key={st} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:border-gray-300 transition-colors">
                   <h4 className="font-medium text-gray-800 text-sm mb-2">{st}</h4>
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-gray-500">Idle</span>
+                    <span className="text-gray-500">En espera</span>
                     <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
                   </div>
                 </div>
@@ -130,8 +137,8 @@ const LineStatus: React.FC = () => {
             </div>
             
             <div className="mt-8 p-4 bg-blue-50 rounded border border-blue-100 text-xs text-blue-800">
-              <p className="font-semibold mb-1">Note:</p>
-              Auxiliary stations operate independently of the main line flow.
+              <p className="font-semibold mb-1">Nota:</p>
+              Las estaciones auxiliares operan de forma independiente del flujo principal.
             </div>
           </div>
         </div>

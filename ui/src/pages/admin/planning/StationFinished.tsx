@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const StationFinished: React.FC = () => {
+  const { setHeader } = useAdminHeader();
+
+  useEffect(() => {
+    setHeader({
+      title: 'Paneles terminados por estacion',
+      kicker: 'Planificacion / Produccion',
+    });
+  }, [setHeader]);
+
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Station Panels Finished</h1>
-      <p className="text-gray-500">This is a placeholder for the Station Panels Finished page.</p>
+      <p className="text-gray-500">
+        Este es un marcador para la pagina de paneles terminados por estacion.
+      </p>
     </div>
   );
 };

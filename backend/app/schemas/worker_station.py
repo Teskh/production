@@ -17,6 +17,10 @@ class StationTask(BaseModel):
     skippable: bool
     concurrent_allowed: bool
     advance_trigger: bool
+    dependencies_satisfied: bool = True
+    dependencies_missing_names: list[str] = Field(default_factory=list)
+    worker_allowed: bool = True
+    allowed_worker_names: list[str] = Field(default_factory=list)
     started_at: datetime | None = None
     completed_at: datetime | None = None
     notes: str | None = None

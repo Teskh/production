@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, MessageSquare, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -60,7 +61,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -89,6 +90,7 @@ const sortStations = (list: Station[]) =>
   });
 
 const NoteDefs: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [templates, setTemplates] = useState<CommentTemplate[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
@@ -99,6 +101,13 @@ const NoteDefs: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Plantillas de comentarios',
+      kicker: 'Configuracion / Notas',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -126,7 +135,9 @@ const NoteDefs: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load comment templates.';
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar las plantillas de comentarios.';
           setStatusMessage(message);
         }
       } finally {
@@ -163,7 +174,7 @@ const NoteDefs: React.FC = () => {
 
   const summaryLabel = useMemo(() => {
     const activeCount = templates.filter((template) => template.active).length;
-    return `${templates.length} templates / ${activeCount} active`;
+    return `${templates.length} plantillas / ${activeCount} activas`;
   }, [templates]);
 
   useEffect(() => {
@@ -228,12 +239,12 @@ const NoteDefs: React.FC = () => {
 
   const buildScopeLabel = (stationIds: number[] | null): string => {
     if (stationIds === null) {
-      return 'All stations';
+      return 'Todas las estaciones';
     }
     if (stationIds.length === 0) {
-      return 'No stations selected';
+      return 'No hay estaciones seleccionadas';
     }
-    const names = stationIds.map((id) => stationNameById.get(id) ?? `Station ${id}`);
+    const names = stationIds.map((id) => stationNameById.get(id) ?? `Estacion ${id}`);
     if (names.length <= 2) {
       return names.join(', ');
     }
@@ -242,17 +253,17 @@ const NoteDefs: React.FC = () => {
 
   const draftStationLabel = useMemo(() => {
     if (!draft) {
-      return 'All stations';
+      return 'Todas las estaciones';
     }
     return draft.all_stations
-      ? 'All stations'
+      ? 'Todas las estaciones'
       : buildScopeLabel(draft.applicable_station_ids);
   }, [draft, stationNameById]);
 
   const buildPayload = (current: TemplateDraft) => {
     const text = current.text.trim();
     if (!text) {
-      throw new Error('Comment template text is required.');
+      throw new Error('Se requiere el texto de la plantilla de comentario.');
     }
     const stationIds = current.all_stations ? null : current.applicable_station_ids;
     return {
@@ -288,10 +299,10 @@ const NoteDefs: React.FC = () => {
       }
       setSelectedTemplateId(saved.id);
       setDraft(buildDraftFromTemplate(saved));
-      setStatusMessage('Comment template saved.');
+      setStatusMessage('Plantilla de comentario guardada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save comment template.';
+        error instanceof Error ? error.message : 'No se pudo guardar la plantilla de comentario.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -314,10 +325,12 @@ const NoteDefs: React.FC = () => {
         setSelectedTemplateId(null);
         setDraft(emptyDraft());
       }
-      setStatusMessage('Comment template removed.');
+      setStatusMessage('Plantilla de comentario eliminada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to remove comment template.';
+        error instanceof Error
+          ? error.message
+          : 'No se pudo eliminar la plantilla de comentario.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -355,36 +368,27 @@ const NoteDefs: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Configuration / Notes
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Comment templates</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Provide consistent language workers can attach to completed tasks.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleAddTemplate}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--accent)]/90"
         >
-          <Plus className="h-4 w-4" /> Add template
+          <Plus className="h-4 w-4" /> Agregar plantilla
         </button>
-      </header>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
         <section className="order-last rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden xl:order-none">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Current templates</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Plantillas actuales</h2>
               <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search..."
+                placeholder="Buscar..."
                 className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -394,12 +398,12 @@ const NoteDefs: React.FC = () => {
 
           {loading && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              Loading comment templates...
+              Cargando plantillas de comentarios...
             </div>
           )}
           {!loading && filteredTemplates.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              No comment templates match that search.
+              No hay plantillas que coincidan con esa busqueda.
             </div>
           )}
 
@@ -413,10 +417,10 @@ const NoteDefs: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Detail
+                  Detalle
                 </p>
                 <h2 className="text-lg font-display text-[var(--ink)]">
-                  {draft?.id ? `Template #${draft.id}` : 'New comment template'}
+                  {draft?.id ? `Plantilla #${draft.id}` : 'Nueva plantilla de comentario'}
                 </h2>
               </div>
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -430,7 +434,7 @@ const NoteDefs: React.FC = () => {
 
             <div className="mt-4 space-y-4">
               <label className="text-sm text-[var(--ink-muted)]">
-                Template text
+                Texto de plantilla
                 <textarea
                   rows={4}
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
@@ -439,19 +443,19 @@ const NoteDefs: React.FC = () => {
                 />
               </label>
               <label className="text-sm text-[var(--ink-muted)]">
-                Status
+                Estado
                 <select
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  value={draft?.active ? 'Active' : 'Inactive'}
-                  onChange={(event) => updateDraft({ active: event.target.value === 'Active' })}
+                  value={draft?.active ? 'Activo' : 'Inactivo'}
+                  onChange={(event) => updateDraft({ active: event.target.value === 'Activo' })}
                 >
-                  <option>Active</option>
-                  <option>Inactive</option>
+                  <option>Activo</option>
+                  <option>Inactivo</option>
                 </select>
               </label>
 
               <div>
-                <p className="text-sm text-[var(--ink-muted)]">Station scope</p>
+                <p className="text-sm text-[var(--ink-muted)]">Alcance de estaciones</p>
                 <div className="relative mt-2" ref={stationDropdownRef}>
                   <button
                     type="button"
@@ -474,12 +478,12 @@ const NoteDefs: React.FC = () => {
                             checked={draft?.all_stations ?? true}
                             onChange={toggleAllStations}
                           />
-                          <span className="text-[var(--ink)]">All stations</span>
+                          <span className="text-[var(--ink)]">Todas las estaciones</span>
                         </label>
                       </div>
                       {stations.length === 0 ? (
                         <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
-                          No stations available.
+                          No hay estaciones disponibles.
                         </div>
                       ) : (
                         <div className="max-h-56 overflow-auto p-3 text-sm">
@@ -516,7 +520,7 @@ const NoteDefs: React.FC = () => {
                   disabled={saving || !draft}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? 'Saving...' : 'Save template'}
+                  {saving ? 'Guardando...' : 'Guardar plantilla'}
                 </button>
                 {draft?.id && (
                   <button
@@ -524,7 +528,7 @@ const NoteDefs: React.FC = () => {
                     disabled={saving}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
                   >
-                    <Trash2 className="h-4 w-4" /> Remove
+                    <Trash2 className="h-4 w-4" /> Eliminar
                   </button>
                 )}
               </div>

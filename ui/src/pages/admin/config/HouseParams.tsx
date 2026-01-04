@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Edit3, Plus, Trash2 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -63,7 +64,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -100,6 +101,7 @@ const parseNumberInput = (value: string): number | 'invalid' => {
 };
 
 const HouseParams: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [parameters, setParameters] = useState<HouseParameter[]>([]);
   const [parameterDraft, setParameterDraft] = useState<ParameterDraft>(emptyDraft());
   const [selectedParameterId, setSelectedParameterId] = useState<number | null>(null);
@@ -116,6 +118,13 @@ const HouseParams: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [valueMessage, setValueMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Parametros de casa',
+      kicker: 'Definicion de producto / Parametros de casa',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -143,7 +152,9 @@ const HouseParams: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load house parameters.';
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar los parametros de casa.';
           setStatusMessage(message);
         }
       } finally {
@@ -165,7 +176,7 @@ const HouseParams: React.FC = () => {
       const data = await apiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
       setSubtypesByType((prev) => ({ ...prev, [houseTypeId]: sortSubtypes(data) }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load subtypes.';
+      const message = error instanceof Error ? error.message : 'No se pudieron cargar los subtipos.';
       setValueMessage(message);
     } finally {
       setLoadingSubtypes(false);
@@ -204,7 +215,7 @@ const HouseParams: React.FC = () => {
           const message =
             error instanceof Error
               ? error.message
-              : 'Failed to load parameter values.';
+              : 'No se pudieron cargar los valores de parametros.';
           setValueMessage(message);
         }
       } finally {
@@ -324,7 +335,7 @@ const HouseParams: React.FC = () => {
   const buildParameterPayload = (draft: ParameterDraft) => {
     const name = draft.name.trim();
     if (!name) {
-      throw new Error('Parameter name is required.');
+      throw new Error('Se requiere el nombre del parametro.');
     }
     const unit = draft.unit.trim();
     return { name, unit: unit ? unit : null };
@@ -332,7 +343,7 @@ const HouseParams: React.FC = () => {
 
   const saveValues = async (parameterId: number) => {
     if (!selectedHouseType) {
-      setValueMessage('Select a house type to edit values.');
+      setValueMessage('Seleccione un tipo de casa para editar valores.');
       return;
     }
     const operations: Promise<unknown>[] = [];
@@ -350,7 +361,7 @@ const HouseParams: React.FC = () => {
       }
       const parsed = parseNumberInput(trimmed);
       if (parsed === 'invalid') {
-        throw new Error(`Invalid value for module ${index}.`);
+        throw new Error(`Valor invalido para modulo ${index}.`);
       }
       if (existing) {
         if (Number(existing.value) !== parsed) {
@@ -377,7 +388,7 @@ const HouseParams: React.FC = () => {
       );
     }
     if (operations.length === 0) {
-      setValueMessage('Values already up to date.');
+      setValueMessage('Los valores ya estan actualizados.');
       return;
     }
     await Promise.all(operations);
@@ -385,7 +396,7 @@ const HouseParams: React.FC = () => {
       `/api/house-parameters/${parameterId}/values`
     );
     setParameterValues(refreshed);
-    setValueMessage('Values saved.');
+    setValueMessage('Valores guardados.');
   };
 
   const handleSave = async () => {
@@ -415,9 +426,9 @@ const HouseParams: React.FC = () => {
       if (selectedHouseType) {
         await saveValues(saved.id);
       }
-      setStatusMessage('Parameter saved.');
+      setStatusMessage('Parametro guardado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save parameter.';
+      const message = error instanceof Error ? error.message : 'No se pudo guardar el parametro.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -428,7 +439,7 @@ const HouseParams: React.FC = () => {
     if (!parameterDraft.id) {
       return;
     }
-    if (!window.confirm('Delete this parameter?')) {
+    if (!window.confirm('Eliminar este parametro?')) {
       return;
     }
     setSaving(true);
@@ -443,9 +454,9 @@ const HouseParams: React.FC = () => {
       setSelectedParameterId(next?.id ?? null);
       setParameterDraft(next ? buildDraftFromParameter(next) : emptyDraft());
       setParameterValues([]);
-      setStatusMessage('Parameter removed.');
+      setStatusMessage('Parametro eliminado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to remove parameter.';
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar el parametro.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -457,36 +468,27 @@ const HouseParams: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Product Definition / House Parameters
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">House Parameters</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Maintain parameter definitions and per-module values for each house type.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleAddParameter}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
         >
-          <Plus className="h-4 w-4" /> New parameter
+          <Plus className="h-4 w-4" /> Nuevo parametro
         </button>
-      </header>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Parameter list</h2>
+              <h2 className="text-lg font-display text-[var(--ink)]">Lista de parametros</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                {parameters.length} parameters in the library
+                {parameters.length} parametros en la biblioteca
               </p>
             </div>
             <input
               type="search"
-              placeholder="Search parameters"
+              placeholder="Buscar parametros"
               className="h-9 rounded-full border border-black/10 bg-white px-4 text-sm"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -495,13 +497,13 @@ const HouseParams: React.FC = () => {
 
           {loading && (
             <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              Loading parameters...
+              Cargando parametros...
             </div>
           )}
 
           {!loading && filteredParameters.length === 0 && (
             <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-              No parameters yet.
+              Aun no hay parametros.
             </div>
           )}
 
@@ -520,7 +522,7 @@ const HouseParams: React.FC = () => {
                 <div>
                   <p className="font-semibold text-[var(--ink)]">{parameter.name}</p>
                   <p className="text-xs text-[var(--ink-muted)]">
-                    Unit: {parameter.unit ?? 'n/a'}
+                    Unidad: {parameter.unit ?? 'n/a'}
                   </p>
                 </div>
                 <span className="rounded-full border border-black/10 px-2 py-0.5 text-xs text-[var(--ink-muted)]">
@@ -536,10 +538,10 @@ const HouseParams: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Detail
+                  Detalle
                 </p>
                 <h2 className="text-lg font-display text-[var(--ink)]">
-                  {selectedParameter?.name || parameterDraft.name || 'New parameter'}
+                  {selectedParameter?.name || parameterDraft.name || 'Nuevo parametro'}
                 </h2>
               </div>
               <Edit3 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -547,7 +549,7 @@ const HouseParams: React.FC = () => {
 
             <div className="mt-4 space-y-4">
               <label className="text-sm text-[var(--ink-muted)]">
-                Parameter name
+                Nombre del parametro
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                   value={parameterDraft.name}
@@ -555,7 +557,7 @@ const HouseParams: React.FC = () => {
                 />
               </label>
               <label className="text-sm text-[var(--ink-muted)]">
-                Unit
+                Unidad
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                   value={parameterDraft.unit}
@@ -566,30 +568,30 @@ const HouseParams: React.FC = () => {
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm text-[var(--ink-muted)]">Per-module values</p>
+                    <p className="text-sm text-[var(--ink-muted)]">Valores por modulo</p>
                     {selectedHouseType && (
                       <p className="text-xs text-[var(--ink-muted)]">
-                        {selectedHouseType.number_of_modules} modules •
+                        {selectedHouseType.number_of_modules} modulos -
                         {subtypeEnabled
-                          ? ' subtype override'
+                          ? ' ajuste por subtipo'
                           : selectedSubtypes.length > 0
-                            ? ' default values'
-                            : ' no subtypes'}
+                            ? ' valores por defecto'
+                            : ' sin subtipos'}
                       </p>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <label className="text-xs text-[var(--ink-muted)]">
-                      House type
+                      Tipo de casa
                       <select
                         className="ml-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs"
                         value={selectedHouseTypeId ?? ''}
                         onChange={(event) => handleHouseTypeChange(event.target.value)}
                         disabled={houseTypes.length === 0}
                       >
-                        {houseTypes.length === 0 && <option value="">No house types</option>}
+                        {houseTypes.length === 0 && <option value="">No hay tipos de casa</option>}
                         {houseTypes.length > 0 && !selectedHouseTypeId && (
-                          <option value="">Select house type</option>
+                          <option value="">Seleccionar tipo de casa</option>
                         )}
                         {houseTypes.map((type) => (
                           <option key={type.id} value={type.id}>
@@ -606,7 +608,7 @@ const HouseParams: React.FC = () => {
                         onChange={(event) => handleToggleSubtype(event.target.checked)}
                         disabled={subtypeDisabled}
                       />
-                      Use subtype
+                      Usar subtipo
                     </label>
                     {subtypeEnabled && (
                       <select
@@ -627,13 +629,13 @@ const HouseParams: React.FC = () => {
 
                 {houseTypes.length === 0 && (
                   <div className="mt-3 rounded-2xl border border-dashed border-black/10 px-3 py-2 text-xs text-[var(--ink-muted)]">
-                    Create a house type to add parameter values.
+                    Cree un tipo de casa para agregar valores de parametros.
                   </div>
                 )}
 
                 {loadingValues && (
                   <div className="mt-3 rounded-2xl border border-dashed border-black/10 px-3 py-2 text-xs text-[var(--ink-muted)]">
-                    Loading parameter values...
+                    Cargando valores de parametros...
                   </div>
                 )}
 
@@ -642,8 +644,8 @@ const HouseParams: React.FC = () => {
                     <table className="w-full text-sm">
                       <thead className="bg-[rgba(201,215,245,0.4)] text-xs text-[var(--ink-muted)]">
                         <tr>
-                          <th className="px-3 py-2 text-left">Module</th>
-                          <th className="px-3 py-2 text-left">Value</th>
+                          <th className="px-3 py-2 text-left">Modulo</th>
+                          <th className="px-3 py-2 text-left">Valor</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -689,14 +691,14 @@ const HouseParams: React.FC = () => {
                   disabled={saving}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? 'Saving...' : 'Save parameter'}
+                  {saving ? 'Guardando...' : 'Guardar parametro'}
                 </button>
                 <button
                   onClick={handleDelete}
                   disabled={saving || !parameterDraft.id}
                   className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
                 >
-                  <Trash2 className="h-4 w-4" /> Delete
+                  <Trash2 className="h-4 w-4" /> Eliminar
                 </button>
               </div>
             </div>

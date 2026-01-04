@@ -19,7 +19,7 @@ const Personnel: React.FC = () => {
             activeTab === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
           }`}
         >
-          Workers
+          Trabajadores
         </button>
         <button
           type="button"
@@ -28,7 +28,7 @@ const Personnel: React.FC = () => {
             activeTab === 'specialties' ? 'bg-black/5 text-[var(--ink)]' : ''
           }`}
         >
-          Specialties
+          Especialidades
         </button>
       </div>
       {activeTab === 'specialties' ? <Specialties /> : <Workers />}

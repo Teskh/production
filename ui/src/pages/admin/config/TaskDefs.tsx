@@ -11,6 +11,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -109,6 +110,13 @@ const sortWorkers = (list: Worker[]) =>
 
 const formatWorkerName = (worker: Worker) => `${worker.first_name} ${worker.last_name}`;
 
+const formatScopeLabel = (scope: TaskScope): string => {
+  if (scope === 'module') {
+    return 'modulo';
+  }
+  return scope;
+};
+
 const normalizeStationName = (station: Station) => {
   const trimmed = station.name.trim();
   if (!station.line_type) {
@@ -147,7 +155,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -156,6 +164,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 };
 
 const TaskDefs: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -174,6 +183,13 @@ const TaskDefs: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const dependencyDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Estudio de definicion de tareas',
+      kicker: 'Configuracion / Definiciones de tareas',
+    });
+  }, [setHeader]);
 
   const loadTasks = async () => {
     const taskData = await apiRequest<TaskDefinition[]>('/api/task-definitions');
@@ -215,7 +231,9 @@ const TaskDefs: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load task definitions.';
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar las definiciones de tareas.';
           setStatusMessage(message);
         }
       } finally {
@@ -291,7 +309,7 @@ const TaskDefs: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load task details.';
+            error instanceof Error ? error.message : 'No se pudieron cargar los detalles de tareas.';
           setStatusMessage(message);
         }
       } finally {
@@ -321,7 +339,7 @@ const TaskDefs: React.FC = () => {
     entries.forEach((names, sequence) => {
       map.set(
         sequence,
-        names.size ? Array.from(names).join(' / ') : `Sequence ${sequence}`
+        names.size ? Array.from(names).join(' / ') : `Secuencia ${sequence}`
       );
     });
     return map;
@@ -368,7 +386,7 @@ const TaskDefs: React.FC = () => {
     return Array.from(entries.entries())
       .map(([sequence, names]) => ({
         sequence,
-        label: names.size ? Array.from(names).join(' / ') : `Sequence ${sequence}`,
+        label: names.size ? Array.from(names).join(' / ') : `Secuencia ${sequence}`,
       }))
       .sort((a, b) => a.sequence - b.sequence);
   }, [draft.scope, stations]);
@@ -441,15 +459,19 @@ const TaskDefs: React.FC = () => {
 
   const dependencyHint = useMemo(() => {
     if (draft.scope === 'aux') {
-      return 'Showing aux tasks. Station assignment does not filter dependencies.';
+      return 'Mostrando tareas aux. La asignacion de estacion no filtra dependencias.';
     }
     if (draftSequenceOrder === null) {
-      return `Showing ${draft.scope} tasks. Set a station sequence to filter upstream.`;
+      return `Mostrando tareas ${formatScopeLabel(
+        draft.scope
+      )}. Establezca una secuencia de estacion para filtrar anteriores.`;
     }
     if (!hasSequenceData) {
-      return `Showing ${draft.scope} tasks.`;
+      return `Mostrando tareas ${formatScopeLabel(draft.scope)}.`;
     }
-    return `Showing ${draft.scope} tasks at or before sequence ${draftSequenceOrder}.`;
+    return `Mostrando tareas ${formatScopeLabel(
+      draft.scope
+    )} en o antes de la secuencia ${draftSequenceOrder}.`;
   }, [draft.scope, draftSequenceOrder, hasSequenceData]);
 
   const filteredAllowedWorkers = useMemo(() => {
@@ -504,10 +526,10 @@ const TaskDefs: React.FC = () => {
 
   const dependencySummaryLabel = useMemo(() => {
     if (draft.dependencies_json.length === 0) {
-      return 'No dependencies selected';
+      return 'No hay dependencias seleccionadas';
     }
     const names = draft.dependencies_json.map(
-      (id) => taskNameById.get(id) ?? `Task ${id}`
+      (id) => taskNameById.get(id) ?? `Tarea ${id}`
     );
     if (names.length <= 2) {
       return names.join(', ');
@@ -518,14 +540,14 @@ const TaskDefs: React.FC = () => {
   const crewNames = useMemo(
     () =>
       draft.regular_crew_worker_ids.map(
-        (id) => workerNameById.get(id) ?? `Worker ${id}`
+        (id) => workerNameById.get(id) ?? `Trabajador ${id}`
       ),
     [draft.regular_crew_worker_ids, workerNameById]
   );
 
   const crewSummaryLabel = useMemo(() => {
     if (crewNames.length === 0) {
-      return 'No crew selected';
+      return 'No hay equipo seleccionado';
     }
     if (crewNames.length <= 2) {
       return crewNames.join(', ');
@@ -549,9 +571,9 @@ const TaskDefs: React.FC = () => {
         const key = stationId === null ? 'aux-unassigned' : `aux-${stationId}`;
         const name =
           stationId === null
-            ? 'AUX - Unassigned'
-            : auxStationLabelById.get(stationId) ?? `AUX Station ${stationId}`;
-        const badge = stationId === null ? 'No station' : `Station ID ${stationId}`;
+            ? 'AUX - Sin asignar'
+            : auxStationLabelById.get(stationId) ?? `Estacion AUX ${stationId}`;
+        const badge = stationId === null ? 'Sin estacion' : `ID de estacion ${stationId}`;
         const group = groups.get(key);
         if (group) {
           group.tasks.push(task);
@@ -564,9 +586,9 @@ const TaskDefs: React.FC = () => {
       const key = sequence === null ? 'unscheduled' : `seq-${sequence}`;
       const name =
         sequence === null
-          ? 'Unassigned'
-          : catalogSequenceLabelByOrder.get(sequence) ?? `Sequence ${sequence}`;
-      const badge = sequence === null ? 'No sequence' : `Seq ${sequence}`;
+          ? 'Sin asignar'
+          : catalogSequenceLabelByOrder.get(sequence) ?? `Secuencia ${sequence}`;
+      const badge = sequence === null ? 'Sin secuencia' : `Sec ${sequence}`;
       const group = groups.get(key);
       if (group) {
         group.tasks.push(task);
@@ -714,7 +736,7 @@ const TaskDefs: React.FC = () => {
     }
     const parsed = parseSequenceValue(trimmed);
     if (parsed === null) {
-      throw new Error('Station sequence order must be a positive whole number.');
+      throw new Error('El orden de secuencia de estacion debe ser un numero entero positivo.');
     }
     return parsed;
   };
@@ -722,11 +744,11 @@ const TaskDefs: React.FC = () => {
   const handleSave = async () => {
     const name = draft.name.trim();
     if (!name) {
-      setStatusMessage('Task name is required.');
+      setStatusMessage('Se requiere el nombre de la tarea.');
       return;
     }
     if (!draft.allow_all_workers && draft.allowed_worker_ids.length === 0) {
-      setStatusMessage('Select allowed workers or enable everyone.');
+      setStatusMessage('Seleccione trabajadores permitidos o habilite a todos.');
       return;
     }
 
@@ -734,7 +756,8 @@ const TaskDefs: React.FC = () => {
     try {
       stationSequence = parseStationSequence();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid station sequence order.';
+      const message =
+        error instanceof Error ? error.message : 'Orden de secuencia de estacion invalido.';
       setStatusMessage(message);
       return;
     }
@@ -781,10 +804,10 @@ const TaskDefs: React.FC = () => {
 
       await loadTasks();
       setSelectedTaskId(saved.id);
-      setStatusMessage('Saved.');
+      setStatusMessage('Guardado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save task definition.';
+        error instanceof Error ? error.message : 'No se pudo guardar la definicion de tarea.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -795,7 +818,7 @@ const TaskDefs: React.FC = () => {
     if (!draft.id) {
       return;
     }
-    if (!window.confirm('Delete this task definition?')) {
+    if (!window.confirm('Eliminar esta definicion de tarea?')) {
       return;
     }
     setSaving(true);
@@ -803,10 +826,10 @@ const TaskDefs: React.FC = () => {
     try {
       await apiRequest<void>(`/api/task-definitions/${draft.id}`, { method: 'DELETE' });
       await loadTasks();
-      setStatusMessage('Deleted.');
+      setStatusMessage('Eliminada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to delete task definition.';
+        error instanceof Error ? error.message : 'No se pudo eliminar la definicion de tarea.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -820,31 +843,22 @@ const TaskDefs: React.FC = () => {
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh-8rem)]">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between mb-6 shrink-0">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Configuration / Task Definitions
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Task Definition Studio</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Build task templates, dependencies, and crew constraints.
-          </p>
-        </div>
+      <div className="mb-6 flex justify-end shrink-0">
         <button
           onClick={handleAddTask}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
         >
-          <Plus className="h-4 w-4" /> New task
+          <Plus className="h-4 w-4" /> Nueva tarea
         </button>
-      </header>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] flex-1 min-h-0">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm lg:overflow-auto">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Task catalog</h2>
+              <h2 className="text-lg font-display text-[var(--ink)]">Catalogo de tareas</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                {totalTasks} total · {panelTasks} panel · {moduleTasks} module · {auxTasks} aux
+                {totalTasks} total - {panelTasks} panel - {moduleTasks} modulo - {auxTasks} aux
               </p>
             </div>
             <div className="flex gap-2">
@@ -852,21 +866,21 @@ const TaskDefs: React.FC = () => {
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
                 <input
                   type="search"
-                  placeholder="Search tasks"
+                  placeholder="Buscar tareas"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
                 />
               </label>
               <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm">
-                <Filter className="h-4 w-4" /> Filters
+                <Filter className="h-4 w-4" /> Filtros
               </button>
             </div>
           </div>
 
           {loading ? (
             <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
-              Loading task definitions...
+              Cargando definiciones de tareas...
             </div>
           ) : catalogGroups.length ? (
             <div className="space-y-4">
@@ -893,7 +907,7 @@ const TaskDefs: React.FC = () => {
                         <div>
                           <p className="text-sm font-semibold text-gray-900">{group.name}</p>
                           <p className="text-[10px] text-gray-500">
-                            {group.badge} · {group.tasks.length} tasks
+                            {group.badge} - {group.tasks.length} tareas
                           </p>
                         </div>
                       </div>
@@ -914,17 +928,19 @@ const TaskDefs: React.FC = () => {
                             <div className="min-w-0 flex-1 pr-3">
                               <p className={`truncate text-sm font-medium ${selectedTaskId === task.id ? 'text-blue-900' : 'text-gray-900'}`}>{task.name}</p>
                               <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                                <span className="uppercase tracking-wider">{task.scope}</span>
+                                <span className="uppercase tracking-wider">
+                                  {formatScopeLabel(task.scope)}
+                                </span>
                                 {task.scope === 'panel' && (
                                   <>
-                                    <span>•</span>
-                                    <span>{task.skippable ? 'Skip OK' : 'Required'}</span>
+                                    <span>-</span>
+                                    <span>{task.skippable ? 'Se puede omitir' : 'Requerida'}</span>
                                   </>
                                 )}
                                 {task.scope === 'module' && task.advance_trigger && (
                                   <>
-                                    <span>•</span>
-                                    <span className="text-emerald-600 font-medium">Trigger</span>
+                                    <span>-</span>
+                                    <span className="text-emerald-600 font-medium">Disparador</span>
                                   </>
                                 )}
                               </div>
@@ -946,7 +962,7 @@ const TaskDefs: React.FC = () => {
             </div>
           ) : (
             <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
-              No tasks match this search.
+              No hay tareas que coincidan con esta busqueda.
             </div>
           )}
         </section>
@@ -956,10 +972,10 @@ const TaskDefs: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  {draft.id ? 'Edit' : 'Create'}
+                  {draft.id ? 'Editar' : 'Crear'}
                 </p>
                 <h2 className="text-lg font-display text-[var(--ink)]">
-                  {draft.name || 'New task definition'}
+                  {draft.name || 'Nueva definicion de tarea'}
                 </h2>
               </div>
               <ListChecks className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -968,11 +984,11 @@ const TaskDefs: React.FC = () => {
             <div className="mt-4 space-y-4">
               <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Definition
+                  Definicion
                 </p>
                 <div className="mt-3 space-y-3">
                   <label className="text-sm text-[var(--ink-muted)]">
-                    Task name
+                    Nombre de tarea
                     <input
                       className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                       value={draft.name}
@@ -981,7 +997,7 @@ const TaskDefs: React.FC = () => {
                   </label>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Scope
+                      Alcance
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                         value={draft.scope}
@@ -998,27 +1014,27 @@ const TaskDefs: React.FC = () => {
                         }}
                       >
                         <option value="panel">panel</option>
-                        <option value="module">module</option>
+                        <option value="module">modulo</option>
                         <option value="aux">aux</option>
                       </select>
                     </label>
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Status
+                      Estado
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                        value={draft.active ? 'Active' : 'Inactive'}
+                        value={draft.active ? 'Activo' : 'Inactivo'}
                         onChange={(event) =>
-                          updateDraft({ active: event.target.value === 'Active' })
+                          updateDraft({ active: event.target.value === 'Activo' })
                         }
                       >
-                        <option value="Active">Active</option>
-                        <option value="Inactive">Inactive</option>
+                        <option value="Activo">Activo</option>
+                        <option value="Inactivo">Inactivo</option>
                       </select>
                     </label>
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <label className="text-sm text-[var(--ink-muted)]">
-                      {draft.scope === 'aux' ? 'AUX station' : 'Station sequence'}
+                      {draft.scope === 'aux' ? 'Estacion AUX' : 'Secuencia de estacion'}
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                         value={draft.station_sequence_order}
@@ -1026,18 +1042,18 @@ const TaskDefs: React.FC = () => {
                           updateDraft({ station_sequence_order: event.target.value })
                         }
                       >
-                        <option value="">Unassigned</option>
+                        <option value="">Sin asignar</option>
                         {stationSequenceChoices.map((option) => (
                           <option key={option.sequence} value={String(option.sequence)}>
                             {draft.scope === 'aux'
                               ? `${option.label} (ID ${option.sequence})`
-                              : `${option.label} (Seq ${option.sequence})`}
+                              : `${option.label} (Sec ${option.sequence})`}
                           </option>
                         ))}
                       </select>
                     </label>
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Specialty
+                      Especialidad
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                         value={draft.skill_id ?? ''}
@@ -1049,7 +1065,7 @@ const TaskDefs: React.FC = () => {
                           })
                         }
                       >
-                        <option value="">None</option>
+                        <option value="">Ninguna</option>
                         {skills.map((skill) => (
                           <option key={skill.id} value={skill.id}>
                             {skill.name}
@@ -1063,7 +1079,7 @@ const TaskDefs: React.FC = () => {
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Behavior
+                  Comportamiento
                 </p>
                 <div className="mt-3 grid gap-2">
                   {draft.scope === 'panel' && (
@@ -1076,7 +1092,7 @@ const TaskDefs: React.FC = () => {
                             updateDraft({ skippable: event.target.checked })
                           }
                         />{' '}
-                        Skippable
+                        Omitible
                       </label>
                       <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
                         <input
@@ -1086,7 +1102,7 @@ const TaskDefs: React.FC = () => {
                             updateDraft({ concurrent_allowed: event.target.checked })
                           }
                         />{' '}
-                        Concurrent allowed
+                        Concurrencia permitida
                       </label>
                     </>
                   )}
@@ -1099,12 +1115,12 @@ const TaskDefs: React.FC = () => {
                           updateDraft({ advance_trigger: event.target.checked })
                         }
                       />{' '}
-                      Advance trigger
+                      Disparador de avance
                     </label>
                   )}
                   {draft.scope === 'aux' && (
                     <p className="text-xs text-[var(--ink-muted)]">
-                      No behavior toggles for AUX tasks.
+                      No hay opciones de comportamiento para tareas AUX.
                     </p>
                   )}
                 </div>
@@ -1112,7 +1128,7 @@ const TaskDefs: React.FC = () => {
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Dependencies
+                  Dependencias
                 </p>
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">{dependencyHint}</p>
                 <div className="relative mt-3" ref={dependencyDropdownRef}>
@@ -1134,7 +1150,7 @@ const TaskDefs: React.FC = () => {
                         <label className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                           <Search className="h-3.5 w-3.5" />
                           <input
-                            placeholder="Filter dependencies"
+                            placeholder="Filtrar dependencias"
                             value={dependencyQuery}
                             onChange={(event) => setDependencyQuery(event.target.value)}
                             className="w-full bg-transparent text-xs outline-none"
@@ -1143,7 +1159,7 @@ const TaskDefs: React.FC = () => {
                         <div className="mt-2 max-h-48 overflow-auto rounded-xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-2 text-xs">
                           {availableDependencyTasks.length === 0 ? (
                             <p className="text-[var(--ink-muted)]">
-                              No eligible tasks for this scope/sequence.
+                              No hay tareas elegibles para este alcance/secuencia.
                             </p>
                           ) : dependencyOptions.length ? (
                             <div className="flex flex-col gap-1.5">
@@ -1160,7 +1176,7 @@ const TaskDefs: React.FC = () => {
                             </div>
                           ) : (
                             <p className="text-[var(--ink-muted)]">
-                              No tasks match that search.
+                              No hay tareas que coincidan con esa busqueda.
                             </p>
                           )}
                         </div>
@@ -1172,7 +1188,7 @@ const TaskDefs: React.FC = () => {
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Access control
+                  Control de acceso
                 </p>
                 <div className="mt-3 space-y-3">
                   <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
@@ -1183,14 +1199,14 @@ const TaskDefs: React.FC = () => {
                         updateDraft({ allow_all_workers: event.target.checked })
                       }
                     />
-                    Everyone can perform this task
+                    Todos pueden realizar esta tarea
                   </label>
                   <p className="text-xs text-[var(--ink-muted)]">
-                    Disable to restrict execution to a specific list of workers.
+                    Desactive para restringir la ejecucion a una lista especifica de trabajadores.
                   </p>
                   {draft.allow_all_workers && (
                     <p className="text-xs text-[var(--ink-muted)]">
-                      Allowed worker selections are ignored while everyone is allowed.
+                      La seleccion de trabajadores permitidos se ignora mientras todos estan permitidos.
                     </p>
                   )}
                   <div
@@ -1199,12 +1215,12 @@ const TaskDefs: React.FC = () => {
                     }`}
                   >
                     <p className="text-sm text-[var(--ink-muted)]">
-                      Allowed workers ({draft.allowed_worker_ids.length})
+                      Trabajadores permitidos ({draft.allowed_worker_ids.length})
                     </p>
                     <label className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                       <Search className="h-3.5 w-3.5" />
                       <input
-                        placeholder="Search workers"
+                        placeholder="Buscar trabajadores"
                         value={allowedQuery}
                         onChange={(event) => setAllowedQuery(event.target.value)}
                         className="w-full bg-transparent text-xs outline-none"
@@ -1223,14 +1239,14 @@ const TaskDefs: React.FC = () => {
                               <span className="flex-1">{formatWorkerName(worker)}</span>
                               {!worker.active && (
                                 <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                                  Inactive
+                                  Inactivo
                                 </span>
                               )}
                             </label>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-[var(--ink-muted)]">No workers found.</p>
+                        <p className="text-[var(--ink-muted)]">No se encontraron trabajadores.</p>
                       )}
                     </div>
                   </div>
@@ -1239,15 +1255,15 @@ const TaskDefs: React.FC = () => {
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Regular crew
+                  Equipo habitual
                 </p>
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
-                  Favorites list for group starts. This does not restrict who can perform the task.
+                  Lista de favoritos para inicios de grupo. Esto no restringe quien puede realizar la tarea.
                 </p>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                      Selected ({draft.regular_crew_worker_ids.length})
+                      Seleccionados ({draft.regular_crew_worker_ids.length})
                     </p>
                     <p className="text-sm font-medium text-[var(--ink)]">{crewSummaryLabel}</p>
                   </div>
@@ -1256,14 +1272,14 @@ const TaskDefs: React.FC = () => {
                     onClick={() => setCrewModalOpen(true)}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm"
                   >
-                    <Users className="h-3.5 w-3.5" /> Manage
+                    <Users className="h-3.5 w-3.5" /> Administrar
                   </button>
                 </div>
               </div>
 
               {detailsLoading && (
                 <p className="rounded-2xl border border-black/5 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
-                  Loading task details...
+                  Cargando detalles de tareas...
                 </p>
               )}
               {statusMessage && (
@@ -1278,14 +1294,14 @@ const TaskDefs: React.FC = () => {
                   disabled={saving}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? 'Saving...' : 'Save task'}
+                  {saving ? 'Guardando...' : 'Guardar tarea'}
                 </button>
                 <button
                   onClick={handleDelete}
                   disabled={saving || !draft.id}
                   className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
                 >
-                  <Trash2 className="h-4 w-4" /> Delete
+                  <Trash2 className="h-4 w-4" /> Eliminar
                 </button>
               </div>
             </div>
@@ -1299,13 +1315,13 @@ const TaskDefs: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Regular crew
+                  Equipo habitual
                 </p>
                 <h3 className="text-lg font-display text-[var(--ink)]">
-                  Select crew members
+                  Seleccionar miembros del equipo
                 </h3>
                 <p className="text-xs text-[var(--ink-muted)]">
-                  {draft.name || 'New task definition'}
+                  {draft.name || 'Nueva definicion de tarea'}
                 </p>
               </div>
               <button type="button" onClick={() => setCrewModalOpen(false)}>
@@ -1317,7 +1333,7 @@ const TaskDefs: React.FC = () => {
               <label className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                 <Search className="h-3.5 w-3.5" />
                 <input
-                  placeholder="Search crew"
+                  placeholder="Buscar equipo"
                   value={crewQuery}
                   onChange={(event) => setCrewQuery(event.target.value)}
                   className="w-full bg-transparent text-xs outline-none"
@@ -1336,14 +1352,14 @@ const TaskDefs: React.FC = () => {
                         <span className="flex-1">{formatWorkerName(worker)}</span>
                         {!worker.active && (
                           <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                            Inactive
+                            Inactivo
                           </span>
                         )}
                       </label>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-[var(--ink-muted)]">No workers found.</p>
+                  <p className="text-[var(--ink-muted)]">No se encontraron trabajadores.</p>
                 )}
               </div>
             </div>
@@ -1354,7 +1370,7 @@ const TaskDefs: React.FC = () => {
                 onClick={() => setCrewModalOpen(false)}
                 className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
               >
-                Done
+                Listo
               </button>
             </div>
           </div>

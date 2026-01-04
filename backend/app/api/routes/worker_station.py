@@ -8,6 +8,7 @@ from app.api.deps import get_current_worker, get_db
 from app.models.admin import CommentTemplate, PauseReason
 from app.models.enums import (
     PanelUnitStatus,
+    RestrictionType,
     StationRole,
     TaskExceptionType,
     TaskScope,
@@ -24,7 +25,7 @@ from app.models.tasks import (
     TaskParticipation,
 )
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
-from app.models.workers import Worker
+from app.models.workers import TaskWorkerRestriction, Worker
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
 from app.schemas.worker_station import StationSnapshot, StationTask, StationWorkItem
 from app.services.task_applicability import resolve_task_station_sequence
@@ -52,6 +53,33 @@ def _filter_comment_templates(
     return eligible
 
 
+def _format_worker_name(first_name: str, last_name: str) -> str:
+    parts = [first_name.strip(), last_name.strip()]
+    return " ".join(part for part in parts if part)
+
+
+def _completed_task_definition_ids(
+    db: Session,
+    work_unit_id: int,
+    panel_unit_id: int | None,
+    task_scope: TaskScope,
+) -> set[int]:
+    if task_scope == TaskScope.PANEL:
+        if panel_unit_id is None:
+            return set()
+        panel_clause = TaskInstance.panel_unit_id == panel_unit_id
+    else:
+        panel_clause = TaskInstance.panel_unit_id.is_(None)
+    return set(
+        db.execute(
+            select(TaskInstance.task_definition_id)
+            .where(TaskInstance.work_unit_id == work_unit_id)
+            .where(panel_clause)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+        ).scalars()
+    )
+
+
 def _build_task_lists(
     station: Station,
     task_definitions: list[TaskDefinition],
@@ -63,6 +91,11 @@ def _build_task_lists(
     module_number: int,
     panel_definition_id: int | None,
     panel_task_order: list[int] | None,
+    completed_task_definition_ids: set[int],
+    allowed_worker_map: dict[int, set[int]],
+    allowed_worker_name_map: dict[int, list[str]],
+    dependency_name_map: dict[int, str],
+    worker_id: int,
 ) -> tuple[list[StationTask], list[StationTask]]:
     instance_map: dict[int, TaskInstance] = {}
     for instance in instances:
@@ -127,6 +160,33 @@ def _build_task_lists(
             instance_id = instance.id
         if task.id in skipped_task_ids:
             status_value = TaskStatus.SKIPPED
+        dependencies = task.dependencies_json
+        missing_dependency_names: list[str] = []
+        if dependencies is None:
+            dependencies_satisfied = True
+        elif not isinstance(dependencies, list):
+            dependencies_satisfied = False
+        elif not dependencies:
+            dependencies_satisfied = True
+        else:
+            missing_dependency_ids = [
+                dependency_id
+                for dependency_id in dependencies
+                if dependency_id not in completed_task_definition_ids
+            ]
+            dependencies_satisfied = len(missing_dependency_ids) == 0
+            if missing_dependency_ids:
+                missing_dependency_names = [
+                    dependency_name_map.get(dependency_id, f"Tarea {dependency_id}")
+                    for dependency_id in missing_dependency_ids
+                ]
+        allowed_worker_ids = allowed_worker_map.get(task.id)
+        worker_allowed = (
+            True
+            if allowed_worker_ids is None
+            else worker_id in allowed_worker_ids
+        )
+        allowed_worker_names = allowed_worker_name_map.get(task.id, [])
 
         dest.append(
             StationTask(
@@ -139,6 +199,10 @@ def _build_task_lists(
                 skippable=task.skippable,
                 concurrent_allowed=task.concurrent_allowed,
                 advance_trigger=task.advance_trigger,
+                dependencies_satisfied=dependencies_satisfied,
+                dependencies_missing_names=missing_dependency_names,
+                worker_allowed=worker_allowed,
+                allowed_worker_names=allowed_worker_names,
                 started_at=started_at,
                 completed_at=completed_at,
                 notes=notes,
@@ -200,6 +264,54 @@ def station_snapshot(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    allowed_worker_map: dict[int, set[int]] = {}
+    allowed_worker_name_map: dict[int, list[str]] = {}
+    if task_definitions:
+        allowed_rows = list(
+            db.execute(
+                select(
+                    TaskWorkerRestriction.task_definition_id.label("task_definition_id"),
+                    Worker.id.label("worker_id"),
+                    Worker.first_name,
+                    Worker.last_name,
+                )
+                .join(Worker, Worker.id == TaskWorkerRestriction.worker_id)
+                .where(
+                    TaskWorkerRestriction.task_definition_id.in_(
+                        [task.id for task in task_definitions]
+                    )
+                )
+                .where(TaskWorkerRestriction.restriction_type == RestrictionType.ALLOWED)
+            ).all()
+        )
+        for row in allowed_rows:
+            allowed_worker_map.setdefault(row.task_definition_id, set()).add(row.worker_id)
+            name = _format_worker_name(row.first_name, row.last_name)
+            if name:
+                allowed_worker_name_map.setdefault(row.task_definition_id, [])
+                if name not in allowed_worker_name_map[row.task_definition_id]:
+                    allowed_worker_name_map[row.task_definition_id].append(name)
+        for task_id in allowed_worker_name_map:
+            allowed_worker_name_map[task_id].sort()
+
+    dependency_ids: set[int] = set()
+    for task in task_definitions:
+        dependencies = task.dependencies_json
+        if not isinstance(dependencies, list):
+            continue
+        for dependency_id in dependencies:
+            if isinstance(dependency_id, int):
+                dependency_ids.add(dependency_id)
+    dependency_name_map: dict[int, str] = {}
+    if dependency_ids:
+        dependency_name_map = {
+            row.id: row.name
+            for row in db.execute(
+                select(TaskDefinition.id, TaskDefinition.name).where(
+                    TaskDefinition.id.in_(sorted(dependency_ids))
+                )
+            ).all()
+        }
 
     work_items: list[StationWorkItem] = []
 
@@ -247,6 +359,9 @@ def station_snapshot(
                     .where(TaskException.station_id == station.id)
                 ).scalars()
             )
+            completed_task_definition_ids = _completed_task_definition_ids(
+                db, work_unit.id, panel_unit.id, TaskScope.PANEL
+            )
             tasks, other_tasks = _build_task_lists(
                 station,
                 task_definitions,
@@ -258,6 +373,11 @@ def station_snapshot(
                 work_unit.module_number,
                 panel_unit.panel_definition_id,
                 panel_def.applicable_task_ids,
+                completed_task_definition_ids,
+                allowed_worker_map,
+                allowed_worker_name_map,
+                dependency_name_map,
+                _worker.id,
             )
             work_items.append(
                 StationWorkItem(
@@ -343,6 +463,9 @@ def station_snapshot(
                             if panel_unit
                             else PanelUnitStatus.PLANNED.value
                         )
+                        completed_task_definition_ids = _completed_task_definition_ids(
+                            db, work_unit.id, panel_unit_id, TaskScope.PANEL
+                        )
                         tasks, other_tasks = _build_task_lists(
                             station,
                             task_definitions,
@@ -354,6 +477,11 @@ def station_snapshot(
                             work_unit.module_number,
                             panel_def.id,
                             panel_def.applicable_task_ids,
+                            completed_task_definition_ids,
+                            allowed_worker_map,
+                            allowed_worker_name_map,
+                            dependency_name_map,
+                            _worker.id,
                         )
                         sort_key = (
                             work_unit.planned_sequence,
@@ -449,6 +577,9 @@ def station_snapshot(
                     .where(TaskException.station_id == station.id)
                 ).scalars()
             )
+            completed_task_definition_ids = _completed_task_definition_ids(
+                db, work_unit.id, None, task_scope
+            )
             tasks, other_tasks = _build_task_lists(
                 station,
                 task_definitions,
@@ -460,6 +591,11 @@ def station_snapshot(
                 work_unit.module_number,
                 None,
                 None,
+                completed_task_definition_ids,
+                allowed_worker_map,
+                allowed_worker_name_map,
+                dependency_name_map,
+                _worker.id,
             )
             work_items.append(
                 StationWorkItem(

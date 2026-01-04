@@ -1,10 +1,21 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const Assistance: React.FC = () => {
+  const { setHeader } = useAdminHeader();
+
+  useEffect(() => {
+    setHeader({
+      title: 'Resumen de asistencia',
+      kicker: 'Personal / Asistencia',
+    });
+  }, [setHeader]);
+
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Assistance Summary</h1>
-      <p className="text-gray-500">This is a placeholder for the Assistance Summary page.</p>
+      <p className="text-gray-500">
+        Este es un marcador para la pagina de resumen de asistencia.
+      </p>
     </div>
   );
 };

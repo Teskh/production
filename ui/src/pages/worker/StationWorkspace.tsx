@@ -87,6 +87,10 @@ type StationTask = {
   skippable: boolean;
   concurrent_allowed: boolean;
   advance_trigger: boolean;
+  dependencies_satisfied?: boolean;
+  dependencies_missing_names?: string[];
+  worker_allowed?: boolean;
+  allowed_worker_names?: string[];
   started_at: string | null;
   completed_at: string | null;
   notes: string | null;
@@ -155,7 +159,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -291,7 +295,7 @@ const StationWorkspace: React.FC = () => {
   );
   const stationSelectionLabel = selectedStation
     ? formatStationLabel(selectedStation)
-    : 'Select station';
+    : 'Seleccionar estacion';
 
   const assemblySequenceOrders = useMemo(
     () => getAssemblySequenceOrders(stations),
@@ -304,11 +308,11 @@ const StationWorkspace: React.FC = () => {
       mode: StationPickerMode;
       context: StationContext | null;
     }> = [
-      { label: 'Specific station', mode: { kind: 'station_list' }, context: null },
+      { label: 'Estacion especifica', mode: { kind: 'station_list' }, context: null },
     ];
     if (stations.some((station) => station.role === 'Panels')) {
       options.push({
-        label: 'Panel line',
+        label: 'Linea de paneles',
         mode: { kind: 'panel_line' },
         context: { kind: 'panel_line' },
       });
@@ -318,14 +322,14 @@ const StationWorkspace: React.FC = () => {
         (item) => item.role === 'Assembly' && item.sequence_order === order
       );
       options.push({
-        label: station ? `Assembly - ${station.name}` : `Assembly sequence ${order}`,
+        label: station ? `Ensamble - ${station.name}` : `Secuencia de ensamble ${order}`,
         mode: { kind: 'assembly_sequence', sequenceOrder: order },
         context: { kind: 'assembly_sequence', sequenceOrder: order },
       });
     });
     if (stations.some((station) => station.role === 'AUX')) {
       options.push({
-        label: 'Auxiliary',
+        label: 'Auxiliar',
         mode: { kind: 'aux' },
         context: { kind: 'aux' },
       });
@@ -433,6 +437,63 @@ const StationWorkspace: React.FC = () => {
     [hasBlockingNonConcurrent]
   );
 
+  const isDependenciesSatisfied = (task: StationTask) => task.dependencies_satisfied ?? true;
+
+  const isWorkerAllowed = (task: StationTask, workerParticipating: boolean) =>
+    (task.worker_allowed ?? true) || workerParticipating;
+
+  const dependencyBlockedLabel = (task: StationTask) => {
+    if (isDependenciesSatisfied(task)) {
+      return '';
+    }
+    const missing = task.dependencies_missing_names ?? [];
+    if (missing.length === 0) {
+      return 'Falta terminar tareas requeridas.';
+    }
+    return `Falta terminar ${missing.join(', ')}`;
+  };
+
+  const workerRestrictionLabel = (task: StationTask) => {
+    if (task.worker_allowed ?? true) {
+      return '';
+    }
+    const names = task.allowed_worker_names ?? [];
+    if (names.length === 0) {
+      return 'Restringido a trabajadores asignados.';
+    }
+    return `Restringido a ${names.join(', ')}`;
+  };
+
+  const buildBlockReason = ({
+    dependencyMessage,
+    workerMessage,
+    concurrencyBlocked,
+    concurrencyAction,
+  }: {
+    dependencyMessage?: string;
+    workerMessage?: string;
+    concurrencyBlocked?: boolean;
+    concurrencyAction?: string;
+  }) => {
+    const reasons: string[] = [];
+    const actionLabelMap: Record<string, string> = {
+      starting: 'iniciar',
+      resuming: 'reanudar',
+      joining: 'unirse',
+    };
+    const actionLabel = concurrencyAction ? actionLabelMap[concurrencyAction] ?? 'iniciar' : 'iniciar';
+    if (dependencyMessage) {
+      reasons.push(dependencyMessage);
+    }
+    if (workerMessage) {
+      reasons.push(workerMessage);
+    }
+    if (concurrencyBlocked) {
+      reasons.push(`Termina tu tarea actual antes de ${actionLabel} otra.`);
+    }
+    return reasons.join(' ');
+  };
+
   const handleLogout = useCallback(async () => {
     try {
       await apiRequest('/api/worker-sessions/logout', { method: 'POST' });
@@ -455,7 +516,7 @@ const StationWorkspace: React.FC = () => {
       setSnapshot(data);
       setError(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load station.';
+      const message = err instanceof Error ? err.message : 'No se pudo cargar la estacion.';
       setError(message);
     } finally {
       setSnapshotLoading(false);
@@ -533,7 +594,7 @@ const StationWorkspace: React.FC = () => {
         }
         setError(null);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Worker session expired.';
+        const message = err instanceof Error ? err.message : 'Sesion de trabajador expirada.';
         setError(message);
         navigate('/login');
       } finally {
@@ -672,8 +733,8 @@ const StationWorkspace: React.FC = () => {
       const station = stations.find((item) => item.id === autoFocusTarget.station_id);
       setAutoFocusNotice(
         station
-          ? `Focused on your active task at ${formatStationLabel(station)}. Conclude to return to your previous station context.`
-          : 'Focused on your active task. Conclude to return to your previous station context.'
+          ? `Enfocado en tu tarea activa en ${formatStationLabel(station)}. Concluye para volver a tu contexto de estacion anterior.`
+          : 'Enfocado en tu tarea activa. Concluye para volver a tu contexto de estacion anterior.'
       );
     }
     autoFocusAppliedRef.current = true;
@@ -756,13 +817,20 @@ const StationWorkspace: React.FC = () => {
       Completed: 'bg-emerald-100 text-emerald-700 border-emerald-200',
       Skipped: 'bg-slate-100 text-slate-600 border-slate-200',
     };
+    const labels: Record<string, string> = {
+      NotStarted: 'Pendiente',
+      InProgress: 'En progreso',
+      Paused: 'En pausa',
+      Completed: 'Completada',
+      Skipped: 'Omitida',
+    };
     return (
       <span
         className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase border ${
           styles[status] ?? 'bg-gray-100 text-gray-600 border-gray-200'
         }`}
       >
-        {status === 'NotStarted' ? 'Pending' : status}
+        {labels[status] ?? status}
       </span>
     );
   };
@@ -869,13 +937,25 @@ const StationWorkspace: React.FC = () => {
     if (!selectedStationId) {
       return;
     }
-    if (!canStartTask(task)) {
-      setError('Finish your current task before starting another.');
+    const dependencyBlocked = !isDependenciesSatisfied(task);
+    const workerRestricted = !isWorkerAllowed(task, false);
+    const dependencyMessage = dependencyBlockedLabel(task);
+    const workerMessage = workerRestrictionLabel(task);
+    const concurrencyBlocked = !canStartTask(task);
+    if (dependencyBlocked || workerRestricted || concurrencyBlocked) {
+      setError(
+        buildBlockReason({
+          dependencyMessage,
+          workerMessage,
+          concurrencyBlocked,
+          concurrencyAction: 'starting',
+        })
+      );
       return;
     }
     setSubmitting(true);
     try {
-          await apiRequest('/api/worker-tasks/start', {
+      await apiRequest('/api/worker-tasks/start', {
         method: 'POST',
         body: JSON.stringify({
           task_definition_id: task.task_definition_id,
@@ -889,7 +969,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start task.';
+      const message = err instanceof Error ? err.message : 'No se pudo iniciar la tarea.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -914,7 +994,7 @@ const StationWorkspace: React.FC = () => {
       await refreshSnapshot();
       closeModal();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to pause task.';
+      const message = err instanceof Error ? err.message : 'No se pudo pausar la tarea.';
       setReasonError(message);
     } finally {
       setSubmitting(false);
@@ -925,8 +1005,21 @@ const StationWorkspace: React.FC = () => {
     if (!task.task_instance_id) {
       return;
     }
-    if (!canStartTask(task, task.task_instance_id)) {
-      setError('Finish your current task before resuming another.');
+    const workerParticipating = task.current_worker_participating ?? false;
+    const dependencyBlocked = !isDependenciesSatisfied(task);
+    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
+    const dependencyMessage = dependencyBlockedLabel(task);
+    const workerMessage = workerRestrictionLabel(task);
+    const concurrencyBlocked = !canStartTask(task, task.task_instance_id);
+    if (dependencyBlocked || workerRestricted || concurrencyBlocked) {
+      setError(
+        buildBlockReason({
+          dependencyMessage,
+          workerMessage,
+          concurrencyBlocked,
+          concurrencyAction: 'resuming',
+        })
+      );
       return;
     }
     setSubmitting(true);
@@ -937,7 +1030,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to resume task.';
+      const message = err instanceof Error ? err.message : 'No se pudo reanudar la tarea.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -948,8 +1041,18 @@ const StationWorkspace: React.FC = () => {
     if (!task.task_instance_id) {
       return;
     }
-    if (!canStartTask(task, task.task_instance_id)) {
-      setError('Finish your current task before joining another.');
+    const workerParticipating = task.current_worker_participating ?? false;
+    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
+    const workerMessage = workerRestrictionLabel(task);
+    const concurrencyBlocked = !canStartTask(task, task.task_instance_id);
+    if (workerRestricted || concurrencyBlocked) {
+      setError(
+        buildBlockReason({
+          workerMessage,
+          concurrencyBlocked,
+          concurrencyAction: 'joining',
+        })
+      );
       return;
     }
     setSubmitting(true);
@@ -960,7 +1063,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to join task.';
+      const message = err instanceof Error ? err.message : 'No se pudo unir a la tarea.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -972,7 +1075,7 @@ const StationWorkspace: React.FC = () => {
       return;
     }
     if (!task.current_worker_participating) {
-      setError('Join the task before completing it.');
+      setError('Unete a la tarea antes de terminarla.');
       return;
     }
     setSubmitting(true);
@@ -986,7 +1089,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to complete task.';
+      const message = err instanceof Error ? err.message : 'No se pudo completar la tarea.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -1013,7 +1116,7 @@ const StationWorkspace: React.FC = () => {
       await refreshSnapshot();
       closeModal();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to skip task.';
+      const message = err instanceof Error ? err.message : 'No se pudo omitir la tarea.';
       setReasonError(message);
       return;
     } finally {
@@ -1026,7 +1129,7 @@ const StationWorkspace: React.FC = () => {
       return;
     }
     if (!commentDraft.trim()) {
-      setCommentError('Add a note before saving.');
+      setCommentError('Agrega una nota antes de guardar.');
       return;
     }
     setSubmitting(true);
@@ -1040,7 +1143,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save note.';
+      const message = err instanceof Error ? err.message : 'No se pudo guardar la nota.';
       setCommentError(message);
       return;
     } finally {
@@ -1084,10 +1187,28 @@ const StationWorkspace: React.FC = () => {
     );
   };
 
+  const crewStartDependencyBlocked = selectedTask
+    ? !isDependenciesSatisfied(selectedTask)
+    : false;
+  const crewStartWorkerRestricted = selectedTask ? !isWorkerAllowed(selectedTask, false) : false;
+  const crewStartConcurrencyBlocked = selectedTask ? !canStartTask(selectedTask) : false;
+  const crewStartDependencyMessage = selectedTask ? dependencyBlockedLabel(selectedTask) : '';
+  const crewStartWorkerMessage = selectedTask ? workerRestrictionLabel(selectedTask) : '';
+  const crewStartBlocked =
+    crewStartDependencyBlocked || crewStartWorkerRestricted || crewStartConcurrencyBlocked;
+  const crewStartBlockTitle = selectedTask
+    ? buildBlockReason({
+        dependencyMessage: crewStartDependencyMessage,
+        workerMessage: crewStartWorkerMessage,
+        concurrencyBlocked: crewStartConcurrencyBlocked,
+        concurrencyAction: 'starting',
+      })
+    : '';
+
   if (loading) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm text-gray-600">
-        Loading station workspace...
+        Cargando area de trabajo de estacion...
       </div>
     );
   }
@@ -1097,34 +1218,34 @@ const StationWorkspace: React.FC = () => {
       <header className="flex flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.3em] text-gray-500 font-medium">
-            Worker Station Workspace
+            Area de Trabajo de Estacion
           </p>
           <h1 className="text-2xl font-display text-gray-900">
-            {selectedStation ? selectedStation.name : 'Station unassigned'}
+            {selectedStation ? selectedStation.name : 'Estacion sin asignar'}
           </h1>
           <p className="mt-1 text-sm text-gray-500">
             {selectedStation
               ? `${selectedStation.role}${
-                  selectedStation.line_type ? ` - Line ${selectedStation.line_type}` : ''
+                  selectedStation.line_type ? ` - Linea ${selectedStation.line_type}` : ''
                 }`
-              : 'Select a station to begin.'}
+              : 'Selecciona una estacion para comenzar.'}
           </p>
           {stationContext && stationContext.kind !== 'station' && (
             <p className="text-xs text-gray-400">
-              Context: {contextLabel} · {stationSelectionLabel}
+              Contexto: {contextLabel} - {stationSelectionLabel}
             </p>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
             <span>
-              {worker ? formatWorkerDisplayName(worker) : 'Worker'}
+              {worker ? formatWorkerDisplayName(worker) : 'Trabajador'}
             </span>
             <button
               onClick={handleLogout}
               className="ml-2 inline-flex items-center gap-1 text-xs font-semibold text-gray-500 hover:text-gray-700"
             >
-              <ArrowLeft className="h-4 w-4" /> Conclude
+              <ArrowLeft className="h-4 w-4" /> Concluir
             </button>
           </div>
           {!selectedStationId && (
@@ -1135,7 +1256,7 @@ const StationWorkspace: React.FC = () => {
               }}
               className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
             >
-              Station config
+              Configurar estacion
             </button>
           )}
           <button
@@ -1163,30 +1284,30 @@ const StationWorkspace: React.FC = () => {
       <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
         <aside className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">Work list</h2>
+            <h2 className="text-sm font-semibold text-gray-700">Lista de trabajo</h2>
             <button
               onClick={refreshSnapshot}
               className="text-xs font-semibold text-blue-600 hover:text-blue-800"
             >
-              Refresh
+              Actualizar
             </button>
           </div>
           <div className="mt-4 space-y-3">
             {snapshotLoading && (
               <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                Loading station queue...
+                Cargando cola de estacion...
               </div>
             )}
             {workItems.length === 0 ? (
               <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-500">
-                No work assigned to this station yet.
+                Aun no hay trabajo asignado a esta estacion.
               </div>
             ) : (
               <>
                 {isW1 && recommendedItem && (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-blue-500 font-semibold">
-                      Recommended next panel
+                      Siguiente panel recomendado
                     </p>
                     {renderWorkItemButton(
                       recommendedItem,
@@ -1199,7 +1320,7 @@ const StationWorkspace: React.FC = () => {
                 {isW1 && inProgressItems.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
-                      Panels in progress
+                      Paneles en progreso
                     </p>
                     {inProgressItems.map((item) =>
                       renderWorkItemButton(
@@ -1214,11 +1335,11 @@ const StationWorkspace: React.FC = () => {
                 {isW1 && plannedItems.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
-                      Panels available to start
+                      Paneles disponibles para iniciar
                     </p>
                     {plannedTotalCount > plannedItems.length && (
                       <p className="text-[11px] text-gray-400">
-                        Showing next {plannedItems.length} of {plannedTotalCount} panels.
+                        Mostrando siguientes {plannedItems.length} de {plannedTotalCount} paneles.
                       </p>
                     )}
                     {plannedItems.map((item) =>
@@ -1234,7 +1355,7 @@ const StationWorkspace: React.FC = () => {
                 {isW1 && otherItems.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
-                      Other items
+                      Otros elementos
                     </p>
                     {otherItems.map((item) =>
                       renderWorkItemButton(
@@ -1263,13 +1384,13 @@ const StationWorkspace: React.FC = () => {
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           {!selectedWorkItem ? (
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
-              Select a work item to view tasks.
+              Selecciona un elemento de trabajo para ver tareas.
             </div>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-xl font-semibold text-gray-900">Tasks for station</h2>
+                  <h2 className="text-xl font-semibold text-gray-900">Tareas de la estacion</h2>
                   {selectedWorkItem.panel_code && (
                     <div className="mt-1 text-lg font-semibold text-gray-900">
                       Panel {selectedWorkItem.panel_code}
@@ -1277,7 +1398,7 @@ const StationWorkspace: React.FC = () => {
                   )}
                   <p className="text-sm text-gray-500">
                     {selectedWorkItem.project_name} - {selectedWorkItem.house_identifier} -
-                    Module {selectedWorkItem.module_number}
+                    Modulo {selectedWorkItem.module_number}
                   </p>
                 </div>
                 {selectedWorkItem.other_tasks.length > 0 && (
@@ -1285,22 +1406,53 @@ const StationWorkspace: React.FC = () => {
                     onClick={() => setActiveModal('other_tasks')}
                     className="rounded-full border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
                   >
-                    Other tasks ({selectedWorkItem.other_tasks.length})
+                    Otras tareas ({selectedWorkItem.other_tasks.length})
                   </button>
                 )}
               </div>
 
               {selectedWorkItem.tasks.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
-                  No station tasks assigned for this item.
+                  No hay tareas de estacion asignadas para este elemento.
                 </div>
               ) : (
                 <div className="space-y-3">
                   {selectedWorkItem.tasks.map((task) => {
                     const workerParticipating = task.current_worker_participating ?? false;
-                    const joinBlocked = !canStartTask(task, task.task_instance_id);
-                    const startBlocked = !canStartTask(task);
-                    const resumeBlocked = !canStartTask(task, task.task_instance_id);
+                    const dependencyBlocked = !isDependenciesSatisfied(task);
+                    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
+                    const dependencyMessage = dependencyBlockedLabel(task);
+                    const workerMessage = workerRestrictionLabel(task);
+                    const joinConcurrencyBlocked = !canStartTask(task, task.task_instance_id);
+                    const startConcurrencyBlocked = !canStartTask(task);
+                    const joinBlocked = workerRestricted || joinConcurrencyBlocked;
+                    const startBlocked =
+                      dependencyBlocked || workerRestricted || startConcurrencyBlocked;
+                    const resumeBlocked =
+                      dependencyBlocked || workerRestricted || joinConcurrencyBlocked;
+                    const restrictionNote = [
+                      dependencyMessage || null,
+                      workerMessage || null,
+                    ]
+                      .filter(Boolean)
+                      .join(' - ');
+                    const startBlockTitle = buildBlockReason({
+                      dependencyMessage,
+                      workerMessage,
+                      concurrencyBlocked: startConcurrencyBlocked,
+                      concurrencyAction: 'starting',
+                    });
+                    const resumeBlockTitle = buildBlockReason({
+                      dependencyMessage,
+                      workerMessage,
+                      concurrencyBlocked: joinConcurrencyBlocked,
+                      concurrencyAction: 'resuming',
+                    });
+                    const joinBlockTitle = buildBlockReason({
+                      workerMessage,
+                      concurrencyBlocked: joinConcurrencyBlocked,
+                      concurrencyAction: 'joining',
+                    });
                     return (
                       <div
                         key={task.task_definition_id}
@@ -1319,6 +1471,14 @@ const StationWorkspace: React.FC = () => {
                               <h3 className="text-lg font-semibold text-gray-900">{task.name}</h3>
                               {statusBadge(task.status)}
                             </div>
+                            {restrictionNote &&
+                              (task.status === 'NotStarted' ||
+                                task.status === 'Paused' ||
+                                (!workerParticipating && task.status === 'InProgress')) && (
+                                <div className="mt-1 text-xs font-semibold text-rose-600">
+                                  {restrictionNote}
+                                </div>
+                              )}
                             {task.notes && (
                               <div className="mt-2 inline-flex items-center gap-2 rounded-md border border-gray-100 bg-white/70 px-2 py-1 text-xs text-gray-600">
                                 <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
@@ -1334,38 +1494,36 @@ const StationWorkspace: React.FC = () => {
                                     onClick={() => openModal('comments', task, selectedWorkItem)}
                                     className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
                                   >
-                                    <MessageSquare className="h-5 w-5" /> Note
+                                    <MessageSquare className="h-5 w-5" /> Nota
                                   </button>
                                   <button
                                     onClick={() => openModal('pause', task, selectedWorkItem)}
                                     className="inline-flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-700 hover:bg-amber-100"
                                   >
-                                    <Pause className="h-5 w-5" /> Pause
+                                    <Pause className="h-5 w-5" /> Pausa
                                   </button>
                                   <button
                                     onClick={() => handleComplete(task)}
                                     className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
                                   >
-                                    <CheckSquare className="h-5 w-5" /> Finish
+                                    <CheckSquare className="h-5 w-5" /> Terminar
                                   </button>
                                 </>
                               ) : (
-                                <button
-                                  onClick={() => handleJoin(task)}
-                                  disabled={joinBlocked || submitting}
-                                  title={
-                                    joinBlocked
-                                      ? 'Finish your current task before joining another.'
-                                      : 'Join this task to help.'
-                                  }
-                                  className={clsx(
-                                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                    joinBlocked
-                                      ? 'bg-gray-400 cursor-not-allowed'
+                                  <button
+                                    onClick={() => handleJoin(task)}
+                                    disabled={joinBlocked || submitting}
+                                    title={
+                                      joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'
+                                    }
+                                    className={clsx(
+                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                                      joinBlocked
+                                        ? 'bg-gray-400 cursor-not-allowed'
                                       : 'bg-blue-600 hover:bg-blue-700'
                                   )}
                                 >
-                                  <Users className="h-5 w-5" /> Join in
+                                  <Users className="h-5 w-5" /> Unirse
                                 </button>
                               ))}
                             {task.status === 'Paused' &&
@@ -1375,9 +1533,7 @@ const StationWorkspace: React.FC = () => {
                                     onClick={() => handleResume(task)}
                                     disabled={resumeBlocked || submitting}
                                     title={
-                                      resumeBlocked
-                                        ? 'Finish your current task before resuming another.'
-                                        : undefined
+                                      resumeBlocked ? resumeBlockTitle : undefined
                                     }
                                     className={clsx(
                                       'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
@@ -1386,32 +1542,30 @@ const StationWorkspace: React.FC = () => {
                                         : 'bg-blue-600 hover:bg-blue-700'
                                     )}
                                   >
-                                    <Play className="h-5 w-5" /> Resume
+                                  <Play className="h-5 w-5" /> Reanudar
                                   </button>
                                   <button
                                     onClick={() => handleComplete(task)}
                                     className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
                                   >
-                                    <CheckSquare className="h-5 w-5" /> Finish
+                                    <CheckSquare className="h-5 w-5" /> Terminar
                                   </button>
                                 </>
                               ) : (
-                                <button
-                                  onClick={() => handleJoin(task)}
-                                  disabled={joinBlocked || submitting}
-                                  title={
-                                    joinBlocked
-                                      ? 'Finish your current task before joining another.'
-                                      : 'Join this task to help.'
-                                  }
-                                  className={clsx(
-                                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                    joinBlocked
-                                      ? 'bg-gray-400 cursor-not-allowed'
+                                  <button
+                                    onClick={() => handleJoin(task)}
+                                    disabled={joinBlocked || submitting}
+                                    title={
+                                      joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'
+                                    }
+                                    className={clsx(
+                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                                      joinBlocked
+                                        ? 'bg-gray-400 cursor-not-allowed'
                                       : 'bg-blue-600 hover:bg-blue-700'
                                   )}
                                 >
-                                  <Users className="h-5 w-5" /> Join in
+                                  <Users className="h-5 w-5" /> Unirse
                                 </button>
                               ))}
                             {task.status === 'NotStarted' && (
@@ -1421,25 +1575,23 @@ const StationWorkspace: React.FC = () => {
                                     onClick={() => openModal('skip', task, selectedWorkItem)}
                                     className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:bg-gray-50"
                                   >
-                                    <FastForward className="h-5 w-5" /> Skip
+                                    <FastForward className="h-5 w-5" /> Omitir
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => handleStart(task, selectedWorkItem)}
-                                  disabled={startBlocked || submitting}
-                                  title={
-                                    startBlocked
-                                      ? 'Finish your current task before starting another.'
-                                      : undefined
-                                  }
-                                  className={clsx(
-                                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                    startBlocked
-                                      ? 'bg-gray-400 cursor-not-allowed'
+                                  <button
+                                    onClick={() => handleStart(task, selectedWorkItem)}
+                                    disabled={startBlocked || submitting}
+                                    title={
+                                      startBlocked ? startBlockTitle : undefined
+                                    }
+                                    className={clsx(
+                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                                      startBlocked
+                                        ? 'bg-gray-400 cursor-not-allowed'
                                       : 'bg-gray-900 hover:bg-gray-800'
                                   )}
                                 >
-                                  <Play className="h-5 w-5" /> Start
+                                  <Play className="h-5 w-5" /> Iniciar
                                 </button>
                               </>
                             )}
@@ -1448,7 +1600,7 @@ const StationWorkspace: React.FC = () => {
                                 onClick={() => handleCrewOpen(task, selectedWorkItem)}
                                 className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
                               >
-                                <Users className="h-5 w-5" /> Crew
+                                <Users className="h-5 w-5" /> Equipo
                               </button>
                             )}
                           </div>
@@ -1480,9 +1632,9 @@ const StationWorkspace: React.FC = () => {
                 <X className="h-5 w-5" />
               </button>
             )}
-            <h3 className="text-lg font-semibold text-gray-900">Station context</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Contexto de estacion</h3>
             <p className="mt-2 text-sm text-gray-500">
-              Set the kiosk context, then pick the station for this session.
+              Define el contexto del kiosco y luego elige la estacion para esta sesion.
             </p>
             <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="space-y-2">
@@ -1514,7 +1666,7 @@ const StationWorkspace: React.FC = () => {
               {stationPickerMode.kind === 'station_list' ? (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    Stations
+                    Estaciones
                   </p>
                   {stationPickerStations.map((station) => (
                     <button
@@ -1530,19 +1682,19 @@ const StationWorkspace: React.FC = () => {
                       <div className="font-semibold text-gray-900">{station.name}</div>
                       <div className="text-xs text-gray-500">
                         {station.role}
-                        {station.line_type ? ` - Line ${station.line_type}` : ''}
+                        {station.line_type ? ` - Linea ${station.line_type}` : ''}
                       </div>
                     </button>
                   ))}
                   {stationPickerStations.length === 0 && (
                     <div className="rounded-md border border-dashed border-gray-200 px-3 py-2 text-xs text-gray-500">
-                      No stations available for this context.
+                      No hay estaciones disponibles para este contexto.
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed border-gray-200 px-3 py-2 text-xs text-gray-500">
-                  Station selection happens after choosing the context.
+                  La seleccion de estacion ocurre despues de elegir el contexto.
                 </div>
               )}
             </div>
@@ -1567,9 +1719,9 @@ const StationWorkspace: React.FC = () => {
                 <X className="h-5 w-5" />
               </button>
             )}
-            <h3 className="text-lg font-semibold text-gray-900">Select station</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Seleccionar estacion</h3>
             <p className="mt-2 text-sm text-gray-500">
-              Choose the station for this session.
+              Elige la estacion para esta sesion.
             </p>
             <div className="mt-4 space-y-2 max-h-[60vh] overflow-y-auto">
               {sessionStations.map((station) => (
@@ -1581,13 +1733,13 @@ const StationWorkspace: React.FC = () => {
                   <div className="font-semibold text-gray-900">{station.name}</div>
                   <div className="text-xs text-gray-500">
                     {station.role}
-                    {station.line_type ? ` - Line ${station.line_type}` : ''}
+                    {station.line_type ? ` - Linea ${station.line_type}` : ''}
                   </div>
                 </button>
               ))}
               {sessionStations.length === 0 && (
                 <div className="rounded-md border border-dashed border-gray-200 px-3 py-2 text-xs text-gray-500">
-                  No stations available for this context.
+                  No hay estaciones disponibles para este contexto.
                 </div>
               )}
             </div>
@@ -1602,8 +1754,8 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Pause task</h3>
-            <p className="mt-1 text-sm text-gray-500">Select a reason to pause this task.</p>
+            <h3 className="text-lg font-semibold text-gray-900">Pausar tarea</h3>
+            <p className="mt-1 text-sm text-gray-500">Selecciona un motivo para pausar esta tarea.</p>
             {reasonError && (
               <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {reasonError}
@@ -1621,13 +1773,13 @@ const StationWorkspace: React.FC = () => {
               ))}
             </div>
             <div className="mt-4">
-              <label className="text-xs font-semibold text-gray-500">Custom reason</label>
+              <label className="text-xs font-semibold text-gray-500">Motivo personalizado</label>
               <input
                 type="text"
                 className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none"
                 value={reasonText}
                 onChange={(event) => setReasonText(event.target.value)}
-                placeholder="Add a custom reason"
+                placeholder="Agrega un motivo personalizado"
               />
             </div>
             <div className="mt-6 flex gap-3">
@@ -1635,13 +1787,13 @@ const StationWorkspace: React.FC = () => {
                 onClick={closeModal}
                 className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={() => {
                   const trimmed = reasonText.trim();
                   if (!trimmed) {
-                    setReasonError('A reason is required.');
+                    setReasonError('Se requiere un motivo.');
                     return;
                   }
                   handlePause(undefined, trimmed);
@@ -1649,7 +1801,7 @@ const StationWorkspace: React.FC = () => {
                 className="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-600"
                 disabled={submitting}
               >
-                Pause task
+                Pausar tarea
               </button>
             </div>
           </div>
@@ -1663,8 +1815,8 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Skip task</h3>
-            <p className="mt-1 text-sm text-gray-500">Provide a reason for skipping this task.</p>
+            <h3 className="text-lg font-semibold text-gray-900">Omitir tarea</h3>
+            <p className="mt-1 text-sm text-gray-500">Proporciona un motivo para omitir esta tarea.</p>
             {reasonError && (
               <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {reasonError}
@@ -1682,13 +1834,13 @@ const StationWorkspace: React.FC = () => {
               ))}
             </div>
             <div className="mt-4">
-              <label className="text-xs font-semibold text-gray-500">Custom reason</label>
+              <label className="text-xs font-semibold text-gray-500">Motivo personalizado</label>
               <input
                 type="text"
                 className="mt-2 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none"
                 value={reasonText}
                 onChange={(event) => setReasonText(event.target.value)}
-                placeholder="Add a custom reason"
+                placeholder="Agrega un motivo personalizado"
               />
             </div>
             <div className="mt-6 flex gap-3">
@@ -1696,13 +1848,13 @@ const StationWorkspace: React.FC = () => {
                 onClick={closeModal}
                 className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={() => {
                   const trimmed = reasonText.trim();
                   if (!trimmed) {
-                    setReasonError('A reason is required.');
+                    setReasonError('Se requiere un motivo.');
                     return;
                   }
                   handleSkip(trimmed);
@@ -1710,7 +1862,7 @@ const StationWorkspace: React.FC = () => {
                 className="flex-1 rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800"
                 disabled={submitting}
               >
-                Skip task
+                Omitir tarea
               </button>
             </div>
           </div>
@@ -1724,8 +1876,8 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Task notes</h3>
-            <p className="mt-1 text-sm text-gray-500">Add notes or observations for this task.</p>
+            <h3 className="text-lg font-semibold text-gray-900">Notas de tarea</h3>
+            <p className="mt-1 text-sm text-gray-500">Agrega notas u observaciones para esta tarea.</p>
             {commentError && (
               <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                 {commentError}
@@ -1746,7 +1898,7 @@ const StationWorkspace: React.FC = () => {
             )}
             <textarea
               className="mt-4 w-full h-32 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm focus:border-blue-500 focus:outline-none"
-              placeholder="Write a note"
+              placeholder="Escribe una nota"
               value={commentDraft}
               onChange={(event) => setCommentDraft(event.target.value)}
             />
@@ -1755,14 +1907,14 @@ const StationWorkspace: React.FC = () => {
                 onClick={closeModal}
                 className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={handleSaveComment}
                 className="flex-1 rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800"
                 disabled={submitting}
               >
-                Save note
+                Guardar nota
               </button>
             </div>
           </div>
@@ -1776,11 +1928,16 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Crew selection</h3>
-            <p className="mt-1 text-sm text-gray-500">Pick teammates to start together.</p>
+            <h3 className="text-lg font-semibold text-gray-900">Seleccion de equipo</h3>
+            <p className="mt-1 text-sm text-gray-500">Elige companeros para iniciar juntos.</p>
+            {crewStartBlocked && (
+              <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {crewStartBlockTitle}
+              </div>
+            )}
             <input
               className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm focus:border-blue-500 focus:outline-none"
-              placeholder="Search workers"
+              placeholder="Buscar trabajadores"
               value={crewQuery}
               onChange={(event) => setCrewQuery(event.target.value)}
             />
@@ -1800,7 +1957,7 @@ const StationWorkspace: React.FC = () => {
                 </label>
               ))}
               {filteredCrew.length === 0 && (
-                <div className="text-sm text-gray-500">No workers found.</div>
+                <div className="text-sm text-gray-500">No se encontraron trabajadores.</div>
               )}
             </div>
             <div className="mt-6 flex gap-3">
@@ -1808,14 +1965,20 @@ const StationWorkspace: React.FC = () => {
                 onClick={closeModal}
                 className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={() => handleStart(selectedTask, selectedTaskWorkItem, crewSelection)}
-                className="flex-1 rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800"
-                disabled={submitting}
+                className={clsx(
+                  'flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white',
+                  crewStartBlocked
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gray-900 hover:bg-gray-800'
+                )}
+                disabled={crewStartBlocked || submitting}
+                title={crewStartBlocked ? crewStartBlockTitle : undefined}
               >
-                Start with crew
+                Iniciar con equipo
               </button>
             </div>
           </div>
@@ -1829,64 +1992,96 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Other tasks</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Otras tareas</h3>
             <p className="mt-1 text-sm text-gray-500">
-              Unscheduled tasks available for this module/panel.
+              Tareas no programadas disponibles para este modulo/panel.
             </p>
             <div className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto">
-              {selectedWorkItem.other_tasks.map((task) => (
-                <div key={task.task_definition_id} className="rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-gray-900">{task.name}</div>
-                    {statusBadge(task.status)}
+              {selectedWorkItem.other_tasks.map((task) => {
+                const workerParticipating = task.current_worker_participating ?? false;
+                const dependencyBlocked = !isDependenciesSatisfied(task);
+                const workerRestricted = !isWorkerAllowed(task, workerParticipating);
+                const dependencyMessage = dependencyBlockedLabel(task);
+                const workerMessage = workerRestrictionLabel(task);
+                const startConcurrencyBlocked = !canStartTask(task);
+                const resumeConcurrencyBlocked = !canStartTask(task, task.task_instance_id);
+                const startBlocked =
+                  dependencyBlocked || workerRestricted || startConcurrencyBlocked;
+                const resumeBlocked =
+                  dependencyBlocked || workerRestricted || resumeConcurrencyBlocked;
+                const restrictionNote = [
+                  dependencyMessage || null,
+                  workerMessage || null,
+                ]
+                  .filter(Boolean)
+                  .join(' - ');
+                const startBlockTitle = buildBlockReason({
+                  dependencyMessage,
+                  workerMessage,
+                  concurrencyBlocked: startConcurrencyBlocked,
+                  concurrencyAction: 'starting',
+                });
+                const resumeBlockTitle = buildBlockReason({
+                  dependencyMessage,
+                  workerMessage,
+                  concurrencyBlocked: resumeConcurrencyBlocked,
+                  concurrencyAction: 'resuming',
+                });
+                return (
+                  <div
+                    key={task.task_definition_id}
+                    className="rounded-xl border border-gray-200 p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-gray-900">{task.name}</div>
+                      {statusBadge(task.status)}
+                    </div>
+                    {restrictionNote &&
+                      (task.status === 'NotStarted' || task.status === 'Paused') && (
+                        <div className="mt-1 text-xs font-semibold text-rose-600">
+                          {restrictionNote}
+                        </div>
+                      )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {task.status === 'NotStarted' && (
+                        <button
+                          onClick={() => handleStart(task, selectedWorkItem)}
+                          disabled={startBlocked || submitting}
+                          title={startBlocked ? startBlockTitle : undefined}
+                          className={clsx(
+                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                            startBlocked
+                              ? 'bg-gray-400 cursor-not-allowed'
+                              : 'bg-gray-900 hover:bg-gray-800'
+                          )}
+                        >
+                          <Play className="h-5 w-5" /> Iniciar
+                        </button>
+                      )}
+                      {task.status === 'Paused' && (
+                        <button
+                          onClick={() => handleResume(task)}
+                          disabled={resumeBlocked || submitting}
+                          title={resumeBlocked ? resumeBlockTitle : undefined}
+                          className={clsx(
+                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                            resumeBlocked
+                              ? 'bg-gray-400 cursor-not-allowed'
+                              : 'bg-blue-600 hover:bg-blue-700'
+                          )}
+                        >
+                          <Play className="h-5 w-5" /> Reanudar
+                        </button>
+                      )}
+                      {task.status === 'InProgress' && (
+                        <span className="text-xs text-gray-500">Tarea ya en progreso</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {task.status === 'NotStarted' && (
-                      <button
-                        onClick={() => handleStart(task, selectedWorkItem)}
-                        disabled={!canStartTask(task) || submitting}
-                        title={
-                          !canStartTask(task)
-                            ? 'Finish your current task before starting another.'
-                            : undefined
-                        }
-                        className={clsx(
-                          'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                          !canStartTask(task)
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-gray-900 hover:bg-gray-800'
-                        )}
-                      >
-                        <Play className="h-5 w-5" /> Start
-                      </button>
-                    )}
-                    {task.status === 'Paused' && (
-                      <button
-                        onClick={() => handleResume(task)}
-                        disabled={!canStartTask(task, task.task_instance_id) || submitting}
-                        title={
-                          !canStartTask(task, task.task_instance_id)
-                            ? 'Finish your current task before resuming another.'
-                            : undefined
-                        }
-                        className={clsx(
-                          'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                          !canStartTask(task, task.task_instance_id)
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700'
-                        )}
-                      >
-                        <Play className="h-5 w-5" /> Resume
-                      </button>
-                    )}
-                    {task.status === 'InProgress' && (
-                      <span className="text-xs text-gray-500">Task already in progress</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {selectedWorkItem.other_tasks.length === 0 && (
-                <div className="text-sm text-gray-500">No other tasks available.</div>
+                <div className="text-sm text-gray-500">No hay otras tareas disponibles.</div>
               )}
             </div>
           </div>

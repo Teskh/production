@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Layers, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -59,7 +60,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -68,6 +69,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 };
 
 const Specialties: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [assignments, setAssignments] = useState<WorkerSkillAssignment[]>([]);
@@ -101,7 +103,7 @@ const Specialties: React.FC = () => {
       } catch (error) {
         if (active) {
           const message =
-            error instanceof Error ? error.message : 'Failed to load specialties.';
+            error instanceof Error ? error.message : 'No se pudieron cargar las especialidades.';
           setStatusMessage(message);
         }
       } finally {
@@ -198,7 +200,7 @@ const Specialties: React.FC = () => {
   const handleSave = async () => {
     const name = draft.name.trim();
     if (!name) {
-      setStatusMessage('Specialty name is required.');
+      setStatusMessage('El nombre de la especialidad es obligatorio.');
       return;
     }
     setSaving(true);
@@ -236,10 +238,10 @@ const Specialties: React.FC = () => {
         return [...remaining, ...next];
       });
       setSelectedSkillId(savedSkill.id);
-      setStatusMessage('Specialty saved.');
+      setStatusMessage('Especialidad guardada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to save specialty.';
+        error instanceof Error ? error.message : 'No se pudo guardar la especialidad.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -250,7 +252,7 @@ const Specialties: React.FC = () => {
     if (!draft.id) {
       return;
     }
-    if (!window.confirm('Remove this specialty?')) {
+    if (!window.confirm('Eliminar esta especialidad?')) {
       return;
     }
     setSaving(true);
@@ -263,10 +265,10 @@ const Specialties: React.FC = () => {
       setAssignments((prev) => prev.filter((item) => item.skill_id !== draft.id));
       setSelectedSkillId(null);
       setDraft(emptySkillDraft());
-      setStatusMessage('Specialty removed.');
+      setStatusMessage('Especialidad eliminada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Failed to remove specialty.';
+        error instanceof Error ? error.message : 'No se pudo eliminar la especialidad.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -275,25 +277,23 @@ const Specialties: React.FC = () => {
 
   const canSave = Boolean(draft.name.trim()) && !saving;
 
+  useEffect(() => {
+    setHeader({
+      title: 'Editor de especialidades',
+      kicker: 'Personal / Especialidades',
+    });
+  }, [setHeader]);
+
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Personnel / Specialties
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Specialty Builder</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Curate skills and map them to workers for station filtering and task eligibility.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleAddSkill}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
         >
-          <Plus className="h-4 w-4" /> New Specialty
+          <Plus className="h-4 w-4" /> Nueva especialidad
         </button>
-      </header>
+      </div>
       {statusMessage && (
         <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-2 text-sm text-[var(--ink-muted)]">
           {statusMessage}
@@ -304,18 +304,18 @@ const Specialties: React.FC = () => {
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Skill Inventory</h2>
+              <h2 className="text-lg font-display text-[var(--ink)]">Inventario de habilidades</h2>
               <p className="text-sm text-[var(--ink-muted)]">
                 {loading
-                  ? 'Loading specialties...'
-                  : `${skills.length} specialties configured`}
+                  ? 'Cargando especialidades...'
+                  : `${skills.length} especialidades configuradas`}
               </p>
             </div>
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search..."
+                placeholder="Buscar..."
                 className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -327,8 +327,8 @@ const Specialties: React.FC = () => {
             {filteredSkills.length === 0 && !loading ? (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
                 {skills.length === 0 && !query
-                  ? 'No specialties created yet.'
-                  : 'No specialties match your search.'}
+                  ? 'Aun no hay especialidades.'
+                  : 'No hay especialidades que coincidan con tu busqueda.'}
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
@@ -354,7 +354,7 @@ const Specialties: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-3">
                          <span className="text-xs text-gray-500">
-                           {workerCount} workers
+                           {workerCount} trabajadores
                          </span>
                          <ChevronRight className={`h-4 w-4 text-gray-300 transition-colors ${isSelected ? 'text-blue-300' : 'group-hover:text-gray-400'}`} />
                       </div>
@@ -369,9 +369,9 @@ const Specialties: React.FC = () => {
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Edit</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Editar</p>
               <h2 className="text-lg font-display text-[var(--ink)]">
-                {draft.name || selectedSkill?.name || 'New Specialty'}
+                {draft.name || selectedSkill?.name || 'Nueva especialidad'}
               </h2>
             </div>
             <Settings className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -379,7 +379,7 @@ const Specialties: React.FC = () => {
 
           <div className="mt-4 space-y-4">
             <label className="text-sm text-[var(--ink-muted)]">
-              Specialty name
+              Nombre de la especialidad
               <input
                 className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                 value={draft.name}
@@ -390,13 +390,13 @@ const Specialties: React.FC = () => {
             <div>
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-[var(--ink-muted)]">
-                  Assigned workers ({assignedWorkers.length})
+                  Trabajadores asignados ({assignedWorkers.length})
                 </p>
                 <label className="relative">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-[var(--ink-muted)]" />
                   <input
                     type="search"
-                    placeholder="Search workers"
+                    placeholder="Buscar trabajadores"
                     className="h-8 rounded-full border border-black/10 bg-white pl-8 pr-3 text-xs"
                     value={workerQuery}
                     onChange={(event) => setWorkerQuery(event.target.value)}
@@ -406,7 +406,7 @@ const Specialties: React.FC = () => {
               <div className="mt-2 flex flex-wrap gap-2">
                 {assignedWorkers.length === 0 && (
                   <span className="text-xs text-[var(--ink-muted)]">
-                    No workers assigned yet.
+                    Aun no hay trabajadores asignados.
                   </span>
                 )}
                 {assignedWorkers.map((worker) => (
@@ -420,7 +420,7 @@ const Specialties: React.FC = () => {
               </div>
               <div className="mt-3 max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)] p-3 text-xs">
                 {filteredWorkers.length === 0 && (
-                  <p className="text-[var(--ink-muted)]">No workers found.</p>
+                  <p className="text-[var(--ink-muted)]">No se encontraron trabajadores.</p>
                 )}
                 {filteredWorkers.map((worker) => {
                   const checked = draft.worker_ids.includes(worker.id);
@@ -436,7 +436,7 @@ const Specialties: React.FC = () => {
                       </span>
                       {!worker.active && (
                         <span className="rounded-full bg-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                          Inactive
+                          Inactivo
                         </span>
                       )}
                     </label>
@@ -451,7 +451,7 @@ const Specialties: React.FC = () => {
                 disabled={!canSave}
                 className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Save specialty
+                Guardar especialidad
               </button>
               {draft.id && (
                 <button
@@ -459,7 +459,7 @@ const Specialties: React.FC = () => {
                   className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)]"
                 >
                   <Trash2 className="h-4 w-4" />
-                  Remove
+                  Eliminar
                 </button>
               )}
             </div>

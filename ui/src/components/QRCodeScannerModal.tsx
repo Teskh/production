@@ -208,12 +208,12 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
     }
     if (!supportsBarcodeDetector) {
       setStatus('unsupported');
-      setErrorMessage('BarcodeDetector is not available on this device.');
+      setErrorMessage('BarcodeDetector no esta disponible en este dispositivo.');
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus('unsupported');
-      setErrorMessage('Camera access is not supported in this browser.');
+      setErrorMessage('El acceso a camara no es compatible en este navegador.');
       return;
     }
     setStatus('starting');
@@ -235,7 +235,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) {
-        throw new Error('Video element not ready.');
+        throw new Error('Elemento de video no listo.');
       }
       video.srcObject = stream;
       video.setAttribute('playsinline', 'true');
@@ -254,7 +254,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       const Detector = (window as Window & { BarcodeDetector?: BarcodeDetectorConstructor })
         .BarcodeDetector;
       if (!Detector) {
-        throw new Error('BarcodeDetector is not available.');
+        throw new Error('BarcodeDetector no esta disponible.');
       }
       detectorRef.current = new Detector({ formats: ['qr_code'] });
       const track = stream.getVideoTracks()[0];
@@ -266,7 +266,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       animationFrameRef.current = requestAnimationFrame(scanFrame);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Unable to start the camera scanner.';
+        error instanceof Error ? error.message : 'No se pudo iniciar el escaner de camara.';
       setStatus('error');
       setErrorMessage(message);
     }
@@ -298,15 +298,15 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
   const statusLabel = (() => {
     switch (status) {
       case 'starting':
-        return 'Starting camera...';
+        return 'Iniciando camara...';
       case 'ready':
-        return 'Scanning for QR codes';
+        return 'Escaneando codigos QR';
       case 'unsupported':
-        return 'Scanner not supported';
+        return 'Escaner no compatible';
       case 'error':
-        return 'Scanner error';
+        return 'Error del escaner';
       default:
-        return 'Idle';
+        return 'En espera';
     }
   })();
 
@@ -316,9 +316,9 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Scan QR badge</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Escanear gafete QR</h3>
             <p className="text-xs text-slate-500">
-              Center the code in the box. Scan runs at 720p with throttled frames and periodic full-frame sweeps.
+              Centra el codigo en el recuadro. El escaneo corre a 720p con cuadros limitados y barridos de cuadro completo.
             </p>
           </div>
           <button
@@ -359,37 +359,37 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
 
           <div className="space-y-4 text-sm">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Status</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">Estado</div>
               <div className="mt-2 text-sm font-semibold text-slate-900">{statusLabel}</div>
               {status === 'ready' && (
                 <div className="mt-2 text-xs text-slate-500">
-                  Processing center ROI at ~10-12 fps with fallback sweeps.
+                  Procesando ROI central a ~10-12 fps con barridos de respaldo.
                 </div>
               )}
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Last scan</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">Ultimo escaneo</div>
               <div className="mt-2 font-mono text-xs text-slate-900 break-all">
-                {lastDetected ?? 'No codes detected yet.'}
+                {lastDetected ?? 'Aun no se detectan codigos.'}
               </div>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Tips</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">Consejos</div>
               <p className="mt-2">
-                Keep the QR level and inside the target box. Move closer if detection is slow.
+                Manten el QR nivelado y dentro del recuadro. Acercate si la deteccion es lenta.
               </p>
             </div>
           </div>
         </div>
 
         <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
-          <span className="text-xs text-slate-500">Green flash + beep confirm a scan.</span>
+          <span className="text-xs text-slate-500">El destello verde + beep confirma un escaneo.</span>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
           >
-            Done
+            Listo
           </button>
         </div>
       </div>

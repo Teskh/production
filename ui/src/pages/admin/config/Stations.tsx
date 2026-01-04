@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MapPin, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -53,7 +54,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -68,6 +69,7 @@ const normalizeSearch = (value: string): string =>
     .toLowerCase();
 
 const Stations: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
   const [draft, setDraft] = useState<StationDraft | null>(null);
@@ -75,6 +77,13 @@ const Stations: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Constructor de estaciones',
+      kicker: 'Configuracion / Estaciones',
+    });
+  }, [setHeader]);
 
   useEffect(() => {
     let active = true;
@@ -96,7 +105,8 @@ const Stations: React.FC = () => {
         }
       } catch (error) {
         if (active) {
-          const message = error instanceof Error ? error.message : 'Failed to load stations.';
+          const message =
+            error instanceof Error ? error.message : 'No se pudieron cargar las estaciones.';
           setStatusMessage(message);
         }
       } finally {
@@ -183,7 +193,7 @@ const Stations: React.FC = () => {
     const assemblyLines = new Set(
       stations.filter((station) => station.role === 'Assembly' && station.line_type).map((s) => s.line_type)
     );
-    return `${stations.length} stations • ${assemblyLines.size} assembly lines`;
+    return `${stations.length} estaciones - ${assemblyLines.size} lineas de ensamblaje`;
   }, [stations]);
 
   const selectStation = (station: Station) => {
@@ -228,11 +238,11 @@ const Stations: React.FC = () => {
       if (role === 'AUX') {
         return null;
       }
-      throw new Error('Sequence order is required for non-aux stations.');
+      throw new Error('Se requiere orden de secuencia para estaciones no AUX.');
     }
     const parsed = Number(trimmed);
     if (!Number.isInteger(parsed) || parsed <= 0) {
-      throw new Error('Sequence order must be a positive whole number.');
+      throw new Error('El orden de secuencia debe ser un numero entero positivo.');
     }
     return parsed;
   };
@@ -240,21 +250,21 @@ const Stations: React.FC = () => {
   const buildPayload = (current: StationDraft) => {
     const name = current.name.trim();
     if (!name) {
-      throw new Error('Station name is required.');
+      throw new Error('Se requiere el nombre de la estacion.');
     }
     const role = current.role;
     const isAssembly = role === 'Assembly';
     const isAux = role === 'AUX';
     const lineType = isAssembly ? current.line_type : '';
     if (isAssembly && !lineType) {
-      throw new Error('Assembly stations require a line type.');
+      throw new Error('Las estaciones de ensamblaje requieren un tipo de linea.');
     }
     if (!isAssembly && lineType) {
-      throw new Error('Line type is only allowed for assembly stations.');
+      throw new Error('El tipo de linea solo se permite en estaciones de ensamblaje.');
     }
     const sequenceOrder = isAux ? null : parseSequenceOrder(current.sequence_order, role);
     if (isAux && current.sequence_order.trim()) {
-      throw new Error('Aux stations should not have a sequence order.');
+      throw new Error('Las estaciones AUX no deben tener orden de secuencia.');
     }
     return {
       name,
@@ -288,9 +298,9 @@ const Stations: React.FC = () => {
       }
       setSelectedStationId(saved.id);
       setDraft(buildDraftFromStation(saved));
-      setStatusMessage('Station saved.');
+      setStatusMessage('Estacion guardada.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save station.';
+      const message = error instanceof Error ? error.message : 'No se pudo guardar la estacion.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -313,9 +323,9 @@ const Stations: React.FC = () => {
         setSelectedStationId(null);
         setDraft(emptyDraft());
       }
-      setStatusMessage('Station removed.');
+      setStatusMessage('Estacion eliminada.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to remove station.';
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar la estacion.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
@@ -324,7 +334,7 @@ const Stations: React.FC = () => {
 
   const renderStationRow = (station: Station) => {
     const isSelected = selectedStationId === station.id;
-    const sequenceLabel = station.sequence_order !== null ? `Seq ${station.sequence_order}` : 'Seq n/a';
+    const sequenceLabel = station.sequence_order !== null ? `Sec ${station.sequence_order}` : 'Sec n/a';
     
     return (
       <button
@@ -353,36 +363,27 @@ const Stations: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Configuration / Stations
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Station Builder</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Define the production flow and assembly lines that power task scheduling.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleAddStation}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[var(--accent)]/90"
         >
-          <Plus className="h-4 w-4" /> Add station
+          <Plus className="h-4 w-4" /> Agregar estacion
         </button>
-      </header>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
         <section className="order-last rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden xl:order-none">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Active stations</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Estaciones activas</h2>
               <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="search"
-                placeholder="Search..."
+                placeholder="Buscar..."
                 className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -392,12 +393,12 @@ const Stations: React.FC = () => {
 
           {loading && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              Loading stations…
+              Cargando estaciones...
             </div>
           )}
           {!loading && filteredStations.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
-              No stations match that search.
+              No hay estaciones que coincidan con esa busqueda.
             </div>
           )}
 
@@ -406,11 +407,13 @@ const Stations: React.FC = () => {
               {(groupedStations.panels.length > 0 || !search.trim()) && (
                 <div>
                    <div className="bg-gray-50 px-4 py-2 border-y border-gray-100 first:border-t-0">
-                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Panels</h3>
+                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Paneles</h3>
                    </div>
                    <div className="divide-y divide-gray-100">
                      {groupedStations.panels.length === 0 ? (
-                        <div className="px-4 py-3 text-xs text-gray-400 italic">No panel stations yet.</div>
+                        <div className="px-4 py-3 text-xs text-gray-400 italic">
+                          Aun no hay estaciones de paneles.
+                        </div>
                      ) : (
                         groupedStations.panels.map(renderStationRow)
                      )}
@@ -421,11 +424,15 @@ const Stations: React.FC = () => {
               {(groupedStations.magazine.length > 0 || !search.trim()) && (
                 <div>
                    <div className="bg-gray-50 px-4 py-2 border-y border-gray-100">
-                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Magazine</h3>
+                      <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">
+                        Magazine
+                      </h3>
                    </div>
                    <div className="divide-y divide-gray-100">
                      {groupedStations.magazine.length === 0 ? (
-                        <div className="px-4 py-3 text-xs text-gray-400 italic">No magazine stations yet.</div>
+                        <div className="px-4 py-3 text-xs text-gray-400 italic">
+                          Aun no hay estaciones de magazine.
+                        </div>
                      ) : (
                         groupedStations.magazine.map(renderStationRow)
                      )}
@@ -440,14 +447,18 @@ const Stations: React.FC = () => {
                 !search.trim()) && (
                 <div>
                   <div className="bg-gray-50 px-4 py-2 border-y border-gray-100">
-                     <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">Assembly</h3>
+                     <h3 className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">
+                       Ensamblaje
+                     </h3>
                   </div>
                   <div className="divide-y divide-gray-100">
                     {(['1', '2', '3'] as StationLineType[]).map((line) => (
                       <div key={line} className="divide-y divide-gray-100">
                          {groupedStations.assemblyLines[line].length > 0 && (
                             <div className="bg-gray-50/50 px-4 py-1.5 border-y border-gray-50">
-                               <span className="text-[10px] font-medium text-gray-400">Line {line}</span>
+                               <span className="text-[10px] font-medium text-gray-400">
+                                 Linea {line}
+                               </span>
                             </div>
                          )}
                          {groupedStations.assemblyLines[line].map(renderStationRow)}
@@ -456,7 +467,9 @@ const Stations: React.FC = () => {
                     {groupedStations.assemblyOther.length > 0 && (
                       <div className="divide-y divide-gray-100">
                          <div className="bg-gray-50/50 px-4 py-1.5 border-y border-gray-50">
-                            <span className="text-[10px] font-medium text-gray-400">Unassigned Line</span>
+                            <span className="text-[10px] font-medium text-gray-400">
+                              Linea sin asignar
+                            </span>
                          </div>
                          {groupedStations.assemblyOther.map(renderStationRow)}
                       </div>
@@ -487,9 +500,9 @@ const Stations: React.FC = () => {
           <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Detail</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Detalle</p>
                 <h2 className="text-lg font-display text-[var(--ink)]">
-                  {draft?.id ? `Station #${draft.id}` : 'New station'}
+                  {draft?.id ? `Estacion #${draft.id}` : 'Nueva estacion'}
                 </h2>
               </div>
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -503,7 +516,7 @@ const Stations: React.FC = () => {
 
             <div className="mt-4 space-y-4">
               <label className="text-sm text-[var(--ink-muted)]">
-                Display name
+                Nombre visible
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                   value={draft?.name ?? ''}
@@ -512,41 +525,53 @@ const Stations: React.FC = () => {
               </label>
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Role
+                  Rol
                   <select
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={draft?.role ?? 'Panels'}
                     onChange={(event) => handleRoleChange(event.target.value as StationRole)}
                   >
-                    {['Panels', 'Magazine', 'Assembly', 'AUX'].map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
+                    {(['Panels', 'Magazine', 'Assembly', 'AUX'] as StationRole[]).map((role) => {
+                      const label =
+                        role === 'Panels'
+                          ? 'Paneles'
+                          : role === 'Magazine'
+                            ? 'Magazine'
+                            : role === 'Assembly'
+                              ? 'Ensamblaje'
+                              : 'AUX';
+                      return (
+                        <option key={role} value={role}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
                 <label className="text-sm text-[var(--ink-muted)]">
-                  Line type
+                  Tipo de linea
                   <select
                     className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
                     value={draft?.line_type ?? ''}
                     onChange={(event) => handleDraftChange({ line_type: event.target.value as StationLineType })}
                     disabled={draft?.role !== 'Assembly'}
                   >
-                    <option value="">None</option>
+                    <option value="">Ninguno</option>
                     {['1', '2', '3'].map((line) => (
                       <option key={line} value={line}>
-                        Line {line}
+                        Linea {line}
                       </option>
                     ))}
                   </select>
                 </label>
               </div>
               <label className="text-sm text-[var(--ink-muted)]">
-                Sequence order
+                Orden de secuencia
                 <input
                   className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  placeholder={draft?.role === 'AUX' ? 'Not used for AUX stations' : 'e.g. 11'}
+                  placeholder={
+                    draft?.role === 'AUX' ? 'No se usa para estaciones AUX' : 'ej. 11'
+                  }
                   value={draft?.sequence_order ?? ''}
                   onChange={(event) => handleDraftChange({ sequence_order: event.target.value })}
                   disabled={draft?.role === 'AUX'}
@@ -559,7 +584,7 @@ const Stations: React.FC = () => {
                   disabled={saving || !draft}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
-                  {saving ? 'Saving…' : 'Save station'}
+                  {saving ? 'Guardando...' : 'Guardar estacion'}
                 </button>
                 {draft?.id && (
                   <button
@@ -567,7 +592,7 @@ const Stations: React.FC = () => {
                     disabled={saving}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
                   >
-                    <Trash2 className="h-4 w-4" /> Remove
+                    <Trash2 className="h-4 w-4" /> Eliminar
                   </button>
                 )}
               </div>

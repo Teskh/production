@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -112,7 +113,7 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed (${response.status})`);
+    throw new Error(text || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -128,11 +129,11 @@ const normalizeSearchValue = (value: string): string =>
 
 const formatPlannedDate = (value: string | null): string => {
   if (!value) {
-    return '—';
+    return '-';
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return '—';
+    return '-';
   }
   const now = new Date();
   const datePart = date.toLocaleDateString('en-US', {
@@ -170,8 +171,21 @@ const toInputDateTime = (value: string | null): string => {
   )}:${pad(date.getMinutes())}`;
 };
 
-const formatStatusLabel = (value: string): string =>
-  value.replace(/([a-z])([A-Z])/g, '$1 $2');
+const formatStatusLabel = (value: string): string => {
+  const map: Record<string, string> = {
+    Planned: 'Planificado',
+    InProgress: 'En progreso',
+    Completed: 'Completado',
+    Consumed: 'Consumido',
+    NotStarted: 'No iniciado',
+    Paused: 'Pausado',
+    Skipped: 'Omitido',
+  };
+  if (map[value]) {
+    return map[value];
+  }
+  return value.replace(/([a-z])([A-Z])/g, '$1 $2');
+};
 
 const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
   [...list].sort((a, b) => {
@@ -225,11 +239,11 @@ const StatusBadge: React.FC<{ status: ProductionStatus }> = ({ status }) => {
   };
 
   const labels: Record<StatusKey, string> = {
-    planned: 'Planned',
-    panels: 'Panels',
+    planned: 'Planificado',
+    panels: 'Paneles',
     magazine: 'Magazine',
-    assembly: 'Assembly',
-    completed: 'Completed',
+    assembly: 'Ensamblaje',
+    completed: 'Completado',
   };
 
   return (
@@ -336,6 +350,7 @@ const SubTypeSelector: React.FC<{
 // --- Main Component ---
 
 const ProductionQueue: React.FC = () => {
+  const { setHeader } = useAdminHeader();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
@@ -377,6 +392,13 @@ const ProductionQueue: React.FC = () => {
     id: number;
     position: 'before' | 'after';
   } | null>(null);
+
+  useEffect(() => {
+    setHeader({
+      title: 'Cola de produccion',
+      kicker: 'Planificacion / Produccion',
+    });
+  }, [setHeader]);
 
   const selectedItems = useMemo(
     () => items.filter((item) => selectedIds.has(item.id)),
@@ -450,7 +472,9 @@ const ProductionQueue: React.FC = () => {
       });
       setLastUpdated(new Date());
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to load queue.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo cargar la cola.'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -482,7 +506,9 @@ const ProductionQueue: React.FC = () => {
           setHouseSubTypes((prev) => ({ ...prev, [houseTypeId]: data }));
         } catch (error) {
           setErrorMessage(
-            error instanceof Error ? error.message : 'Unable to load house sub-types.'
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar los subtipos de casa.'
           );
         }
       };
@@ -500,7 +526,9 @@ const ProductionQueue: React.FC = () => {
         const data = await apiRequest<HouseType[]>('/api/house-types');
         setHouseTypes(data);
       } catch (error) {
-        setBatchError(error instanceof Error ? error.message : 'Unable to load house types.');
+        setBatchError(
+          error instanceof Error ? error.message : 'No se pudieron cargar los tipos de casa.'
+        );
       }
     };
     load();
@@ -534,7 +562,9 @@ const ProductionQueue: React.FC = () => {
         setHouseSubTypes((prev) => ({ ...prev, [houseTypeId]: data }));
       } catch (error) {
         setBatchError(
-          error instanceof Error ? error.message : 'Unable to load house sub-types.'
+          error instanceof Error
+            ? error.message
+            : 'No se pudieron cargar los subtipos de casa.'
         );
       }
     };
@@ -550,7 +580,11 @@ const ProductionQueue: React.FC = () => {
         const data = await apiRequest<HouseSubType[]>(`/api/house-types/${editHouseTypeId}/subtypes`);
         setHouseSubTypes((prev) => ({ ...prev, [editHouseTypeId]: data }));
       } catch (error) {
-        setEditError(error instanceof Error ? error.message : 'Unable to load house sub-types.');
+        setEditError(
+          error instanceof Error
+            ? error.message
+            : 'No se pudieron cargar los subtipos de casa.'
+        );
       }
     };
     load();
@@ -617,7 +651,9 @@ const ProductionQueue: React.FC = () => {
       setErrorMessage(null);
     } catch (error) {
       setItems(previousItems);
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to reorder items.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudieron reordenar los elementos.'
+      );
     }
   };
 
@@ -783,7 +819,9 @@ const ProductionQueue: React.FC = () => {
       setIsEditModalOpen(false);
       await loadQueue(true);
     } catch (error) {
-      setEditError(error instanceof Error ? error.message : 'Unable to save changes.');
+      setEditError(
+        error instanceof Error ? error.message : 'No se pudieron guardar los cambios.'
+      );
     } finally {
       setEditSaving(false);
     }
@@ -798,7 +836,7 @@ const ProductionQueue: React.FC = () => {
         ? Array.from(selectedIds)
         : [anchorId];
     if (targetIds.some((id) => items.find((item) => item.id === id)?.status === 'Completed')) {
-      setErrorMessage('Completed items cannot change line assignments.');
+      setErrorMessage('Los elementos completados no pueden cambiar de linea.');
       return;
     }
     try {
@@ -812,7 +850,9 @@ const ProductionQueue: React.FC = () => {
       setErrorMessage(null);
       await loadQueue(true);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update line.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo actualizar la linea.'
+      );
     }
   };
 
@@ -827,7 +867,9 @@ const ProductionQueue: React.FC = () => {
     }
     const houseTypeId = targetItems[0].house_type_id;
     if (!targetItems.every((item) => item.house_type_id === houseTypeId)) {
-      setErrorMessage('Select items with the same house type to change sub-type.');
+      setErrorMessage(
+        'Selecciona elementos con el mismo tipo de casa para cambiar el subtipo.'
+      );
       return;
     }
     const shouldClear = targetItems.every((item) => item.sub_type_id === subTypeId);
@@ -842,7 +884,9 @@ const ProductionQueue: React.FC = () => {
       setErrorMessage(null);
       await loadQueue(true);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to update sub-type.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo actualizar el subtipo.'
+      );
     }
   };
 
@@ -861,7 +905,9 @@ const ProductionQueue: React.FC = () => {
       await loadQueue(true);
       clearSelection();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to mark complete.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo marcar como completado.'
+      );
     }
   };
 
@@ -871,8 +917,8 @@ const ProductionQueue: React.FC = () => {
     }
     const confirmation =
       selectedCount === 1
-        ? 'Remove this item from the queue?'
-        : `Remove ${selectedCount} items from the queue? This cannot be undone.`;
+        ? 'Eliminar este elemento de la cola?'
+        : `Eliminar ${selectedCount} elementos de la cola? Esto no se puede deshacer.`;
     if (!window.confirm(confirmation)) {
       return;
     }
@@ -884,22 +930,24 @@ const ProductionQueue: React.FC = () => {
       clearSelection();
       await loadQueue(true);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete items.');
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudieron eliminar los elementos.'
+      );
     }
   };
 
   const handleBatchCreate = async () => {
     setBatchError(null);
     if (!batchDraft.project_name.trim() || !batchDraft.house_identifier_base.trim()) {
-      setBatchError('Project name and house identifier base are required.');
+      setBatchError('El nombre del proyecto y la base del identificador son obligatorios.');
       return;
     }
     if (!batchDraft.house_type_id) {
-      setBatchError('Select a house type to continue.');
+      setBatchError('Selecciona un tipo de casa para continuar.');
       return;
     }
     if (batchDraft.quantity < 1) {
-      setBatchError('Quantity must be at least 1.');
+      setBatchError('La cantidad debe ser al menos 1.');
       return;
     }
     try {
@@ -926,7 +974,9 @@ const ProductionQueue: React.FC = () => {
       });
       await loadQueue(true);
     } catch (error) {
-      setBatchError(error instanceof Error ? error.message : 'Unable to create batch.');
+      setBatchError(
+        error instanceof Error ? error.message : 'No se pudo crear el lote.'
+      );
     } finally {
       setBatchSaving(false);
     }
@@ -945,7 +995,9 @@ const ProductionQueue: React.FC = () => {
       setDetailData(data);
     } catch (error) {
       setDetailError(
-        error instanceof Error ? error.message : 'Unable to load module status.'
+        error instanceof Error
+          ? error.message
+          : 'No se pudo cargar el estado del modulo.'
       );
     } finally {
       setDetailLoading(false);
@@ -962,36 +1014,25 @@ const ProductionQueue: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-            Planning / Production
-          </p>
-          <h1 className="text-3xl font-display text-[var(--ink)]">Production Queue</h1>
-          <p className="mt-2 text-sm text-[var(--ink-muted)]">
-            Manage sequences, assign assembly lines, and keep module schedules in sync.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
-          >
-            <Plus className="h-4 w-4" /> Add Production Batch
-          </button>
-        </div>
-      </header>
+      <div className="flex justify-end">
+        <button
+          onClick={() => setIsAddModalOpen(true)}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+        >
+          <Plus className="h-4 w-4" /> Agregar lote de produccion
+        </button>
+      </div>
 
       <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">
             <div>
-              <h2 className="text-lg font-display text-[var(--ink)]">Active Sequence</h2>
+              <h2 className="text-lg font-display text-[var(--ink)]">Secuencia activa</h2>
               <p className="text-sm text-[var(--ink-muted)]">
-                {items.filter((item) => item.status !== 'Completed').length} active modules
+                {items.filter((item) => item.status !== 'Completed').length} modulos activos
               </p>
               <p className="text-[11px] text-[var(--ink-muted)]">
-                Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}
+                Ultima actualizacion {lastUpdated ? lastUpdated.toLocaleTimeString() : '-'}
               </p>
             </div>
             <div className="flex bg-black/5 rounded-full p-1 ml-4">
@@ -1003,7 +1044,7 @@ const ProductionQueue: React.FC = () => {
                     : 'text-[var(--ink-muted)]'
                 }`}
               >
-                Active
+                Activos
               </button>
               <button
                 onClick={() => setShowCompleted(true)}
@@ -1013,7 +1054,7 @@ const ProductionQueue: React.FC = () => {
                     : 'text-[var(--ink-muted)]'
                 }`}
               >
-                All
+                Todos
               </button>
             </div>
           </div>
@@ -1023,7 +1064,7 @@ const ProductionQueue: React.FC = () => {
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
               <input
                 type="search"
-                placeholder="Search modules..."
+                placeholder="Buscar modulos..."
                 className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm focus:ring-2 focus:ring-[var(--accent)] outline-none transition-all w-64"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -1034,7 +1075,7 @@ const ProductionQueue: React.FC = () => {
               onClick={() => loadQueue(true)}
               disabled={refreshing}
               className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] disabled:opacity-40 transition-colors"
-              title="Refresh"
+              title="Actualizar"
             >
               <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
@@ -1042,7 +1083,7 @@ const ProductionQueue: React.FC = () => {
               disabled={selectedCount === 0}
               onClick={handleDelete}
               className="p-2 text-[var(--ink-muted)] hover:text-red-500 disabled:opacity-30 transition-colors"
-              title="Delete Selected"
+              title="Eliminar seleccionados"
             >
               <Trash2 className="h-5 w-5" />
             </button>
@@ -1058,29 +1099,29 @@ const ProductionQueue: React.FC = () => {
         {selectedCount > 0 && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--accent)]/20 bg-[rgba(242,98,65,0.06)] px-4 py-3">
             <span className="text-xs font-semibold text-[var(--ink)]">
-              {selectedCount} selected
+              {selectedCount} seleccionados
             </span>
             <button
               onClick={() => openEditModal(Array.from(selectedIds))}
               className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20"
             >
-              Edit schedule
+              Editar horario
             </button>
             <button
               onClick={() => handleComplete(Array.from(selectedIds))}
               className="rounded-full bg-[var(--leaf)]/10 px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[var(--leaf)]/20 hover:bg-[var(--leaf)]/20"
             >
-              Mark complete
+              Marcar completado
             </button>
             <button
               onClick={clearSelection}
               className="rounded-full px-3 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
             >
-              Clear
+              Limpiar
             </button>
             {hasCompletedSelected && (
               <span className="text-[11px] text-[var(--ink-muted)]">
-                Completed items are locked from line edits.
+                Los elementos completados no se pueden editar en la linea.
               </span>
             )}
           </div>
@@ -1089,13 +1130,13 @@ const ProductionQueue: React.FC = () => {
         <div className="space-y-3" onClick={handleContainerClick}>
           {loading && items.length === 0 && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-12 text-center text-sm text-[var(--ink-muted)]">
-              Loading production queue...
+              Cargando cola de produccion...
             </div>
           )}
 
           {!loading && visibleItems.length === 0 && (
             <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-12 text-center text-sm text-[var(--ink-muted)]">
-              No modules found in the production queue.
+              No se encontraron modulos en la cola de produccion.
             </div>
           )}
 
@@ -1117,7 +1158,7 @@ const ProductionQueue: React.FC = () => {
                   <div className="pt-4 pb-2">
                     <div className="flex items-center gap-3">
                       <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--ink-muted)]">
-                        Project: {item.project_name}
+                        Proyecto: {item.project_name}
                       </span>
                       <div className="h-px bg-black/5 flex-1" />
                     </div>
@@ -1155,7 +1196,7 @@ const ProductionQueue: React.FC = () => {
                     <div className="col-span-3">
                       <p className="font-bold text-[var(--ink)]">{item.house_identifier}</p>
                       <p className="text-[11px] text-[var(--ink-muted)]">
-                        Module: M-{String(item.module_number).padStart(2, '0')}
+                        Modulo: M-{String(item.module_number).padStart(2, '0')}
                       </p>
                     </div>
 
@@ -1208,7 +1249,7 @@ const ProductionQueue: React.FC = () => {
                           openDetailModal(item);
                         }}
                         className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all"
-                        title="Module status"
+                        title="Estado del modulo"
                         type="button"
                       >
                         <Info className="h-4 w-4" />
@@ -1221,7 +1262,7 @@ const ProductionQueue: React.FC = () => {
                             openEditModal(selectedIds.has(item.id) && selectedCount > 1 ? Array.from(selectedIds) : [item.id]);
                           }}
                           className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                          title="Edit schedule"
+                          title="Editar horario"
                         >
                           <Edit className="h-4 w-4" />
                         </button>
@@ -1235,7 +1276,7 @@ const ProductionQueue: React.FC = () => {
                             );
                           }}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                          title="Mark complete"
+                          title="Marcar completado"
                         >
                           <CheckCircle className="h-4 w-4" />
                         </button>
@@ -1246,7 +1287,7 @@ const ProductionQueue: React.FC = () => {
                           }}
                           disabled={item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
-                          title="Move up"
+                          title="Mover arriba"
                         >
                           <ChevronUp className="h-4 w-4" />
                         </button>
@@ -1257,7 +1298,7 @@ const ProductionQueue: React.FC = () => {
                           }}
                           disabled={item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
-                          title="Move down"
+                          title="Mover abajo"
                         >
                           <ChevronDown className="h-4 w-4" />
                         </button>
@@ -1277,36 +1318,36 @@ const ProductionQueue: React.FC = () => {
             <div className="px-8 py-6 flex justify-between items-start gap-6 border-b border-black/5">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Module status
+                  Estado del modulo
                 </p>
                 <div className="flex items-center gap-3">
                   <h2 className="text-xl font-display text-[var(--ink)]">
                     {detailData
-                      ? `${detailData.house_identifier} · M-${String(detailData.module_number).padStart(
+                      ? `${detailData.house_identifier} - M-${String(detailData.module_number).padStart(
                           2,
                           '0'
                         )}`
                       : detailItem
-                      ? `${detailItem.house_identifier} · M-${String(detailItem.module_number).padStart(
+                      ? `${detailItem.house_identifier} - M-${String(detailItem.module_number).padStart(
                           2,
                           '0'
                         )}`
-                      : 'Module details'}
+                      : 'Detalles del modulo'}
                   </h2>
                   {detailData && <StatusBadge status={detailData.status} />}
                   {!detailData && detailItem && <StatusBadge status={detailItem.status} />}
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
                   <span>
-                    {detailData?.project_name ?? detailItem?.project_name ?? '—'}
+                    {detailData?.project_name ?? detailItem?.project_name ?? '-'}
                   </span>
-                  <span>·</span>
+                  <span>-</span>
                   <span>
-                    {detailData?.house_type_name ?? detailItem?.house_type_name ?? '—'}
+                    {detailData?.house_type_name ?? detailItem?.house_type_name ?? '-'}
                   </span>
                   {(detailData?.sub_type_name ?? detailItem?.sub_type_name) && (
                     <>
-                      <span>·</span>
+                      <span>-</span>
                       <span>
                         {detailData?.sub_type_name ?? detailItem?.sub_type_name}
                       </span>
@@ -1325,7 +1366,7 @@ const ProductionQueue: React.FC = () => {
             <div className="px-8 py-6 space-y-4 overflow-y-auto max-h-[calc(80vh-140px)]">
               {detailLoading && (
                 <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
-                  Loading module status...
+                  Cargando estado del modulo...
                 </div>
               )}
 
@@ -1339,17 +1380,17 @@ const ProductionQueue: React.FC = () => {
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ink-muted)]">
                     <span>
-                      Line {detailData.planned_assembly_line ?? '—'}
+                      Linea {detailData.planned_assembly_line ?? '-'}
                     </span>
-                    <span>·</span>
+                    <span>-</span>
                     <span>
-                      Current station {detailData.current_station_name ?? '—'}
+                      Estacion actual {detailData.current_station_name ?? '-'}
                     </span>
                   </div>
 
                   {detailData.panels.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
-                      No panels defined for this module.
+                      No hay paneles definidos para este modulo.
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -1364,7 +1405,7 @@ const ProductionQueue: React.FC = () => {
                                 {panel.panel_code ?? `Panel ${panel.panel_definition_id}`}
                               </p>
                               <p className="text-xs text-[var(--ink-muted)]">
-                                Station {panel.current_station_name ?? '—'}
+                                Estacion {panel.current_station_name ?? '-'}
                               </p>
                             </div>
                             <span
@@ -1386,17 +1427,17 @@ const ProductionQueue: React.FC = () => {
                                       taskStatusStyles[task.status]
                                     }`}
                                   >
-                                    {task.name} · {formatStatusLabel(task.status)}
+                                    {task.name} - {formatStatusLabel(task.status)}
                                   </span>
                                 ))}
                               </div>
                             ) : (
                               <p className="text-xs text-[var(--ink-muted)]">
                                 {panel.status === 'Completed' || panel.status === 'Consumed'
-                                  ? 'Panel complete.'
+                                  ? 'Panel completado.'
                                   : panel.current_station_name
-                                  ? 'No pending tasks at this station.'
-                                  : 'Not at a station yet.'}
+                                  ? 'No hay tareas pendientes en esta estacion.'
+                                  : 'Aun no esta en una estacion.'}
                               </p>
                             )}
                           </div>
@@ -1417,7 +1458,7 @@ const ProductionQueue: React.FC = () => {
             <div className="px-8 py-6 flex justify-between items-center">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Workflow</p>
-                <h2 className="text-xl font-display text-[var(--ink)]">New Production Batch</h2>
+                <h2 className="text-xl font-display text-[var(--ink)]">Nuevo lote de produccion</h2>
               </div>
               <button
                 onClick={() => setIsAddModalOpen(false)}
@@ -1434,14 +1475,14 @@ const ProductionQueue: React.FC = () => {
                 </div>
               )}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Project</label>
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Proyecto</label>
                 <input
                   list="project-options"
                   value={batchDraft.project_name}
                   onChange={(event) =>
                     setBatchDraft((prev) => ({ ...prev, project_name: event.target.value }))
                   }
-                  placeholder="Enter project name"
+                  placeholder="Ingresa el nombre del proyecto"
                   className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
                 />
                 <datalist id="project-options">
@@ -1453,7 +1494,7 @@ const ProductionQueue: React.FC = () => {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
-                  House Identifier Base
+                  Base del identificador de casa
                 </label>
                 <input
                   value={batchDraft.house_identifier_base}
@@ -1470,7 +1511,7 @@ const ProductionQueue: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Type</label>
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Tipo de casa</label>
                   <select
                     value={batchDraft.house_type_id}
                     onChange={(event) =>
@@ -1482,16 +1523,16 @@ const ProductionQueue: React.FC = () => {
                     }
                     className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
                   >
-                    <option value="">Select type</option>
+                    <option value="">Selecciona tipo</option>
                     {houseTypes.map((house) => (
                       <option key={house.id} value={house.id}>
-                        {house.name} · {house.number_of_modules} modules
+                        {house.name} - {house.number_of_modules} modulos
                       </option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Quantity</label>
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Cantidad</label>
                   <input
                     type="number"
                     min={1}
@@ -1508,14 +1549,14 @@ const ProductionQueue: React.FC = () => {
               </div>
               {selectedHouseType && (
                 <p className="text-[11px] text-[var(--ink-muted)]">
-                  {selectedHouseType.number_of_modules} modules per house ·{' '}
-                  {selectedHouseType.number_of_modules * batchDraft.quantity} modules total
+                  {selectedHouseType.number_of_modules} modulos por casa -{' '}
+                  {selectedHouseType.number_of_modules * batchDraft.quantity} modulos total
                 </p>
               )}
 
               {selectedHouseType && (houseSubTypes[selectedHouseType.id]?.length ?? 0) > 0 && (
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Sub-Type</label>
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Subtipo de casa</label>
                   <select
                     value={batchDraft.sub_type_id}
                     onChange={(event) =>
@@ -1526,7 +1567,7 @@ const ProductionQueue: React.FC = () => {
                     }
                     className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
                   >
-                    <option value="">None</option>
+                    <option value="">Ninguno</option>
                     {(houseSubTypes[selectedHouseType.id] || []).map((subtype) => (
                       <option key={subtype.id} value={subtype.id}>
                         {subtype.name}
@@ -1537,7 +1578,9 @@ const ProductionQueue: React.FC = () => {
               )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Start Date/Time</label>
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Fecha/hora de inicio
+                </label>
                 <input
                   type="datetime-local"
                   value={batchDraft.planned_start_datetime}
@@ -1556,14 +1599,14 @@ const ProductionQueue: React.FC = () => {
                   onClick={() => setIsAddModalOpen(false)}
                   className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   onClick={handleBatchCreate}
                   disabled={batchSaving}
                   className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
                 >
-                  {batchSaving ? 'Creating...' : 'Create Batch'}
+                  {batchSaving ? 'Creando...' : 'Crear lote'}
                 </button>
               </div>
             </div>
@@ -1576,9 +1619,15 @@ const ProductionQueue: React.FC = () => {
           <div className="bg-white rounded-[2rem] shadow-2xl w-[480px] overflow-hidden border border-black/5 animate-rise">
             <div className="px-8 py-6 flex justify-between items-center">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Schedule</p>
-                <h2 className="text-xl font-display text-[var(--ink)]">Edit Queue Items</h2>
-                <p className="text-xs text-[var(--ink-muted)] mt-1">{editIds.length} selected</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Horario
+                </p>
+                <h2 className="text-xl font-display text-[var(--ink)]">
+                  Editar elementos de la cola
+                </h2>
+                <p className="text-xs text-[var(--ink-muted)] mt-1">
+                  {editIds.length} seleccionados
+                </p>
               </div>
               <button
                 onClick={() => setIsEditModalOpen(false)}
@@ -1595,7 +1644,9 @@ const ProductionQueue: React.FC = () => {
               )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">Planned Start</label>
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Inicio planificado
+                </label>
                 <div className="flex items-center gap-2">
                   <input
                     type="datetime-local"
@@ -1614,24 +1665,28 @@ const ProductionQueue: React.FC = () => {
                     }}
                     className="rounded-full border border-black/10 px-3 py-2 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
                   >
-                    Clear
+                    Limpiar
                   </button>
                 </div>
                 {editIds.length > 1 && (
-                  <p className="text-[11px] text-[var(--ink-muted)]">Leave empty to keep current values.</p>
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    Deja vacio para mantener los valores actuales.
+                  </p>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">House Sub-Type</label>
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Subtipo de casa
+                </label>
                 <select
                   value={editSubTypeValue}
                   onChange={(event) => setEditSubTypeValue(event.target.value)}
                   disabled={!editHouseTypeId}
                   className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20 disabled:bg-black/5"
                 >
-                  {editIds.length > 1 && <option value="keep">Keep current</option>}
-                  <option value="none">None</option>
+                  {editIds.length > 1 && <option value="keep">Mantener actual</option>}
+                  <option value="none">Ninguno</option>
                   {editSubTypes.map((subtype) => (
                     <option key={subtype.id} value={subtype.id}>
                       {subtype.name}
@@ -1640,7 +1695,7 @@ const ProductionQueue: React.FC = () => {
                 </select>
                 {!editHouseTypeId && (
                   <p className="text-[11px] text-[var(--ink-muted)]">
-                    Select items with the same house type to change sub-type.
+                    Selecciona elementos con el mismo tipo de casa para cambiar el subtipo.
                   </p>
                 )}
               </div>
@@ -1650,14 +1705,14 @@ const ProductionQueue: React.FC = () => {
                   onClick={() => setIsEditModalOpen(false)}
                   className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   onClick={handleEditSave}
                   disabled={editSaving}
                   className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
                 >
-                  {editSaving ? 'Saving...' : 'Save Changes'}
+                  {editSaving ? 'Guardando...' : 'Guardar cambios'}
                 </button>
               </div>
             </div>
