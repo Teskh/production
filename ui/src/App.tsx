@@ -55,9 +55,11 @@ function App() {
         {/* QC Routes */}
         <Route path="/qc" element={<QCLayout />}>
           <Route index element={<QCDashboard />} />
-          <Route path="execute" element={<QCExecution />} />
           <Route path="library" element={<QCLibrary />} />
         </Route>
+        
+        {/* QC Execution - Standalone (tablet optimized, no layout wrapper) */}
+        <Route path="/qc/execute" element={<QCExecution />} />
 
         {/* Admin Routes */}
         <Route path="/admin" element={<AdminLayout />}>

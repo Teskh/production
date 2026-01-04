@@ -91,6 +91,92 @@ def _required_panel_task_ids(
     return required_ids
 
 
+def _station_has_module_tasks(
+    station: Station,
+    task_definitions: list[TaskDefinition],
+    applicability_map: dict[int, list[TaskApplicability]],
+    work_order: WorkOrder,
+    work_unit: WorkUnit,
+) -> bool:
+    if station.sequence_order is None:
+        return False
+    for task in task_definitions:
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
+            applicability_map.get(task.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            work_unit.module_number,
+            None,
+        )
+        if applies and station_sequence_order == station.sequence_order:
+            return True
+    return False
+
+
+def _next_applicable_module_station(
+    db: Session, station: Station, work_unit: WorkUnit, work_order: WorkOrder
+) -> Station | None:
+    if station.sequence_order is None:
+        return None
+    task_definitions = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.active == True)
+            .where(TaskDefinition.scope == TaskScope.MODULE)
+        ).scalars()
+    )
+    if not task_definitions:
+        return None
+    task_def_ids = [task.id for task in task_definitions]
+    applicability_rows = list(
+        db.execute(
+            select(TaskApplicability).where(TaskApplicability.task_definition_id.in_(task_def_ids))
+        ).scalars()
+    )
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    for row in applicability_rows:
+        applicability_map.setdefault(row.task_definition_id, []).append(row)
+
+    candidates = list(
+        db.execute(
+            select(Station)
+            .where(Station.role == StationRole.ASSEMBLY)
+            .where(Station.line_type == station.line_type)
+            .where(Station.sequence_order > station.sequence_order)
+            .order_by(Station.sequence_order)
+        ).scalars()
+    )
+    for candidate in candidates:
+        if _station_has_module_tasks(
+            candidate, task_definitions, applicability_map, work_order, work_unit
+        ):
+            return candidate
+    return None
+
+
+def _auto_pause_station_tasks(db: Session, work_unit_id: int, station_id: int) -> None:
+    paused_at = utc_now()
+    instances = list(
+        db.execute(
+            select(TaskInstance)
+            .where(TaskInstance.work_unit_id == work_unit_id)
+            .where(TaskInstance.station_id == station_id)
+            .where(TaskInstance.scope == TaskScope.MODULE)
+            .where(TaskInstance.status == TaskStatus.IN_PROGRESS)
+        ).scalars()
+    )
+    for instance in instances:
+        instance.status = TaskStatus.PAUSED
+        db.add(
+            TaskPause(
+                task_instance_id=instance.id,
+                reason_text="Auto-pausa por avance",
+                paused_at=paused_at,
+            )
+        )
+
+
 
 def _get_task_instance(instance_id: int, db: Session) -> TaskInstance:
     instance = db.get(TaskInstance, instance_id)
@@ -591,6 +677,39 @@ def complete_task(
                         panel_unit.status = PanelUnitStatus.COMPLETED
                         if work_unit.status in (WorkUnitStatus.PLANNED, WorkUnitStatus.PANELS):
                             work_unit.status = WorkUnitStatus.MAGAZINE
+    if instance.scope == TaskScope.MODULE and instance.panel_unit_id is None:
+        task_def = db.get(TaskDefinition, instance.task_definition_id)
+        station = db.get(Station, instance.station_id)
+        if (
+            task_def
+            and task_def.advance_trigger
+            and station
+            and station.role == StationRole.ASSEMBLY
+        ):
+            work_unit = db.get(WorkUnit, instance.work_unit_id)
+            work_order = (
+                db.get(WorkOrder, work_unit.work_order_id) if work_unit else None
+            )
+            if work_unit and work_order:
+                _auto_pause_station_tasks(db, work_unit.id, station.id)
+                next_station = _next_applicable_module_station(
+                    db, station, work_unit, work_order
+                )
+                if next_station:
+                    work_unit.current_station_id = next_station.id
+                    if work_unit.status != WorkUnitStatus.ASSEMBLY:
+                        work_unit.status = WorkUnitStatus.ASSEMBLY
+                else:
+                    work_unit.current_station_id = None
+                    work_unit.status = WorkUnitStatus.COMPLETED
+                    panels = list(
+                        db.execute(
+                            select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)
+                        ).scalars()
+                    )
+                    for panel in panels:
+                        panel.status = PanelUnitStatus.CONSUMED
+                        panel.current_station_id = None
 
     db.commit()
     db.refresh(instance)

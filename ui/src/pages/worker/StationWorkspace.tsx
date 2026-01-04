@@ -1453,6 +1453,7 @@ const StationWorkspace: React.FC = () => {
                       concurrencyBlocked: joinConcurrencyBlocked,
                       concurrencyAction: 'joining',
                     });
+                    const completeLabel = task.advance_trigger ? 'Terminar y avanzar' : 'Terminar';
                     return (
                       <div
                         key={task.task_definition_id}
@@ -1470,6 +1471,11 @@ const StationWorkspace: React.FC = () => {
                             <div className="flex items-center gap-2">
                               <h3 className="text-lg font-semibold text-gray-900">{task.name}</h3>
                               {statusBadge(task.status)}
+                              {task.advance_trigger && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-100 text-slate-600 border-slate-200">
+                                  Avanza estacion
+                                </span>
+                              )}
                             </div>
                             {restrictionNote &&
                               (task.status === 'NotStarted' ||
@@ -1506,7 +1512,7 @@ const StationWorkspace: React.FC = () => {
                                     onClick={() => handleComplete(task)}
                                     className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
                                   >
-                                    <CheckSquare className="h-5 w-5" /> Terminar
+                                    <CheckSquare className="h-5 w-5" /> {completeLabel}
                                   </button>
                                 </>
                               ) : (
@@ -1548,7 +1554,7 @@ const StationWorkspace: React.FC = () => {
                                     onClick={() => handleComplete(task)}
                                     className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
                                   >
-                                    <CheckSquare className="h-5 w-5" /> Terminar
+                                    <CheckSquare className="h-5 w-5" /> {completeLabel}
                                   </button>
                                 </>
                               ) : (
