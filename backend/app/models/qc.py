@@ -21,6 +21,7 @@ from app.models.enums import (
     QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
+    QCCheckMediaType,
     QCExecutionOutcome,
     QCNotificationStatus,
     QCReworkStatus,
@@ -159,13 +160,25 @@ class QCFailureModeDefinition(Base):
         Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
     )
     default_rework_description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    require_evidence: Mapped[bool] = mapped_column(Boolean, default=False)
-    require_measurement: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QCCheckMediaAsset(Base):
+    __tablename__ = "qc_check_media_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_check_definitions.id"), index=True
+    )
+    media_type: Mapped[QCCheckMediaType] = mapped_column(
+        Enum(QCCheckMediaType, values_callable=lambda enum: [item.value for item in enum])
+    )
+    uri: Mapped[str] = mapped_column(String(400))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class MediaAsset(Base):

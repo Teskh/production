@@ -103,3 +103,8 @@ class QCSeverityLevel(str, Enum):
     BAJA = "baja"
     MEDIA = "media"
     CRITICA = "critica"
+
+
+class QCCheckMediaType(str, Enum):
+    GUIDANCE = "guidance"
+    REFERENCE = "reference"

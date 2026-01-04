@@ -2,7 +2,12 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import QCCheckKind, QCSeverityLevel, QCTriggerEventType
+from app.models.enums import (
+    QCCheckKind,
+    QCCheckMediaType,
+    QCSeverityLevel,
+    QCTriggerEventType,
+)
 
 
 class QCCheckCategoryBase(BaseModel):
@@ -125,9 +130,6 @@ class QCFailureModeDefinitionBase(BaseModel):
     description: str | None = None
     default_severity_level: QCSeverityLevel | None = None
     default_rework_description: str | None = None
-    require_evidence: bool = False
-    require_measurement: bool = False
-    active: bool = True
     created_by_user_id: int | None = None
 
 
@@ -141,9 +143,6 @@ class QCFailureModeDefinitionUpdate(BaseModel):
     description: str | None = None
     default_severity_level: QCSeverityLevel | None = None
     default_rework_description: str | None = None
-    require_evidence: bool | None = None
-    require_measurement: bool | None = None
-    active: bool | None = None
     created_by_user_id: int | None = None
     archived_at: datetime | None = None
 
@@ -154,3 +153,15 @@ class QCFailureModeDefinitionRead(QCFailureModeDefinitionBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class QCCheckMediaAssetBase(BaseModel):
+    check_definition_id: int
+    media_type: QCCheckMediaType
+    uri: str
+    created_at: datetime | None = None
+
+
+class QCCheckMediaAssetRead(QCCheckMediaAssetBase):
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)

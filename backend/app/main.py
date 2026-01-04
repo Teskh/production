@@ -4,12 +4,16 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
-from app.core.config import settings
+from app.core.config import BASE_DIR, settings
 from app.services import backups as backup_service
 
 app = FastAPI(title="SCP API", version="0.1.0")
+MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
+MEDIA_GALLERY_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media_gallery", StaticFiles(directory=MEDIA_GALLERY_DIR), name="media_gallery")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

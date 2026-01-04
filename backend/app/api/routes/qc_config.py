@@ -1,17 +1,28 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import shutil
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.core.config import BASE_DIR
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
     QCApplicability,
     QCCheckCategory,
     QCCheckDefinition,
+    QCCheckMediaAsset,
     QCFailureModeDefinition,
     QCTrigger,
 )
-from app.models.enums import QCCheckKind, QCSeverityLevel, QCTriggerEventType
+from app.models.enums import (
+    QCCheckKind,
+    QCCheckMediaType,
+    QCSeverityLevel,
+    QCTriggerEventType,
+)
 from app.models.stations import Station
 from app.models.tasks import TaskDefinition
 from app.schemas.qc import (
@@ -24,6 +35,7 @@ from app.schemas.qc import (
     QCCheckDefinitionCreate,
     QCCheckDefinitionRead,
     QCCheckDefinitionUpdate,
+    QCCheckMediaAssetRead,
     QCFailureModeDefinitionCreate,
     QCFailureModeDefinitionRead,
     QCFailureModeDefinitionUpdate,
@@ -33,6 +45,8 @@ from app.schemas.qc import (
 )
 
 router = APIRouter()
+
+MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 
 
 def _require_check_definition(db: Session, check_definition_id: int) -> QCCheckDefinition:
@@ -468,4 +482,67 @@ def delete_failure_mode(failure_mode_id: int, db: Session = Depends(get_db)) -> 
     if not mode:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC failure mode not found")
     db.delete(mode)
+    db.commit()
+
+
+@router.get("/check-media", response_model=list[QCCheckMediaAssetRead])
+def list_check_media(
+    check_definition_id: int | None = None, db: Session = Depends(get_db)
+) -> list[QCCheckMediaAsset]:
+    query = select(QCCheckMediaAsset).order_by(QCCheckMediaAsset.created_at.desc())
+    if check_definition_id is not None:
+        query = query.where(QCCheckMediaAsset.check_definition_id == check_definition_id)
+    return list(db.execute(query).scalars())
+
+
+@router.post(
+    "/check-media",
+    response_model=QCCheckMediaAssetRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_check_media(
+    check_definition_id: int = Form(...),
+    media_type: QCCheckMediaType = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> QCCheckMediaAsset:
+    _require_check_definition(db, check_definition_id)
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only image uploads are supported",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower() or ".jpg"
+    safe_name = f"{uuid4().hex}{suffix}"
+    target_dir = MEDIA_GALLERY_DIR / str(check_definition_id) / media_type.value
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+
+    with target_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    uri = f"/media_gallery/{check_definition_id}/{media_type.value}/{safe_name}"
+    asset = QCCheckMediaAsset(
+        check_definition_id=check_definition_id,
+        media_type=media_type,
+        uri=uri,
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
+    return asset
+
+
+@router.delete("/check-media/{media_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_check_media(media_id: int, db: Session = Depends(get_db)) -> None:
+    asset = db.get(QCCheckMediaAsset, media_id)
+    if not asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="QC check media not found"
+        )
+    file_path = BASE_DIR / asset.uri.lstrip("/")
+    if file_path.exists():
+        file_path.unlink()
+    db.delete(asset)
     db.commit()

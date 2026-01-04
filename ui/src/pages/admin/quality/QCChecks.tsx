@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, ListChecks, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { Filter, Image, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -7,6 +7,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 type QCCheckKind = 'triggered' | 'manual_template';
 type QCTriggerEventType = 'task_completed' | 'enter_station';
 type QCSeverityLevelKey = 'baja' | 'media' | 'critica';
+type QCCheckMediaType = 'guidance' | 'reference';
 
 type QCCheckDefinition = {
   id: number;
@@ -34,9 +35,14 @@ type QCFailureMode = {
   description: string | null;
   default_severity_level: QCSeverityLevelKey | null;
   default_rework_description: string | null;
-  require_evidence: boolean;
-  require_measurement: boolean;
-  active: boolean;
+};
+
+type QCCheckMediaAsset = {
+  id: number;
+  check_definition_id: number;
+  media_type: QCCheckMediaType;
+  uri: string;
+  created_at: string | null;
 };
 
 type QCTrigger = {
@@ -123,9 +129,6 @@ type FailureModeDraft = {
   description: string;
   default_severity_level: QCSeverityLevelKey | null;
   default_rework_description: string;
-  require_evidence: boolean;
-  require_measurement: boolean;
-  active: boolean;
 };
 
 type TriggerDraft = {
@@ -171,9 +174,6 @@ const emptyFailureModeDraft = (checkDefinitionId: number | null): FailureModeDra
   description: '',
   default_severity_level: null,
   default_rework_description: '',
-  require_evidence: false,
-  require_measurement: false,
-  active: true,
 });
 
 const severityOptions: Array<{ value: QCSeverityLevelKey; label: string }> = [
@@ -250,6 +250,7 @@ const QCChecks: React.FC = () => {
   const [checks, setChecks] = useState<QCCheckDefinition[]>([]);
   const [categories, setCategories] = useState<QCCheckCategory[]>([]);
   const [failureModes, setFailureModes] = useState<QCFailureMode[]>([]);
+  const [checkMedia, setCheckMedia] = useState<QCCheckMediaAsset[]>([]);
   const [triggers, setTriggers] = useState<QCTrigger[]>([]);
   const [applicability, setApplicability] = useState<QCApplicability[]>([]);
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
@@ -259,7 +260,9 @@ const QCChecks: React.FC = () => {
   const [panelDefinitions, setPanelDefinitions] = useState<PanelDefinition[]>([]);
   const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
   const [checkDraft, setCheckDraft] = useState<CheckDraft>(emptyCheckDraft());
-  const [selectedTab, setSelectedTab] = useState<'definition' | 'triggers' | 'applicability'>(
+  const [selectedTab, setSelectedTab] = useState<
+    'definition' | 'triggers' | 'references' | 'applicability'
+  >(
     'definition'
   );
   const [checkSearch, setCheckSearch] = useState('');
@@ -270,18 +273,21 @@ const QCChecks: React.FC = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [categoryDraft, setCategoryDraft] = useState<CategoryDraft>(emptyCategoryDraft());
   const [categoryStatus, setCategoryStatus] = useState<string | null>(null);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   const [selectedFailureId, setSelectedFailureId] = useState<number | null>(null);
   const [failureDraft, setFailureDraft] = useState<FailureModeDraft>(
     emptyFailureModeDraft(null)
   );
   const [failureStatus, setFailureStatus] = useState<string | null>(null);
-  const [showGlobalFailureModes, setShowGlobalFailureModes] = useState(true);
 
   const [selectedTriggerId, setSelectedTriggerId] = useState<number | null>(null);
   const [triggerDraft, setTriggerDraft] = useState<TriggerDraft>(emptyTriggerDraft());
   const [triggerStatus, setTriggerStatus] = useState<string | null>(null);
   const [triggerSearch, setTriggerSearch] = useState('');
+
+  const [mediaStatus, setMediaStatus] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
 
   const [selectedApplicabilityId, setSelectedApplicabilityId] = useState<number | null>(null);
   const [applicabilityDraft, setApplicabilityDraft] = useState<ApplicabilityDraft>(
@@ -305,6 +311,7 @@ const QCChecks: React.FC = () => {
           checkData,
           categoryData,
           failureData,
+          checkMediaData,
           triggerData,
           applicabilityData,
           taskData,
@@ -315,6 +322,7 @@ const QCChecks: React.FC = () => {
           apiRequest<QCCheckDefinition[]>('/api/qc/check-definitions'),
           apiRequest<QCCheckCategory[]>('/api/qc/categories'),
           apiRequest<QCFailureMode[]>('/api/qc/failure-modes'),
+          apiRequest<QCCheckMediaAsset[]>('/api/qc/check-media'),
           apiRequest<QCTrigger[]>('/api/qc/triggers'),
           apiRequest<QCApplicability[]>('/api/qc/applicability'),
           apiRequest<TaskDefinition[]>('/api/task-definitions'),
@@ -334,6 +342,7 @@ const QCChecks: React.FC = () => {
         setChecks(sortedChecks);
         setCategories(sortByOrderThenName(categoryData));
         setFailureModes(sortByName(failureData));
+        setCheckMedia(checkMediaData);
         setTriggers(triggerData);
         setApplicability(applicabilityData);
         setTasks(sortByName(taskData));
@@ -389,22 +398,63 @@ const QCChecks: React.FC = () => {
     });
   }, [checkSearch, checks, categoryNameById]);
 
+  const checksByCategoryId = useMemo(() => {
+    const map = new Map<number, QCCheckDefinition[]>();
+    filteredChecks.forEach((check) => {
+      if (check.category_id == null) {
+        return;
+      }
+      const list = map.get(check.category_id) ?? [];
+      list.push(check);
+      map.set(check.category_id, list);
+    });
+    return map;
+  }, [filteredChecks]);
+
+  const checksWithoutCategory = useMemo(
+    () => filteredChecks.filter((check) => check.category_id == null),
+    [filteredChecks]
+  );
+
+  const categoryChildren = useMemo(() => {
+    const map = new Map<number | null, QCCheckCategory[]>();
+    categories.forEach((category) => {
+      const parent = category.parent_id ?? null;
+      const list = map.get(parent) ?? [];
+      list.push(category);
+      map.set(parent, list);
+    });
+    return map;
+  }, [categories]);
+
+  const checkMediaForSelected = useMemo(() => {
+    if (!selectedCheckId) {
+      return [];
+    }
+    return checkMedia.filter((media) => media.check_definition_id === selectedCheckId);
+  }, [checkMedia, selectedCheckId]);
+
+  const guidanceMedia = useMemo(
+    () => checkMediaForSelected.filter((media) => media.media_type === 'guidance'),
+    [checkMediaForSelected]
+  );
+
+  const referenceMedia = useMemo(
+    () => checkMediaForSelected.filter((media) => media.media_type === 'reference'),
+    [checkMediaForSelected]
+  );
+
   const selectedCheck = useMemo(
     () => checks.find((check) => check.id === selectedCheckId) ?? null,
     [checks, selectedCheckId]
   );
 
   const filteredFailureModes = useMemo(() => {
-    return failureModes.filter((mode) => {
-      if (selectedCheckId === null) {
-        return mode.check_definition_id === null;
-      }
-      if (mode.check_definition_id === selectedCheckId) {
-        return true;
-      }
-      return showGlobalFailureModes && mode.check_definition_id === null;
-    });
-  }, [failureModes, selectedCheckId, showGlobalFailureModes]);
+    if (selectedCheckId === null) {
+      return [];
+    }
+    return failureModes.filter((mode) => mode.check_definition_id === selectedCheckId);
+  }, [failureModes, selectedCheckId]);
 
   const filteredTriggers = useMemo(
     () =>
@@ -447,6 +497,7 @@ const QCChecks: React.FC = () => {
       setCheckDraft(emptyCheckDraft());
       setFailureDraft(emptyFailureModeDraft(null));
       setSelectedFailureId(null);
+      setMediaStatus(null);
       return;
     }
     setCheckDraft({
@@ -464,6 +515,7 @@ const QCChecks: React.FC = () => {
     setTriggerDraft(emptyTriggerDraft());
     setSelectedApplicabilityId(null);
     setApplicabilityDraft(emptyApplicabilityDraft());
+    setMediaStatus(null);
   }, [selectedCheck]);
 
   useEffect(() => {
@@ -484,9 +536,6 @@ const QCChecks: React.FC = () => {
       description: first.description ?? '',
       default_severity_level: first.default_severity_level,
       default_rework_description: first.default_rework_description ?? '',
-      require_evidence: first.require_evidence,
-      require_measurement: first.require_measurement,
-      active: first.active,
     });
   }, [filteredFailureModes, selectedFailureId, selectedCheckId]);
 
@@ -637,7 +686,8 @@ const QCChecks: React.FC = () => {
         active: saved.active,
         sort_order: saved.sort_order !== null ? String(saved.sort_order) : '',
       });
-      setCategoryStatus('Categoria guardada.');
+      setCategoryStatus(null);
+      setIsCategoryModalOpen(false);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'No se pudo guardar la categoria.';
@@ -655,7 +705,8 @@ const QCChecks: React.FC = () => {
       setCategories((prev) => prev.filter((category) => category.id !== categoryDraft.id));
       setSelectedCategoryId(null);
       setCategoryDraft(emptyCategoryDraft());
-      setCategoryStatus('Categoria eliminada.');
+      setCategoryStatus(null);
+      setIsCategoryModalOpen(false);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'No se pudo eliminar la categoria.';
@@ -669,17 +720,19 @@ const QCChecks: React.FC = () => {
       setFailureStatus('Se requiere el nombre del modo de falla.');
       return;
     }
+    const checkDefinitionId = failureDraft.check_definition_id ?? selectedCheckId;
+    if (!checkDefinitionId) {
+      setFailureStatus('Seleccione una revision antes de guardar el modo de falla.');
+      return;
+    }
     setFailureStatus(null);
     try {
       const payload = {
-        check_definition_id: failureDraft.check_definition_id,
+        check_definition_id: checkDefinitionId,
         name,
         description: failureDraft.description.trim() || null,
         default_severity_level: failureDraft.default_severity_level,
         default_rework_description: failureDraft.default_rework_description.trim() || null,
-        require_evidence: failureDraft.require_evidence,
-        require_measurement: failureDraft.require_measurement,
-        active: failureDraft.active,
       };
       let saved: QCFailureMode;
       if (failureDraft.id) {
@@ -705,9 +758,6 @@ const QCChecks: React.FC = () => {
         description: saved.description ?? '',
         default_severity_level: saved.default_severity_level,
         default_rework_description: saved.default_rework_description ?? '',
-        require_evidence: saved.require_evidence,
-        require_measurement: saved.require_measurement,
-        active: saved.active,
       });
       setFailureStatus('Modo de falla guardado.');
     } catch (error) {
@@ -733,6 +783,64 @@ const QCChecks: React.FC = () => {
         error instanceof Error ? error.message : 'No se pudo eliminar el modo de falla.';
       setFailureStatus(message);
     }
+  };
+
+  const uploadCheckMedia = async (files: File[], mediaType: QCCheckMediaType) => {
+    if (!selectedCheckId) {
+      setMediaStatus('Seleccione una revision antes de cargar imagenes.');
+      return;
+    }
+    if (!files.length) {
+      return;
+    }
+    setUploadingMedia(true);
+    setMediaStatus(null);
+    try {
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('check_definition_id', String(selectedCheckId));
+        formData.append('media_type', mediaType);
+        const response = await fetch(`${API_BASE_URL}/api/qc/check-media`, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || 'No se pudo guardar la imagen.');
+        }
+        const saved = (await response.json()) as QCCheckMediaAsset;
+        setCheckMedia((prev) => [...prev, saved]);
+      }
+      setMediaStatus('Imagen guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la imagen.';
+      setMediaStatus(message);
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const handleMediaInput = (
+    event: React.ChangeEvent<HTMLInputElement>,
+    mediaType: QCCheckMediaType
+  ) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    void uploadCheckMedia(files, mediaType);
+  };
+
+  const handleMediaDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    mediaType: QCCheckMediaType
+  ) => {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
+      file.type.startsWith('image/')
+    );
+    void uploadCheckMedia(files, mediaType);
   };
 
   const handleSaveTrigger = async () => {
@@ -937,6 +1045,37 @@ const QCChecks: React.FC = () => {
     setCategoryStatus(null);
   };
 
+  const openCategoryModal = (draft: CategoryDraft, selectedId: number | null) => {
+    setSelectedCategoryId(selectedId);
+    setCategoryDraft(draft);
+    setCategoryStatus(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const startNewCategory = () => {
+    openCategoryModal(
+      emptyCategoryDraft(),
+      selectedCategoryId ?? (categories[0]?.id ?? null)
+    );
+  };
+
+  const startSubcategory = (parent: QCCheckCategory) => {
+    openCategoryModal({ ...emptyCategoryDraft(), parent_id: parent.id }, parent.id);
+  };
+
+  const startEditCategory = (category: QCCheckCategory) => {
+    openCategoryModal(
+      {
+        id: category.id,
+        name: category.name,
+        parent_id: category.parent_id,
+        active: category.active,
+        sort_order: category.sort_order !== null ? String(category.sort_order) : '',
+      },
+      category.id
+    );
+  };
+
   const selectFailureMode = (mode: QCFailureMode) => {
     setSelectedFailureId(mode.id);
     setFailureDraft({
@@ -946,9 +1085,6 @@ const QCChecks: React.FC = () => {
       description: mode.description ?? '',
       default_severity_level: mode.default_severity_level,
       default_rework_description: mode.default_rework_description ?? '',
-      require_evidence: mode.require_evidence,
-      require_measurement: mode.require_measurement,
-      active: mode.active,
     });
     setFailureStatus(null);
   };
@@ -1031,6 +1167,69 @@ const QCChecks: React.FC = () => {
     );
   };
 
+  const renderCategoryTree = (parentId: number | null, depth = 0) => {
+    const children = categoryChildren.get(parentId) ?? [];
+    if (!children.length) {
+      return null;
+    }
+    return children.map((category) => {
+      const checksForCategory = checksByCategoryId.get(category.id) ?? [];
+      return (
+        <div key={category.id} className="space-y-1">
+          <div
+            className="flex items-center justify-between gap-2 group"
+            style={{ marginLeft: depth * 12 }}
+          >
+            <button
+              onClick={() => selectCategory(category)}
+              className={`flex-1 text-left px-2 py-1 text-xs rounded ${
+                selectedCategoryId === category.id
+                  ? 'bg-blue-100 text-blue-800'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              {category.name}
+              {!category.active && <span className="ml-1 text-gray-400">(inactivo)</span>}
+            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => startEditCategory(category)}
+                className="opacity-0 group-hover:opacity-100 text-[10px] text-gray-500 hover:text-gray-700 px-1"
+                title="Editar categoria"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => startSubcategory(category)}
+                className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-600 hover:text-blue-800 px-1"
+                title="Nueva subcategoria"
+              >
+                + sub
+              </button>
+            </div>
+          </div>
+          {checksForCategory.length > 0 && (
+            <div className="space-y-1" style={{ marginLeft: depth * 12 + 12 }}>
+              {checksForCategory.map(renderCheckRow)}
+            </div>
+          )}
+          {renderCategoryTree(category.id, depth + 1)}
+        </div>
+      );
+    });
+  };
+
+  const tabs: Array<{
+    key: 'definition' | 'triggers' | 'references' | 'applicability';
+    label: string;
+    icon?: typeof Image;
+  }> = [
+    { key: 'definition', label: 'Definicion' },
+    { key: 'triggers', label: 'Triggers' },
+    { key: 'references', label: 'Referencias', icon: Image },
+    { key: 'applicability', label: 'Aplicabilidad' },
+  ];
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1064,6 +1263,34 @@ const QCChecks: React.FC = () => {
             </label>
           </div>
 
+          <div className="border-b border-gray-100 px-4 py-3 bg-gray-50/30">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                Categorias y checks
+              </p>
+              <button
+                type="button"
+                onClick={startNewCategory}
+                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+              >
+                <Plus className="h-3 w-3" /> Nueva categoria
+              </button>
+            </div>
+            <div className="max-h-[420px] overflow-auto space-y-3 pr-1">
+              {renderCategoryTree(null)}
+              {checksWithoutCategory.length > 0 && (
+                <div className="space-y-1">
+                  <div className="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Sin categoria
+                  </div>
+                  <div className="space-y-1">
+                    {checksWithoutCategory.map(renderCheckRow)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {loading && (
             <div className="px-4 py-8 text-center text-sm text-gray-500">
               Cargando revisiones...
@@ -1075,148 +1302,14 @@ const QCChecks: React.FC = () => {
             </div>
           )}
 
-          {!loading && <div className="divide-y divide-gray-100">{filteredChecks.map(renderCheckRow)}</div>}
+          {!loading && filteredChecks.length > 0 && (
+            <div className="px-4 pb-4 text-[11px] text-gray-400">
+              {filteredChecks.length} checks visibles en el arbol.
+            </div>
+          )}
         </section>
 
         <aside className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-2">
-            <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    Categorias
-                  </p>
-                  <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                    Biblioteca QC
-                  </h3>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedCategoryId(null);
-                      setCategoryDraft(emptyCategoryDraft());
-                      setCategoryStatus(null);
-                    }}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Nueva
-                  </button>
-                  <ListChecks className="h-5 w-5 text-[var(--ink-muted)]" />
-                </div>
-              </div>
-              <div className="mt-4 grid gap-3">
-                <div className="max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)]">
-                  {categories.length === 0 ? (
-                    <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
-                      Sin categorias registradas.
-                    </p>
-                  ) : (
-                    categories.map((category) => (
-                      <button
-                        key={category.id}
-                        onClick={() => selectCategory(category)}
-                        className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
-                          selectedCategoryId === category.id ? 'bg-white' : 'bg-transparent'
-                        }`}
-                      >
-                        <span className="truncate text-[var(--ink)]">{category.name}</span>
-                        {!category.active && (
-                          <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                            Inactivo
-                          </span>
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
-                <div className="space-y-3">
-                  <label className="text-sm text-[var(--ink-muted)]">
-                    Nombre
-                    <input
-                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                      value={categoryDraft.name}
-                      onChange={(event) =>
-                        setCategoryDraft((prev) => ({ ...prev, name: event.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="text-sm text-[var(--ink-muted)]">
-                    Categoria padre
-                    <select
-                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                      value={categoryDraft.parent_id ?? ''}
-                      onChange={(event) =>
-                        setCategoryDraft((prev) => ({
-                          ...prev,
-                          parent_id: event.target.value ? Number(event.target.value) : null,
-                        }))
-                      }
-                    >
-                      <option value="">Sin categoria padre</option>
-                      {categories
-                        .filter((category) => category.id !== categoryDraft.id)
-                        .map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Orden
-                      <input
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={categoryDraft.sort_order}
-                        onChange={(event) =>
-                          setCategoryDraft((prev) => ({ ...prev, sort_order: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Estado
-                      <select
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={categoryDraft.active ? 'Activo' : 'Inactivo'}
-                        onChange={(event) =>
-                          setCategoryDraft((prev) => ({
-                            ...prev,
-                            active: event.target.value === 'Activo',
-                          }))
-                        }
-                      >
-                        <option value="Activo">Activo</option>
-                        <option value="Inactivo">Inactivo</option>
-                      </select>
-                    </label>
-                  </div>
-                  {categoryStatus && (
-                    <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
-                      {categoryStatus}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={handleSaveCategory}
-                      className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
-                    >
-                      Guardar
-                    </button>
-                    <button
-                      onClick={handleDeleteCategory}
-                      disabled={!categoryDraft.id}
-                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
-                    >
-                      <Trash2 className="h-4 w-4" /> Eliminar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-          </div>
-
           <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
@@ -1231,13 +1324,7 @@ const QCChecks: React.FC = () => {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {(
-                [
-                  { key: 'definition', label: 'Definicion' },
-                  { key: 'triggers', label: 'Triggers' },
-                  { key: 'applicability', label: 'Aplicabilidad' },
-                ] as const
-              ).map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setSelectedTab(tab.key)}
@@ -1247,7 +1334,10 @@ const QCChecks: React.FC = () => {
                       : 'bg-white text-[var(--ink)] border border-black/10'
                   }`}
                 >
-                  {tab.label}
+                  <span className="inline-flex items-center gap-2">
+                    {tab.icon && <tab.icon className="h-4 w-4" />}
+                    {tab.label}
+                  </span>
                 </button>
               ))}
             </div>
@@ -1337,11 +1427,11 @@ const QCChecks: React.FC = () => {
                       <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
                         Modos de falla
                       </p>
-                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
-                        {selectedCheckId
-                          ? 'Asignados a la revision o globales.'
-                          : 'Cree una revision para asignar modos de falla.'}
-                      </p>
+                        <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                          {selectedCheckId
+                            ? 'Asignados a la revision.'
+                            : 'Cree una revision para asignar modos de falla.'}
+                        </p>
                     </div>
                     <button
                       type="button"
@@ -1370,11 +1460,6 @@ const QCChecks: React.FC = () => {
                             }`}
                           >
                             <span className="truncate text-[var(--ink)]">{mode.name}</span>
-                            {mode.check_definition_id === null && (
-                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                                Global
-                              </span>
-                            )}
                           </button>
                         ))
                       )}
@@ -1394,7 +1479,7 @@ const QCChecks: React.FC = () => {
                         Aplica a
                         <select
                           className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                          value={failureDraft.check_definition_id ?? ''}
+                          value={failureDraft.check_definition_id ?? selectedCheckId ?? ''}
                           onChange={(event) =>
                             setFailureDraft((prev) => ({
                               ...prev,
@@ -1404,7 +1489,9 @@ const QCChecks: React.FC = () => {
                             }))
                           }
                         >
-                          <option value="">Global</option>
+                          <option value="" disabled>
+                            Seleccione una revision
+                          </option>
                           {checks.map((check) => (
                             <option key={check.id} value={check.id}>
                               {check.name}
@@ -1460,47 +1547,6 @@ const QCChecks: React.FC = () => {
                           }
                         />
                       </label>
-                      <div className="grid gap-2 text-sm text-[var(--ink)]">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={failureDraft.require_evidence}
-                            onChange={(event) =>
-                              setFailureDraft((prev) => ({
-                                ...prev,
-                                require_evidence: event.target.checked,
-                              }))
-                            }
-                          />
-                          Requiere evidencia
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={failureDraft.require_measurement}
-                            onChange={(event) =>
-                              setFailureDraft((prev) => ({
-                                ...prev,
-                                require_measurement: event.target.checked,
-                              }))
-                            }
-                          />
-                          Requiere medicion
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={failureDraft.active}
-                            onChange={(event) =>
-                              setFailureDraft((prev) => ({
-                                ...prev,
-                                active: event.target.checked,
-                              }))
-                            }
-                          />
-                          Activo
-                        </label>
-                      </div>
                       {failureStatus && (
                         <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                           {failureStatus}
@@ -1546,15 +1592,127 @@ const QCChecks: React.FC = () => {
                   >
                     <Trash2 className="h-4 w-4" /> Eliminar
                   </button>
-                  <label className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
-                    <input
-                      type="checkbox"
-                      checked={showGlobalFailureModes}
-                      onChange={(event) => setShowGlobalFailureModes(event.target.checked)}
-                    />
-                    Mostrar modos globales
-                  </label>
                 </div>
+              </div>
+            )}
+
+            {selectedTab === 'references' && (
+              <div className="mt-6 space-y-5">
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Guias
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        Ejemplos de como se debe ejecutar el trabajo.
+                      </p>
+                    </div>
+                    <label
+                      className={`inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                        !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      Subir
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => handleMediaInput(event, 'guidance')}
+                      />
+                    </label>
+                  </div>
+                  <div
+                    className={`mt-3 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-6 text-center text-xs text-[var(--ink-muted)] ${
+                      !selectedCheckId ? 'opacity-50' : ''
+                    }`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => handleMediaDrop(event, 'guidance')}
+                  >
+                    Arrastra y suelta imagenes aqui para guias.
+                  </div>
+                  {guidanceMedia.length > 0 ? (
+                    <div className="mt-3 flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+                      {guidanceMedia.map((media) => (
+                        <div key={media.id} className="snap-start shrink-0 w-40">
+                          <img
+                            src={`${API_BASE_URL}${media.uri}`}
+                            alt="Guia"
+                            className="h-28 w-full rounded-xl border border-black/5 object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-[var(--ink-muted)]">
+                      No hay imagenes de guia.
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Referencias
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        Ejemplos de fallas o resultados incorrectos.
+                      </p>
+                    </div>
+                    <label
+                      className={`inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                        !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      Subir
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => handleMediaInput(event, 'reference')}
+                      />
+                    </label>
+                  </div>
+                  <div
+                    className={`mt-3 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-6 text-center text-xs text-[var(--ink-muted)] ${
+                      !selectedCheckId ? 'opacity-50' : ''
+                    }`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => handleMediaDrop(event, 'reference')}
+                  >
+                    Arrastra y suelta imagenes aqui para referencias.
+                  </div>
+                  {referenceMedia.length > 0 ? (
+                    <div className="mt-3 flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+                      {referenceMedia.map((media) => (
+                        <div key={media.id} className="snap-start shrink-0 w-40">
+                          <img
+                            src={`${API_BASE_URL}${media.uri}`}
+                            alt="Referencia"
+                            className="h-28 w-full rounded-xl border border-black/5 object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-[var(--ink-muted)]">
+                      No hay imagenes de referencia.
+                    </p>
+                  )}
+                </div>
+
+                {mediaStatus && (
+                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                    {mediaStatus}
+                  </p>
+                )}
+
+                {uploadingMedia && (
+                  <p className="text-xs text-[var(--ink-muted)]">Subiendo imagenes...</p>
+                )}
               </div>
             )}
 
@@ -1985,6 +2143,77 @@ const QCChecks: React.FC = () => {
           </section>
         </aside>
       </div>
+
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Categorias
+                </p>
+                <h3 className="text-lg font-display text-[var(--ink)]">
+                  {categoryDraft.id
+                    ? 'Editar categoria'
+                    : categoryDraft.parent_id
+                      ? 'Nueva subcategoria'
+                      : 'Nueva categoria'}
+                </h3>
+                {categoryDraft.parent_id && (
+                  <p className="text-xs text-[var(--ink-muted)]">
+                    Subcategoria de{' '}
+                    {categoryNameById.get(categoryDraft.parent_id) ?? 'Categoria'}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="rounded-full p-1 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <label className="text-sm text-[var(--ink-muted)]">
+                Nombre
+                <input
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                  placeholder="Nombre de categoria"
+                  value={categoryDraft.name}
+                  onChange={(e) =>
+                    setCategoryDraft((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                />
+              </label>
+
+              {categoryStatus && (
+                <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                  {categoryStatus}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleSaveCategory}
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Guardar categoria
+                </button>
+                <button
+                  onClick={handleDeleteCategory}
+                  disabled={!categoryDraft.id}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                >
+                  <Trash2 className="h-4 w-4" /> Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
