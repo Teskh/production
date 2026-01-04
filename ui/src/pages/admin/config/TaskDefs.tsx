@@ -178,6 +178,9 @@ const TaskDefs: React.FC = () => {
   const [dependencyDropdownOpen, setDependencyDropdownOpen] = useState(false);
   const [crewModalOpen, setCrewModalOpen] = useState(false);
   const [catalogOpenGroups, setCatalogOpenGroups] = useState<Record<string, boolean>>({});
+  const [scopeFilter, setScopeFilter] = useState<TaskScope | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [showFilters, setShowFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -410,12 +413,19 @@ const TaskDefs: React.FC = () => {
   );
 
   const filteredTasks = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      return tasks;
+    let result = tasks;
+    if (scopeFilter !== 'all') {
+      result = result.filter((task) => task.scope === scopeFilter);
     }
-    return tasks.filter((task) => task.name.toLowerCase().includes(needle));
-  }, [query, tasks]);
+    if (statusFilter !== 'all') {
+      result = result.filter((task) => (statusFilter === 'active' ? task.active : !task.active));
+    }
+    const needle = query.trim().toLowerCase();
+    if (needle) {
+      result = result.filter((task) => task.name.toLowerCase().includes(needle));
+    }
+    return result;
+  }, [query, tasks, scopeFilter, statusFilter]);
 
   const draftSequenceOrder = useMemo(
     () => parseSequenceValue(draft.station_sequence_order),
@@ -723,6 +733,15 @@ const TaskDefs: React.FC = () => {
     }));
   };
 
+  const toggleAllGroups = () => {
+    const allOpen = catalogGroups.every((g) => catalogOpenGroups[g.key] !== false);
+    const newState: Record<string, boolean> = {};
+    catalogGroups.forEach((g) => {
+      newState[g.key] = !allOpen;
+    });
+    setCatalogOpenGroups(newState);
+  };
+
   const handleAddTask = () => {
     setStatusMessage(null);
     setSelectedTaskId(null);
@@ -840,18 +859,10 @@ const TaskDefs: React.FC = () => {
   const moduleTasks = tasks.filter((task) => task.scope === 'module').length;
   const panelTasks = tasks.filter((task) => task.scope === 'panel').length;
   const auxTasks = tasks.filter((task) => task.scope === 'aux').length;
+  const allGroupsOpen = catalogGroups.every((g) => catalogOpenGroups[g.key] !== false);
 
   return (
     <div className="flex flex-col lg:h-[calc(100vh-8rem)]">
-      <div className="mb-6 flex justify-end shrink-0">
-        <button
-          onClick={handleAddTask}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
-        >
-          <Plus className="h-4 w-4" /> Nueva tarea
-        </button>
-      </div>
-
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr] flex-1 min-h-0">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm lg:overflow-auto">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -872,10 +883,44 @@ const TaskDefs: React.FC = () => {
                   className="h-9 rounded-full border border-black/10 bg-white pl-9 pr-4 text-sm"
                 />
               </label>
-              <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm">
+              <button
+                onClick={() => setShowFilters((prev) => !prev)}
+                className={`inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm ${showFilters ? 'ring-2 ring-[var(--accent)]' : ''}`}
+              >
                 <Filter className="h-4 w-4" /> Filtros
               </button>
             </div>
+          </div>
+          {showFilters && (
+            <div className="mt-3 flex flex-wrap gap-3">
+              <select
+                value={scopeFilter}
+                onChange={(e) => setScopeFilter(e.target.value as TaskScope | 'all')}
+                className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="all">Todos los alcances</option>
+                <option value="panel">Panel</option>
+                <option value="module">Modulo</option>
+                <option value="aux">Aux</option>
+              </select>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="all">Todos los estados</option>
+                <option value="active">Activo</option>
+                <option value="inactive">Inactivo</option>
+              </select>
+            </div>
+          )}
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={toggleAllGroups}
+              className="text-xs text-[var(--ink-muted)] hover:text-[var(--ink)]"
+            >
+              {allGroupsOpen ? 'Colapsar todos' : 'Expandir todos'}
+            </button>
           </div>
 
           {loading ? (
@@ -978,7 +1023,15 @@ const TaskDefs: React.FC = () => {
                   {draft.name || 'Nueva definicion de tarea'}
                 </h2>
               </div>
-              <ListChecks className="h-5 w-5 text-[var(--ink-muted)]" />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAddTask}
+                  className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                >
+                  <Plus className="h-4 w-4" /> Nueva tarea
+                </button>
+                <ListChecks className="h-5 w-5 text-[var(--ink-muted)]" />
+              </div>
             </div>
 
             <div className="mt-4 space-y-4">
@@ -1255,7 +1308,7 @@ const TaskDefs: React.FC = () => {
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Equipo habitual
+                  Cuadrilla habitual
                 </p>
                 <p className="mt-2 text-xs text-[var(--ink-muted)]">
                   Lista de favoritos para inicios de grupo. Esto no restringe quien puede realizar la tarea.
@@ -1315,7 +1368,7 @@ const TaskDefs: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Equipo habitual
+                  Cuadrilla habitual
                 </p>
                 <h3 className="text-lg font-display text-[var(--ink)]">
                   Seleccionar miembros del equipo

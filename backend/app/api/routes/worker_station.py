@@ -25,7 +25,7 @@ from app.models.tasks import (
     TaskParticipation,
 )
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
-from app.models.workers import TaskWorkerRestriction, Worker
+from app.models.workers import TaskSkillRequirement, TaskWorkerRestriction, Worker, WorkerSkill
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
 from app.schemas.worker_station import StationSnapshot, StationTask, StationWorkItem
 from app.services.task_applicability import resolve_task_station_sequence
@@ -96,7 +96,8 @@ def _build_task_lists(
     allowed_worker_name_map: dict[int, list[str]],
     dependency_name_map: dict[int, str],
     worker_id: int,
-) -> tuple[list[StationTask], list[StationTask]]:
+    current_station_sequence_order: int | None,
+) -> tuple[list[StationTask], list[StationTask], list[StationTask]]:
     instance_map: dict[int, TaskInstance] = {}
     for instance in instances:
         existing = instance_map.get(instance.task_definition_id)
@@ -119,6 +120,7 @@ def _build_task_lists(
 
     station_tasks: list[StationTask] = []
     other_tasks: list[StationTask] = []
+    backlog_tasks: list[StationTask] = []
 
     for task in ordered_tasks:
         applies, station_sequence_order = resolve_task_station_sequence(
@@ -138,13 +140,17 @@ def _build_task_lists(
             and station_sequence_order == station.sequence_order
         )
         is_aux_station_task = is_aux_station and station_sequence_order is None
-        if not is_station_task and not is_aux_station_task:
-            if station_sequence_order is None:
-                dest = other_tasks
-            else:
-                continue
-        else:
+        if is_station_task or is_aux_station_task:
             dest = station_tasks
+        elif station_sequence_order is None:
+            dest = other_tasks
+        elif (
+            current_station_sequence_order is not None
+            and station_sequence_order < current_station_sequence_order
+        ):
+            dest = backlog_tasks
+        else:
+            continue
 
         instance = instance_map.get(task.id)
         status_value = TaskStatus.NOT_STARTED
@@ -160,6 +166,10 @@ def _build_task_lists(
             instance_id = instance.id
         if task.id in skipped_task_ids:
             status_value = TaskStatus.SKIPPED
+        if dest is backlog_tasks and (
+            status_value == TaskStatus.COMPLETED or task.id in skipped_task_ids
+        ):
+            continue
         dependencies = task.dependencies_json
         missing_dependency_names: list[str] = []
         if dependencies is None:
@@ -206,10 +216,11 @@ def _build_task_lists(
                 started_at=started_at,
                 completed_at=completed_at,
                 notes=notes,
+                backlog=dest is backlog_tasks,
             )
         )
 
-    return station_tasks, other_tasks
+    return station_tasks, other_tasks, backlog_tasks
 
 
 @router.get("/{station_id}/snapshot", response_model=StationSnapshot)
@@ -253,6 +264,35 @@ def station_snapshot(
                 .where(TaskDefinition.scope == task_scope)
             ).scalars()
         )
+
+    worker_skill_ids = set(
+        db.execute(
+            select(WorkerSkill.skill_id).where(WorkerSkill.worker_id == _worker.id)
+        ).scalars()
+    )
+    if task_definitions:
+        requirement_rows = list(
+            db.execute(
+                select(
+                    TaskSkillRequirement.task_definition_id,
+                    TaskSkillRequirement.skill_id,
+                ).where(
+                    TaskSkillRequirement.task_definition_id.in_(
+                        [task.id for task in task_definitions]
+                    )
+                )
+            ).all()
+        )
+        if requirement_rows:
+            required_map: dict[int, set[int]] = {}
+            for row in requirement_rows:
+                required_map.setdefault(row.task_definition_id, set()).add(row.skill_id)
+            task_definitions = [
+                task
+                for task in task_definitions
+                if task.id not in required_map
+                or required_map[task.id].intersection(worker_skill_ids)
+            ]
 
     applicability_rows = list(
         db.execute(
@@ -348,7 +388,6 @@ def station_snapshot(
                     select(TaskInstance)
                     .where(TaskInstance.work_unit_id == work_unit.id)
                     .where(TaskInstance.panel_unit_id == panel_unit.id)
-                    .where(TaskInstance.station_id == station.id)
                 ).scalars()
             )
             task_exceptions = list(
@@ -356,13 +395,12 @@ def station_snapshot(
                     select(TaskException)
                     .where(TaskException.work_unit_id == work_unit.id)
                     .where(TaskException.panel_unit_id == panel_unit.id)
-                    .where(TaskException.station_id == station.id)
                 ).scalars()
             )
             completed_task_definition_ids = _completed_task_definition_ids(
                 db, work_unit.id, panel_unit.id, TaskScope.PANEL
             )
-            tasks, other_tasks = _build_task_lists(
+            tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
                 task_definitions,
                 applicability_map,
@@ -378,6 +416,7 @@ def station_snapshot(
                 allowed_worker_name_map,
                 dependency_name_map,
                 _worker.id,
+                station.sequence_order,
             )
             work_items.append(
                 StationWorkItem(
@@ -395,6 +434,7 @@ def station_snapshot(
                     status=panel_unit.status.value,
                     tasks=tasks,
                     other_tasks=other_tasks,
+                    backlog_tasks=backlog_tasks,
                     recommended=False,
                 )
             )
@@ -466,7 +506,7 @@ def station_snapshot(
                         completed_task_definition_ids = _completed_task_definition_ids(
                             db, work_unit.id, panel_unit_id, TaskScope.PANEL
                         )
-                        tasks, other_tasks = _build_task_lists(
+                        tasks, other_tasks, backlog_tasks = _build_task_lists(
                             station,
                             task_definitions,
                             applicability_map,
@@ -482,6 +522,7 @@ def station_snapshot(
                             allowed_worker_name_map,
                             dependency_name_map,
                             _worker.id,
+                            station.sequence_order,
                         )
                         sort_key = (
                             work_unit.planned_sequence,
@@ -511,6 +552,7 @@ def station_snapshot(
                                     status=status_value,
                                     tasks=tasks,
                                     other_tasks=other_tasks,
+                                    backlog_tasks=backlog_tasks,
                                     recommended=False,
                                 ),
                             )
@@ -566,7 +608,6 @@ def station_snapshot(
                     select(TaskInstance)
                     .where(TaskInstance.work_unit_id == work_unit.id)
                     .where(TaskInstance.panel_unit_id.is_(None))
-                    .where(TaskInstance.station_id == station.id)
                 ).scalars()
             )
             task_exceptions = list(
@@ -574,13 +615,12 @@ def station_snapshot(
                     select(TaskException)
                     .where(TaskException.work_unit_id == work_unit.id)
                     .where(TaskException.panel_unit_id.is_(None))
-                    .where(TaskException.station_id == station.id)
                 ).scalars()
             )
             completed_task_definition_ids = _completed_task_definition_ids(
                 db, work_unit.id, None, task_scope
             )
-            tasks, other_tasks = _build_task_lists(
+            tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
                 task_definitions,
                 applicability_map,
@@ -596,6 +636,7 @@ def station_snapshot(
                 allowed_worker_name_map,
                 dependency_name_map,
                 _worker.id,
+                station.sequence_order,
             )
             work_items.append(
                 StationWorkItem(
@@ -613,6 +654,7 @@ def station_snapshot(
                     status=work_unit.status.value,
                     tasks=tasks,
                     other_tasks=other_tasks,
+                    backlog_tasks=backlog_tasks,
                     recommended=False,
                 )
             )
@@ -641,7 +683,7 @@ def station_snapshot(
     )
     if active_participation_ids:
         for item in work_items:
-            for task in item.tasks + item.other_tasks:
+            for task in item.tasks + item.other_tasks + item.backlog_tasks:
                 if task.task_instance_id in active_participation_ids:
                     task.current_worker_participating = True
 

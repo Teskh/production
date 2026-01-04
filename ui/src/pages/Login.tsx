@@ -726,7 +726,7 @@ const Login: React.FC = () => {
                         type="button"
                         onClick={() => setQrScannerOpen(true)}
                       >
-                        <QrCode className="mr-1 h-4 w-4" /> Escanear gafete
+                        <QrCode className="mr-1 h-4 w-4" /> Escanear QR
                       </button>
                     </div>
 

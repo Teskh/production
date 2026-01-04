@@ -68,3 +68,32 @@ body {
     background-size: 32px 32px;
   }
 }
+
+/* Custom scrollbar styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 27, 45, 0.2) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 27, 45, 0.2);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 27, 45, 0.35);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

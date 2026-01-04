@@ -25,6 +25,7 @@ class StationTask(BaseModel):
     completed_at: datetime | None = None
     notes: str | None = None
     current_worker_participating: bool = False
+    backlog: bool = False
 
 
 class StationWorkItem(BaseModel):
@@ -42,6 +43,7 @@ class StationWorkItem(BaseModel):
     status: str
     tasks: list[StationTask]
     other_tasks: list[StationTask]
+    backlog_tasks: list[StationTask] = Field(default_factory=list)
     recommended: bool = False
 
 

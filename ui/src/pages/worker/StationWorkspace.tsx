@@ -95,6 +95,7 @@ type StationTask = {
   completed_at: string | null;
   notes: string | null;
   current_worker_participating?: boolean;
+  backlog?: boolean;
 };
 
 type StationWorkItem = {
@@ -112,6 +113,7 @@ type StationWorkItem = {
   status: string;
   tasks: StationTask[];
   other_tasks: StationTask[];
+  backlog_tasks: StationTask[];
   recommended: boolean;
 };
 
@@ -733,8 +735,8 @@ const StationWorkspace: React.FC = () => {
       const station = stations.find((item) => item.id === autoFocusTarget.station_id);
       setAutoFocusNotice(
         station
-          ? `Enfocado en tu tarea activa en ${formatStationLabel(station)}. Concluye para volver a tu contexto de estacion anterior.`
-          : 'Enfocado en tu tarea activa. Concluye para volver a tu contexto de estacion anterior.'
+          ? `Tienes una tarea activa en ${formatStationLabel(station)}. Concluye o pausa para poder iniciar otra`
+          : 'Tienes una tarea activa. Concluye o pausa para poder iniciar otra'
       );
     }
     autoFocusAppliedRef.current = true;
@@ -762,6 +764,12 @@ const StationWorkspace: React.FC = () => {
     const ids = new Set<number>();
     snapshot?.work_items.forEach((item) => {
       item.tasks.forEach((task) => {
+        ids.add(task.task_definition_id);
+      });
+      item.backlog_tasks.forEach((task) => {
+        ids.add(task.task_definition_id);
+      });
+      item.other_tasks.forEach((task) => {
         ids.add(task.task_definition_id);
       });
     });
@@ -860,6 +868,205 @@ const StationWorkspace: React.FC = () => {
           {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
         </div>
       </>
+    );
+  };
+
+  const sortTasksForDisplay = (tasks: StationTask[]) => {
+    return [...tasks].sort((a, b) => {
+      const aCompleted = a.status === 'Completed';
+      const bCompleted = b.status === 'Completed';
+      if (aCompleted !== bCompleted) {
+        return aCompleted ? 1 : -1;
+      }
+      return 0;
+    });
+  };
+
+  const renderTaskCard = (task: StationTask, workItem: StationWorkItem) => {
+    const isCompleted = task.status === 'Completed';
+    const workerParticipating = task.current_worker_participating ?? false;
+    const dependencyBlocked = !isDependenciesSatisfied(task);
+    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
+    const dependencyMessage = dependencyBlockedLabel(task);
+    const workerMessage = workerRestrictionLabel(task);
+    const joinConcurrencyBlocked = !canStartTask(task, task.task_instance_id);
+    const startConcurrencyBlocked = !canStartTask(task);
+    const joinBlocked = workerRestricted || joinConcurrencyBlocked;
+    const startBlocked = dependencyBlocked || workerRestricted || startConcurrencyBlocked;
+    const resumeBlocked = dependencyBlocked || workerRestricted || joinConcurrencyBlocked;
+    const restrictionNote = [dependencyMessage || null, workerMessage || null]
+      .filter(Boolean)
+      .join(' - ');
+    const startBlockTitle = buildBlockReason({
+      dependencyMessage,
+      workerMessage,
+      concurrencyBlocked: startConcurrencyBlocked,
+      concurrencyAction: 'starting',
+    });
+    const resumeBlockTitle = buildBlockReason({
+      dependencyMessage,
+      workerMessage,
+      concurrencyBlocked: joinConcurrencyBlocked,
+      concurrencyAction: 'resuming',
+    });
+    const joinBlockTitle = buildBlockReason({
+      workerMessage,
+      concurrencyBlocked: joinConcurrencyBlocked,
+      concurrencyAction: 'joining',
+    });
+    const completeLabel = task.advance_trigger ? 'Terminar y avanzar' : 'Terminar';
+    return (
+      <div
+        key={task.task_definition_id}
+        className={clsx(
+          'rounded-xl border p-4 transition-all',
+          isCompleted
+            ? 'border-gray-200 bg-gray-50/70 opacity-70'
+            : task.status === 'InProgress'
+            ? 'border-blue-200 bg-blue-50/50'
+            : task.status === 'Paused'
+            ? 'border-amber-200 bg-amber-50/50'
+            : 'border-gray-200 bg-white'
+        )}
+      >
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900">{task.name}</h3>
+              {statusBadge(task.status)}
+              {task.advance_trigger && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-100 text-slate-600 border-slate-200">
+                  Avanza estacion
+                </span>
+              )}
+            </div>
+            {restrictionNote &&
+              (task.status === 'NotStarted' ||
+                task.status === 'Paused' ||
+                (!workerParticipating && task.status === 'InProgress')) && (
+                <div className="mt-1 text-xs font-semibold text-rose-600">
+                  {restrictionNote}
+                </div>
+              )}
+            {task.notes && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded-md border border-gray-100 bg-white/70 px-2 py-1 text-xs text-gray-600">
+                <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
+                <span className="truncate max-w-md">{task.notes}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {task.status === 'InProgress' &&
+              (workerParticipating ? (
+                <>
+                  <button
+                    onClick={() => openModal('comments', task, workItem)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    <MessageSquare className="h-5 w-5" /> Nota
+                  </button>
+                  <button
+                    onClick={() => openModal('pause', task, workItem)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-700 hover:bg-amber-100"
+                  >
+                    <Pause className="h-5 w-5" /> Pausa
+                  </button>
+                  <button
+                    onClick={() => handleComplete(task)}
+                    className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
+                  >
+                    <CheckSquare className="h-5 w-5" /> {completeLabel}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => handleJoin(task)}
+                  disabled={joinBlocked || submitting}
+                  title={joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'}
+                  className={clsx(
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    joinBlocked
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  )}
+                >
+                  <Users className="h-5 w-5" /> Unirse
+                </button>
+              ))}
+            {task.status === 'Paused' &&
+              (workerParticipating ? (
+                <>
+                  <button
+                    onClick={() => handleResume(task)}
+                    disabled={resumeBlocked || submitting}
+                    title={resumeBlocked ? resumeBlockTitle : undefined}
+                    className={clsx(
+                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                      resumeBlocked
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700'
+                    )}
+                  >
+                    <Play className="h-5 w-5" /> Reanudar
+                  </button>
+                  <button
+                    onClick={() => handleComplete(task)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                  >
+                    <CheckSquare className="h-5 w-5" /> {completeLabel}
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => handleJoin(task)}
+                  disabled={joinBlocked || submitting}
+                  title={joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'}
+                  className={clsx(
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    joinBlocked
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  )}
+                >
+                  <Users className="h-5 w-5" /> Unirse
+                </button>
+              ))}
+            {task.status === 'NotStarted' && (
+              <>
+                {task.skippable && (
+                  <button
+                    onClick={() => openModal('skip', task, workItem)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:bg-gray-50"
+                  >
+                    <FastForward className="h-5 w-5" /> Omitir
+                  </button>
+                )}
+                <button
+                  onClick={() => handleStart(task, workItem)}
+                  disabled={startBlocked || submitting}
+                  title={startBlocked ? startBlockTitle : undefined}
+                  className={clsx(
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    startBlocked
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-gray-900 hover:bg-gray-800'
+                  )}
+                >
+                  <Play className="h-5 w-5" /> Iniciar
+                </button>
+              </>
+            )}
+            {(regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
+              <button
+                onClick={() => handleCrewOpen(task, workItem)}
+                className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
+              >
+                <Users className="h-5 w-5" /> Equipo
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     );
   };
 
@@ -1307,7 +1514,7 @@ const StationWorkspace: React.FC = () => {
                 {isW1 && recommendedItem && (
                   <div className="space-y-2">
                     <p className="text-[11px] uppercase tracking-[0.3em] text-blue-500 font-semibold">
-                      Siguiente panel recomendado
+                      Siguiente panel planeado
                     </p>
                     {renderWorkItemButton(
                       recommendedItem,
@@ -1411,209 +1618,30 @@ const StationWorkspace: React.FC = () => {
                 )}
               </div>
 
-              {selectedWorkItem.tasks.length === 0 ? (
+              {selectedWorkItem.tasks.length === 0 &&
+              selectedWorkItem.backlog_tasks.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
                   No hay tareas de estacion asignadas para este elemento.
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {selectedWorkItem.tasks.map((task) => {
-                    const workerParticipating = task.current_worker_participating ?? false;
-                    const dependencyBlocked = !isDependenciesSatisfied(task);
-                    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
-                    const dependencyMessage = dependencyBlockedLabel(task);
-                    const workerMessage = workerRestrictionLabel(task);
-                    const joinConcurrencyBlocked = !canStartTask(task, task.task_instance_id);
-                    const startConcurrencyBlocked = !canStartTask(task);
-                    const joinBlocked = workerRestricted || joinConcurrencyBlocked;
-                    const startBlocked =
-                      dependencyBlocked || workerRestricted || startConcurrencyBlocked;
-                    const resumeBlocked =
-                      dependencyBlocked || workerRestricted || joinConcurrencyBlocked;
-                    const restrictionNote = [
-                      dependencyMessage || null,
-                      workerMessage || null,
-                    ]
-                      .filter(Boolean)
-                      .join(' - ');
-                    const startBlockTitle = buildBlockReason({
-                      dependencyMessage,
-                      workerMessage,
-                      concurrencyBlocked: startConcurrencyBlocked,
-                      concurrencyAction: 'starting',
-                    });
-                    const resumeBlockTitle = buildBlockReason({
-                      dependencyMessage,
-                      workerMessage,
-                      concurrencyBlocked: joinConcurrencyBlocked,
-                      concurrencyAction: 'resuming',
-                    });
-                    const joinBlockTitle = buildBlockReason({
-                      workerMessage,
-                      concurrencyBlocked: joinConcurrencyBlocked,
-                      concurrencyAction: 'joining',
-                    });
-                    const completeLabel = task.advance_trigger ? 'Terminar y avanzar' : 'Terminar';
-                    return (
-                      <div
-                        key={task.task_definition_id}
-                        className={clsx(
-                          'rounded-xl border p-4 transition-all',
-                          task.status === 'InProgress'
-                            ? 'border-blue-200 bg-blue-50/50'
-                            : task.status === 'Paused'
-                            ? 'border-amber-200 bg-amber-50/50'
-                            : 'border-gray-200 bg-white'
-                        )}
-                      >
-                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-lg font-semibold text-gray-900">{task.name}</h3>
-                              {statusBadge(task.status)}
-                              {task.advance_trigger && (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-100 text-slate-600 border-slate-200">
-                                  Avanza estacion
-                                </span>
-                              )}
-                            </div>
-                            {restrictionNote &&
-                              (task.status === 'NotStarted' ||
-                                task.status === 'Paused' ||
-                                (!workerParticipating && task.status === 'InProgress')) && (
-                                <div className="mt-1 text-xs font-semibold text-rose-600">
-                                  {restrictionNote}
-                                </div>
-                              )}
-                            {task.notes && (
-                              <div className="mt-2 inline-flex items-center gap-2 rounded-md border border-gray-100 bg-white/70 px-2 py-1 text-xs text-gray-600">
-                                <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
-                                <span className="truncate max-w-md">{task.notes}</span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {task.status === 'InProgress' &&
-                              (workerParticipating ? (
-                                <>
-                                  <button
-                                    onClick={() => openModal('comments', task, selectedWorkItem)}
-                                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
-                                  >
-                                    <MessageSquare className="h-5 w-5" /> Nota
-                                  </button>
-                                  <button
-                                    onClick={() => openModal('pause', task, selectedWorkItem)}
-                                    className="inline-flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-700 hover:bg-amber-100"
-                                  >
-                                    <Pause className="h-5 w-5" /> Pausa
-                                  </button>
-                                  <button
-                                    onClick={() => handleComplete(task)}
-                                    className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
-                                  >
-                                    <CheckSquare className="h-5 w-5" /> {completeLabel}
-                                  </button>
-                                </>
-                              ) : (
-                                  <button
-                                    onClick={() => handleJoin(task)}
-                                    disabled={joinBlocked || submitting}
-                                    title={
-                                      joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'
-                                    }
-                                    className={clsx(
-                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                      joinBlocked
-                                        ? 'bg-gray-400 cursor-not-allowed'
-                                      : 'bg-blue-600 hover:bg-blue-700'
-                                  )}
-                                >
-                                  <Users className="h-5 w-5" /> Unirse
-                                </button>
-                              ))}
-                            {task.status === 'Paused' &&
-                              (workerParticipating ? (
-                                <>
-                                  <button
-                                    onClick={() => handleResume(task)}
-                                    disabled={resumeBlocked || submitting}
-                                    title={
-                                      resumeBlocked ? resumeBlockTitle : undefined
-                                    }
-                                    className={clsx(
-                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                      resumeBlocked
-                                        ? 'bg-gray-400 cursor-not-allowed'
-                                        : 'bg-blue-600 hover:bg-blue-700'
-                                    )}
-                                  >
-                                  <Play className="h-5 w-5" /> Reanudar
-                                  </button>
-                                  <button
-                                    onClick={() => handleComplete(task)}
-                                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
-                                  >
-                                    <CheckSquare className="h-5 w-5" /> {completeLabel}
-                                  </button>
-                                </>
-                              ) : (
-                                  <button
-                                    onClick={() => handleJoin(task)}
-                                    disabled={joinBlocked || submitting}
-                                    title={
-                                      joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'
-                                    }
-                                    className={clsx(
-                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                      joinBlocked
-                                        ? 'bg-gray-400 cursor-not-allowed'
-                                      : 'bg-blue-600 hover:bg-blue-700'
-                                  )}
-                                >
-                                  <Users className="h-5 w-5" /> Unirse
-                                </button>
-                              ))}
-                            {task.status === 'NotStarted' && (
-                              <>
-                                {task.skippable && (
-                                  <button
-                                    onClick={() => openModal('skip', task, selectedWorkItem)}
-                                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:bg-gray-50"
-                                  >
-                                    <FastForward className="h-5 w-5" /> Omitir
-                                  </button>
-                                )}
-                                  <button
-                                    onClick={() => handleStart(task, selectedWorkItem)}
-                                    disabled={startBlocked || submitting}
-                                    title={
-                                      startBlocked ? startBlockTitle : undefined
-                                    }
-                                    className={clsx(
-                                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
-                                      startBlocked
-                                        ? 'bg-gray-400 cursor-not-allowed'
-                                      : 'bg-gray-900 hover:bg-gray-800'
-                                  )}
-                                >
-                                  <Play className="h-5 w-5" /> Iniciar
-                                </button>
-                              </>
-                            )}
-                            {(regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
-                              <button
-                                onClick={() => handleCrewOpen(task, selectedWorkItem)}
-                                className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
-                              >
-                                <Users className="h-5 w-5" /> Equipo
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-6">
+                  {selectedWorkItem.tasks.length > 0 && (
+                    <div className="space-y-3">
+                      {sortTasksForDisplay(selectedWorkItem.tasks).map((task) =>
+                        renderTaskCard(task, selectedWorkItem)
+                      )}
+                    </div>
+                  )}
+                  {selectedWorkItem.backlog_tasks.length > 0 && (
+                    <div className="space-y-3 rounded-xl border border-amber-100 bg-amber-50/40 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
+                        Pendientes de estaciones previas
+                      </p>
+                      {sortTasksForDisplay(selectedWorkItem.backlog_tasks).map((task) =>
+                        renderTaskCard(task, selectedWorkItem)
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2003,7 +2031,8 @@ const StationWorkspace: React.FC = () => {
               Tareas no programadas disponibles para este modulo/panel.
             </p>
             <div className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto">
-              {selectedWorkItem.other_tasks.map((task) => {
+              {sortTasksForDisplay(selectedWorkItem.other_tasks).map((task) => {
+                const isCompleted = task.status === 'Completed';
                 const workerParticipating = task.current_worker_participating ?? false;
                 const dependencyBlocked = !isDependenciesSatisfied(task);
                 const workerRestricted = !isWorkerAllowed(task, workerParticipating);
@@ -2036,7 +2065,10 @@ const StationWorkspace: React.FC = () => {
                 return (
                   <div
                     key={task.task_definition_id}
-                    className="rounded-xl border border-gray-200 p-4"
+                    className={clsx(
+                      'rounded-xl border border-gray-200 p-4',
+                      isCompleted && 'bg-gray-50/70 opacity-70'
+                    )}
                   >
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-semibold text-gray-900">{task.name}</div>

@@ -23,10 +23,6 @@ import AdminTeam from './pages/admin/personnel/AdminTeam';
 import Assistance from './pages/admin/personnel/Assistance';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
-import PanelHistory from './pages/admin/planning/PanelHistory';
-import StationFinished from './pages/admin/planning/StationFinished';
-import TaskAnalysis from './pages/admin/planning/TaskAnalysis';
-import PanelMeters from './pages/admin/planning/PanelMeters';
 import Stations from './pages/admin/config/Stations';
 import HouseConfigurator from './pages/admin/config/HouseConfigurator';
 import HouseParams from './pages/admin/config/HouseParams';
@@ -74,10 +70,6 @@ function App() {
           {/* Planning */}
           <Route path="line-status" element={<LineStatus />} />
           <Route path="production-queue" element={<ProductionQueue />} />
-          <Route path="panel-history" element={<PanelHistory />} />
-          <Route path="station-finished" element={<StationFinished />} />
-          <Route path="task-analysis" element={<TaskAnalysis />} />
-          <Route path="panel-meters" element={<PanelMeters />} />
           
           {/* Config */}
           <Route path="stations" element={<Stations />} />

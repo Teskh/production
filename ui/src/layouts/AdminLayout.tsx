@@ -5,7 +5,6 @@ import {
   Calendar,
   Settings,
   FileText,
-  BarChart,
   Menu,
   X,
   Home,
@@ -59,10 +58,6 @@ const AdminLayout: React.FC = () => {
       items: [
         { name: 'Estado de Linea', path: '/admin/line-status', icon: Home },
         { name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers },
-        { name: 'Historial de Paneles', path: '/admin/panel-history', icon: FileText },
-        { name: 'Estacion Finalizada', path: '/admin/station-finished', icon: CheckSquare },
-        { name: 'Analisis de Tareas', path: '/admin/task-analysis', icon: BarChart },
-        { name: 'Metros de Panel', path: '/admin/panel-meters', icon: BarChart },
       ],
     },
     {

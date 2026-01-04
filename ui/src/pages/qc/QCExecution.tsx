@@ -1,19 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
-  Camera, Check, X, MessageSquare, Maximize2, 
-  AlertTriangle, ChevronLeft, MoreVertical, SkipForward, AlertCircle
+  Camera, Check, X, MessageSquare, 
+  AlertTriangle, ChevronLeft, SkipForward, AlertCircle,
+  ChevronRight, Image
 } from 'lucide-react';
 import { 
   CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS 
 } from '../../services/qcMockData';
+
+const MOCK_GUIDANCE_IMAGES = [
+  'https://placehold.co/600x400/3b82f6/white?text=Guidance+1',
+  'https://placehold.co/600x400/3b82f6/white?text=Guidance+2',
+];
 
 const QCExecution: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const checkId = location.state?.checkId;
   
-  // Resolve check definition
   const checkInstance = PENDING_CHECKS.find(c => c.id === checkId);
   const defId = checkInstance?.checkDefinitionId || location.state?.defId || 'chk_wall';
   const checkDef = CHECK_DEFINITIONS[defId];
@@ -23,202 +28,281 @@ const QCExecution: React.FC = () => {
   const [showFailModal, setShowFailModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
   
-  // Execution State
+  const [refImageIndex, setRefImageIndex] = useState(0);
+  const [guideImageIndex, setGuideImageIndex] = useState(0);
+  
   const [evidence, setEvidence] = useState<{url: string, id: string, type: 'image'|'video'}[]>([]);
   const [notes, setNotes] = useState('');
   const [failureData, setFailureData] = useState<{modeId: string, severityId: string} | null>(null);
 
   const steps = checkDef?.steps || [];
+  const currentStepData = steps[currentStep];
+  
+  const referenceImages = steps
+    .map(s => s.image)
+    .filter((img): img is string => !!img);
+  
+  const guidanceImages = MOCK_GUIDANCE_IMAGES;
 
   const handlePass = () => {
     if (currentStep < steps.length - 1) {
       setCurrentStep(prev => prev + 1);
+      setRefImageIndex(Math.min(currentStep + 1, referenceImages.length - 1));
     } else {
-      // Finish Check
       navigate('/qc');
     }
   };
   
   const handleFailSubmit = () => {
-      // In a real app, save failure data here
-      setShowFailModal(false);
-      navigate('/qc'); // Return to dashboard or rework creation
+    setShowFailModal(false);
+    navigate('/qc');
   };
 
   const handleCapture = () => {
-      // Mock capture
-      const newImage = {
-          url: 'https://placehold.co/400x400/22c55e/white?text=Evidence',
-          id: Date.now().toString(),
-          type: 'image' as const
-      };
-      setEvidence([...evidence, newImage]);
-      setShowCamera(false);
+    const newImage = {
+      url: 'https://placehold.co/400x400/22c55e/white?text=Evidence',
+      id: Date.now().toString(),
+      type: 'image' as const
+    };
+    setEvidence([...evidence, newImage]);
+    setShowCamera(false);
   };
 
-  if (!checkDef) return <div className="p-8">Cargando revision...</div>;
+  const nextRefImage = () => setRefImageIndex(i => (i + 1) % referenceImages.length);
+  const prevRefImage = () => setRefImageIndex(i => (i - 1 + referenceImages.length) % referenceImages.length);
+  const nextGuideImage = () => setGuideImageIndex(i => (i + 1) % guidanceImages.length);
+  const prevGuideImage = () => setGuideImageIndex(i => (i - 1 + guidanceImages.length) % guidanceImages.length);
+
+  if (!checkDef) return <div className="h-screen flex items-center justify-center bg-slate-900 text-white">Cargando revision...</div>;
 
   return (
-    <div className="flex flex-col h-full bg-slate-100">
+    <div className="flex flex-col h-screen bg-slate-900 text-white overflow-hidden">
       
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm z-10">
-          <div className="flex items-center">
-              <button onClick={() => navigate('/qc')} className="mr-3 p-1 rounded hover:bg-slate-100">
-                  <ChevronLeft className="w-6 h-6 text-slate-500" />
-              </button>
-              <div>
-                  <h1 className="text-lg font-bold text-slate-800">{checkDef.name}</h1>
-                  <p className="text-xs text-slate-500">
-                      {checkInstance
-                        ? `${checkInstance.moduleNumber} - ${checkInstance.stationName}`
-                        : 'Revision manual'}
-                  </p>
-              </div>
-          </div>
-          <div className="flex space-x-2">
-              <button className="p-2 text-slate-400 hover:text-slate-600">
-                  <MoreVertical className="w-5 h-5" />
-              </button>
-          </div>
+      {/* Minimal Header */}
+      <div className="flex items-center px-4 py-2 bg-slate-800/50 backdrop-blur-sm">
+        <button 
+          onClick={() => navigate('/qc')} 
+          className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+        <div className="ml-2 text-sm text-slate-400">
+          <span className="font-medium text-white">{checkInstance?.moduleNumber || 'Manual'}</span>
+          <span className="mx-2">•</span>
+          <span>Paso {currentStep + 1}/{steps.length}</span>
+        </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden flex flex-col relative">
+      {/* Main Content: Two Carousels Side by Side */}
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         
-        {/* Step Indicator */}
-        <div className="absolute top-4 left-4 z-10 bg-black/60 backdrop-blur-sm text-white px-3 py-1 rounded-full text-xs font-bold shadow-sm">
-          Paso {currentStep + 1} de {steps.length}
-        </div>
-
-        {/* Reference Image / Guidance */}
-        <div className="flex-1 bg-slate-200 flex items-center justify-center relative group overflow-hidden">
-           {steps[currentStep] ? (
-               <img 
-                src={steps[currentStep].image} 
-                alt="Referencia" 
-                className="w-full h-full object-cover"
-               />
-           ) : (
-               <div className="text-slate-400">Sin imagen</div>
-           )}
-           
-           <button className="absolute bottom-4 right-4 bg-white/90 p-2 rounded-full shadow hover:bg-white transition-opacity">
-             <Maximize2 className="w-5 h-5 text-gray-700" />
-           </button>
-        </div>
-
-        {/* Guidance Text */}
-        <div className="bg-white px-6 py-4 border-t border-gray-100 shadow-sm z-10">
-          <h2 className="text-xl font-bold text-slate-900 mb-1">{steps[currentStep]?.title}</h2>
-          <p className="text-base text-slate-600 leading-relaxed">{steps[currentStep]?.desc}</p>
-          <div className="mt-2 text-xs text-slate-400 bg-slate-50 p-2 rounded border border-slate-100 inline-block">
-             Guia: {checkDef.guidance}
+        {/* Reference Images Carousel */}
+        <div className="flex-1 relative bg-slate-800 flex items-center justify-center min-h-[30vh] lg:min-h-0">
+          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
+            Referencia
           </div>
+          
+          {referenceImages.length > 0 ? (
+            <>
+              <img 
+                src={referenceImages[refImageIndex]} 
+                alt="Referencia" 
+                className="max-w-full max-h-full object-contain p-4"
+              />
+              
+              {referenceImages.length > 1 && (
+                <>
+                  <button 
+                    onClick={prevRefImage}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={nextRefImage}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                    {referenceImages.map((_, i) => (
+                      <button 
+                        key={i}
+                        onClick={() => setRefImageIndex(i)}
+                        className={`w-2 h-2 rounded-full transition-colors ${i === refImageIndex ? 'bg-white' : 'bg-white/40'}`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="text-slate-500 flex flex-col items-center">
+              <Image className="w-12 h-12 mb-2 opacity-50" />
+              <span className="text-sm">Sin imagen de referencia</span>
+            </div>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="hidden lg:block w-px bg-slate-700" />
+        <div className="lg:hidden h-px bg-slate-700" />
+
+        {/* Guidance Images Carousel */}
+        <div className="flex-1 relative bg-slate-800/50 flex items-center justify-center min-h-[30vh] lg:min-h-0">
+          <div className="absolute top-3 left-3 bg-blue-600/80 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
+            Guia Visual
+          </div>
+          
+          {guidanceImages.length > 0 ? (
+            <>
+              <img 
+                src={guidanceImages[guideImageIndex]} 
+                alt="Guia" 
+                className="max-w-full max-h-full object-contain p-4"
+              />
+              
+              {guidanceImages.length > 1 && (
+                <>
+                  <button 
+                    onClick={prevGuideImage}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={nextGuideImage}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                    {guidanceImages.map((_, i) => (
+                      <button 
+                        key={i}
+                        onClick={() => setGuideImageIndex(i)}
+                        className={`w-2 h-2 rounded-full transition-colors ${i === guideImageIndex ? 'bg-white' : 'bg-white/40'}`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="text-slate-500 flex flex-col items-center">
+              <Image className="w-12 h-12 mb-2 opacity-50" />
+              <span className="text-sm">Sin guia visual</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Action Bar */}
-      <div className="bg-white border-t border-gray-200 flex flex-col shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.1)] z-20">
+      {/* Bottom Panel: Description + Actions */}
+      <div className="bg-slate-800 border-t border-slate-700">
+        
+        {/* Description */}
+        <div className="px-4 py-3 border-b border-slate-700/50">
+          <h2 className="text-lg font-bold text-white">{currentStepData?.title || checkDef.name}</h2>
+          <p className="text-sm text-slate-300 mt-1">{currentStepData?.desc || checkDef.guidance}</p>
+        </div>
+        
+        {/* Actions Row */}
+        <div className="flex items-center justify-between p-3 gap-3">
           
-          {/* Toolbar */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-             <div className="flex space-x-4">
-                <button 
-                    onClick={() => setShowCamera(true)}
-                    className="flex flex-col items-center justify-center text-slate-500 hover:text-blue-600 transition-colors"
-                >
-                    <div className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center mb-1 border border-slate-200">
-                        <Camera className="w-5 h-5" />
-                    </div>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide">Evidencia</span>
-                </button>
-                <button 
-                    onClick={() => setShowNotesModal(true)}
-                    className={`flex flex-col items-center justify-center transition-colors ${notes ? 'text-blue-600' : 'text-slate-500 hover:text-blue-600'}`}
-                >
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-1 border ${notes ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
-                        <MessageSquare className="w-5 h-5" />
-                    </div>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide">Nota</span>
-                </button>
-             </div>
-
-             {/* Evidence Gallery Preview */}
-             {evidence.length > 0 && (
-                 <div className="flex -space-x-2">
-                     {evidence.map((ev) => (
-                         <div key={ev.id} className="w-10 h-10 rounded-lg border-2 border-white overflow-hidden shadow-sm">
-                             <img src={ev.url} alt="ev" className="w-full h-full object-cover" />
-                         </div>
-                     ))}
-                 </div>
-             )}
-          </div>
-
-          {/* Main Actions */}
-          <div className="flex p-4 space-x-3">
+          {/* Left: Tools */}
+          <div className="flex items-center gap-2">
             <button 
-                onClick={() => setShowFailModal(true)}
-                className="flex-1 flex items-center justify-center px-4 py-4 bg-red-50 text-red-700 rounded-xl hover:bg-red-100 font-bold border border-red-200 transition-colors"
+              onClick={() => setShowCamera(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
             >
-                <X className="w-6 h-6 mr-2" />
-                Fallar
+              <Camera className="w-4 h-4" />
+              <span className="hidden sm:inline">Evidencia</span>
+            </button>
+            <button 
+              onClick={() => setShowNotesModal(true)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
+                notes ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Nota</span>
             </button>
             
-            {/* Secondary actions (hidden by default or smaller) */}
-            <div className="flex flex-col space-y-1 justify-center">
-                 <button className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50" title="Omitir paso">
-                     <SkipForward className="w-5 h-5" />
-                 </button>
-                 <button className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50" title="Omitir revision">
-                     <AlertCircle className="w-5 h-5" />
-                 </button>
-            </div>
+            {evidence.length > 0 && (
+              <div className="flex -space-x-2 ml-2">
+                {evidence.slice(0, 3).map((ev) => (
+                  <div key={ev.id} className="w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden">
+                    <img src={ev.url} alt="ev" className="w-full h-full object-cover" />
+                  </div>
+                ))}
+                {evidence.length > 3 && (
+                  <div className="w-8 h-8 rounded-lg border-2 border-slate-800 bg-slate-700 flex items-center justify-center text-xs">
+                    +{evidence.length - 3}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-            <button 
-                onClick={handlePass}
-                className="flex-[2] flex items-center justify-center px-4 py-4 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 font-bold shadow-lg shadow-emerald-200 transform active:scale-[0.98] transition-all"
-            >
-                <Check className="w-6 h-6 mr-2" />
-                {currentStep < steps.length - 1 ? 'Aprobar y siguiente' : 'Finalizar revision'}
+          {/* Center: Secondary Actions */}
+          <div className="hidden sm:flex items-center gap-1">
+            <button className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Omitir paso">
+              <SkipForward className="w-5 h-5" />
+            </button>
+            <button className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Omitir revision">
+              <AlertCircle className="w-5 h-5" />
             </button>
           </div>
+
+          {/* Right: Main Actions */}
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setShowFailModal(true)}
+              className="flex items-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-xl font-bold transition-colors"
+            >
+              <X className="w-5 h-5" />
+              <span className="hidden sm:inline">Fallar</span>
+            </button>
+            <button 
+              onClick={handlePass}
+              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
+            >
+              <Check className="w-5 h-5" />
+              <span>{currentStep < steps.length - 1 ? 'Siguiente' : 'Finalizar'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* --- Modals & Overlays --- */}
+      {/* --- Modals --- */}
 
       {/* Camera Overlay */}
       {showCamera && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
           <div className="flex-1 flex flex-col items-center justify-center relative bg-slate-900">
-            <p className="text-white/50 text-sm absolute top-20">Simulador de camara</p>
-            {/* Simulated Viewfinder */}
-            <div className="w-full max-w-md h-3/4 border border-white/20 relative flex items-center justify-center">
-                <div className="w-64 h-64 border-2 border-white/30 rounded-lg flex items-center justify-center">
-                    <span className="text-white/20 text-4xl font-thin">+</span>
-                </div>
-                {/* Watermark Simulator */}
-                <div className="absolute bottom-4 left-4 text-[10px] text-yellow-400 font-mono bg-black/50 px-2 py-1 rounded">
-                    {checkInstance?.moduleNumber || 'MOD-XXX'} | {new Date().toLocaleTimeString()}
-                </div>
+            <p className="text-white/50 text-sm absolute top-8">Simulador de camara</p>
+            <div className="w-full max-w-md aspect-[4/3] border border-white/20 relative flex items-center justify-center">
+              <div className="w-48 h-48 border-2 border-white/30 rounded-lg flex items-center justify-center">
+                <span className="text-white/20 text-4xl font-thin">+</span>
+              </div>
+              <div className="absolute bottom-4 left-4 text-[10px] text-yellow-400 font-mono bg-black/50 px-2 py-1 rounded">
+                {checkInstance?.moduleNumber || 'MOD-XXX'} | {new Date().toLocaleTimeString()}
+              </div>
             </div>
-
-            {/* Controls */}
-            <div className="absolute bottom-0 w-full h-32 bg-black/40 backdrop-blur flex items-center justify-around pb-4">
-                <button 
-                    onClick={() => setShowCamera(false)}
-                    className="p-4 rounded-full bg-slate-800 text-white hover:bg-slate-700"
-                >
-                    <X className="w-6 h-6" />
-                </button>
-                <button 
-                    onClick={handleCapture}
-                    className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
-                >
-                    <div className="w-16 h-16 bg-white rounded-full"></div>
-                </button>
-                <div className="w-14"></div> {/* Spacer */}
+            <div className="mt-8 flex items-center gap-8">
+              <button 
+                onClick={() => setShowCamera(false)}
+                className="p-4 rounded-full bg-slate-800 text-white hover:bg-slate-700"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <button 
+                onClick={handleCapture}
+                className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
+              >
+                <div className="w-16 h-16 bg-white rounded-full"></div>
+              </button>
+              <div className="w-14" />
             </div>
           </div>
         </div>
@@ -226,130 +310,133 @@ const QCExecution: React.FC = () => {
 
       {/* Notes Modal */}
       {showNotesModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-              <div className="bg-white w-full max-w-lg rounded-xl shadow-2xl overflow-hidden">
-                  <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-                      <h3 className="font-bold text-slate-800">Agregar nota</h3>
-                      <button onClick={() => setShowNotesModal(false)}><X className="w-5 h-5 text-slate-400" /></button>
-                  </div>
-                  <div className="p-4">
-                      <textarea 
-                        className="w-full h-32 border border-gray-300 rounded-lg p-3 text-slate-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-                        placeholder="Escribe los detalles de observacion aqui..."
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        autoFocus
-                      />
-                  </div>
-                  <div className="p-4 bg-gray-50 flex justify-end">
-                      <button 
-                        onClick={() => setShowNotesModal(false)}
-                        className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
-                      >
-                          Guardar nota
-                      </button>
-                  </div>
-              </div>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 w-full max-w-lg rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+              <h3 className="font-bold text-white">Agregar nota</h3>
+              <button onClick={() => setShowNotesModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <textarea 
+                className="w-full h-32 bg-slate-900 border border-slate-600 rounded-lg p-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+                placeholder="Escribe los detalles de observacion aqui..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="p-4 bg-slate-900/50 flex justify-end">
+              <button 
+                onClick={() => setShowNotesModal(false)}
+                className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
+              >
+                Guardar nota
+              </button>
+            </div>
           </div>
+        </div>
       )}
 
       {/* Failure Mode Modal */}
       {showFailModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-              <div className="bg-white w-full max-w-lg sm:rounded-xl shadow-2xl flex flex-col max-h-[90vh]">
-                  <div className="p-4 border-b border-gray-100 bg-red-50 flex justify-between items-center rounded-t-xl">
-                      <div className="flex items-center text-red-700">
-                          <AlertTriangle className="w-5 h-5 mr-2" />
-                          <h3 className="font-bold">Registrar falla</h3>
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 w-full max-w-lg rounded-xl shadow-2xl flex flex-col max-h-[90vh] border border-slate-700">
+            <div className="p-4 border-b border-slate-700 bg-red-900/30 flex justify-between items-center rounded-t-xl">
+              <div className="flex items-center text-red-400">
+                <AlertTriangle className="w-5 h-5 mr-2" />
+                <h3 className="font-bold">Registrar falla</h3>
+              </div>
+              <button onClick={() => setShowFailModal(false)} className="text-red-400 hover:text-red-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto">
+              <div className="mb-6">
+                <label className="block text-sm font-bold text-slate-300 mb-2">Modo de falla</label>
+                <div className="space-y-2">
+                  {FAILURE_MODES.map(mode => (
+                    <label 
+                      key={mode.id}
+                      className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
+                        failureData?.modeId === mode.id 
+                          ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500' 
+                          : 'border-slate-600 hover:border-slate-500 bg-slate-900/50'
+                      }`}
+                    >
+                      <input 
+                        type="radio" 
+                        name="failureMode" 
+                        className="mt-1 mr-3 text-red-600 focus:ring-red-500"
+                        checked={failureData?.modeId === mode.id}
+                        onChange={() => setFailureData({ 
+                          modeId: mode.id, 
+                          severityId: mode.defaultSeverityId 
+                        })}
+                      />
+                      <div>
+                        <div className="font-semibold text-white">{mode.name}</div>
+                        <div className="text-xs text-slate-400">{mode.description}</div>
                       </div>
-                      <button onClick={() => setShowFailModal(false)}><X className="w-5 h-5 text-red-400" /></button>
-                  </div>
-                  
-                  <div className="p-6 overflow-y-auto">
-                      <div className="mb-6">
-                          <label className="block text-sm font-bold text-gray-700 mb-2">Modo de falla</label>
-                          <div className="space-y-2">
-                              {FAILURE_MODES.map(mode => (
-                                  <label 
-                                    key={mode.id}
-                                    className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
-                                        failureData?.modeId === mode.id 
-                                        ? 'border-red-500 bg-red-50 ring-1 ring-red-500' 
-                                        : 'border-gray-200 hover:border-gray-300'
-                                    }`}
-                                  >
-                                      <input 
-                                        type="radio" 
-                                        name="failureMode" 
-                                        className="mt-1 mr-3 text-red-600 focus:ring-red-500"
-                                        checked={failureData?.modeId === mode.id}
-                                        onChange={() => setFailureData({ 
-                                            modeId: mode.id, 
-                                            severityId: mode.defaultSeverityId 
-                                        })}
-                                      />
-                                      <div>
-                                          <div className="font-semibold text-gray-900">{mode.name}</div>
-                                          <div className="text-xs text-gray-500">{mode.description}</div>
-                                      </div>
-                                  </label>
-                              ))}
-                          </div>
-                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
 
-                      {failureData && (
-                          <div className="mb-6">
-                              <label className="block text-sm font-bold text-gray-700 mb-2">Severidad</label>
-                              <div className="flex flex-wrap gap-2">
-                                  {SEVERITY_LEVELS.map(sev => (
-                                      <button
-                                        key={sev.id}
-                                        onClick={() => setFailureData(prev => prev ? {...prev, severityId: sev.id} : null)}
-                                        className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                                            failureData.severityId === sev.id 
-                                            ? sev.color + ' border-current ring-1 ring-current'
-                                            : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-                                        }`}
-                                      >
-                                          {sev.name}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-
-                      <div className="mb-4">
-                          <label className="block text-sm font-bold text-gray-700 mb-2">
-                            Instrucciones de retrabajo
-                          </label>
-                          <textarea 
-                              className="w-full border border-gray-300 rounded-lg p-2 text-sm h-20"
-                              defaultValue={failureData ? FAILURE_MODES.find(m => m.id === failureData.modeId)?.defaultReworkText : ''}
-                          />
-                      </div>
-                  </div>
-
-                  <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end space-x-3 rounded-b-xl">
-                      <button 
-                        onClick={() => setShowFailModal(false)}
-                        className="px-5 py-2 text-gray-600 font-semibold hover:bg-gray-200 rounded-lg"
-                      >
-                          Cancelar
-                      </button>
-                      <button 
-                        disabled={!failureData}
-                        onClick={handleFailSubmit}
-                        className={`px-5 py-2 text-white font-bold rounded-lg shadow-sm ${
-                            failureData ? 'bg-red-600 hover:bg-red-700' : 'bg-red-300 cursor-not-allowed'
+              {failureData && (
+                <div className="mb-6">
+                  <label className="block text-sm font-bold text-slate-300 mb-2">Severidad</label>
+                  <div className="flex flex-wrap gap-2">
+                    {SEVERITY_LEVELS.map(sev => (
+                      <button
+                        key={sev.id}
+                        onClick={() => setFailureData(prev => prev ? {...prev, severityId: sev.id} : null)}
+                        className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
+                          failureData.severityId === sev.id 
+                            ? sev.color + ' border-current ring-1 ring-current'
+                            : 'bg-slate-900 text-slate-400 border-slate-600 hover:bg-slate-700'
                         }`}
                       >
-                          Confirmar falla
+                        {sev.name}
                       </button>
+                    ))}
                   </div>
-              </div>
-          </div>
-      )}
+                </div>
+              )}
 
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-slate-300 mb-2">
+                  Instrucciones de retrabajo
+                </label>
+                <textarea 
+                  className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2 text-sm h-20 text-white placeholder-slate-500"
+                  defaultValue={failureData ? FAILURE_MODES.find(m => m.id === failureData.modeId)?.defaultReworkText : ''}
+                />
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-700 bg-slate-900/50 flex justify-end gap-3 rounded-b-xl">
+              <button 
+                onClick={() => setShowFailModal(false)}
+                className="px-5 py-2 text-slate-300 font-semibold hover:bg-slate-700 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button 
+                disabled={!failureData}
+                onClick={handleFailSubmit}
+                className={`px-5 py-2 text-white font-bold rounded-lg shadow-sm ${
+                  failureData ? 'bg-red-600 hover:bg-red-700' : 'bg-red-900 cursor-not-allowed opacity-50'
+                }`}
+              >
+                Confirmar falla
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

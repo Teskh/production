@@ -316,7 +316,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Escanear gafete QR</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Escanear QR</h3>
             <p className="text-xs text-slate-500">
               Centra el codigo en el recuadro. El escaneo corre a 720p con cuadros limitados y barridos de cuadro completo.
             </p>
