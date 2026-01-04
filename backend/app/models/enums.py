@@ -97,3 +97,9 @@ class QCReworkStatus(str, Enum):
 class QCNotificationStatus(str, Enum):
     ACTIVE = "Active"
     DISMISSED = "Dismissed"
+
+
+class QCSeverityLevel(str, Enum):
+    BAJA = "baja"
+    MEDIA = "media"
+    CRITICA = "critica"

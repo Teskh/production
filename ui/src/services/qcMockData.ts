@@ -4,7 +4,7 @@
 
 export interface QCSeverityLevel {
   id: string;
-  name: 'Low' | 'Medium' | 'High' | 'Critical';
+  name: 'Baja' | 'Media' | 'Crítica';
   color: string;
   icon?: string;
 }
@@ -79,10 +79,9 @@ export interface QCEventTimeline {
 // --- Mock Data Constants ---
 
 export const SEVERITY_LEVELS: QCSeverityLevel[] = [
-  { id: 'sev_low', name: 'Low', color: 'bg-blue-100 text-blue-800' },
-  { id: 'sev_med', name: 'Medium', color: 'bg-amber-100 text-amber-800' },
-  { id: 'sev_high', name: 'High', color: 'bg-orange-100 text-orange-800' },
-  { id: 'sev_crit', name: 'Critical', color: 'bg-rose-100 text-rose-800' },
+  { id: 'sev_baja', name: 'Baja', color: 'bg-blue-100 text-blue-800' },
+  { id: 'sev_media', name: 'Media', color: 'bg-amber-100 text-amber-800' },
+  { id: 'sev_critica', name: 'Crítica', color: 'bg-rose-100 text-rose-800' },
 ];
 
 export const FAILURE_MODES: QCFailureMode[] = [
@@ -90,28 +89,28 @@ export const FAILURE_MODES: QCFailureMode[] = [
     id: 'fm_dim', 
     name: 'Incorrect Dimensions', 
     description: 'Measured dimensions do not match the plan.', 
-    defaultSeverityId: 'sev_med',
+    defaultSeverityId: 'sev_media',
     defaultReworkText: 'Measure and trim to correct size.'
   },
   { 
     id: 'fm_gap', 
     name: 'Excessive Gap', 
     description: 'Joint gap exceeds 2mm tolerance.', 
-    defaultSeverityId: 'sev_low',
+    defaultSeverityId: 'sev_baja',
     defaultReworkText: 'Apply filler or shim as necessary.'
   },
   { 
     id: 'fm_miss', 
     name: 'Missing Component', 
     description: 'Required part is missing from the assembly.', 
-    defaultSeverityId: 'sev_high',
+    defaultSeverityId: 'sev_critica',
     defaultReworkText: 'Install missing component.'
   },
   {
     id: 'fm_damage',
     name: 'Material Damage',
     description: 'Visible damage to surface or structure.',
-    defaultSeverityId: 'sev_med',
+    defaultSeverityId: 'sev_media',
     defaultReworkText: 'Replace damaged component.'
   }
 ];

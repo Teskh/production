@@ -1,135 +1,1989 @@
-import React, { useEffect } from 'react';
-import { Plus, Edit2, Trash2, Sliders, PlayCircle, MapPin, MousePointer, Target } from 'lucide-react';
-import { CHECK_DEFINITIONS } from '../../../services/qcMockData';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Filter, ListChecks, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+type QCCheckKind = 'triggered' | 'manual_template';
+type QCTriggerEventType = 'task_completed' | 'enter_station';
+type QCSeverityLevelKey = 'baja' | 'media' | 'critica';
+
+type QCCheckDefinition = {
+  id: number;
+  name: string;
+  active: boolean;
+  guidance_text: string | null;
+  version: number;
+  kind: QCCheckKind;
+  category_id: number | null;
+  archived_at?: string | null;
+};
+
+type QCCheckCategory = {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  active: boolean;
+  sort_order: number | null;
+};
+
+type QCFailureMode = {
+  id: number;
+  check_definition_id: number | null;
+  name: string;
+  description: string | null;
+  default_severity_level: QCSeverityLevelKey | null;
+  default_rework_description: string | null;
+  require_evidence: boolean;
+  require_measurement: boolean;
+  active: boolean;
+};
+
+type QCTrigger = {
+  id: number;
+  check_definition_id: number;
+  event_type: QCTriggerEventType;
+  params_json: Record<string, number[]> | null;
+  sampling_rate: number;
+  sampling_autotune: boolean;
+  sampling_step: number;
+};
+
+type QCApplicability = {
+  id: number;
+  check_definition_id: number;
+  house_type_id: number | null;
+  sub_type_id: number | null;
+  module_number: number | null;
+  panel_definition_id: number | null;
+  force_required: boolean;
+  effective_from: string | null;
+  effective_to: string | null;
+};
+
+type HouseType = {
+  id: number;
+  name: string;
+  number_of_modules: number;
+};
+
+type HouseSubType = {
+  id: number;
+  house_type_id: number;
+  name: string;
+};
+
+type PanelDefinition = {
+  id: number;
+  house_type_id: number;
+  module_sequence_number: number;
+  sub_type_id: number | null;
+  group: string;
+  panel_code: string;
+};
+
+type TaskDefinition = {
+  id: number;
+  name: string;
+  scope: 'panel' | 'module' | 'aux';
+  default_station_sequence: number | null;
+  active: boolean;
+};
+
+type Station = {
+  id: number;
+  name: string;
+  role: 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
+  line_type: '1' | '2' | '3' | null;
+  sequence_order: number | null;
+};
+
+type CheckDraft = {
+  id?: number;
+  name: string;
+  active: boolean;
+  guidance_text: string;
+  version: number;
+  kind: QCCheckKind;
+  category_id: number | null;
+};
+
+type CategoryDraft = {
+  id?: number;
+  name: string;
+  parent_id: number | null;
+  active: boolean;
+  sort_order: string;
+};
+
+type FailureModeDraft = {
+  id?: number;
+  check_definition_id: number | null;
+  name: string;
+  description: string;
+  default_severity_level: QCSeverityLevelKey | null;
+  default_rework_description: string;
+  require_evidence: boolean;
+  require_measurement: boolean;
+  active: boolean;
+};
+
+type TriggerDraft = {
+  id?: number;
+  event_type: QCTriggerEventType;
+  sampling_rate: string;
+  sampling_step: string;
+  sampling_autotune: boolean;
+  task_definition_ids: number[];
+  station_ids: number[];
+};
+
+type ApplicabilityDraft = {
+  id?: number;
+  house_type_id: number | null;
+  sub_type_id: number | null;
+  module_number: string;
+  panel_definition_id: number | null;
+  force_required: boolean;
+  effective_from: string;
+  effective_to: string;
+};
+
+const emptyCheckDraft = (): CheckDraft => ({
+  name: '',
+  active: true,
+  guidance_text: '',
+  version: 1,
+  kind: 'triggered',
+  category_id: null,
+});
+
+const emptyCategoryDraft = (): CategoryDraft => ({
+  name: '',
+  parent_id: null,
+  active: true,
+  sort_order: '',
+});
+
+const emptyFailureModeDraft = (checkDefinitionId: number | null): FailureModeDraft => ({
+  check_definition_id: checkDefinitionId,
+  name: '',
+  description: '',
+  default_severity_level: null,
+  default_rework_description: '',
+  require_evidence: false,
+  require_measurement: false,
+  active: true,
+});
+
+const severityOptions: Array<{ value: QCSeverityLevelKey; label: string }> = [
+  { value: 'baja', label: 'Baja' },
+  { value: 'media', label: 'Media' },
+  { value: 'critica', label: 'Crítica' },
+];
+
+const emptyTriggerDraft = (): TriggerDraft => ({
+  event_type: 'task_completed',
+  sampling_rate: '1',
+  sampling_step: '0.2',
+  sampling_autotune: false,
+  task_definition_ids: [],
+  station_ids: [],
+});
+
+const emptyApplicabilityDraft = (): ApplicabilityDraft => ({
+  house_type_id: null,
+  sub_type_id: null,
+  module_number: '',
+  panel_definition_id: null,
+  force_required: false,
+  effective_from: '',
+  effective_to: '',
+});
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const normalizeSearch = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const sortByName = <T extends { name: string }>(list: T[]) =>
+  [...list].sort((a, b) => a.name.localeCompare(b.name));
+
+const sortByOrderThenName = <T extends { name: string; sort_order: number | null }>(
+  list: T[]
+) =>
+  [...list].sort((a, b) => {
+    const orderCompare = (a.sort_order ?? 9999) - (b.sort_order ?? 9999);
+    if (orderCompare !== 0) {
+      return orderCompare;
+    }
+    return a.name.localeCompare(b.name);
+  });
 
 const QCChecks: React.FC = () => {
   const { setHeader } = useAdminHeader();
-  const checks = Object.values(CHECK_DEFINITIONS);
+  const [checks, setChecks] = useState<QCCheckDefinition[]>([]);
+  const [categories, setCategories] = useState<QCCheckCategory[]>([]);
+  const [failureModes, setFailureModes] = useState<QCFailureMode[]>([]);
+  const [triggers, setTriggers] = useState<QCTrigger[]>([]);
+  const [applicability, setApplicability] = useState<QCApplicability[]>([]);
+  const [tasks, setTasks] = useState<TaskDefinition[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [houseTypes, setHouseTypes] = useState<HouseType[]>([]);
+  const [houseSubTypes, setHouseSubTypes] = useState<HouseSubType[]>([]);
+  const [panelDefinitions, setPanelDefinitions] = useState<PanelDefinition[]>([]);
+  const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
+  const [checkDraft, setCheckDraft] = useState<CheckDraft>(emptyCheckDraft());
+  const [selectedTab, setSelectedTab] = useState<'definition' | 'triggers' | 'applicability'>(
+    'definition'
+  );
+  const [checkSearch, setCheckSearch] = useState('');
+  const [checkStatus, setCheckStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [categoryDraft, setCategoryDraft] = useState<CategoryDraft>(emptyCategoryDraft());
+  const [categoryStatus, setCategoryStatus] = useState<string | null>(null);
+
+  const [selectedFailureId, setSelectedFailureId] = useState<number | null>(null);
+  const [failureDraft, setFailureDraft] = useState<FailureModeDraft>(
+    emptyFailureModeDraft(null)
+  );
+  const [failureStatus, setFailureStatus] = useState<string | null>(null);
+  const [showGlobalFailureModes, setShowGlobalFailureModes] = useState(true);
+
+  const [selectedTriggerId, setSelectedTriggerId] = useState<number | null>(null);
+  const [triggerDraft, setTriggerDraft] = useState<TriggerDraft>(emptyTriggerDraft());
+  const [triggerStatus, setTriggerStatus] = useState<string | null>(null);
+  const [triggerSearch, setTriggerSearch] = useState('');
+
+  const [selectedApplicabilityId, setSelectedApplicabilityId] = useState<number | null>(null);
+  const [applicabilityDraft, setApplicabilityDraft] = useState<ApplicabilityDraft>(
+    emptyApplicabilityDraft()
+  );
+  const [applicabilityStatus, setApplicabilityStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setHeader({
-      title: 'Definiciones de revisiones QC',
+      title: 'Definicion de revisiones QC',
       kicker: 'Calidad / Revisiones QC',
     });
   }, [setHeader]);
 
-  const getTriggerIcon = (type: string) => {
-      switch(type) {
-          case 'Task Completion': return <CheckCircleIcon className="w-4 h-4 text-emerald-500" />;
-          case 'Station Entry': return <MapPin className="w-4 h-4 text-blue-500" />;
-          default: return <MousePointer className="w-4 h-4 text-gray-400" />;
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [
+          checkData,
+          categoryData,
+          failureData,
+          triggerData,
+          applicabilityData,
+          taskData,
+          stationData,
+          houseTypeData,
+          panelData,
+        ] = await Promise.all([
+          apiRequest<QCCheckDefinition[]>('/api/qc/check-definitions'),
+          apiRequest<QCCheckCategory[]>('/api/qc/categories'),
+          apiRequest<QCFailureMode[]>('/api/qc/failure-modes'),
+          apiRequest<QCTrigger[]>('/api/qc/triggers'),
+          apiRequest<QCApplicability[]>('/api/qc/applicability'),
+          apiRequest<TaskDefinition[]>('/api/task-definitions'),
+          apiRequest<Station[]>('/api/stations'),
+          apiRequest<HouseType[]>('/api/house-types'),
+          apiRequest<PanelDefinition[]>('/api/panel-definitions'),
+        ]);
+        const subtypeResponses = await Promise.all(
+          houseTypeData.map((house) =>
+            apiRequest<HouseSubType[]>(`/api/house-types/${house.id}/subtypes`)
+          )
+        );
+        if (!active) {
+          return;
+        }
+        const sortedChecks = sortByName(checkData);
+        setChecks(sortedChecks);
+        setCategories(sortByOrderThenName(categoryData));
+        setFailureModes(sortByName(failureData));
+        setTriggers(triggerData);
+        setApplicability(applicabilityData);
+        setTasks(sortByName(taskData));
+        setStations(stationData);
+        setHouseTypes(sortByName(houseTypeData));
+        setHouseSubTypes(subtypeResponses.flat());
+        setPanelDefinitions(panelData);
+        setSelectedCheckId(sortedChecks[0]?.id ?? null);
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'No se pudo cargar la configuracion de QC.';
+          setCheckStatus(message);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
       }
-  };
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const CheckCircleIcon = ({className}: {className: string}) => (
-      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories]
+  );
+  const houseTypeNameById = useMemo(
+    () => new Map(houseTypes.map((house) => [house.id, house.name])),
+    [houseTypes]
+  );
+  const houseSubTypeNameById = useMemo(
+    () => new Map(houseSubTypes.map((sub) => [sub.id, sub.name])),
+    [houseSubTypes]
   );
 
+  const filteredChecks = useMemo(() => {
+    const query = normalizeSearch(checkSearch.trim());
+    if (!query) {
+      return checks;
+    }
+    return checks.filter((check) => {
+      const categoryName = check.category_id
+        ? categoryNameById.get(check.category_id) ?? ''
+        : '';
+      const haystack = normalizeSearch(`${check.name} ${check.kind} ${categoryName}`);
+      return haystack.includes(query);
+    });
+  }, [checkSearch, checks, categoryNameById]);
+
+  const selectedCheck = useMemo(
+    () => checks.find((check) => check.id === selectedCheckId) ?? null,
+    [checks, selectedCheckId]
+  );
+
+  const filteredFailureModes = useMemo(() => {
+    return failureModes.filter((mode) => {
+      if (selectedCheckId === null) {
+        return mode.check_definition_id === null;
+      }
+      if (mode.check_definition_id === selectedCheckId) {
+        return true;
+      }
+      return showGlobalFailureModes && mode.check_definition_id === null;
+    });
+  }, [failureModes, selectedCheckId, showGlobalFailureModes]);
+
+  const filteredTriggers = useMemo(
+    () =>
+      triggers.filter((trigger) =>
+        selectedCheckId ? trigger.check_definition_id === selectedCheckId : false
+      ),
+    [triggers, selectedCheckId]
+  );
+
+  const filteredApplicability = useMemo(
+    () =>
+      applicability.filter((rule) =>
+        selectedCheckId ? rule.check_definition_id === selectedCheckId : false
+      ),
+    [applicability, selectedCheckId]
+  );
+
+  useEffect(() => {
+    if (!categories.length) {
+      setSelectedCategoryId(null);
+      setCategoryDraft(emptyCategoryDraft());
+      return;
+    }
+    if (selectedCategoryId && categories.some((category) => category.id === selectedCategoryId)) {
+      return;
+    }
+    const first = categories[0];
+    setSelectedCategoryId(first.id);
+    setCategoryDraft({
+      id: first.id,
+      name: first.name,
+      parent_id: first.parent_id,
+      active: first.active,
+      sort_order: first.sort_order !== null ? String(first.sort_order) : '',
+    });
+  }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    if (!selectedCheck) {
+      setCheckDraft(emptyCheckDraft());
+      setFailureDraft(emptyFailureModeDraft(null));
+      setSelectedFailureId(null);
+      return;
+    }
+    setCheckDraft({
+      id: selectedCheck.id,
+      name: selectedCheck.name,
+      active: selectedCheck.active,
+      guidance_text: selectedCheck.guidance_text ?? '',
+      version: selectedCheck.version,
+      kind: selectedCheck.kind,
+      category_id: selectedCheck.category_id ?? null,
+    });
+    setFailureDraft(emptyFailureModeDraft(selectedCheck.id));
+    setSelectedFailureId(null);
+    setSelectedTriggerId(null);
+    setTriggerDraft(emptyTriggerDraft());
+    setSelectedApplicabilityId(null);
+    setApplicabilityDraft(emptyApplicabilityDraft());
+  }, [selectedCheck]);
+
+  useEffect(() => {
+    if (!filteredFailureModes.length) {
+      setSelectedFailureId(null);
+      setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+      return;
+    }
+    if (selectedFailureId && filteredFailureModes.some((mode) => mode.id === selectedFailureId)) {
+      return;
+    }
+    const first = filteredFailureModes[0];
+    setSelectedFailureId(first.id);
+    setFailureDraft({
+      id: first.id,
+      check_definition_id: first.check_definition_id,
+      name: first.name,
+      description: first.description ?? '',
+      default_severity_level: first.default_severity_level,
+      default_rework_description: first.default_rework_description ?? '',
+      require_evidence: first.require_evidence,
+      require_measurement: first.require_measurement,
+      active: first.active,
+    });
+  }, [filteredFailureModes, selectedFailureId, selectedCheckId]);
+
+  const summaryLabel = useMemo(() => {
+    const activeCount = checks.filter((check) => check.active).length;
+    return `${checks.length} revisiones / ${activeCount} activas`;
+  }, [checks]);
+
+  const updateCheckDraft = (patch: Partial<CheckDraft>) => {
+    setCheckDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleAddCheck = () => {
+    setSelectedCheckId(null);
+    setCheckDraft(emptyCheckDraft());
+    setSelectedTab('definition');
+    setCheckStatus(null);
+  };
+
+  const handleSaveCheck = async () => {
+    const name = checkDraft.name.trim();
+    if (!name) {
+      setCheckStatus('Se requiere el nombre de la revision.');
+      return;
+    }
+    if (!Number.isInteger(checkDraft.version) || checkDraft.version < 1) {
+      setCheckStatus('La version debe ser un numero entero positivo.');
+      return;
+    }
+    setSaving(true);
+    setCheckStatus(null);
+    try {
+      const payload = {
+        name,
+        active: checkDraft.active,
+        guidance_text: checkDraft.guidance_text.trim() || null,
+        version: checkDraft.version,
+        kind: checkDraft.kind,
+        category_id: checkDraft.category_id,
+      };
+      let saved: QCCheckDefinition;
+      if (checkDraft.id) {
+        saved = await apiRequest<QCCheckDefinition>(
+          `/api/qc/check-definitions/${checkDraft.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          }
+        );
+        setChecks((prev) => sortByName(prev.map((check) => (check.id === saved.id ? saved : check))));
+      } else {
+        saved = await apiRequest<QCCheckDefinition>('/api/qc/check-definitions', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setChecks((prev) => sortByName([...prev, saved]));
+      }
+      setSelectedCheckId(saved.id);
+      setCheckStatus('Revision guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la revision.';
+      setCheckStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCheck = async () => {
+    if (!checkDraft.id) {
+      return;
+    }
+    setSaving(true);
+    setCheckStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/check-definitions/${checkDraft.id}`, {
+        method: 'DELETE',
+      });
+      setChecks((prev) => {
+        const updated = prev.filter((check) => check.id !== checkDraft.id);
+        const next = updated[0] ?? null;
+        if (next) {
+          setSelectedCheckId(next.id);
+        } else {
+          setSelectedCheckId(null);
+          setCheckDraft(emptyCheckDraft());
+        }
+        return updated;
+      });
+      setTriggers((prev) => prev.filter((trigger) => trigger.check_definition_id !== checkDraft.id));
+      setApplicability((prev) =>
+        prev.filter((rule) => rule.check_definition_id !== checkDraft.id)
+      );
+      setFailureModes((prev) =>
+        prev.filter((mode) => mode.check_definition_id !== checkDraft.id)
+      );
+      setCheckStatus('Revision eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la revision.';
+      setCheckStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    const name = categoryDraft.name.trim();
+    if (!name) {
+      setCategoryStatus('Se requiere el nombre de la categoria.');
+      return;
+    }
+    const rawSortOrder = categoryDraft.sort_order.trim();
+    const sortOrder = rawSortOrder ? Number(rawSortOrder) : null;
+    if (rawSortOrder && !Number.isInteger(Number(rawSortOrder))) {
+      setCategoryStatus('El orden debe ser un numero entero.');
+      return;
+    }
+    setCategoryStatus(null);
+    try {
+      const payload = {
+        name,
+        parent_id: categoryDraft.parent_id,
+        active: categoryDraft.active,
+        sort_order: sortOrder,
+      };
+      let saved: QCCheckCategory;
+      if (categoryDraft.id) {
+        saved = await apiRequest<QCCheckCategory>(`/api/qc/categories/${categoryDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setCategories((prev) =>
+          sortByOrderThenName(prev.map((category) => (category.id === saved.id ? saved : category)))
+        );
+      } else {
+        saved = await apiRequest<QCCheckCategory>('/api/qc/categories', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setCategories((prev) => sortByOrderThenName([...prev, saved]));
+      }
+      setSelectedCategoryId(saved.id);
+      setCategoryDraft({
+        id: saved.id,
+        name: saved.name,
+        parent_id: saved.parent_id,
+        active: saved.active,
+        sort_order: saved.sort_order !== null ? String(saved.sort_order) : '',
+      });
+      setCategoryStatus('Categoria guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la categoria.';
+      setCategoryStatus(message);
+    }
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!categoryDraft.id) {
+      return;
+    }
+    setCategoryStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/categories/${categoryDraft.id}`, { method: 'DELETE' });
+      setCategories((prev) => prev.filter((category) => category.id !== categoryDraft.id));
+      setSelectedCategoryId(null);
+      setCategoryDraft(emptyCategoryDraft());
+      setCategoryStatus('Categoria eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la categoria.';
+      setCategoryStatus(message);
+    }
+  };
+
+  const handleSaveFailureMode = async () => {
+    const name = failureDraft.name.trim();
+    if (!name) {
+      setFailureStatus('Se requiere el nombre del modo de falla.');
+      return;
+    }
+    setFailureStatus(null);
+    try {
+      const payload = {
+        check_definition_id: failureDraft.check_definition_id,
+        name,
+        description: failureDraft.description.trim() || null,
+        default_severity_level: failureDraft.default_severity_level,
+        default_rework_description: failureDraft.default_rework_description.trim() || null,
+        require_evidence: failureDraft.require_evidence,
+        require_measurement: failureDraft.require_measurement,
+        active: failureDraft.active,
+      };
+      let saved: QCFailureMode;
+      if (failureDraft.id) {
+        saved = await apiRequest<QCFailureMode>(`/api/qc/failure-modes/${failureDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setFailureModes((prev) =>
+          sortByName(prev.map((mode) => (mode.id === saved.id ? saved : mode)))
+        );
+      } else {
+        saved = await apiRequest<QCFailureMode>('/api/qc/failure-modes', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setFailureModes((prev) => sortByName([...prev, saved]));
+      }
+      setSelectedFailureId(saved.id);
+      setFailureDraft({
+        id: saved.id,
+        check_definition_id: saved.check_definition_id,
+        name: saved.name,
+        description: saved.description ?? '',
+        default_severity_level: saved.default_severity_level,
+        default_rework_description: saved.default_rework_description ?? '',
+        require_evidence: saved.require_evidence,
+        require_measurement: saved.require_measurement,
+        active: saved.active,
+      });
+      setFailureStatus('Modo de falla guardado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar el modo de falla.';
+      setFailureStatus(message);
+    }
+  };
+
+  const handleDeleteFailureMode = async () => {
+    if (!failureDraft.id) {
+      return;
+    }
+    setFailureStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/failure-modes/${failureDraft.id}`, { method: 'DELETE' });
+      setFailureModes((prev) => prev.filter((mode) => mode.id !== failureDraft.id));
+      setSelectedFailureId(null);
+      setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+      setFailureStatus('Modo de falla eliminado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar el modo de falla.';
+      setFailureStatus(message);
+    }
+  };
+
+  const handleSaveTrigger = async () => {
+    if (!selectedCheckId) {
+      setTriggerStatus('Seleccione una revision antes de crear un trigger.');
+      return;
+    }
+    const samplingRate = Number(triggerDraft.sampling_rate);
+    const samplingStep = Number(triggerDraft.sampling_step);
+    if (Number.isNaN(samplingRate) || samplingRate < 0 || samplingRate > 1) {
+      setTriggerStatus('La tasa debe estar entre 0 y 1.');
+      return;
+    }
+    if (Number.isNaN(samplingStep) || samplingStep < 0 || samplingStep > 1) {
+      setTriggerStatus('El paso de ajuste debe estar entre 0 y 1.');
+      return;
+    }
+    setTriggerStatus(null);
+    try {
+      const paramsJson =
+        triggerDraft.event_type === 'task_completed'
+          ? { task_definition_ids: triggerDraft.task_definition_ids }
+          : { station_ids: triggerDraft.station_ids };
+      const payload = {
+        check_definition_id: selectedCheckId,
+        event_type: triggerDraft.event_type,
+        params_json: paramsJson,
+        sampling_rate: samplingRate,
+        sampling_autotune: triggerDraft.sampling_autotune,
+        sampling_step: samplingStep,
+      };
+      let saved: QCTrigger;
+      if (triggerDraft.id) {
+        saved = await apiRequest<QCTrigger>(`/api/qc/triggers/${triggerDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setTriggers((prev) => prev.map((trigger) => (trigger.id === saved.id ? saved : trigger)));
+      } else {
+        saved = await apiRequest<QCTrigger>('/api/qc/triggers', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setTriggers((prev) => [...prev, saved]);
+      }
+      setSelectedTriggerId(saved.id);
+      setTriggerDraft({
+        id: saved.id,
+        event_type: saved.event_type,
+        sampling_rate: String(saved.sampling_rate),
+        sampling_step: String(saved.sampling_step),
+        sampling_autotune: saved.sampling_autotune,
+        task_definition_ids: saved.params_json?.task_definition_ids ?? [],
+        station_ids: saved.params_json?.station_ids ?? [],
+      });
+      setTriggerStatus('Trigger guardado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar el trigger.';
+      setTriggerStatus(message);
+    }
+  };
+
+  const handleDeleteTrigger = async () => {
+    if (!triggerDraft.id) {
+      return;
+    }
+    setTriggerStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/triggers/${triggerDraft.id}`, { method: 'DELETE' });
+      setTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerDraft.id));
+      setSelectedTriggerId(null);
+      setTriggerDraft(emptyTriggerDraft());
+      setTriggerStatus('Trigger eliminado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar el trigger.';
+      setTriggerStatus(message);
+    }
+  };
+
+  const handleSaveApplicability = async () => {
+    if (!selectedCheckId) {
+      setApplicabilityStatus('Seleccione una revision antes de crear una regla.');
+      return;
+    }
+    const rawModuleNumber = applicabilityDraft.module_number.trim();
+    const moduleNumber = rawModuleNumber ? Number(rawModuleNumber) : null;
+    if (
+      rawModuleNumber &&
+      (!Number.isInteger(Number(rawModuleNumber)) || Number(rawModuleNumber) <= 0)
+    ) {
+      setApplicabilityStatus('El numero de modulo debe ser un entero positivo.');
+      return;
+    }
+    setApplicabilityStatus(null);
+    try {
+      const payload = {
+        check_definition_id: selectedCheckId,
+        house_type_id: applicabilityDraft.house_type_id,
+        sub_type_id: applicabilityDraft.sub_type_id,
+        module_number: moduleNumber,
+        panel_definition_id: applicabilityDraft.panel_definition_id,
+        force_required: applicabilityDraft.force_required,
+        effective_from: applicabilityDraft.effective_from || null,
+        effective_to: applicabilityDraft.effective_to || null,
+      };
+      let saved: QCApplicability;
+      if (applicabilityDraft.id) {
+        saved = await apiRequest<QCApplicability>(
+          `/api/qc/applicability/${applicabilityDraft.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          }
+        );
+        setApplicability((prev) => prev.map((rule) => (rule.id === saved.id ? saved : rule)));
+      } else {
+        saved = await apiRequest<QCApplicability>('/api/qc/applicability', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setApplicability((prev) => [...prev, saved]);
+      }
+      setSelectedApplicabilityId(saved.id);
+      setApplicabilityDraft({
+        id: saved.id,
+        house_type_id: saved.house_type_id,
+        sub_type_id: saved.sub_type_id,
+        module_number: saved.module_number ? String(saved.module_number) : '',
+        panel_definition_id: saved.panel_definition_id,
+        force_required: saved.force_required,
+        effective_from: saved.effective_from ?? '',
+        effective_to: saved.effective_to ?? '',
+      });
+      setApplicabilityStatus('Regla guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la regla.';
+      setApplicabilityStatus(message);
+    }
+  };
+
+  const handleDeleteApplicability = async () => {
+    if (!applicabilityDraft.id) {
+      return;
+    }
+    setApplicabilityStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/applicability/${applicabilityDraft.id}`, {
+        method: 'DELETE',
+      });
+      setApplicability((prev) => prev.filter((rule) => rule.id !== applicabilityDraft.id));
+      setSelectedApplicabilityId(null);
+      setApplicabilityDraft(emptyApplicabilityDraft());
+      setApplicabilityStatus('Regla eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la regla.';
+      setApplicabilityStatus(message);
+    }
+  };
+
+  const selectTrigger = (trigger: QCTrigger) => {
+    setSelectedTriggerId(trigger.id);
+    setTriggerDraft({
+      id: trigger.id,
+      event_type: trigger.event_type,
+      sampling_rate: String(trigger.sampling_rate),
+      sampling_step: String(trigger.sampling_step),
+      sampling_autotune: trigger.sampling_autotune,
+      task_definition_ids: trigger.params_json?.task_definition_ids ?? [],
+      station_ids: trigger.params_json?.station_ids ?? [],
+    });
+    setTriggerStatus(null);
+  };
+
+  const selectApplicability = (rule: QCApplicability) => {
+    setSelectedApplicabilityId(rule.id);
+    setApplicabilityDraft({
+      id: rule.id,
+      house_type_id: rule.house_type_id,
+      sub_type_id: rule.sub_type_id,
+      module_number: rule.module_number ? String(rule.module_number) : '',
+      panel_definition_id: rule.panel_definition_id,
+      force_required: rule.force_required,
+      effective_from: rule.effective_from ?? '',
+      effective_to: rule.effective_to ?? '',
+    });
+    setApplicabilityStatus(null);
+  };
+
+  const selectCategory = (category: QCCheckCategory) => {
+    setSelectedCategoryId(category.id);
+    setCategoryDraft({
+      id: category.id,
+      name: category.name,
+      parent_id: category.parent_id,
+      active: category.active,
+      sort_order: category.sort_order !== null ? String(category.sort_order) : '',
+    });
+    setCategoryStatus(null);
+  };
+
+  const selectFailureMode = (mode: QCFailureMode) => {
+    setSelectedFailureId(mode.id);
+    setFailureDraft({
+      id: mode.id,
+      check_definition_id: mode.check_definition_id,
+      name: mode.name,
+      description: mode.description ?? '',
+      default_severity_level: mode.default_severity_level,
+      default_rework_description: mode.default_rework_description ?? '',
+      require_evidence: mode.require_evidence,
+      require_measurement: mode.require_measurement,
+      active: mode.active,
+    });
+    setFailureStatus(null);
+  };
+
+  const filteredTasks = useMemo(() => {
+    const query = normalizeSearch(triggerSearch.trim());
+    if (!query) {
+      return tasks;
+    }
+    return tasks.filter((task) => normalizeSearch(task.name).includes(query));
+  }, [tasks, triggerSearch]);
+
+  const filteredStations = useMemo(() => {
+    const query = normalizeSearch(triggerSearch.trim());
+    if (!query) {
+      return stations;
+    }
+    return stations.filter((station) => normalizeSearch(station.name).includes(query));
+  }, [stations, triggerSearch]);
+
+  const subTypesForHouse = useMemo(() => {
+    if (!applicabilityDraft.house_type_id) {
+      return houseSubTypes;
+    }
+    return houseSubTypes.filter((sub) => sub.house_type_id === applicabilityDraft.house_type_id);
+  }, [houseSubTypes, applicabilityDraft.house_type_id]);
+
+  const filteredPanels = useMemo(() => {
+    return panelDefinitions.filter((panel) => {
+      if (applicabilityDraft.house_type_id && panel.house_type_id !== applicabilityDraft.house_type_id) {
+        return false;
+      }
+      if (applicabilityDraft.sub_type_id && panel.sub_type_id !== applicabilityDraft.sub_type_id) {
+        return false;
+      }
+      const moduleNumber = applicabilityDraft.module_number.trim()
+        ? Number(applicabilityDraft.module_number)
+        : null;
+      if (moduleNumber && panel.module_sequence_number !== moduleNumber) {
+        return false;
+      }
+      return true;
+    });
+  }, [panelDefinitions, applicabilityDraft]);
+
+  const renderCheckRow = (check: QCCheckDefinition) => {
+    const isSelected = selectedCheckId === check.id;
+    const categoryLabel = check.category_id
+      ? categoryNameById.get(check.category_id) ?? 'Sin categoria'
+      : 'Sin categoria';
+    return (
+      <button
+        key={check.id}
+        onClick={() => setSelectedCheckId(check.id)}
+        className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
+          isSelected ? 'bg-blue-50/60' : 'bg-white hover:bg-gray-50'
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className={`truncate text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+              {check.name}
+            </p>
+            {!check.active && (
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                Inactivo
+              </span>
+            )}
+          </div>
+          <p className="truncate text-xs text-gray-500">
+            {check.kind === 'triggered' ? 'Disparado' : 'Plantilla manual'} · {categoryLabel}
+          </p>
+        </div>
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${
+            check.active ? 'bg-emerald-500' : 'bg-gray-300'
+          }`}
+        />
+      </button>
+    );
+  };
+
   return (
-    <div className="p-8 max-w-[1600px] mx-auto">
-      <div className="flex justify-end mb-8">
-        <button className="flex items-center px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 font-medium transition-colors shadow-sm">
-          <Plus className="w-4 h-4 mr-2" />
-          Crear definicion
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button
+          onClick={handleAddCheck}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
+        >
+          <Plus className="h-4 w-4" /> Agregar revision
         </button>
+        <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+          <Filter className="h-3.5 w-3.5" /> {summaryLabel}
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-         <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50/50 text-xs uppercase font-bold text-slate-400 border-b border-gray-100">
-               <tr>
-                 <th className="px-6 py-4 w-1/4">Nombre de definicion</th>
-                 <th className="px-6 py-4">Disparador y alcance</th>
-                 <th className="px-6 py-4">Estrategia de muestreo</th>
-                 <th className="px-6 py-4">Vista previa de guia</th>
-                 <th className="px-6 py-4 text-right">Acciones</th>
-               </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-               {checks.map(check => (
-                 <tr key={check.id} className="hover:bg-slate-50 transition-colors group">
-                    <td className="px-6 py-5">
-                        <div className="flex items-start">
-                            <div className="mr-3 mt-1 p-2 bg-slate-100 rounded text-slate-500">
-                                <Target className="w-4 h-4" />
-                            </div>
-                            <div>
-                                <div className="font-bold text-slate-900 text-sm">{check.name}</div>
-                                <div className="text-xs text-slate-400 font-mono mt-0.5">{check.id}</div>
-                                <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 uppercase tracking-wide">
-                                    {check.category}
-                                </div>
-                            </div>
-                        </div>
-                    </td>
-                    <td className="px-6 py-5">
-                        <div className="space-y-2">
-                            <div className="flex items-center text-sm text-slate-700">
-                                <div className="w-6 flex justify-center mr-2">
-                                    {getTriggerIcon(check.trigger)}
-                                </div>
-                                <span className="font-medium">{check.trigger}</span>
-                            </div>
-                            <div className="flex items-center text-xs text-slate-500">
-                                <div className="w-6 flex justify-center mr-2">
-                                    <Sliders className="w-3.5 h-3.5 text-slate-400" />
-                                </div>
-                                {check.applicability}
-                            </div>
-                        </div>
-                    </td>
-                    <td className="px-6 py-5">
-                        <div className="w-48">
-                            <div className="flex justify-between text-xs font-bold text-slate-600 mb-1.5">
-                                <span>{(check.samplingRate * 100).toFixed(0)}% tasa</span>
-                                <span className="text-slate-400">Objetivo</span>
-                            </div>
-                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div 
-                                    className={`h-full rounded-full ${
-                                        check.samplingRate === 1.0 ? 'bg-emerald-500' : 
-                                        check.samplingRate >= 0.5 ? 'bg-blue-500' : 'bg-amber-400'
-                                    }`} 
-                                    style={{ width: `${check.samplingRate * 100}%` }}
-                                ></div>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-1.5">
-                                {check.samplingRate === 1.0
-                                  ? 'Cada unidad revisada'
-                                  : 'Muestreo aleatorio habilitado'}
-                            </div>
-                        </div>
-                    </td>
-                    <td className="px-6 py-5">
-                        <p className="text-sm text-slate-500 line-clamp-2 max-w-xs leading-relaxed">
-                            {check.guidance}
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_1.9fr] items-start">
+        <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Biblioteca de checks</h2>
+              <p className="text-xs text-gray-500">{summaryLabel}</p>
+            </div>
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
+              <input
+                type="search"
+                placeholder="Buscar..."
+                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                value={checkSearch}
+                onChange={(event) => setCheckSearch(event.target.value)}
+              />
+            </label>
+          </div>
+
+          {loading && (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
+              Cargando revisiones...
+            </div>
+          )}
+          {!loading && filteredChecks.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
+              No hay revisiones que coincidan con esa busqueda.
+            </div>
+          )}
+
+          {!loading && <div className="divide-y divide-gray-100">{filteredChecks.map(renderCheckRow)}</div>}
+        </section>
+
+        <aside className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    Categorias
+                  </p>
+                  <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
+                    Biblioteca QC
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategoryId(null);
+                      setCategoryDraft(emptyCategoryDraft());
+                      setCategoryStatus(null);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Nueva
+                  </button>
+                  <ListChecks className="h-5 w-5 text-[var(--ink-muted)]" />
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3">
+                <div className="max-h-40 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)]">
+                  {categories.length === 0 ? (
+                    <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                      Sin categorias registradas.
+                    </p>
+                  ) : (
+                    categories.map((category) => (
+                      <button
+                        key={category.id}
+                        onClick={() => selectCategory(category)}
+                        className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                          selectedCategoryId === category.id ? 'bg-white' : 'bg-transparent'
+                        }`}
+                      >
+                        <span className="truncate text-[var(--ink)]">{category.name}</span>
+                        {!category.active && (
+                          <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                            Inactivo
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="space-y-3">
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Nombre
+                    <input
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={categoryDraft.name}
+                      onChange={(event) =>
+                        setCategoryDraft((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Categoria padre
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={categoryDraft.parent_id ?? ''}
+                      onChange={(event) =>
+                        setCategoryDraft((prev) => ({
+                          ...prev,
+                          parent_id: event.target.value ? Number(event.target.value) : null,
+                        }))
+                      }
+                    >
+                      <option value="">Sin categoria padre</option>
+                      {categories
+                        .filter((category) => category.id !== categoryDraft.id)
+                        .map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Orden
+                      <input
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={categoryDraft.sort_order}
+                        onChange={(event) =>
+                          setCategoryDraft((prev) => ({ ...prev, sort_order: event.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Estado
+                      <select
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={categoryDraft.active ? 'Activo' : 'Inactivo'}
+                        onChange={(event) =>
+                          setCategoryDraft((prev) => ({
+                            ...prev,
+                            active: event.target.value === 'Activo',
+                          }))
+                        }
+                      >
+                        <option value="Activo">Activo</option>
+                        <option value="Inactivo">Inactivo</option>
+                      </select>
+                    </label>
+                  </div>
+                  {categoryStatus && (
+                    <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                      {categoryStatus}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={handleSaveCategory}
+                      className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                    >
+                      Guardar
+                    </button>
+                    <button
+                      onClick={handleDeleteCategory}
+                      disabled={!categoryDraft.id}
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                    >
+                      <Trash2 className="h-4 w-4" /> Eliminar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+          </div>
+
+          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Editor de revision
+                </p>
+                <h2 className="mt-2 text-lg font-display text-[var(--ink)]">
+                  {checkDraft.id ? `Revision #${checkDraft.id}` : 'Nueva revision'}
+                </h2>
+              </div>
+              <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(
+                [
+                  { key: 'definition', label: 'Definicion' },
+                  { key: 'triggers', label: 'Triggers' },
+                  { key: 'applicability', label: 'Aplicabilidad' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setSelectedTab(tab.key)}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                    selectedTab === tab.key
+                      ? 'bg-[var(--ink)] text-white'
+                      : 'bg-white text-[var(--ink)] border border-black/10'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {selectedTab === 'definition' && (
+              <div className="mt-6 space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Nombre
+                    <input
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.name}
+                      onChange={(event) => updateCheckDraft({ name: event.target.value })}
+                    />
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Categoria
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.category_id ?? ''}
+                      onChange={(event) =>
+                        updateCheckDraft({
+                          category_id: event.target.value ? Number(event.target.value) : null,
+                        })
+                      }
+                    >
+                      <option value="">Sin categoria</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Tipo
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.kind}
+                      onChange={(event) =>
+                        updateCheckDraft({ kind: event.target.value as QCCheckKind })
+                      }
+                    >
+                      <option value="triggered">Disparado</option>
+                      <option value="manual_template">Plantilla manual</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Estado
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.active ? 'Activo' : 'Inactivo'}
+                      onChange={(event) =>
+                        updateCheckDraft({ active: event.target.value === 'Activo' })
+                      }
+                    >
+                      <option value="Activo">Activo</option>
+                      <option value="Inactivo">Inactivo</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Version
+                    <input
+                      type="number"
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.version}
+                      onChange={(event) =>
+                        updateCheckDraft({ version: Number(event.target.value) || 1 })
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="text-sm text-[var(--ink-muted)]">
+                  Guia
+                  <textarea
+                    className="mt-2 min-h-[96px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                    value={checkDraft.guidance_text}
+                    onChange={(event) =>
+                      updateCheckDraft({ guidance_text: event.target.value })
+                    }
+                  />
+                </label>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Modos de falla
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        {selectedCheckId
+                          ? 'Asignados a la revision o globales.'
+                          : 'Cree una revision para asignar modos de falla.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFailureId(null);
+                        setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Nuevo
+                    </button>
+                  </div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                    <div className="max-h-52 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                      {filteredFailureModes.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          No hay modos de falla registrados.
                         </p>
-                        <div className="mt-2 text-xs font-medium text-slate-400">
-                            {check.steps.length} paso{check.steps.length !== 1 && 's'} configurado{check.steps.length !== 1 && 's'}
-                        </div>
-                    </td>
-                    <td className="px-6 py-5 text-right">
-                        <div className="flex items-center justify-end space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button className="p-2 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
-                                <Edit2 className="w-4 h-4" />
+                      ) : (
+                        filteredFailureModes.map((mode) => (
+                          <button
+                            key={mode.id}
+                            onClick={() => selectFailureMode(mode)}
+                            className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                              selectedFailureId === mode.id ? 'bg-white' : 'bg-transparent'
+                            }`}
+                          >
+                            <span className="truncate text-[var(--ink)]">{mode.name}</span>
+                            {mode.check_definition_id === null && (
+                              <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                                Global
+                              </span>
+                            )}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Nombre
+                        <input
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.name}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Aplica a
+                        <select
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.check_definition_id ?? ''}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              check_definition_id: event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            }))
+                          }
+                        >
+                          <option value="">Global</option>
+                          {checks.map((check) => (
+                            <option key={check.id} value={check.id}>
+                              {check.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Severidad sugerida
+                        <select
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.default_severity_level ?? ''}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              default_severity_level: event.target.value
+                                ? (event.target.value as QCSeverityLevelKey)
+                                : null,
+                            }))
+                          }
+                        >
+                          <option value="">Sin severidad</option>
+                          {severityOptions.map((level) => (
+                            <option key={level.value} value={level.value}>
+                              {level.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Descripcion
+                        <textarea
+                          className="mt-2 min-h-[80px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.description}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              description: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Re-trabajo sugerido
+                        <textarea
+                          className="mt-2 min-h-[80px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.default_rework_description}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              default_rework_description: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <div className="grid gap-2 text-sm text-[var(--ink)]">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={failureDraft.require_evidence}
+                            onChange={(event) =>
+                              setFailureDraft((prev) => ({
+                                ...prev,
+                                require_evidence: event.target.checked,
+                              }))
+                            }
+                          />
+                          Requiere evidencia
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={failureDraft.require_measurement}
+                            onChange={(event) =>
+                              setFailureDraft((prev) => ({
+                                ...prev,
+                                require_measurement: event.target.checked,
+                              }))
+                            }
+                          />
+                          Requiere medicion
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={failureDraft.active}
+                            onChange={(event) =>
+                              setFailureDraft((prev) => ({
+                                ...prev,
+                                active: event.target.checked,
+                              }))
+                            }
+                          />
+                          Activo
+                        </label>
+                      </div>
+                      {failureStatus && (
+                        <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                          {failureStatus}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={handleSaveFailureMode}
+                          className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                        >
+                          Guardar modo
+                        </button>
+                        <button
+                          onClick={handleDeleteFailureMode}
+                          disabled={!failureDraft.id}
+                          className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" /> Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {checkStatus && (
+                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                    {checkStatus}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleSaveCheck}
+                    disabled={saving}
+                    className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {saving ? 'Guardando...' : 'Guardar revision'}
+                  </button>
+                  <button
+                    onClick={handleDeleteCheck}
+                    disabled={saving || !checkDraft.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                  >
+                    <Trash2 className="h-4 w-4" /> Eliminar
+                  </button>
+                  <label className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                    <input
+                      type="checkbox"
+                      checked={showGlobalFailureModes}
+                      onChange={(event) => setShowGlobalFailureModes(event.target.checked)}
+                    />
+                    Mostrar modos globales
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'triggers' && (
+              <div className="mt-6 space-y-5">
+                <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                    <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                          Triggers actuales
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {filteredTriggers.length} configurados
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTriggerId(null);
+                          setTriggerDraft(emptyTriggerDraft());
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Nuevo
+                      </button>
+                    </div>
+                    <div className="max-h-60 overflow-auto">
+                      {filteredTriggers.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          No hay triggers configurados.
+                        </p>
+                      ) : (
+                        filteredTriggers.map((trigger) => (
+                          <button
+                            key={trigger.id}
+                            onClick={() => selectTrigger(trigger)}
+                            className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                              selectedTriggerId === trigger.id ? 'bg-white' : 'bg-transparent'
+                            }`}
+                          >
+                            <span className="truncate text-[var(--ink)]">
+                              {trigger.event_type === 'task_completed'
+                                ? 'Tarea completada'
+                                : 'Ingreso a estacion'}
+                            </span>
+                            <span className="text-[10px] text-[var(--ink-muted)]">
+                              {Math.round(trigger.sampling_rate * 100)}%
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Evento
+                      <select
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={triggerDraft.event_type}
+                        onChange={(event) => {
+                          const eventType = event.target.value as QCTriggerEventType;
+                          setTriggerDraft((prev) => ({
+                            ...prev,
+                            event_type: eventType,
+                            task_definition_ids:
+                              eventType === 'task_completed' ? prev.task_definition_ids : [],
+                            station_ids: eventType === 'enter_station' ? prev.station_ids : [],
+                          }));
+                        }}
+                      >
+                        <option value="task_completed">Tarea completada</option>
+                        <option value="enter_station">Ingreso a estacion</option>
+                      </select>
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Tasa base
+                        <input
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={triggerDraft.sampling_rate}
+                          onChange={(event) =>
+                            setTriggerDraft((prev) => ({
+                              ...prev,
+                              sampling_rate: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Paso de ajuste
+                        <input
+                          className={`mt-2 w-full rounded-xl border px-3 py-2 text-sm ${
+                            triggerDraft.sampling_autotune
+                              ? 'border-black/10'
+                              : 'border-black/5 bg-gray-100 text-gray-400'
+                          }`}
+                          value={triggerDraft.sampling_step}
+                          onChange={(event) =>
+                            setTriggerDraft((prev) => ({
+                              ...prev,
+                              sampling_step: event.target.value,
+                            }))
+                          }
+                          disabled={!triggerDraft.sampling_autotune}
+                        />
+                      </label>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={triggerDraft.sampling_autotune}
+                        onChange={(event) =>
+                          setTriggerDraft((prev) => ({
+                            ...prev,
+                            sampling_autotune: event.target.checked,
+                          }))
+                        }
+                      />
+                      Muestreo adaptativo
+                    </label>
+
+                    <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
+                      <label className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                        <Search className="h-3.5 w-3.5" />
+                        <input
+                          placeholder="Filtrar..."
+                          value={triggerSearch}
+                          onChange={(event) => setTriggerSearch(event.target.value)}
+                          className="w-full bg-transparent text-xs outline-none"
+                        />
+                      </label>
+                      <div className="mt-2 max-h-40 overflow-auto text-xs">
+                        {triggerDraft.event_type === 'task_completed' ? (
+                          filteredTasks.length === 0 ? (
+                            <p className="text-[var(--ink-muted)]">No hay tareas disponibles.</p>
+                          ) : (
+                            filteredTasks.map((task) => (
+                              <label key={task.id} className="flex items-center gap-2 py-1">
+                                <input
+                                  type="checkbox"
+                                  checked={triggerDraft.task_definition_ids.includes(task.id)}
+                                  onChange={() =>
+                                    setTriggerDraft((prev) => {
+                                      const selected = new Set(prev.task_definition_ids);
+                                      if (selected.has(task.id)) {
+                                        selected.delete(task.id);
+                                      } else {
+                                        selected.add(task.id);
+                                      }
+                                      return {
+                                        ...prev,
+                                        task_definition_ids: Array.from(selected),
+                                      };
+                                    })
+                                  }
+                                />
+                                <span className="text-[var(--ink)]">{task.name}</span>
+                              </label>
+                            ))
+                          )
+                        ) : filteredStations.length === 0 ? (
+                          <p className="text-[var(--ink-muted)]">No hay estaciones disponibles.</p>
+                        ) : (
+                          filteredStations.map((station) => (
+                            <label key={station.id} className="flex items-center gap-2 py-1">
+                              <input
+                                type="checkbox"
+                                checked={triggerDraft.station_ids.includes(station.id)}
+                                onChange={() =>
+                                  setTriggerDraft((prev) => {
+                                    const selected = new Set(prev.station_ids);
+                                    if (selected.has(station.id)) {
+                                      selected.delete(station.id);
+                                    } else {
+                                      selected.add(station.id);
+                                    }
+                                    return {
+                                      ...prev,
+                                      station_ids: Array.from(selected),
+                                    };
+                                  })
+                                }
+                              />
+                              <span className="text-[var(--ink)]">{station.name}</span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {triggerStatus && (
+                      <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                        {triggerStatus}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleSaveTrigger}
+                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Guardar trigger
+                      </button>
+                      <button
+                        onClick={handleDeleteTrigger}
+                        disabled={!triggerDraft.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                      >
+                        <Trash2 className="h-4 w-4" /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'applicability' && (
+              <div className="mt-6 space-y-5">
+                <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                    <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                          Reglas vigentes
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {filteredApplicability.length} reglas
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedApplicabilityId(null);
+                          setApplicabilityDraft(emptyApplicabilityDraft());
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Nueva
+                      </button>
+                    </div>
+                    <div className="max-h-60 overflow-auto">
+                      {filteredApplicability.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          Sin reglas configuradas.
+                        </p>
+                      ) : (
+                        filteredApplicability.map((rule) => {
+                          const houseLabel = rule.house_type_id
+                            ? houseTypeNameById.get(rule.house_type_id) ?? `Tipo ${rule.house_type_id}`
+                            : 'Todos';
+                          const subLabel = rule.sub_type_id
+                            ? houseSubTypeNameById.get(rule.sub_type_id) ?? `Subtipo ${rule.sub_type_id}`
+                            : 'Cualquier subtipo';
+                          return (
+                            <button
+                              key={rule.id}
+                              onClick={() => selectApplicability(rule)}
+                              className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                                selectedApplicabilityId === rule.id ? 'bg-white' : 'bg-transparent'
+                              }`}
+                            >
+                              <span className="truncate text-[var(--ink)]">
+                                {houseLabel} · {subLabel}
+                              </span>
+                              {rule.force_required && (
+                                <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
+                                  Forzado
+                                </span>
+                              )}
                             </button>
-                            <button className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors">
-                                <Trash2 className="w-4 h-4" />
-                            </button>
-                        </div>
-                    </td>
-                 </tr>
-               ))}
-            </tbody>
-         </table>
-         {checks.length === 0 && (
-             <div className="p-12 text-center text-slate-400 border-t border-gray-100">
-                 Aun no hay revisiones definidas.
-             </div>
-         )}
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Tipo de casa
+                      <select
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={applicabilityDraft.house_type_id ?? ''}
+                        onChange={(event) =>
+                          setApplicabilityDraft((prev) => ({
+                            ...prev,
+                            house_type_id: event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          }))
+                        }
+                      >
+                        <option value="">Todos</option>
+                        {houseTypes.map((house) => (
+                          <option key={house.id} value={house.id}>
+                            {house.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Subtipo
+                      <select
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={applicabilityDraft.sub_type_id ?? ''}
+                        onChange={(event) =>
+                          setApplicabilityDraft((prev) => ({
+                            ...prev,
+                            sub_type_id: event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          }))
+                        }
+                      >
+                        <option value="">Todos</option>
+                        {subTypesForHouse.map((sub) => (
+                          <option key={sub.id} value={sub.id}>
+                            {sub.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Numero de modulo
+                      <input
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={applicabilityDraft.module_number}
+                        onChange={(event) =>
+                          setApplicabilityDraft((prev) => ({
+                            ...prev,
+                            module_number: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="text-sm text-[var(--ink-muted)]">
+                      Panel
+                      <select
+                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                        value={applicabilityDraft.panel_definition_id ?? ''}
+                        onChange={(event) =>
+                          setApplicabilityDraft((prev) => ({
+                            ...prev,
+                            panel_definition_id: event.target.value
+                              ? Number(event.target.value)
+                              : null,
+                          }))
+                        }
+                      >
+                        <option value="">Todos</option>
+                        {filteredPanels.map((panel) => (
+                          <option key={panel.id} value={panel.id}>
+                            {panel.panel_code} · M{panel.module_sequence_number}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Vigencia inicio
+                        <input
+                          type="date"
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={applicabilityDraft.effective_from}
+                          onChange={(event) =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              effective_from: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Vigencia fin
+                        <input
+                          type="date"
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={applicabilityDraft.effective_to}
+                          onChange={(event) =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              effective_to: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={applicabilityDraft.force_required}
+                        onChange={(event) =>
+                          setApplicabilityDraft((prev) => ({
+                            ...prev,
+                            force_required: event.target.checked,
+                          }))
+                        }
+                      />
+                      Forzar apertura (ignora muestreo)
+                    </label>
+
+                    {applicabilityStatus && (
+                      <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                        {applicabilityStatus}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleSaveApplicability}
+                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Guardar regla
+                      </button>
+                      <button
+                        onClick={handleDeleteApplicability}
+                        disabled={!applicabilityDraft.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                      >
+                        <Trash2 className="h-4 w-4" /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        </aside>
       </div>
     </div>
   );

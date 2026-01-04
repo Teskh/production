@@ -13,7 +13,7 @@
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
 - Failure modes: predefined reasons for a failed check, each with a default severity and optional defaults for rework/evidence.
-- Severity: chosen on a failed check from the check's allowed severity levels, prefilled by failure mode defaults.
+- Severity: chosen on a failed check from a fixed three-level scale (Baja, Media, Crítica), prefilled by failure mode defaults.
 - Evidence: photos or videos attached to an execution.
 - Rework tasks: corrective work created from failed checks.
 - Worker notifications: alerts for the worker whose work triggered the failed check.
@@ -28,7 +28,7 @@
 
 ## Check lifecycle
 - Open checks are executed by QC staff with an outcome and notes.
-- Failed outcomes require selecting a severity level from the check's configured severity options.
+- Failed outcomes require selecting a severity level from the fixed three-level scale.
 - Failed outcomes can select one or more failure modes; defaults are used only as prefill.
 - Pass/waive/skip closes the check and auto-completes any open rework for it.
 - Fail marks the check failed, creates a rework task, and alerts the original worker.

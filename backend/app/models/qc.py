@@ -24,6 +24,7 @@ from app.models.enums import (
     QCExecutionOutcome,
     QCNotificationStatus,
     QCReworkStatus,
+    QCSeverityLevel,
     QCTriggerEventType,
     TaskScope,
 )
@@ -36,12 +37,27 @@ class QCCheckDefinition(Base):
     name: Mapped[str] = mapped_column(String(200))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     guidance_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    version: Mapped[int] = mapped_column(Integer)
+    version: Mapped[int] = mapped_column(Integer, default=1)
     kind: Mapped[QCCheckKind] = mapped_column(Enum(QCCheckKind))
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_check_categories.id"), nullable=True
+    )
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QCCheckCategory(Base):
+    __tablename__ = "qc_check_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_check_categories.id"), nullable=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class QCTrigger(Base):
@@ -102,6 +118,9 @@ class QCCheckInstance(Base):
         ForeignKey("stations.id"), nullable=True
     )
     status: Mapped[QCCheckStatus] = mapped_column(Enum(QCCheckStatus))
+    severity_level: Mapped[QCSeverityLevel | None] = mapped_column(
+        Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
+    )
     sampling_selected: Mapped[bool] = mapped_column(Boolean, default=True)
     sampling_probability: Mapped[float] = mapped_column(Float, default=1.0)
     opened_by_user_id: Mapped[int | None] = mapped_column(
@@ -125,6 +144,28 @@ class QCExecution(Base):
         ForeignKey("admin_users.id"), index=True
     )
     performed_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class QCFailureModeDefinition(Base):
+    __tablename__ = "qc_failure_mode_definitions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_definition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_check_definitions.id"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_severity_level: Mapped[QCSeverityLevel | None] = mapped_column(
+        Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
+    )
+    default_rework_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    require_evidence: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_measurement: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id"), nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class MediaAsset(Base):

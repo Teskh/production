@@ -19,6 +19,9 @@
 ## 2026-01-02
 - Force-deleting a house type cascades through related production/config data (work orders/units, panel units, task/QC history, applicability/duration rules, parameter values) so the delete can complete without leaving orphaned rows.
 
+## 2026-01-04
+- QC configuration is managed via new REST endpoints under `/api/qc/*` (categories, check definitions, triggers, applicability rules, failure modes), with severity levels fixed to Baja/Media/Crítica.
+
 ## 2026-01-05
 - Production queue scheduling stores `planned_sequence`, `planned_start_datetime`, and `planned_assembly_line` on `work_units` to order modules directly; `work_orders.planned_sequence` is treated as the first module’s sequence for that house.
 - Batch house identifiers are generated from `house_identifier_base` by incrementing any trailing digits (preserving padding); if none exist, the system appends a `-01` style suffix.

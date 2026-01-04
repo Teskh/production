@@ -10,6 +10,7 @@ from app.api.routes import (
     panel_definitions,
     pause_reasons,
     production_queue,
+    qc_config,
     stations,
     task_definitions,
     task_rules,
@@ -28,6 +29,7 @@ api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
 api_router.include_router(stations.router, prefix="/stations", tags=["stations"])
 api_router.include_router(pause_reasons.router, prefix="/pause-reasons", tags=["pause-reasons"])
 api_router.include_router(comment_templates.router, prefix="/comment-templates", tags=["comment-templates"])
+api_router.include_router(qc_config.router, prefix="/qc", tags=["qc-config"])
 api_router.include_router(house_types.router, prefix="/house-types", tags=["house-types"])
 api_router.include_router(
     panel_definitions.router, prefix="/panel-definitions", tags=["panel-definitions"]

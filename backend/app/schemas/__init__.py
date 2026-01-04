@@ -5,6 +5,7 @@ __all__ = [
     "houses",
     "panels",
     "parameters",
+    "qc",
     "stations",
     "tasks",
     "worker_sessions",
