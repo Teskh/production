@@ -53,6 +53,21 @@ class StationSnapshot(BaseModel):
     pause_reasons: list[PauseReasonRead]
     comment_templates: list[CommentTemplateRead]
     worker_active_nonconcurrent_task_instance_ids: list[int] = Field(default_factory=list)
+    qc_rework_tasks: list["StationQCReworkTask"] = Field(default_factory=list)
+    qc_notification_count: int = 0
+
+
+class StationQCReworkTask(BaseModel):
+    id: int
+    check_instance_id: int
+    description: str
+    status: str
+    work_unit_id: int
+    panel_unit_id: int | None = None
+    module_number: int
+    panel_code: str | None = None
+    station_id: int | None = None
+    created_at: datetime
 
 
 class TaskStartRequest(BaseModel):

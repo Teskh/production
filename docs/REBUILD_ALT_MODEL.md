@@ -357,9 +357,10 @@ Advancement logic:
 `QCTrigger`
 - id
 - check_definition_id
-- event_type (task_completed | enter_station)
-- params_json (e.g., `{"task_definition_ids": [1,2]}` or `{"station_ids": ["W3","A2"]}`)
+- event_type (task_completed)
+- params_json (e.g., `{"task_definition_ids": [1,2]}`)
 - sampling_rate (0.0–1.0, default 1.0)
+- current_sampling_rate (nullable; adaptive sampling live rate)
 - sampling_autotune (boolean)
 - sampling_step (default 0.2)
 
@@ -387,8 +388,6 @@ Advancement logic:
 - station_id (nullable)
 - status (Open | Closed)
 - severity_level (nullable, one of Baja | Media | Critica, set when an execution fails)
-- sampling_selected (boolean)
-- sampling_probability (float)
 - opened_by_user_id (nullable)
 - opened_at
 - closed_at (nullable)
@@ -459,7 +458,7 @@ Notes:
 - Manual QC entries are created as `QCCheckInstance` rows with `origin = manual`.
   - If created from a manual template, set `check_definition_id` and leave `ad_hoc_*` null.
   - If fully ad hoc, leave `check_definition_id` null and require `ad_hoc_title`.
-  - Manual checks bypass sampling: set `sampling_selected = true` and `sampling_probability = 1.0`.
+  - Manual checks bypass sampling and open immediately.
 - `opened_by_user_id` records the QC user for manual checks; triggered checks can leave it null or set to a system user.
 - `QCApplicability` can still scope manual templates; ad hoc checks bypass applicability filters.
 - Severity is fixed to Baja/Media/Critica across all checks; failure mode defaults only prefill the selection.
@@ -674,7 +673,7 @@ These are behavior and UX requirements from the legacy spec that are not capture
 - Preferred: unify via TaskSkillRequirement for both panel and module tasks.
 
 ### 5.7 QC workflows and sampling
-- Trigger types: task_completed (panel or module) and enter_station.
+- Trigger types: task_completed (panel or module) only.
 - Applicability rules match by house type, module number, and subtype; higher specificity wins.
 - Manual QC checks are created directly by QC staff against a module/panel (optional station context).
   - If created from a manual template, it uses `QCCheckDefinition.kind = manual_template`.

@@ -13,6 +13,7 @@ class TaskDefinitionBase(BaseModel):
     skippable: bool = False
     concurrent_allowed: bool = False
     advance_trigger: bool = False
+    is_rework: bool = False
     dependencies_json: list[int] | None = None
 
 
@@ -28,6 +29,7 @@ class TaskDefinitionUpdate(BaseModel):
     skippable: bool | None = None
     concurrent_allowed: bool | None = None
     advance_trigger: bool | None = None
+    is_rework: bool | None = None
     dependencies_json: list[int] | None = None
 
 
@@ -114,6 +116,7 @@ class TaskInstanceRead(BaseModel):
     work_unit_id: int
     panel_unit_id: int | None = None
     station_id: int
+    rework_task_id: int | None = None
     status: TaskStatus
     started_at: datetime | None = None
     completed_at: datetime | None = None

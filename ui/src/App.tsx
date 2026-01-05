@@ -18,6 +18,8 @@ import QCLibrary from './pages/qc/QCLibrary';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
+import Dashboards from './pages/admin/dashboards/Dashboards';
+import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import Personnel from './pages/admin/personnel/Personnel';
 import AdminTeam from './pages/admin/personnel/AdminTeam';
 import Assistance from './pages/admin/personnel/Assistance';
@@ -85,6 +87,10 @@ function App() {
           
           {/* Quality Config */}
           <Route path="qc-checks" element={<QCChecks />} />
+
+          {/* Dashboards */}
+          <Route path="dashboards" element={<Dashboards />} />
+          <Route path="dashboards/tasks" element={<DashboardTasks />} />
         </Route>
 
         {/* Utility Pages (Standalone?) - Spec says "accessed outside the primary navigation" */}

@@ -280,6 +280,8 @@ def start_task(
     task_def = db.get(TaskDefinition, payload.task_definition_id)
     if not task_def or not task_def.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
+    if task_def.is_rework:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rework tasks are handled separately")
     if task_def.scope != payload.scope:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task scope mismatch")
     worker_ids = payload.worker_ids or [worker.id]

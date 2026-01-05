@@ -8,7 +8,7 @@
 ## Core concepts
 - Check definitions: named checks with descriptions, active state, and sampling settings.
 - Check categories: hierarchical grouping for QC check definitions (category + optional subcategory).
-- Triggers: events that can open a check (task completion or station entry).
+- Triggers: events that can open a check (task completion).
 - Applicability rules: scope checks by house type, module number, and optional subtype.
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
@@ -19,7 +19,7 @@
 - Worker notifications: alerts for the worker whose work triggered the failed check.
 
 ## Triggering and sampling
-- A trigger fires on task completion or station entry.
+- A trigger fires on task completion.
 - Applicability uses most-specific-wins; if no rules exist, the check applies to all.
 - A force-required rule overrides sampling and always opens the check.
 - Sampling is deterministic per plan, check, and trigger event so results are repeatable.

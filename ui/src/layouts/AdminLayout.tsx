@@ -12,6 +12,7 @@ import {
   CheckSquare,
   Layers,
   Database,
+  BarChart3,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -81,6 +82,10 @@ const AdminLayout: React.FC = () => {
       title: 'Calidad',
       items: [{ name: 'Revisiones de QC', path: '/admin/qc-checks', icon: CheckSquare }],
     },
+    {
+      title: 'Analitica',
+      items: [{ name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
+    },
   ];
 
   return (
@@ -132,7 +137,8 @@ const AdminLayout: React.FC = () => {
                           to={item.path}
                           className={clsx(
                             "flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors",
-                            location.pathname === item.path
+                            location.pathname === item.path ||
+                              location.pathname.startsWith(`${item.path}/`)
                               ? "bg-white/15 text-white"
                               : "text-white/70 hover:bg-white/10 hover:text-white"
                           )}

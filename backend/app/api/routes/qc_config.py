@@ -23,7 +23,6 @@ from app.models.enums import (
     QCSeverityLevel,
     QCTriggerEventType,
 )
-from app.models.stations import Station
 from app.models.tasks import TaskDefinition
 from app.schemas.qc import (
     QCApplicabilityCreate,
@@ -112,28 +111,6 @@ def _validate_trigger_params(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="One or more task definitions not found",
-                )
-    if event_type == QCTriggerEventType.ENTER_STATION:
-        station_ids = params_json.get("station_ids")
-        if station_ids is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="params_json must include station_ids for enter_station",
-            )
-        if not isinstance(station_ids, list):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="station_ids must be a list",
-            )
-        unique_ids = sorted({int(station_id) for station_id in station_ids}) if station_ids else []
-        if unique_ids:
-            rows = list(
-                db.execute(select(Station.id).where(Station.id.in_(unique_ids))).scalars()
-            )
-            if len(rows) != len(unique_ids):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="One or more stations not found",
                 )
 
 

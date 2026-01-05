@@ -253,6 +253,7 @@ def station_snapshot(
             select(TaskDefinition)
             .where(TaskDefinition.active == True)
             .where(TaskDefinition.scope == task_scope)
+            .where(TaskDefinition.is_rework == False)
         ).scalars()
     )
     if station.role == StationRole.AUX and not task_definitions:
@@ -262,6 +263,7 @@ def station_snapshot(
                 select(TaskDefinition)
                 .where(TaskDefinition.active == True)
                 .where(TaskDefinition.scope == task_scope)
+                .where(TaskDefinition.is_rework == False)
             ).scalars()
         )
 

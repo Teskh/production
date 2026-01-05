@@ -5,7 +5,7 @@ import { useAdminHeader } from '../../../layouts/AdminLayout';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 type QCCheckKind = 'triggered' | 'manual_template';
-type QCTriggerEventType = 'task_completed' | 'enter_station';
+type QCTriggerEventType = 'task_completed';
 type QCSeverityLevelKey = 'baja' | 'media' | 'critica';
 type QCCheckMediaType = 'guidance' | 'reference';
 
@@ -138,7 +138,6 @@ type TriggerDraft = {
   sampling_step: string;
   sampling_autotune: boolean;
   task_definition_ids: number[];
-  station_ids: number[];
 };
 
 type ApplicabilityDraft = {
@@ -188,7 +187,6 @@ const emptyTriggerDraft = (): TriggerDraft => ({
   sampling_step: '0.2',
   sampling_autotune: false,
   task_definition_ids: [],
-  station_ids: [],
 });
 
 const emptyApplicabilityDraft = (): ApplicabilityDraft => ({
@@ -883,10 +881,7 @@ const QCChecks: React.FC = () => {
     }
     setTriggerStatus(null);
     try {
-      const paramsJson =
-        triggerDraft.event_type === 'task_completed'
-          ? { task_definition_ids: triggerDraft.task_definition_ids }
-          : { station_ids: triggerDraft.station_ids };
+      const paramsJson = { task_definition_ids: triggerDraft.task_definition_ids };
       const payload = {
         check_definition_id: selectedCheckId,
         event_type: triggerDraft.event_type,
@@ -917,7 +912,6 @@ const QCChecks: React.FC = () => {
         sampling_step: String(saved.sampling_step),
         sampling_autotune: saved.sampling_autotune,
         task_definition_ids: saved.params_json?.task_definition_ids ?? [],
-        station_ids: saved.params_json?.station_ids ?? [],
       });
       setTriggerStatus('Gatillante guardado.');
     } catch (error) {
@@ -1036,7 +1030,6 @@ const QCChecks: React.FC = () => {
       sampling_step: String(trigger.sampling_step),
       sampling_autotune: trigger.sampling_autotune,
       task_definition_ids: trigger.params_json?.task_definition_ids ?? [],
-      station_ids: trigger.params_json?.station_ids ?? [],
     });
     setTriggerStatus(null);
   };
@@ -1174,14 +1167,6 @@ const QCChecks: React.FC = () => {
         return a.name.localeCompare(b.name);
       });
   }, [catalogSequenceLabelByOrder, filteredTasks]);
-
-  const filteredStations = useMemo(() => {
-    const query = normalizeSearch(triggerSearch.trim());
-    if (!query) {
-      return stations;
-    }
-    return stations.filter((station) => normalizeSearch(station.name).includes(query));
-  }, [stations, triggerSearch]);
 
   const subTypesForHouse = useMemo(() => {
     if (!applicabilityDraft.house_type_id) {
@@ -1943,9 +1928,7 @@ const QCChecks: React.FC = () => {
                             }`}
                           >
                             <span className="truncate text-[var(--ink)]">
-                              {trigger.event_type === 'task_completed'
-                                ? 'Tarea completada'
-                                : 'Ingreso a estacion'}
+                              Tarea completada
                             </span>
                             <span className="text-[10px] text-[var(--ink-muted)]">
                               {Math.round(trigger.sampling_rate * 100)}%
@@ -1957,34 +1940,20 @@ const QCChecks: React.FC = () => {
                   </div>
 
                   <div className="space-y-3">
-                    <label className="text-sm text-[var(--ink-muted)]">
+                    <div className="text-sm text-[var(--ink-muted)]">
                       <span className="inline-flex items-center gap-2">
                         Evento
                         <span
                           className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
-                          title="Define cuando se dispara el gatillante (al completar una tarea o al ingresar a una estacion)."
+                          title="Define cuando se dispara el gatillante (al completar una tarea)."
                         >
                           i
                         </span>
                       </span>
-                      <select
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={triggerDraft.event_type}
-                        onChange={(event) => {
-                          const eventType = event.target.value as QCTriggerEventType;
-                          setTriggerDraft((prev) => ({
-                            ...prev,
-                            event_type: eventType,
-                            task_definition_ids:
-                              eventType === 'task_completed' ? prev.task_definition_ids : [],
-                            station_ids: eventType === 'enter_station' ? prev.station_ids : [],
-                          }));
-                        }}
-                      >
-                        <option value="task_completed">Tarea completada</option>
-                        <option value="enter_station">Ingreso a estacion</option>
-                      </select>
-                    </label>
+                      <div className="mt-2 rounded-xl border border-black/10 bg-gray-50 px-3 py-2 text-sm text-[var(--ink)]">
+                        Tarea completada
+                      </div>
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="text-sm text-[var(--ink-muted)]">
                         <span className="inline-flex items-center gap-2">
@@ -2067,71 +2036,43 @@ const QCChecks: React.FC = () => {
                         />
                       </label>
                       <div className="mt-2 max-h-40 overflow-auto text-xs">
-                        {triggerDraft.event_type === 'task_completed' ? (
-                          groupedTasks.length === 0 ? (
-                            <p className="text-[var(--ink-muted)]">No hay tareas disponibles.</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {groupedTasks.map((group) => (
-                                <div key={group.key}>
-                                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                    {group.name}
-                                  </p>
-                                  <div className="space-y-1">
-                                    {group.tasks.map((task) => (
-                                      <label key={task.id} className="flex items-center gap-2 py-1">
-                                        <input
-                                          type="checkbox"
-                                          checked={triggerDraft.task_definition_ids.includes(task.id)}
-                                          onChange={() =>
-                                            setTriggerDraft((prev) => {
-                                              const selected = new Set(prev.task_definition_ids);
-                                              if (selected.has(task.id)) {
-                                                selected.delete(task.id);
-                                              } else {
-                                                selected.add(task.id);
-                                              }
-                                              return {
-                                                ...prev,
-                                                task_definition_ids: Array.from(selected),
-                                              };
-                                            })
-                                          }
-                                        />
-                                        <span className="text-[var(--ink)]">{task.name}</span>
-                                      </label>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )
-                        ) : filteredStations.length === 0 ? (
-                          <p className="text-[var(--ink-muted)]">No hay estaciones disponibles.</p>
+                        {groupedTasks.length === 0 ? (
+                          <p className="text-[var(--ink-muted)]">No hay tareas disponibles.</p>
                         ) : (
-                          filteredStations.map((station) => (
-                            <label key={station.id} className="flex items-center gap-2 py-1">
-                              <input
-                                type="checkbox"
-                                checked={triggerDraft.station_ids.includes(station.id)}
-                                onChange={() =>
-                                  setTriggerDraft((prev) => {
-                                    const selected = new Set(prev.station_ids);
-                                    if (selected.has(station.id)) {
-                                      selected.delete(station.id);
-                                    } else {
-                                      selected.add(station.id);
-                                    }
-                                    return {
-                                      ...prev,
-                                      station_ids: Array.from(selected),
-                                    };
-                                  })
-                                }
-                              />
-                              <span className="text-[var(--ink)]">{station.name}</span>
-                            </label>
-                          ))
+                          <div className="space-y-2">
+                            {groupedTasks.map((group) => (
+                              <div key={group.key}>
+                                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                  {group.name}
+                                </p>
+                                <div className="space-y-1">
+                                  {group.tasks.map((task) => (
+                                    <label key={task.id} className="flex items-center gap-2 py-1">
+                                      <input
+                                        type="checkbox"
+                                        checked={triggerDraft.task_definition_ids.includes(task.id)}
+                                        onChange={() =>
+                                          setTriggerDraft((prev) => {
+                                            const selected = new Set(prev.task_definition_ids);
+                                            if (selected.has(task.id)) {
+                                              selected.delete(task.id);
+                                            } else {
+                                              selected.add(task.id);
+                                            }
+                                            return {
+                                              ...prev,
+                                              task_definition_ids: Array.from(selected),
+                                            };
+                                          })
+                                        }
+                                      />
+                                      <span className="text-[var(--ink)]">{task.name}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>

@@ -32,6 +32,7 @@ class TaskDefinition(Base):
     skippable: Mapped[bool] = mapped_column(Boolean, default=False)
     concurrent_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     advance_trigger: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_rework: Mapped[bool] = mapped_column(Boolean, default=False)
     dependencies_json: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
@@ -91,6 +92,9 @@ class TaskInstance(Base):
         ForeignKey("panel_units.id"), nullable=True
     )
     station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"), index=True)
+    rework_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_rework_tasks.id"), nullable=True
+    )
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.NOT_STARTED
     )

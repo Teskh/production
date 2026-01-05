@@ -47,3 +47,7 @@
 
 ## 2026-01-09
 - Task applicability defaults are now implied by `task_definitions` (absence of a scoped `TaskApplicability` row means applies=true), and default-scope applicability rows are no longer used.
+
+## 2026-01-10
+- Task analysis dashboard assumes a `GET /api/task-analysis` endpoint that accepts `house_type_id`, `panel_definition_id`, `task_definition_id`, `station_id`, `worker_id`, `from_date`, and `to_date` query params and returns `data_points`, `stats.average_duration`, and `expected_reference_minutes` in the legacy shape until the backend analytics routes are rebuilt.
+- When `panel_definitions.applicable_task_ids` is null, `panel_definitions.task_durations_json` is assumed to align with panel-scope tasks ordered by `default_station_sequence` then name (matching the House Configurator UI ordering) for task analysis expected-minute lookup.

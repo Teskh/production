@@ -67,7 +67,6 @@ class QCCheckKind(str, Enum):
 
 class QCTriggerEventType(str, Enum):
     TASK_COMPLETED = "task_completed"
-    ENTER_STATION = "enter_station"
 
 
 class QCCheckOrigin(str, Enum):

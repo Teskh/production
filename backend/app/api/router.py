@@ -12,6 +12,7 @@ from app.api.routes import (
     production_queue,
     qc_config,
     stations,
+    task_analysis,
     task_definitions,
     task_rules,
     worker_sessions,
@@ -39,6 +40,7 @@ api_router.include_router(
 )
 api_router.include_router(task_definitions.router, prefix="/task-definitions", tags=["task-definitions"])
 api_router.include_router(task_rules.router, prefix="/task-rules", tags=["task-rules"])
+api_router.include_router(task_analysis.router, prefix="/task-analysis", tags=["task-analysis"])
 api_router.include_router(production_queue.router, prefix="/production-queue", tags=["production-queue"])
 api_router.include_router(worker_sessions.router, prefix="/worker-sessions", tags=["worker-sessions"])
 api_router.include_router(worker_station.router, prefix="/worker-stations", tags=["worker-stations"])

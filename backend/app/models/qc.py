@@ -73,6 +73,7 @@ class QCTrigger(Base):
     sampling_rate: Mapped[float] = mapped_column(Float, default=1.0)
     sampling_autotune: Mapped[bool] = mapped_column(Boolean, default=False)
     sampling_step: Mapped[float] = mapped_column(Float, default=0.2)
+    current_sampling_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class QCApplicability(Base):
@@ -122,8 +123,6 @@ class QCCheckInstance(Base):
     severity_level: Mapped[QCSeverityLevel | None] = mapped_column(
         Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
     )
-    sampling_selected: Mapped[bool] = mapped_column(Boolean, default=True)
-    sampling_probability: Mapped[float] = mapped_column(Float, default=1.0)
     opened_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
     )
@@ -160,6 +159,8 @@ class QCFailureModeDefinition(Base):
         Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
     )
     default_rework_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    require_evidence: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_measurement: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
@@ -205,6 +206,21 @@ class QCEvidence(Base):
         ForeignKey("media_assets.id"), index=True
     )
     captured_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class QCExecutionFailureMode(Base):
+    __tablename__ = "qc_execution_failure_modes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    execution_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_executions.id"), index=True
+    )
+    failure_mode_definition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_failure_mode_definitions.id"), nullable=True
+    )
+    other_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    measurement_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class QCReworkTask(Base):

@@ -985,7 +985,7 @@ const TaskDefs: React.FC = () => {
                                 {task.scope === 'module' && task.advance_trigger && (
                                   <>
                                     <span>-</span>
-                                    <span className="text-emerald-600 font-medium">Disparador</span>
+                                    <span className="text-emerald-600 font-medium">Gatillante</span>
                                   </>
                                 )}
                               </div>
@@ -1168,7 +1168,7 @@ const TaskDefs: React.FC = () => {
                           updateDraft({ advance_trigger: event.target.checked })
                         }
                       />{' '}
-                      Disparador de avance
+                      Gatilla avance
                     </label>
                   )}
                   {draft.scope === 'aux' && (
