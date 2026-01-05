@@ -47,6 +47,10 @@ const AdminLayout: React.FC = () => {
 
   const menuItems = [
     {
+      title: 'Analitica',
+      items: [{ name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
+    },
+    {
       title: 'Personal',
       items: [
         { name: 'Trabajadores', path: '/admin/workers', icon: Users },
@@ -81,10 +85,6 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Calidad',
       items: [{ name: 'Revisiones de QC', path: '/admin/qc-checks', icon: CheckSquare }],
-    },
-    {
-      title: 'Analitica',
-      items: [{ name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
     },
   ];
 

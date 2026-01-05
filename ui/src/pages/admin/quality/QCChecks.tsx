@@ -35,6 +35,8 @@ type QCFailureMode = {
   description: string | null;
   default_severity_level: QCSeverityLevelKey | null;
   default_rework_description: string | null;
+  require_evidence: boolean;
+  require_measurement: boolean;
 };
 
 type QCCheckMediaAsset = {
@@ -129,6 +131,8 @@ type FailureModeDraft = {
   description: string;
   default_severity_level: QCSeverityLevelKey | null;
   default_rework_description: string;
+  require_evidence: boolean;
+  require_measurement: boolean;
 };
 
 type TriggerDraft = {
@@ -173,6 +177,8 @@ const emptyFailureModeDraft = (checkDefinitionId: number | null): FailureModeDra
   description: '',
   default_severity_level: null,
   default_rework_description: '',
+  require_evidence: false,
+  require_measurement: false,
 });
 
 const severityOptions: Array<{ value: QCSeverityLevelKey; label: string }> = [
@@ -544,6 +550,8 @@ const QCChecks: React.FC = () => {
       description: first.description ?? '',
       default_severity_level: first.default_severity_level,
       default_rework_description: first.default_rework_description ?? '',
+      require_evidence: first.require_evidence,
+      require_measurement: first.require_measurement,
     });
   }, [filteredFailureModes, selectedFailureId, selectedCheckId]);
 
@@ -741,6 +749,8 @@ const QCChecks: React.FC = () => {
         description: failureDraft.description.trim() || null,
         default_severity_level: failureDraft.default_severity_level,
         default_rework_description: failureDraft.default_rework_description.trim() || null,
+        require_evidence: failureDraft.require_evidence,
+        require_measurement: failureDraft.require_measurement,
       };
       let saved: QCFailureMode;
       if (failureDraft.id) {
@@ -766,6 +776,8 @@ const QCChecks: React.FC = () => {
         description: saved.description ?? '',
         default_severity_level: saved.default_severity_level,
         default_rework_description: saved.default_rework_description ?? '',
+        require_evidence: saved.require_evidence,
+        require_measurement: saved.require_measurement,
       });
       setFailureStatus('Modo de falla guardado.');
     } catch (error) {
@@ -1101,6 +1113,8 @@ const QCChecks: React.FC = () => {
       description: mode.description ?? '',
       default_severity_level: mode.default_severity_level,
       default_rework_description: mode.default_rework_description ?? '',
+      require_evidence: mode.require_evidence,
+      require_measurement: mode.require_measurement,
     });
     setFailureStatus(null);
   };
@@ -1597,6 +1611,36 @@ const QCChecks: React.FC = () => {
                           }
                         />
                       </label>
+                      <div className="flex flex-wrap gap-3 rounded-2xl border border-black/10 bg-white/70 px-3 py-2 text-xs text-[var(--ink-muted)]">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-black/20"
+                            checked={failureDraft.require_evidence}
+                            onChange={(event) =>
+                              setFailureDraft((prev) => ({
+                                ...prev,
+                                require_evidence: event.target.checked,
+                              }))
+                            }
+                          />
+                          Requiere evidencia
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-black/20"
+                            checked={failureDraft.require_measurement}
+                            onChange={(event) =>
+                              setFailureDraft((prev) => ({
+                                ...prev,
+                                require_measurement: event.target.checked,
+                              }))
+                            }
+                          />
+                          Requiere medicion
+                        </label>
+                      </div>
                       <label className="text-sm text-[var(--ink-muted)]">
                         Re-trabajo sugerido
                         <textarea

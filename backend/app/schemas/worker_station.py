@@ -47,16 +47,6 @@ class StationWorkItem(BaseModel):
     recommended: bool = False
 
 
-class StationSnapshot(BaseModel):
-    station: StationRead
-    work_items: list[StationWorkItem]
-    pause_reasons: list[PauseReasonRead]
-    comment_templates: list[CommentTemplateRead]
-    worker_active_nonconcurrent_task_instance_ids: list[int] = Field(default_factory=list)
-    qc_rework_tasks: list["StationQCReworkTask"] = Field(default_factory=list)
-    qc_notification_count: int = 0
-
-
 class StationQCReworkTask(BaseModel):
     id: int
     check_instance_id: int
@@ -68,6 +58,16 @@ class StationQCReworkTask(BaseModel):
     panel_code: str | None = None
     station_id: int | None = None
     created_at: datetime
+
+
+class StationSnapshot(BaseModel):
+    station: StationRead
+    work_items: list[StationWorkItem]
+    pause_reasons: list[PauseReasonRead]
+    comment_templates: list[CommentTemplateRead]
+    worker_active_nonconcurrent_task_instance_ids: list[int] = Field(default_factory=list)
+    qc_rework_tasks: list[StationQCReworkTask] = Field(default_factory=list)
+    qc_notification_count: int = 0
 
 
 class TaskStartRequest(BaseModel):

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ArrowUpRight, BarChart3, Timer } from 'lucide-react';
+import { ArrowUpRight, BarChart3, Ruler, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
@@ -14,6 +14,16 @@ type DashboardCard = {
 };
 
 const dashboards: DashboardCard[] = [
+  {
+    id: 'panel-linear-meters',
+    name: 'Metros lineales por panel',
+    description:
+      'Mide tiempos promedio por estacion y el rendimiento en ML/min por tipo de panel.',
+    path: '/admin/dashboards/panels',
+    status: 'ready',
+    tags: ['Paneles', 'Estaciones', 'Pausas'],
+    icon: Ruler,
+  },
   {
     id: 'tasks-analysis',
     name: 'Analisis de tiempos de tareas',

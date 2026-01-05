@@ -49,5 +49,14 @@
 - Task applicability defaults are now implied by `task_definitions` (absence of a scoped `TaskApplicability` row means applies=true), and default-scope applicability rows are no longer used.
 
 ## 2026-01-10
+- QC auto-skip executions are attributed to a system QC admin user created on demand (`System QC`, PIN `0000`) so `QCExecution.performed_by_user_id` stays required.
+- Adaptive sampling updates apply to any `QCTrigger` for the same check definition that includes the triggering `task_definition_id`.
+
+## 2026-01-10
 - Task analysis dashboard assumes a `GET /api/task-analysis` endpoint that accepts `house_type_id`, `panel_definition_id`, `task_definition_id`, `station_id`, `worker_id`, `from_date`, and `to_date` query params and returns `data_points`, `stats.average_duration`, and `expected_reference_minutes` in the legacy shape until the backend analytics routes are rebuilt.
 - When `panel_definitions.applicable_task_ids` is null, `panel_definitions.task_durations_json` is assumed to align with panel-scope tasks ordered by `default_station_sequence` then name (matching the House Configurator UI ordering) for task analysis expected-minute lookup.
+
+## 2026-01-11
+- Panel linear meters dashboard assumes `GET /api/panel-linear-meters` with `from_date`, `to_date`, `house_type_id`, `min_multiplier`, and `max_multiplier` params, returning per-panel-definition rows with station aggregates; W-stations are treated as stations with `Station.role == Panels`.
+- Outlier filtering for panel linear meters uses the ratio of summed panel-unit station duration to summed expected minutes for tasks recorded at that station; samples without expected minutes are retained and excluded from ratio filtering.
+- Pause summary assumes `GET /api/pause-summary` with `from_date`, `to_date`, and optional `house_type_id`, returning pause durations computed from `TaskPause.resumed_at` (or task completion), grouped by reason, filtered by `TaskPause.paused_at` in the date range for panel-scope tasks at panel stations.

@@ -38,6 +38,7 @@ from app.schemas.worker_station import (
     TaskStartRequest,
 )
 from app.services.task_applicability import resolve_task_station_sequence
+from app.services.qc_runtime import open_qc_checks_for_task_completion
 
 router = APIRouter()
 
@@ -712,6 +713,9 @@ def complete_task(
                     for panel in panels:
                         panel.status = PanelUnitStatus.CONSUMED
                         panel.current_station_id = None
+
+    if instance.status == TaskStatus.COMPLETED:
+        open_qc_checks_for_task_completion(db, instance)
 
     db.commit()
     db.refresh(instance)

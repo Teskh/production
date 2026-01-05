@@ -10,12 +10,12 @@ from app.core.security import utc_now
 from app.models.admin import AdminUser
 from app.models.enums import (
     AdminRole,
+    QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
     QCExecutionOutcome,
     QCNotificationStatus,
     QCTriggerEventType,
-    TaskScope,
     TaskStatus,
 )
 from app.models.qc import (
@@ -56,7 +56,7 @@ def ensure_system_qc_user(db: Session) -> AdminUser:
         role=AdminRole.QC,
     )
     db.add(admin)
-    db.commit()
+    db.flush()
     db.refresh(admin)
     return admin
 
@@ -127,6 +127,7 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
             .join(QCCheckDefinition, QCTrigger.check_definition_id == QCCheckDefinition.id)
             .where(QCTrigger.event_type == QCTriggerEventType.TASK_COMPLETED)
             .where(QCCheckDefinition.active == True)
+            .where(QCCheckDefinition.kind == QCCheckKind.TRIGGERED)
         ).scalars()
     )
 
@@ -138,7 +139,10 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
     for trigger in trigger_rows:
         params = trigger.params_json or {}
         task_ids = params.get("task_definition_ids", []) if isinstance(params, dict) else []
-        if task_ids and instance.task_definition_id not in task_ids:
+        normalized_task_ids = (
+            {int(task_id) for task_id in task_ids} if task_ids else set()
+        )
+        if normalized_task_ids and instance.task_definition_id not in normalized_task_ids:
             continue
 
         applicability_rows = list(
@@ -224,7 +228,10 @@ def update_sampling_from_execution(
             continue
         params = trigger.params_json or {}
         task_ids = params.get("task_definition_ids", []) if isinstance(params, dict) else []
-        if task_ids and task_definition_id not in task_ids:
+        normalized_task_ids = (
+            {int(task_id) for task_id in task_ids} if task_ids else set()
+        )
+        if normalized_task_ids and task_definition_id not in normalized_task_ids:
             continue
         base_rate = trigger.sampling_rate
         current_rate = trigger.current_sampling_rate if trigger.current_sampling_rate is not None else base_rate
@@ -296,18 +303,19 @@ def create_notifications_for_task(
         )
 
 
-def enforce_no_active_tasks(db: Session, worker_ids: list[int]) -> bool:
+def enforce_no_active_tasks(
+    db: Session, worker_ids: list[int], exclude_instance_id: int | None = None
+) -> bool:
     if not worker_ids:
         return False
-    active = (
-        db.execute(
-            select(TaskParticipation.worker_id)
-            .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
-            .where(TaskParticipation.worker_id.in_(worker_ids))
-            .where(TaskParticipation.left_at.is_(None))
-            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
-        )
-        .scalars()
-        .all()
+    stmt = (
+        select(TaskParticipation.worker_id)
+        .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+        .where(TaskParticipation.worker_id.in_(worker_ids))
+        .where(TaskParticipation.left_at.is_(None))
+        .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
     )
+    if exclude_instance_id is not None:
+        stmt = stmt.where(TaskInstance.id != exclude_instance_id)
+    active = db.execute(stmt).scalars().all()
     return len(active) > 0

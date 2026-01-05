@@ -8,6 +8,8 @@ from app.api.deps import get_current_worker, get_db
 from app.models.admin import CommentTemplate, PauseReason
 from app.models.enums import (
     PanelUnitStatus,
+    QCNotificationStatus,
+    QCReworkStatus,
     RestrictionType,
     StationRole,
     TaskExceptionType,
@@ -16,6 +18,7 @@ from app.models.enums import (
     WorkUnitStatus,
 )
 from app.models.house import HouseSubType, HouseType, PanelDefinition
+from app.models.qc import QCCheckInstance, QCNotification, QCReworkTask
 from app.models.stations import Station
 from app.models.tasks import (
     TaskApplicability,
@@ -27,7 +30,12 @@ from app.models.tasks import (
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import TaskSkillRequirement, TaskWorkerRestriction, Worker, WorkerSkill
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
-from app.schemas.worker_station import StationSnapshot, StationTask, StationWorkItem
+from app.schemas.worker_station import (
+    StationQCReworkTask,
+    StationSnapshot,
+    StationTask,
+    StationWorkItem,
+)
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -689,10 +697,55 @@ def station_snapshot(
                 if task.task_instance_id in active_participation_ids:
                     task.current_worker_participating = True
 
+    rework_rows = list(
+        db.execute(
+            select(QCReworkTask, QCCheckInstance, WorkUnit, PanelUnit)
+            .join(QCCheckInstance, QCReworkTask.check_instance_id == QCCheckInstance.id)
+            .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
+            .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
+            .where(QCCheckInstance.station_id == station.id)
+            .where(QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]))
+            .order_by(QCReworkTask.created_at.desc())
+        )
+    )
+    qc_rework_tasks = []
+    for rework, check_instance, rework_work_unit, panel_unit in rework_rows:
+        panel_code = (
+            panel_unit.panel_definition.panel_code
+            if panel_unit and panel_unit.panel_definition
+            else None
+        )
+        qc_rework_tasks.append(
+            StationQCReworkTask(
+                id=rework.id,
+                check_instance_id=check_instance.id,
+                description=rework.description,
+                status=rework.status.value,
+                work_unit_id=rework_work_unit.id,
+                panel_unit_id=panel_unit.id if panel_unit else None,
+                module_number=rework_work_unit.module_number,
+                panel_code=panel_code,
+                station_id=check_instance.station_id,
+                created_at=rework.created_at,
+            )
+        )
+
+    qc_notification_count = (
+        db.execute(
+            select(QCNotification.id)
+            .where(QCNotification.worker_id == _worker.id)
+            .where(QCNotification.status == QCNotificationStatus.ACTIVE)
+        )
+        .scalars()
+        .all()
+    )
+
     return StationSnapshot(
         station=station,
         work_items=work_items,
         pause_reasons=_filter_pause_reasons(pause_reasons, station.id),
         comment_templates=_filter_comment_templates(comment_templates, station.id),
         worker_active_nonconcurrent_task_instance_ids=sorted(active_nonconcurrent_ids),
+        qc_rework_tasks=qc_rework_tasks,
+        qc_notification_count=len(qc_notification_count),
     )

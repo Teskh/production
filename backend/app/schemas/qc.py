@@ -88,6 +88,7 @@ class QCTriggerUpdate(BaseModel):
 
 class QCTriggerRead(QCTriggerBase):
     id: int
+    current_sampling_rate: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

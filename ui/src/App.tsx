@@ -19,6 +19,7 @@ import QCLibrary from './pages/qc/QCLibrary';
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
 import Dashboards from './pages/admin/dashboards/Dashboards';
+import DashboardPanels from './pages/admin/dashboards/dashboard_panels';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import Personnel from './pages/admin/personnel/Personnel';
 import AdminTeam from './pages/admin/personnel/AdminTeam';
@@ -90,6 +91,7 @@ function App() {
 
           {/* Dashboards */}
           <Route path="dashboards" element={<Dashboards />} />
+          <Route path="dashboards/panels" element={<DashboardPanels />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
         </Route>
 
