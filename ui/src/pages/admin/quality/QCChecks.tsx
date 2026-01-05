@@ -843,6 +843,19 @@ const QCChecks: React.FC = () => {
     void uploadCheckMedia(files, mediaType);
   };
 
+  const handleDeleteCheckMedia = async (mediaId: number) => {
+    setMediaStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/check-media/${mediaId}`, { method: 'DELETE' });
+      setCheckMedia((prev) => prev.filter((media) => media.id !== mediaId));
+      setMediaStatus('Imagen eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la imagen.';
+      setMediaStatus(message);
+    }
+  };
+
   const handleSaveTrigger = async () => {
     if (!selectedCheckId) {
       setTriggerStatus('Seleccione una revision antes de crear un trigger.');
@@ -1623,31 +1636,86 @@ const QCChecks: React.FC = () => {
                       />
                     </label>
                   </div>
-                  <div
-                    className={`mt-3 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-6 text-center text-xs text-[var(--ink-muted)] ${
-                      !selectedCheckId ? 'opacity-50' : ''
-                    }`}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => handleMediaDrop(event, 'guidance')}
-                  >
-                    Arrastra y suelta imagenes aqui para guias.
-                  </div>
                   {guidanceMedia.length > 0 ? (
-                    <div className="mt-3 flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div
+                        className={`flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 text-center text-xs text-[var(--ink-muted)] sm:h-48 ${
+                          !selectedCheckId ? 'opacity-50' : ''
+                        }`}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => handleMediaDrop(event, 'guidance')}
+                      >
+                        <Image className="h-5 w-5 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta guias aqui.
+                        </p>
+                        <label
+                          className={`mt-1 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'guidance')}
+                          />
+                        </label>
+                      </div>
                       {guidanceMedia.map((media) => (
-                        <div key={media.id} className="snap-start shrink-0 w-40">
+                        <div
+                          key={media.id}
+                          className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
+                        >
                           <img
                             src={`${API_BASE_URL}${media.uri}`}
                             alt="Guia"
-                            className="h-28 w-full rounded-xl border border-black/5 object-cover"
+                            className="h-40 w-full object-cover sm:h-48"
                           />
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCheckMedia(media.id)}
+                            className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 p-1.5 text-[var(--ink)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-3 text-xs text-[var(--ink-muted)]">
-                      No hay imagenes de guia.
-                    </p>
+                    <div
+                      className={`mt-4 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-8 text-center text-xs text-[var(--ink-muted)] ${
+                        !selectedCheckId ? 'opacity-50' : ''
+                      }`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleMediaDrop(event, 'guidance')}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <Image className="h-6 w-6 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta imagenes aqui.
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          O haz clic en el boton para agregar nuevas guias.
+                        </p>
+                        <label
+                          className={`mt-2 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'guidance')}
+                          />
+                        </label>
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -1658,7 +1726,7 @@ const QCChecks: React.FC = () => {
                         Referencias
                       </p>
                       <p className="mt-1 text-xs text-[var(--ink-muted)]">
-                        Ejemplos de fallas o resultados incorrectos.
+                        Ejemplos de fallas y de como deben ser tomadas las fotos de evidencia
                       </p>
                     </div>
                     <label
@@ -1676,31 +1744,86 @@ const QCChecks: React.FC = () => {
                       />
                     </label>
                   </div>
-                  <div
-                    className={`mt-3 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-6 text-center text-xs text-[var(--ink-muted)] ${
-                      !selectedCheckId ? 'opacity-50' : ''
-                    }`}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => handleMediaDrop(event, 'reference')}
-                  >
-                    Arrastra y suelta imagenes aqui para referencias.
-                  </div>
                   {referenceMedia.length > 0 ? (
-                    <div className="mt-3 flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div
+                        className={`flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 text-center text-xs text-[var(--ink-muted)] sm:h-48 ${
+                          !selectedCheckId ? 'opacity-50' : ''
+                        }`}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => handleMediaDrop(event, 'reference')}
+                      >
+                        <Image className="h-5 w-5 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta referencias aqui.
+                        </p>
+                        <label
+                          className={`mt-1 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'reference')}
+                          />
+                        </label>
+                      </div>
                       {referenceMedia.map((media) => (
-                        <div key={media.id} className="snap-start shrink-0 w-40">
+                        <div
+                          key={media.id}
+                          className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
+                        >
                           <img
                             src={`${API_BASE_URL}${media.uri}`}
                             alt="Referencia"
-                            className="h-28 w-full rounded-xl border border-black/5 object-cover"
+                            className="h-40 w-full object-cover sm:h-48"
                           />
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCheckMedia(media.id)}
+                            className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 p-1.5 text-[var(--ink)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-3 text-xs text-[var(--ink-muted)]">
-                      No hay imagenes de referencia.
-                    </p>
+                    <div
+                      className={`mt-4 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-8 text-center text-xs text-[var(--ink-muted)] ${
+                        !selectedCheckId ? 'opacity-50' : ''
+                      }`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleMediaDrop(event, 'reference')}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <Image className="h-6 w-6 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta imagenes aqui.
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          O haz clic en el boton para agregar nuevas referencias.
+                        </p>
+                        <label
+                          className={`mt-2 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'reference')}
+                          />
+                        </label>
+                      </div>
+                    </div>
                   )}
                 </div>
 
