@@ -231,6 +231,16 @@ const normalizeSearch = (value: string): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
 
+const normalizeStationName = (station: Station) => {
+  const trimmed = station.name.trim();
+  if (!station.line_type) {
+    return trimmed;
+  }
+  const pattern = new RegExp(`^(Linea|Line)\\s*${station.line_type}\\s*-\\s*`, 'i');
+  const normalized = trimmed.replace(pattern, '').trim();
+  return normalized || trimmed;
+};
+
 const sortByName = <T extends { name: string }>(list: T[]) =>
   [...list].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -858,7 +868,7 @@ const QCChecks: React.FC = () => {
 
   const handleSaveTrigger = async () => {
     if (!selectedCheckId) {
-      setTriggerStatus('Seleccione una revision antes de crear un trigger.');
+      setTriggerStatus('Seleccione una revision antes de crear un gatillante.');
       return;
     }
     const samplingRate = Number(triggerDraft.sampling_rate);
@@ -909,10 +919,10 @@ const QCChecks: React.FC = () => {
         task_definition_ids: saved.params_json?.task_definition_ids ?? [],
         station_ids: saved.params_json?.station_ids ?? [],
       });
-      setTriggerStatus('Trigger guardado.');
+      setTriggerStatus('Gatillante guardado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'No se pudo guardar el trigger.';
+        error instanceof Error ? error.message : 'No se pudo guardar el gatillante.';
       setTriggerStatus(message);
     }
   };
@@ -927,10 +937,10 @@ const QCChecks: React.FC = () => {
       setTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerDraft.id));
       setSelectedTriggerId(null);
       setTriggerDraft(emptyTriggerDraft());
-      setTriggerStatus('Trigger eliminado.');
+      setTriggerStatus('Gatillante eliminado.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'No se pudo eliminar el trigger.';
+        error instanceof Error ? error.message : 'No se pudo eliminar el gatillante.';
       setTriggerStatus(message);
     }
   };
@@ -1110,6 +1120,61 @@ const QCChecks: React.FC = () => {
     return tasks.filter((task) => normalizeSearch(task.name).includes(query));
   }, [tasks, triggerSearch]);
 
+  const catalogSequenceLabelByOrder = useMemo(() => {
+    const entries = new Map<number, Set<string>>();
+    stations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      const normalized = normalizeStationName(station);
+      const existing = entries.get(station.sequence_order) ?? new Set<string>();
+      existing.add(normalized);
+      entries.set(station.sequence_order, existing);
+    });
+    const map = new Map<number, string>();
+    entries.forEach((names, sequence) => {
+      map.set(
+        sequence,
+        names.size ? Array.from(names).join(' / ') : `Secuencia ${sequence}`
+      );
+    });
+    return map;
+  }, [stations]);
+
+  const groupedTasks = useMemo(() => {
+    const groups = new Map<
+      string,
+      { key: string; sequence: number | null; name: string; tasks: TaskDefinition[] }
+    >();
+    filteredTasks.forEach((task) => {
+      const sequence = task.default_station_sequence ?? null;
+      const key = sequence === null ? 'unscheduled' : `seq-${sequence}`;
+      const name =
+        sequence === null
+          ? 'Sin secuencia'
+          : catalogSequenceLabelByOrder.get(sequence) ?? `Secuencia ${sequence}`;
+      const group = groups.get(key);
+      if (group) {
+        group.tasks.push(task);
+      } else {
+        groups.set(key, { key, sequence, name, tasks: [task] });
+      }
+    });
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        tasks: [...group.tasks].sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => {
+        const aSeq = a.sequence ?? Number.POSITIVE_INFINITY;
+        const bSeq = b.sequence ?? Number.POSITIVE_INFINITY;
+        if (aSeq !== bSeq) {
+          return aSeq - bSeq;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [catalogSequenceLabelByOrder, filteredTasks]);
+
   const filteredStations = useMemo(() => {
     const query = normalizeSearch(triggerSearch.trim());
     if (!query) {
@@ -1238,7 +1303,7 @@ const QCChecks: React.FC = () => {
     icon?: typeof Image;
   }> = [
     { key: 'definition', label: 'Definicion' },
-    { key: 'triggers', label: 'Triggers' },
+    { key: 'triggers', label: 'Gatillantes' },
     { key: 'references', label: 'Referencias', icon: Image },
     { key: 'applicability', label: 'Aplicabilidad' },
   ];
@@ -1846,7 +1911,7 @@ const QCChecks: React.FC = () => {
                     <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
                       <div>
                         <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                          Triggers actuales
+                          Gatillantes actuales
                         </p>
                         <p className="text-xs text-[var(--ink-muted)]">
                           {filteredTriggers.length} configurados
@@ -1866,7 +1931,7 @@ const QCChecks: React.FC = () => {
                     <div className="max-h-60 overflow-auto">
                       {filteredTriggers.length === 0 ? (
                         <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
-                          No hay triggers configurados.
+                          No hay gatillantes configurados.
                         </p>
                       ) : (
                         filteredTriggers.map((trigger) => (
@@ -1971,32 +2036,43 @@ const QCChecks: React.FC = () => {
                       </label>
                       <div className="mt-2 max-h-40 overflow-auto text-xs">
                         {triggerDraft.event_type === 'task_completed' ? (
-                          filteredTasks.length === 0 ? (
+                          groupedTasks.length === 0 ? (
                             <p className="text-[var(--ink-muted)]">No hay tareas disponibles.</p>
                           ) : (
-                            filteredTasks.map((task) => (
-                              <label key={task.id} className="flex items-center gap-2 py-1">
-                                <input
-                                  type="checkbox"
-                                  checked={triggerDraft.task_definition_ids.includes(task.id)}
-                                  onChange={() =>
-                                    setTriggerDraft((prev) => {
-                                      const selected = new Set(prev.task_definition_ids);
-                                      if (selected.has(task.id)) {
-                                        selected.delete(task.id);
-                                      } else {
-                                        selected.add(task.id);
-                                      }
-                                      return {
-                                        ...prev,
-                                        task_definition_ids: Array.from(selected),
-                                      };
-                                    })
-                                  }
-                                />
-                                <span className="text-[var(--ink)]">{task.name}</span>
-                              </label>
-                            ))
+                            <div className="space-y-2">
+                              {groupedTasks.map((group) => (
+                                <div key={group.key}>
+                                  <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                    {group.name}
+                                  </p>
+                                  <div className="space-y-1">
+                                    {group.tasks.map((task) => (
+                                      <label key={task.id} className="flex items-center gap-2 py-1">
+                                        <input
+                                          type="checkbox"
+                                          checked={triggerDraft.task_definition_ids.includes(task.id)}
+                                          onChange={() =>
+                                            setTriggerDraft((prev) => {
+                                              const selected = new Set(prev.task_definition_ids);
+                                              if (selected.has(task.id)) {
+                                                selected.delete(task.id);
+                                              } else {
+                                                selected.add(task.id);
+                                              }
+                                              return {
+                                                ...prev,
+                                                task_definition_ids: Array.from(selected),
+                                              };
+                                            })
+                                          }
+                                        />
+                                        <span className="text-[var(--ink)]">{task.name}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           )
                         ) : filteredStations.length === 0 ? (
                           <p className="text-[var(--ink-muted)]">No hay estaciones disponibles.</p>
@@ -2039,7 +2115,7 @@ const QCChecks: React.FC = () => {
                         onClick={handleSaveTrigger}
                         className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
                       >
-                        Guardar trigger
+                        Guardar gatillante
                       </button>
                       <button
                         onClick={handleDeleteTrigger}
