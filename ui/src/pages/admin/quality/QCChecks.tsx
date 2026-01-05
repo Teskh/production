@@ -1315,7 +1315,7 @@ const QCChecks: React.FC = () => {
           onClick={handleAddCheck}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
         >
-          <Plus className="h-4 w-4" /> Agregar revision
+          <Plus className="h-4 w-4" /> Agregar check
         </button>
         <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
           <Filter className="h-3.5 w-3.5" /> {summaryLabel}
@@ -1392,10 +1392,10 @@ const QCChecks: React.FC = () => {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Editor de revision
+                  Editor de Check
                 </p>
                 <h2 className="mt-2 text-lg font-display text-[var(--ink)]">
-                  {checkDraft.id ? `Revision #${checkDraft.id}` : 'Nueva revision'}
+                  {checkDraft.id ? `Check #${checkDraft.id}` : 'Nuevo Check'}
                 </h2>
               </div>
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -1958,7 +1958,15 @@ const QCChecks: React.FC = () => {
 
                   <div className="space-y-3">
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Evento
+                      <span className="inline-flex items-center gap-2">
+                        Evento
+                        <span
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                          title="Define cuando se dispara el gatillante (al completar una tarea o al ingresar a una estacion)."
+                        >
+                          i
+                        </span>
+                      </span>
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
                         value={triggerDraft.event_type}
@@ -1979,7 +1987,15 @@ const QCChecks: React.FC = () => {
                     </label>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="text-sm text-[var(--ink-muted)]">
-                        Tasa base
+                        <span className="inline-flex items-center gap-2">
+                          Tasa base
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                            title="Porcentaje base de muestreo (0 a 1) para disparar la revision."
+                          >
+                            i
+                          </span>
+                        </span>
                         <input
                           className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
                           value={triggerDraft.sampling_rate}
@@ -1992,7 +2008,15 @@ const QCChecks: React.FC = () => {
                         />
                       </label>
                       <label className="text-sm text-[var(--ink-muted)]">
-                        Paso de ajuste
+                        <span className="inline-flex items-center gap-2">
+                          Paso de ajuste
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                            title="Incremento/decremento aplicado cuando el muestreo adaptativo esta activo (0 a 1)."
+                          >
+                            i
+                          </span>
+                        </span>
                         <input
                           className={`mt-2 w-full rounded-xl border px-3 py-2 text-sm ${
                             triggerDraft.sampling_autotune
@@ -2021,7 +2045,15 @@ const QCChecks: React.FC = () => {
                           }))
                         }
                       />
-                      Muestreo adaptativo
+                      <span className="inline-flex items-center gap-2">
+                        Muestreo adaptativo
+                        <span
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                          title="Permite ajustar automaticamente la tasa base usando el paso de ajuste."
+                        >
+                          i
+                        </span>
+                      </span>
                     </label>
 
                     <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
