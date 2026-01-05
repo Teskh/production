@@ -408,8 +408,6 @@ Advancement logic:
 - description (nullable)
 - default_severity_level (nullable, one of Baja | Media | Critica)
 - default_rework_description (nullable)
-- require_evidence (boolean)
-- require_measurement (boolean)
 - active (boolean)
 - created_by_user_id (nullable)
 - archived_at (nullable)

@@ -131,8 +131,6 @@ class QCFailureModeDefinitionBase(BaseModel):
     description: str | None = None
     default_severity_level: QCSeverityLevel | None = None
     default_rework_description: str | None = None
-    require_evidence: bool = False
-    require_measurement: bool = False
     created_by_user_id: int | None = None
 
 
@@ -146,8 +144,6 @@ class QCFailureModeDefinitionUpdate(BaseModel):
     description: str | None = None
     default_severity_level: QCSeverityLevel | None = None
     default_rework_description: str | None = None
-    require_evidence: bool | None = None
-    require_measurement: bool | None = None
     created_by_user_id: int | None = None
     archived_at: datetime | None = None
 

@@ -159,8 +159,6 @@ class QCFailureModeDefinition(Base):
         Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
     )
     default_rework_description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    require_evidence: Mapped[bool] = mapped_column(Boolean, default=False)
-    require_measurement: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True

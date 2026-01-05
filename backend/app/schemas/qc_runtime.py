@@ -80,8 +80,6 @@ class QCFailureModeSummary(BaseModel):
     description: str | None = None
     default_severity_level: QCSeverityLevel | None = None
     default_rework_description: str | None = None
-    require_evidence: bool
-    require_measurement: bool
 
 
 class QCCheckMediaSummary(BaseModel):

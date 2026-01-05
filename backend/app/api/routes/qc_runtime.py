@@ -238,8 +238,6 @@ def qc_check_instance_detail(
             description=mode.description,
             default_severity_level=mode.default_severity_level,
             default_rework_description=mode.default_rework_description,
-            require_evidence=mode.require_evidence,
-            require_measurement=mode.require_measurement,
         )
         for mode in failure_modes
     ]
