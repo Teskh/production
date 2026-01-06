@@ -123,6 +123,8 @@ type StationSnapshot = {
   pause_reasons: PauseReason[];
   comment_templates: CommentTemplate[];
   worker_active_nonconcurrent_task_instance_ids?: number[];
+  qc_rework_tasks?: StationQCReworkTask[];
+  qc_notification_count?: number;
 };
 
 type WorkerSessionResponse = {
@@ -143,6 +145,23 @@ type WorkerActiveTask = {
   panel_unit_id: number | null;
   status: string;
   started_at: string | null;
+};
+
+type StationQCReworkTask = {
+  id: number;
+  check_instance_id: number;
+  check_name: string | null;
+  description: string;
+  status: string;
+  work_unit_id: number;
+  panel_unit_id: number | null;
+  module_number: number;
+  panel_code: string | null;
+  station_id: number | null;
+  created_at: string;
+  failure_notes: string | null;
+  failure_modes: string[];
+  evidence_uris: string[];
 };
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -249,10 +268,11 @@ const StationWorkspace: React.FC = () => {
   const [autoFocusTarget, setAutoFocusTarget] = useState<WorkerActiveTask | null>(null);
   const [autoFocusNotice, setAutoFocusNotice] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<
-    'pause' | 'skip' | 'comments' | 'crew' | 'other_tasks' | null
+    'pause' | 'skip' | 'comments' | 'crew' | 'other_tasks' | 'rework_details' | null
   >(null);
   const [selectedTask, setSelectedTask] = useState<StationTask | null>(null);
   const [selectedTaskWorkItem, setSelectedTaskWorkItem] = useState<StationWorkItem | null>(null);
+  const [selectedRework, setSelectedRework] = useState<StationQCReworkTask | null>(null);
   const [reasonText, setReasonText] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
@@ -415,6 +435,52 @@ const StationWorkspace: React.FC = () => {
   const commentTemplates = snapshot?.comment_templates ?? [];
   const activeNonConcurrentTaskIds =
     snapshot?.worker_active_nonconcurrent_task_instance_ids ?? [];
+  const qcReworkTasks = snapshot?.qc_rework_tasks ?? [];
+  const qcNotificationCount = snapshot?.qc_notification_count ?? 0;
+  const selectedReworkTasks = useMemo(() => {
+    if (!selectedWorkItem) {
+      return [];
+    }
+    return qcReworkTasks.filter((rework) => {
+      if (rework.work_unit_id !== selectedWorkItem.work_unit_id) {
+        return false;
+      }
+      if (selectedWorkItem.panel_unit_id) {
+        return rework.panel_unit_id === selectedWorkItem.panel_unit_id;
+      }
+      return rework.panel_unit_id === null;
+    });
+  }, [qcReworkTasks, selectedWorkItem]);
+
+  const formatReworkStatus = (status: string) => {
+    switch (status) {
+      case 'Open':
+        return 'Abierto';
+      case 'InProgress':
+        return 'En curso';
+      case 'Done':
+        return 'Completado';
+      case 'Canceled':
+        return 'Cancelado';
+      default:
+        return status;
+    }
+  };
+
+  const reworkStatusClass = (status: string) => {
+    switch (status) {
+      case 'Open':
+        return 'bg-amber-100 text-amber-700 border-amber-200';
+      case 'InProgress':
+        return 'bg-blue-100 text-blue-700 border-blue-200';
+      case 'Done':
+        return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+      case 'Canceled':
+        return 'bg-gray-100 text-gray-600 border-gray-200';
+      default:
+        return 'bg-gray-100 text-gray-600 border-gray-200';
+    }
+  };
 
   const hasBlockingNonConcurrent = useCallback(
     (taskInstanceId?: number | null) => {
@@ -1069,6 +1135,95 @@ const StationWorkspace: React.FC = () => {
     );
   };
 
+  const renderReworkCard = (rework: StationQCReworkTask) => {
+    const statusStyles: Record<string, string> = {
+      Open: 'border-amber-200 bg-amber-50/50',
+      InProgress: 'border-blue-200 bg-blue-50/50',
+      Done: 'border-gray-200 bg-gray-50/70 opacity-70',
+      Canceled: 'border-gray-200 bg-gray-50/70 opacity-70',
+    };
+    return (
+      <div
+        key={rework.id}
+        className={clsx(
+          'rounded-xl border p-4 transition-all',
+          statusStyles[rework.status] ?? 'border-gray-200 bg-white'
+        )}
+      >
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900">Rework QC</h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
+                Rework
+              </span>
+              <span
+                className={clsx(
+                  'px-2 py-0.5 rounded-full text-xs font-bold uppercase border',
+                  reworkStatusClass(rework.status)
+                )}
+              >
+                {formatReworkStatus(rework.status)}
+              </span>
+            </div>
+            {rework.check_name && (
+              <p className="mt-1 text-xs text-gray-500">Check: {rework.check_name}</p>
+            )}
+            <p className="mt-2 text-sm text-gray-700">{rework.description}</p>
+            {rework.failure_modes.length > 0 && (
+              <p className="mt-2 text-xs text-gray-600">
+                <span className="font-semibold text-gray-700">Fallas:</span>{' '}
+                {rework.failure_modes.join(', ')}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => openReworkDetails(rework)}
+              className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              <MessageSquare className="h-5 w-5" /> Detalles
+            </button>
+            {rework.status === 'Open' && (
+              <button
+                onClick={() => handleReworkStart(rework)}
+                className="inline-flex items-center gap-2.5 rounded-lg bg-amber-600 px-6 py-3 text-base font-semibold text-white hover:bg-amber-700"
+                disabled={submitting}
+              >
+                <Play className="h-5 w-5" /> Iniciar
+              </button>
+            )}
+            {rework.status === 'InProgress' && (
+              <>
+                <button
+                  onClick={() => handleReworkStart(rework)}
+                  className="inline-flex items-center gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-5 py-3 text-base font-semibold text-blue-700 hover:bg-blue-100"
+                  disabled={submitting}
+                >
+                  <Play className="h-5 w-5" /> Continuar
+                </button>
+                <button
+                  onClick={() => handleReworkPause(rework)}
+                  className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                  disabled={submitting}
+                >
+                  <Pause className="h-5 w-5" /> Pausa
+                </button>
+                <button
+                  onClick={() => handleReworkComplete(rework)}
+                  className="inline-flex items-center gap-2.5 rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white hover:bg-emerald-700"
+                  disabled={submitting}
+                >
+                  <CheckSquare className="h-5 w-5" /> Completar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderWorkItemButton = (item: StationWorkItem, className: string) => (
     <button
       key={item.id}
@@ -1097,11 +1252,17 @@ const StationWorkspace: React.FC = () => {
     setActiveModal(null);
     setSelectedTask(null);
     setSelectedTaskWorkItem(null);
+    setSelectedRework(null);
     setReasonText('');
     setReasonError(null);
     setCommentDraft('');
     setCommentError(null);
     setCrewSelection([]);
+  };
+
+  const openReworkDetails = (rework: StationQCReworkTask) => {
+    setSelectedRework(rework);
+    setActiveModal('rework_details');
   };
 
   const handleContextModeSelect = (mode: StationPickerMode, context: StationContext | null) => {
@@ -1302,6 +1463,67 @@ const StationWorkspace: React.FC = () => {
     }
   };
 
+  const handleReworkStart = async (rework: StationQCReworkTask) => {
+    if (!worker?.id) {
+      setError('Necesitas iniciar sesion para iniciar el rework.');
+      return;
+    }
+    if (!selectedStationId) {
+      setError('Selecciona una estacion antes de iniciar el rework.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest(`/api/qc/rework-tasks/${rework.id}/start`, {
+        method: 'POST',
+        body: JSON.stringify({
+          worker_ids: [worker.id],
+          station_id: selectedStationId,
+        }),
+      });
+      await refreshSnapshot();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'No se pudo iniciar el rework.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReworkPause = async (rework: StationQCReworkTask) => {
+    setSubmitting(true);
+    try {
+      await apiRequest(`/api/qc/rework-tasks/${rework.id}/pause`, {
+        method: 'POST',
+        body: JSON.stringify({ reason_id: null, reason_text: null }),
+      });
+      await refreshSnapshot();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'No se pudo pausar el rework.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReworkComplete = async (rework: StationQCReworkTask) => {
+    setSubmitting(true);
+    try {
+      await apiRequest(`/api/qc/rework-tasks/${rework.id}/complete`, {
+        method: 'POST',
+      });
+      await refreshSnapshot();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'No se pudo completar el rework.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSkip = async (customReason?: string) => {
     if (!selectedTask || !selectedTaskWorkItem || !selectedStationId) {
       return;
@@ -1470,7 +1692,14 @@ const StationWorkspace: React.FC = () => {
             disabled
           >
             <Bell className="h-4 w-4" /> QC
-            <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-rose-500" />
+            {qcNotificationCount > 0 && (
+              <>
+                <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-rose-500" />
+                <span className="absolute -top-2 -right-3 min-w-[16px] rounded-full bg-rose-500 px-1 text-[10px] font-semibold text-white">
+                  {qcNotificationCount}
+                </span>
+              </>
+            )}
           </button>
         </div>
       </header>
@@ -1626,6 +1855,7 @@ const StationWorkspace: React.FC = () => {
                 <div className="space-y-6">
                   {selectedWorkItem.tasks.length > 0 && (
                     <div className="space-y-3">
+                      {selectedReworkTasks.map((rework) => renderReworkCard(rework))}
                       {sortTasksForDisplay(selectedWorkItem.tasks).map((task) =>
                         renderTaskCard(task, selectedWorkItem)
                       )}
@@ -2013,6 +2243,84 @@ const StationWorkspace: React.FC = () => {
                 title={crewStartBlocked ? crewStartBlockTitle : undefined}
               >
                 Iniciar con equipo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeModal === 'rework_details' && selectedRework && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40" onClick={closeModal} />
+          <div className="relative w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+            <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
+              <X className="h-5 w-5" />
+            </button>
+            <h3 className="text-lg font-semibold text-gray-900">Detalle de rework QC</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Modulo {selectedRework.module_number}
+              {selectedRework.panel_code ? ` • Panel ${selectedRework.panel_code}` : ''}
+            </p>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">
+                    Rework
+                  </span>
+                  <span
+                    className={clsx(
+                      'px-2 py-0.5 rounded-full text-xs font-bold uppercase border',
+                      reworkStatusClass(selectedRework.status)
+                    )}
+                  >
+                    {formatReworkStatus(selectedRework.status)}
+                  </span>
+                </div>
+                {selectedRework.check_name && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    Check: {selectedRework.check_name}
+                  </p>
+                )}
+                <p className="mt-2 text-sm text-gray-700">{selectedRework.description}</p>
+              </div>
+              {selectedRework.failure_modes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500">Fallas detectadas</p>
+                  <p className="mt-1 text-sm text-gray-700">
+                    {selectedRework.failure_modes.join(', ')}
+                  </p>
+                </div>
+              )}
+              {selectedRework.failure_notes && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500">Notas del inspector</p>
+                  <p className="mt-1 text-sm text-gray-700">{selectedRework.failure_notes}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-xs font-semibold text-gray-500">Registro</p>
+                {selectedRework.evidence_uris.length > 0 ? (
+                  <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {selectedRework.evidence_uris.map((uri) => (
+                      <img
+                        key={uri}
+                        src={`${API_BASE_URL}${uri}`}
+                        alt="Registro Calidad"
+                        className="h-28 w-full rounded-xl border border-gray-200 object-cover"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-gray-500">No hay registros adjuntos.</p>
+                )}
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={closeModal}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
+              >
+                Cerrar
               </button>
             </div>
           </div>

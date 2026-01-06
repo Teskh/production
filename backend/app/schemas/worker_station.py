@@ -50,6 +50,7 @@ class StationWorkItem(BaseModel):
 class StationQCReworkTask(BaseModel):
     id: int
     check_instance_id: int
+    check_name: str | None = None
     description: str
     status: str
     work_unit_id: int
@@ -58,6 +59,9 @@ class StationQCReworkTask(BaseModel):
     panel_code: str | None = None
     station_id: int | None = None
     created_at: datetime
+    failure_notes: str | None = None
+    failure_modes: list[str] = Field(default_factory=list)
+    evidence_uris: list[str] = Field(default_factory=list)
 
 
 class StationSnapshot(BaseModel):

@@ -441,6 +441,8 @@ def execute_qc_check(
             created_at=now,
         )
         db.add(rework)
+        # Ensure rework_task.id is available before creating notifications.
+        db.flush()
         instance.status = QCCheckStatus.CLOSED
         instance.closed_at = now
         if instance.related_task_instance_id:

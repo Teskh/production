@@ -155,7 +155,8 @@ const QCExecution: React.FC = () => {
   type EvidenceItem = { url: string; id: string; type: 'image' | 'video'; file?: File };
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [notes, setNotes] = useState('');
-  const [failureData, setFailureData] = useState<{ modeId: string; severityId: string } | null>(null);
+  const [selectedFailureModeIds, setSelectedFailureModeIds] = useState<string[]>([]);
+  const [selectedSeverityId, setSelectedSeverityId] = useState<string | null>(null);
   const [reworkText, setReworkText] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -277,13 +278,20 @@ const QCExecution: React.FC = () => {
   }, [checkDetail?.failure_modes]);
 
   useEffect(() => {
-    if (!failureData) {
+    if (selectedFailureModeIds.length === 0) {
       setReworkText('');
+      setSelectedSeverityId(null);
       return;
     }
-    const mode = failureModes.find((item) => item.id === failureData.modeId);
-    setReworkText(mode?.defaultReworkText ?? '');
-  }, [failureData, failureModes]);
+    if (!selectedSeverityId) {
+      const firstMode = failureModes.find((item) => item.id === selectedFailureModeIds[0]);
+      setSelectedSeverityId(firstMode?.defaultSeverityId ?? null);
+    }
+    if (!reworkText.trim()) {
+      const firstMode = failureModes.find((item) => item.id === selectedFailureModeIds[0]);
+      setReworkText(firstMode?.defaultReworkText ?? '');
+    }
+  }, [failureModes, reworkText, selectedFailureModeIds, selectedSeverityId]);
 
   const handleEvidenceSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -326,22 +334,26 @@ const QCExecution: React.FC = () => {
     if (isSubmitting) {
       return;
     }
-    if (outcome === 'Fail' && !failureData) {
-      setActionError('Seleccione un modo de falla antes de confirmar.');
+    if (outcome === 'Fail' && selectedFailureModeIds.length === 0) {
+      setActionError('Seleccione al menos un modo de falla antes de confirmar.');
       return;
     }
     setIsSubmitting(true);
     setActionError(null);
     try {
       const severity =
-        outcome === 'Fail' && failureData ? severityLevelById[failureData.severityId] : undefined;
+        outcome === 'Fail' && selectedSeverityId
+          ? severityLevelById[selectedSeverityId]
+          : undefined;
       if (outcome === 'Fail' && !severity) {
         setActionError('Seleccione una severidad antes de confirmar.');
         return;
       }
       const failureIds =
-        outcome === 'Fail' && failureData
-          ? [Number(failureData.modeId)].filter((value) => !Number.isNaN(value))
+        outcome === 'Fail'
+          ? selectedFailureModeIds
+              .map((value) => Number(value))
+              .filter((value) => !Number.isNaN(value))
           : [];
       const payload = {
         outcome,
@@ -768,28 +780,30 @@ const QCExecution: React.FC = () => {
 
             <div className="p-6 overflow-y-auto">
               <div className="mb-6">
-                <label className="block text-sm font-bold text-slate-300 mb-2">Modo de falla</label>
+                <label className="block text-sm font-bold text-slate-300 mb-2">Modos de falla</label>
                 <div className="space-y-2">
                   {failureModes.map((mode) => (
                     <label
                       key={mode.id}
                       className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
-                        failureData?.modeId === mode.id
+                        selectedFailureModeIds.includes(mode.id)
                           ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500'
                           : 'border-slate-600 hover:border-slate-500 bg-slate-900/50'
                       }`}
                     >
                       <input
-                        type="radio"
-                        name="failureMode"
+                        type="checkbox"
+                        name={`failureMode-${mode.id}`}
                         className="mt-1 mr-3 text-red-600 focus:ring-red-500"
-                        checked={failureData?.modeId === mode.id}
-                        onChange={() =>
-                          setFailureData({
-                            modeId: mode.id,
-                            severityId: mode.defaultSeverityId,
-                          })
-                        }
+                        checked={selectedFailureModeIds.includes(mode.id)}
+                        onChange={() => {
+                          setSelectedFailureModeIds((prev) => {
+                            if (prev.includes(mode.id)) {
+                              return prev.filter((id) => id !== mode.id);
+                            }
+                            return [...prev, mode.id];
+                          });
+                        }}
                       />
                       <div>
                         <div className="font-semibold text-white">{mode.name}</div>
@@ -800,18 +814,16 @@ const QCExecution: React.FC = () => {
                 </div>
               </div>
 
-              {failureData && (
+              {selectedFailureModeIds.length > 0 && (
                 <div className="mb-6">
                   <label className="block text-sm font-bold text-slate-300 mb-2">Severidad</label>
                   <div className="flex flex-wrap gap-2">
                     {SEVERITY_LEVELS.map((sev) => (
                       <button
                         key={sev.id}
-                        onClick={() =>
-                          setFailureData((prev) => (prev ? { ...prev, severityId: sev.id } : null))
-                        }
+                        onClick={() => setSelectedSeverityId(sev.id)}
                         className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                          failureData.severityId === sev.id
+                          selectedSeverityId === sev.id
                             ? `${sev.color} border-current ring-1 ring-current`
                             : 'bg-slate-900 text-slate-400 border-slate-600 hover:bg-slate-700'
                         }`}

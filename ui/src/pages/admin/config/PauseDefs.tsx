@@ -89,6 +89,13 @@ const sortStations = (list: Station[]) =>
     return a.name.localeCompare(b.name);
   });
 
+type StationGroup = {
+  sequence: number | null;
+  label: string;
+  subtitle: string | null;
+  stations: Station[];
+};
+
 const PauseDefs: React.FC = () => {
   const { setHeader } = useAdminHeader();
   const [reasons, setReasons] = useState<PauseReason[]>([]);
@@ -96,11 +103,14 @@ const PauseDefs: React.FC = () => {
   const [selectedReasonId, setSelectedReasonId] = useState<number | null>(null);
   const [draft, setDraft] = useState<PauseDraft | null>(null);
   const [search, setSearch] = useState('');
+  const [stationFilterId, setStationFilterId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
+  const [stationFilterOpen, setStationFilterOpen] = useState(false);
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
+  const stationFilterRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setHeader({
@@ -155,12 +165,39 @@ const PauseDefs: React.FC = () => {
     [stations]
   );
 
+  const stationGroups = useMemo<StationGroup[]>(() => {
+    const entries = new Map<number | null, Station[]>();
+    stations.forEach((station) => {
+      const key = station.sequence_order ?? null;
+      const existing = entries.get(key) ?? [];
+      existing.push(station);
+      entries.set(key, existing);
+    });
+    const sortKey = (sequence: number | null) => sequence ?? Number.POSITIVE_INFINITY;
+    return Array.from(entries.entries())
+      .sort(([a], [b]) => sortKey(a) - sortKey(b))
+      .map(([sequence, groupStations]) => ({
+        sequence,
+        label: sequence === null ? 'Sin secuencia' : `Secuencia ${sequence}`,
+        subtitle: groupStations.length ? groupStations[0].name : null,
+        stations: [...groupStations].sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+  }, [stations]);
+
   const filteredReasons = useMemo(() => {
     const query = normalizeSearch(search.trim());
-    if (!query) {
-      return reasons;
-    }
     return reasons.filter((reason) => {
+      if (stationFilterId !== null) {
+        const scopedStationIds = reason.applicable_station_ids;
+        const matchesStation =
+          scopedStationIds === null || scopedStationIds.includes(stationFilterId);
+        if (!matchesStation) {
+          return false;
+        }
+      }
+      if (!query) {
+        return true;
+      }
       const stationsLabel =
         reason.applicable_station_ids
           ?.map((id) => stationNameById.get(id) ?? '')
@@ -168,12 +205,24 @@ const PauseDefs: React.FC = () => {
       const haystack = normalizeSearch(`${reason.name} ${stationsLabel} ${reason.active}`);
       return haystack.includes(query);
     });
-  }, [reasons, search, stationNameById]);
+  }, [reasons, search, stationFilterId, stationNameById]);
 
   const summaryLabel = useMemo(() => {
     const activeCount = reasons.filter((reason) => reason.active).length;
     return `${reasons.length} motivos / ${activeCount} activos`;
   }, [reasons]);
+
+  const stationFilterLabel = useMemo(() => {
+    if (stationFilterId === null) {
+      return 'Todas las estaciones';
+    }
+    return stationNameById.get(stationFilterId) ?? `Estacion ${stationFilterId}`;
+  }, [stationFilterId, stationNameById]);
+
+  const handleStationFilterSelect = (stationId: number | null) => {
+    setStationFilterId(stationId);
+    setStationFilterOpen(false);
+  };
 
   useEffect(() => {
     if (!stationDropdownOpen) {
@@ -199,6 +248,31 @@ const PauseDefs: React.FC = () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [stationDropdownOpen]);
+
+  useEffect(() => {
+    if (!stationFilterOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!stationFilterRef.current) {
+        return;
+      }
+      if (!stationFilterRef.current.contains(event.target as Node)) {
+        setStationFilterOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setStationFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [stationFilterOpen]);
 
   const selectReason = (reason: PauseReason) => {
     setSelectedReasonId(reason.id);
@@ -387,16 +461,79 @@ const PauseDefs: React.FC = () => {
               <h2 className="text-sm font-semibold text-gray-900">Motivos actuales</h2>
               <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
-            <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
-              <input
-                type="search"
-                placeholder="Buscar..."
-                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
+            <div className="flex flex-wrap items-center gap-3 justify-end">
+              <div className="relative" ref={stationFilterRef}>
+                <button
+                  type="button"
+                  onClick={() => setStationFilterOpen((prev) => !prev)}
+                  className="flex h-8 items-center justify-between gap-2 rounded-md border border-gray-200 bg-white px-3 text-left text-xs text-gray-700"
+                >
+                  <span className="max-w-[180px] truncate">{stationFilterLabel}</span>
+                  <ChevronDown
+                    className={`h-4 w-4 text-gray-400 transition ${
+                      stationFilterOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+                {stationFilterOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-72 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                    <div className="border-b border-gray-100 px-3 py-2 text-xs font-semibold text-gray-700">
+                      Filtrar por estacion
+                    </div>
+                    <div className="max-h-72 overflow-auto p-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => handleStationFilterSelect(null)}
+                        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-gray-50 ${
+                          stationFilterId === null ? 'bg-blue-50/50 text-blue-900' : 'text-gray-700'
+                        }`}
+                      >
+                        Todas las estaciones
+                      </button>
+                      {stationGroups.map((group) => (
+                        <div key={String(group.sequence)} className="mt-2">
+                          <div className="flex items-baseline gap-2 px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400">
+                            <span>{group.label}</span>
+                            {group.subtitle && (
+                              <span className="max-w-[160px] truncate font-normal normal-case text-gray-300">
+                                {group.subtitle}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-col">
+                            {group.stations.map((station) => (
+                              <button
+                                key={station.id}
+                                type="button"
+                                onClick={() => handleStationFilterSelect(station.id)}
+                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-gray-50 ${
+                                  stationFilterId === station.id
+                                    ? 'bg-blue-50/50 text-blue-900'
+                                    : 'text-gray-700'
+                                }`}
+                              >
+                                <span className="truncate">{station.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <label className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="search"
+                  placeholder="Buscar..."
+                  className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+            </div>
           </div>
 
           {loading && (

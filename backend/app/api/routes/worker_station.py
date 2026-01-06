@@ -9,6 +9,7 @@ from app.models.admin import CommentTemplate, PauseReason
 from app.models.enums import (
     PanelUnitStatus,
     QCNotificationStatus,
+    QCExecutionOutcome,
     QCReworkStatus,
     RestrictionType,
     StationRole,
@@ -18,7 +19,17 @@ from app.models.enums import (
     WorkUnitStatus,
 )
 from app.models.house import HouseSubType, HouseType, PanelDefinition
-from app.models.qc import QCCheckInstance, QCNotification, QCReworkTask
+from app.models.qc import (
+    MediaAsset,
+    QCCheckDefinition,
+    QCCheckInstance,
+    QCExecution,
+    QCExecutionFailureMode,
+    QCFailureModeDefinition,
+    QCEvidence,
+    QCNotification,
+    QCReworkTask,
+)
 from app.models.stations import Station
 from app.models.tasks import (
     TaskApplicability,
@@ -697,28 +708,78 @@ def station_snapshot(
                 if task.task_instance_id in active_participation_ids:
                     task.current_worker_participating = True
 
-    rework_rows = list(
-        db.execute(
-            select(QCReworkTask, QCCheckInstance, WorkUnit, PanelUnit)
-            .join(QCCheckInstance, QCReworkTask.check_instance_id == QCCheckInstance.id)
-            .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
-            .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
-            .where(QCCheckInstance.station_id == station.id)
-            .where(QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]))
-            .order_by(QCReworkTask.created_at.desc())
+    work_unit_ids = {item.work_unit_id for item in work_items}
+    panel_unit_ids = {item.panel_unit_id for item in work_items if item.panel_unit_id is not None}
+    rework_rows = []
+    if work_unit_ids:
+        rework_rows = list(
+            db.execute(
+                select(QCReworkTask, QCCheckInstance, QCCheckDefinition, WorkUnit, PanelUnit)
+                .join(QCCheckInstance, QCReworkTask.check_instance_id == QCCheckInstance.id)
+                .join(QCCheckDefinition, QCCheckInstance.check_definition_id == QCCheckDefinition.id, isouter=True)
+                .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
+                .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
+                .where(QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]))
+                .where(QCCheckInstance.work_unit_id.in_(work_unit_ids))
+                .where(
+                    (QCCheckInstance.panel_unit_id.is_(None))
+                    | (QCCheckInstance.panel_unit_id.in_(panel_unit_ids))
+                )
+                .order_by(QCReworkTask.created_at.desc())
+            )
         )
-    )
     qc_rework_tasks = []
-    for rework, check_instance, rework_work_unit, panel_unit in rework_rows:
+    for rework, check_instance, check_definition, rework_work_unit, panel_unit in rework_rows:
         panel_code = (
             panel_unit.panel_definition.panel_code
             if panel_unit and panel_unit.panel_definition
             else None
         )
+        latest_fail = (
+            db.execute(
+                select(QCExecution)
+                .where(QCExecution.check_instance_id == check_instance.id)
+                .where(QCExecution.outcome == QCExecutionOutcome.FAIL)
+                .order_by(QCExecution.performed_at.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        failure_modes: list[str] = []
+        evidence_uris: list[str] = []
+        failure_notes = latest_fail.notes if latest_fail else None
+        if latest_fail:
+            mode_rows = list(
+                db.execute(
+                    select(QCExecutionFailureMode, QCFailureModeDefinition)
+                    .join(
+                        QCFailureModeDefinition,
+                        QCExecutionFailureMode.failure_mode_definition_id == QCFailureModeDefinition.id,
+                        isouter=True,
+                    )
+                    .where(QCExecutionFailureMode.execution_id == latest_fail.id)
+                )
+            )
+            for mode, definition in mode_rows:
+                label = definition.name if definition else "Otro"
+                if mode.other_text:
+                    label = f"{label}: {mode.other_text}"
+                failure_modes.append(label)
+            evidence_rows = list(
+                db.execute(
+                    select(QCEvidence, MediaAsset)
+                    .join(MediaAsset, QCEvidence.media_asset_id == MediaAsset.id)
+                    .where(QCEvidence.execution_id == latest_fail.id)
+                )
+            )
+            for evidence, media in evidence_rows:
+                evidence_uris.append(f"/media_gallery/{media.storage_key}")
         qc_rework_tasks.append(
             StationQCReworkTask(
                 id=rework.id,
                 check_instance_id=check_instance.id,
+                check_name=check_definition.name if check_definition else check_instance.ad_hoc_title,
                 description=rework.description,
                 status=rework.status.value,
                 work_unit_id=rework_work_unit.id,
@@ -727,6 +788,9 @@ def station_snapshot(
                 panel_code=panel_code,
                 station_id=check_instance.station_id,
                 created_at=rework.created_at,
+                failure_notes=failure_notes,
+                failure_modes=failure_modes,
+                evidence_uris=evidence_uris,
             )
         )
 
