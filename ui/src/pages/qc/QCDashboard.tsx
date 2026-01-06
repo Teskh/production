@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Wrench } from 'lucide-react';
 import clsx from 'clsx';
 import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayout';
 
 const REFRESH_INTERVAL_MS = 20000;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
 
 type QCCheckOrigin = 'triggered' | 'manual';
 type QCCheckStatus = 'Open' | 'Closed';
@@ -88,6 +89,7 @@ const reworkTaskStatusLabels: Record<string, string> = {
 
 const QCDashboard: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [dashboard, setDashboard] = useState<QCDashboardResponse>({
     pending_checks: [],
@@ -98,7 +100,7 @@ const QCDashboard: React.FC = () => {
   const [isUnauthorized, setIsUnauthorized] = useState(false);
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
-  const canExecuteChecks = Boolean(qcSession);
+  const canExecuteChecks = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
   const blockedMessage =
     location.state?.blocked === 'qc-auth'
       ? 'Inicia sesion para ejecutar inspecciones QC.'
@@ -176,9 +178,13 @@ const QCDashboard: React.FC = () => {
         <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
           {blockedMessage ?? unauthorizedMessage}
           {!canExecuteChecks ? (
-            <Link className="ml-2 font-semibold text-[var(--ink)] underline" to="/login">
+            <button
+              type="button"
+              onClick={() => navigate('/qc', { state: { qcLogin: true } })}
+              className="ml-2 font-semibold text-[var(--ink)] underline"
+            >
               Iniciar sesion
-            </Link>
+            </button>
           ) : null}
         </div>
       )}

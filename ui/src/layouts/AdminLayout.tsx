@@ -51,6 +51,10 @@ export const useAdminHeader = (): AdminHeaderContextValue => {
   return context;
 };
 
+export const useOptionalAdminHeader = (): AdminHeaderContextValue | null => {
+  return useContext(AdminHeaderContext);
+};
+
 export const useAdminSession = (): AdminSession => {
   const context = useContext(AdminSessionContext);
   if (!context) {
@@ -72,6 +76,7 @@ const AdminLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
+  const isSysadmin = isSysadminUser(admin);
   const menuItems = [
     {
       title: 'Analitica',
@@ -100,11 +105,11 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Configuracion',
       items: [
-        { name: 'Estaciones', path: '/admin/stations', icon: Settings },
+        { name: 'Estaciones', path: '/admin/stations', icon: Settings, sysadminOnly: true },
         { name: 'Tareas', path: '/admin/task-defs', icon: ClipboardList },
         { name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
-        { name: 'Respaldos', path: '/admin/backups', icon: Database },
-      ],
+        { name: 'Respaldos', path: '/admin/backups', icon: Database, sysadminOnly: true },
+      ].filter((item) => !item.sysadminOnly || isSysadmin),
     },
   ];
 

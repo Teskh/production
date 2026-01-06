@@ -1,10 +1,17 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, CalendarClock, LayoutGrid, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import {
+  BookOpen,
+  CalendarClock,
+  LayoutGrid,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 import clsx from 'clsx';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
 
 type AdminSession = {
   id: number;
@@ -54,10 +61,16 @@ const QCLayout: React.FC = () => {
   const [admin, setAdmin] = useState<AdminSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [status, setStatus] = useState<QCLayoutStatus>({});
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginFirstName, setLoginFirstName] = useState('');
+  const [loginLastName, setLoginLastName] = useState('');
+  const [loginPin, setLoginPin] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
   const navItems = [
     { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
-    { name: 'Checks', path: '/qc/checks', icon: ShieldCheck },
+    ...(admin ? [{ name: 'Checks', path: '/qc/checks', icon: ShieldCheck }] : []),
   ];
 
   useEffect(() => {
@@ -79,10 +92,6 @@ const QCLayout: React.FC = () => {
           throw new Error('No se pudo verificar la sesion de QC.');
         }
         const data = (await response.json()) as AdminSession;
-        if (!QC_ROLE_VALUES.has(data.role)) {
-          setAdmin(null);
-          return;
-        }
         setAdmin(data);
       } catch {
         if (active) {
@@ -100,6 +109,14 @@ const QCLayout: React.FC = () => {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    const state = location.state as { qcLogin?: boolean } | null;
+    if (state?.qcLogin) {
+      setLoginOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
+
   const handleLogout = async () => {
     try {
       await fetch(`${API_BASE_URL}/api/admin/logout`, {
@@ -107,7 +124,57 @@ const QCLayout: React.FC = () => {
         credentials: 'include',
       });
     } finally {
-      navigate('/login', { replace: true });
+      setAdmin(null);
+    }
+  };
+
+  const openLogin = () => {
+    setLoginOpen(true);
+    setLoginError(null);
+  };
+
+  const closeLogin = () => {
+    setLoginOpen(false);
+    setLoginError(null);
+    setLoginSubmitting(false);
+    setLoginFirstName('');
+    setLoginLastName('');
+    setLoginPin('');
+  };
+
+  const handleLogin = async () => {
+    setLoginSubmitting(true);
+    setLoginError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          first_name: loginFirstName.trim(),
+          last_name: loginLastName.trim(),
+          pin: loginPin,
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Fallo el inicio de sesion de admin.');
+      }
+      const meResponse = await fetch(`${API_BASE_URL}/api/admin/me`, {
+        credentials: 'include',
+      });
+      if (!meResponse.ok) {
+        throw new Error('No se pudo verificar la sesion de QC.');
+      }
+      const data = (await meResponse.json()) as AdminSession;
+      setAdmin(data);
+      closeLogin();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Fallo el inicio de sesion de admin.';
+      setLoginError(message);
+    } finally {
+      setLoginSubmitting(false);
     }
   };
 
@@ -185,7 +252,7 @@ const QCLayout: React.FC = () => {
               ) : (
                 <button
                   type="button"
-                  onClick={() => navigate('/login')}
+                  onClick={openLogin}
                   className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
                 >
                   <LogOut className="h-4 w-4" /> Iniciar sesion
@@ -213,6 +280,74 @@ const QCLayout: React.FC = () => {
             </main>
           </div>
         </div>
+        {loginOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-md rounded-3xl border border-black/10 bg-white p-6 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    QC login
+                  </p>
+                  <h2 className="mt-2 font-display text-xl text-[var(--ink)]">
+                    Iniciar sesion
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeLogin}
+                  className="rounded-full border border-black/10 p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="mt-5 space-y-4">
+                <label className="block text-sm text-[var(--ink-muted)]">
+                  Nombre
+                  <input
+                    type="text"
+                    value={loginFirstName}
+                    onChange={(event) => setLoginFirstName(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
+                  />
+                </label>
+                <label className="block text-sm text-[var(--ink-muted)]">
+                  Apellido
+                  <input
+                    type="text"
+                    value={loginLastName}
+                    onChange={(event) => setLoginLastName(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
+                  />
+                </label>
+                <label className="block text-sm text-[var(--ink-muted)]">
+                  PIN
+                  <input
+                    type="password"
+                    value={loginPin}
+                    onChange={(event) => setLoginPin(event.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
+                  />
+                </label>
+                {loginError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
+                    {loginError}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleLogin}
+                  disabled={loginSubmitting}
+                  className={clsx(
+                    'w-full rounded-2xl px-4 py-2 text-sm font-semibold text-white transition',
+                    loginSubmitting ? 'bg-slate-400' : 'bg-[var(--ink)] hover:bg-black'
+                  )}
+                >
+                  {loginSubmitting ? 'Ingresando...' : 'Ingresar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </QCLayoutStatusContext.Provider>
     </QCSessionContext.Provider>
   );

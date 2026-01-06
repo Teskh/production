@@ -40,6 +40,7 @@ from app.models.qc import (
 from app.models.stations import Station
 from app.models.tasks import TaskDefinition, TaskInstance, TaskParticipation, TaskPause
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
+from app.models.workers import Worker
 from app.schemas.qc_runtime import (
     QCCheckInstanceDetail,
     QCCheckInstanceSummary,
@@ -48,6 +49,7 @@ from app.schemas.qc_runtime import (
     QCExecutionCreate,
     QCExecutionFailureModeRead,
     QCExecutionRead,
+    QCReworkAttemptSummary,
     QCDashboardResponse,
     QCEvidenceSummary,
     QCFailureModeSummary,
@@ -55,6 +57,8 @@ from app.schemas.qc_runtime import (
     QCLibraryWorkUnitSummary,
     QCManualCheckCreate,
     QCNotificationSummary,
+    QCTaskInstanceWithWorkersSummary,
+    QCTaskParticipantSummary,
     QCReworkPauseRequest,
     QCReworkStartRequest,
     QCReworkTaskSummary,
@@ -114,6 +118,7 @@ def _build_check_summary(
         scope=instance.scope,
         work_unit_id=instance.work_unit_id,
         panel_unit_id=instance.panel_unit_id,
+        related_task_instance_id=instance.related_task_instance_id,
         station_id=instance.station_id,
         station_name=station_name,
         current_station_id=current_station_id,
@@ -122,7 +127,9 @@ def _build_check_summary(
         panel_code=panel_code,
         status=instance.status,
         severity_level=instance.severity_level,
+        opened_by_user_id=instance.opened_by_user_id,
         opened_at=instance.opened_at,
+        closed_at=instance.closed_at,
     )
 
 
@@ -346,6 +353,40 @@ def qc_check_instance_detail(
         for media in media_assets
     ]
 
+    trigger_task: QCTaskInstanceWithWorkersSummary | None = None
+    if instance.related_task_instance_id:
+        related = db.get(TaskInstance, instance.related_task_instance_id)
+        if related:
+            related_def = db.get(TaskDefinition, related.task_definition_id)
+            related_station_name = (
+                db.get(Station, related.station_id).name if related.station_id else None
+            )
+            participant_rows = list(
+                db.execute(
+                    select(TaskParticipation, Worker)
+                    .join(Worker, TaskParticipation.worker_id == Worker.id)
+                    .where(TaskParticipation.task_instance_id == related.id)
+                    .order_by(TaskParticipation.joined_at)
+                )
+            )
+            trigger_task = QCTaskInstanceWithWorkersSummary(
+                task_instance_id=related.id,
+                task_definition_id=related.task_definition_id,
+                task_name=related_def.name if related_def else f"Tarea #{related.task_definition_id}",
+                station_id=related.station_id,
+                station_name=related_station_name,
+                status=related.status,
+                started_at=related.started_at,
+                completed_at=related.completed_at,
+                workers=[
+                    QCTaskParticipantSummary(
+                        worker_id=worker.id,
+                        worker_name=f"{worker.first_name} {worker.last_name}",
+                    )
+                    for participation, worker in participant_rows
+                ],
+            )
+
     execution_rows = list(
         db.execute(
             select(QCExecution)
@@ -359,6 +400,7 @@ def qc_check_instance_detail(
     }
     executions: list[QCExecutionRead] = []
     evidence: list[QCEvidenceSummary] = []
+    rework_attempts: list[QCReworkAttemptSummary] = []
     for execution in execution_rows:
         mode_rows = list(
             db.execute(
@@ -380,6 +422,7 @@ def qc_check_instance_detail(
         executions.append(
             QCExecutionRead(
                 id=execution.id,
+                check_instance_id=execution.check_instance_id,
                 outcome=execution.outcome,
                 notes=execution.notes,
                 performed_by_user_id=execution.performed_by_user_id,
@@ -398,8 +441,10 @@ def qc_check_instance_detail(
             evidence.append(
                 QCEvidenceSummary(
                     id=evidence_row.id,
+                    execution_id=evidence_row.execution_id,
                     media_asset_id=media.id,
                     uri=f"/media_gallery/{media.storage_key}",
+                    mime_type=media.mime_type,
                     captured_at=evidence_row.captured_at,
                 )
             )
@@ -440,6 +485,43 @@ def qc_check_instance_detail(
         for rework in rework_rows
     ]
 
+    for rework in rework_rows:
+        task_rows = list(
+            db.execute(
+                select(TaskInstance)
+                .where(TaskInstance.rework_task_id == rework.id)
+                .order_by(TaskInstance.started_at.desc().nullslast(), TaskInstance.id.desc())
+            ).scalars()
+        )
+        for task in task_rows:
+            task_station_name = db.get(Station, task.station_id).name if task.station_id else None
+            participant_rows = list(
+                db.execute(
+                    select(TaskParticipation, Worker)
+                    .join(Worker, TaskParticipation.worker_id == Worker.id)
+                    .where(TaskParticipation.task_instance_id == task.id)
+                    .order_by(TaskParticipation.joined_at)
+                )
+            )
+            rework_attempts.append(
+                QCReworkAttemptSummary(
+                    rework_task_id=rework.id,
+                    task_instance_id=task.id,
+                    station_id=task.station_id,
+                    station_name=task_station_name,
+                    status=task.status,
+                    started_at=task.started_at,
+                    completed_at=task.completed_at,
+                    workers=[
+                        QCTaskParticipantSummary(
+                            worker_id=worker.id,
+                            worker_name=f"{worker.first_name} {worker.last_name}",
+                        )
+                        for participation, worker in participant_rows
+                    ],
+                )
+            )
+
     check_def_summary = (
         QCCheckDefinitionSummary(
             id=check_def.id,
@@ -458,7 +540,9 @@ def qc_check_instance_detail(
         media_assets=media_summaries,
         executions=executions,
         rework_tasks=rework_summaries,
+        rework_attempts=rework_attempts,
         evidence=evidence,
+        trigger_task=trigger_task,
     )
 
 
@@ -565,6 +649,7 @@ def execute_qc_check(
 
     execution_read = QCExecutionRead(
         id=execution.id,
+        check_instance_id=execution.check_instance_id,
         outcome=execution.outcome,
         notes=execution.notes,
         performed_by_user_id=execution.performed_by_user_id,
@@ -711,8 +796,10 @@ def upload_execution_evidence(
 
     return QCEvidenceSummary(
         id=evidence.id,
+        execution_id=evidence.execution_id,
         media_asset_id=media.id,
         uri=f"/media_gallery/{storage_key}",
+        mime_type=media.mime_type,
         captured_at=evidence.captured_at,
     )
 
@@ -1164,6 +1251,7 @@ def list_library_work_units(
             QCLibraryWorkUnitSummary(
                 work_unit_id=work_unit.id,
                 module_number=work_unit.module_number,
+                project_name=work_order.project_name,
                 house_type_name=house_type.name,
                 status=work_unit.status.value,
                 open_checks=len(open_checks),
@@ -1231,6 +1319,7 @@ def library_work_unit_detail(
             executions.append(
                 QCExecutionRead(
                     id=execution.id,
+                    check_instance_id=execution.check_instance_id,
                     outcome=execution.outcome,
                     notes=execution.notes,
                     performed_by_user_id=execution.performed_by_user_id,
@@ -1249,8 +1338,10 @@ def library_work_unit_detail(
                 evidence.append(
                     QCEvidenceSummary(
                         id=evidence_row.id,
+                        execution_id=evidence_row.execution_id,
                         media_asset_id=media.id,
                         uri=f"/media_gallery/{media.storage_key}",
+                        mime_type=media.mime_type,
                         captured_at=evidence_row.captured_at,
                     )
                 )
@@ -1304,6 +1395,7 @@ def library_work_unit_detail(
     return QCLibraryWorkUnitDetail(
         work_unit_id=work_unit.id,
         module_number=work_unit.module_number,
+        project_name=work_order.project_name if work_order else "",
         house_type_name=house_type.name if house_type else "",
         status=work_unit.status.value,
         checks=check_summaries,

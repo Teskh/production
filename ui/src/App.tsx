@@ -17,7 +17,6 @@ import QCExecution from './pages/qc/QCExecution';
 import QCLibrary from './pages/qc/QCLibrary';
 
 // Admin Pages
-import AdminDashboard from './pages/admin/AdminDashboard';
 import Dashboards from './pages/admin/dashboards/Dashboards';
 import DashboardPanels from './pages/admin/dashboards/dashboard_panels';
 import DashboardStations from './pages/admin/dashboards/dashboard_stations';
@@ -62,7 +61,7 @@ function App() {
 
         {/* Admin Routes */}
         <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<AdminDashboard />} />
+          <Route index element={<Navigate to="dashboards" replace />} />
           
           {/* Personnel */}
           <Route path="workers" element={<Personnel />} />

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Filter, Image, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useOptionalAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -254,7 +254,7 @@ const sortByOrderThenName = <T extends { name: string; sort_order: number | null
   });
 
 const QCChecks: React.FC = () => {
-  const { setHeader } = useAdminHeader();
+  const adminHeader = useOptionalAdminHeader();
   const [checks, setChecks] = useState<QCCheckDefinition[]>([]);
   const [categories, setCategories] = useState<QCCheckCategory[]>([]);
   const [failureModes, setFailureModes] = useState<QCFailureMode[]>([]);
@@ -303,11 +303,14 @@ const QCChecks: React.FC = () => {
   const [applicabilityStatus, setApplicabilityStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    setHeader({
+    if (!adminHeader) {
+      return;
+    }
+    adminHeader.setHeader({
       title: 'Definicion de revisiones QC',
       kicker: 'Calidad / Revisiones QC',
     });
-  }, [setHeader]);
+  }, [adminHeader]);
 
   useEffect(() => {
     let active = true;

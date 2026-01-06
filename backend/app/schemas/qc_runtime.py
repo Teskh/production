@@ -21,6 +21,7 @@ class QCCheckInstanceSummary(BaseModel):
     scope: TaskScope
     work_unit_id: int
     panel_unit_id: int | None = None
+    related_task_instance_id: int | None = None
     station_id: int | None = None
     station_name: str | None = None
     current_station_id: int | None = None
@@ -29,7 +30,9 @@ class QCCheckInstanceSummary(BaseModel):
     panel_code: str | None = None
     status: QCCheckStatus
     severity_level: QCSeverityLevel | None = None
+    opened_by_user_id: int | None = None
     opened_at: datetime
+    closed_at: datetime | None = None
 
 
 class QCReworkTaskSummary(BaseModel):
@@ -66,6 +69,7 @@ class QCExecutionFailureModeRead(BaseModel):
 
 class QCExecutionRead(BaseModel):
     id: int
+    check_instance_id: int
     outcome: QCExecutionOutcome
     notes: str | None = None
     performed_by_user_id: int
@@ -98,9 +102,39 @@ class QCCheckMediaSummary(BaseModel):
 
 class QCEvidenceSummary(BaseModel):
     id: int
+    execution_id: int
     media_asset_id: int
     uri: str
+    mime_type: str | None = None
     captured_at: datetime
+
+
+class QCTaskParticipantSummary(BaseModel):
+    worker_id: int
+    worker_name: str
+
+
+class QCTaskInstanceWithWorkersSummary(BaseModel):
+    task_instance_id: int
+    task_definition_id: int
+    task_name: str
+    station_id: int | None = None
+    station_name: str | None = None
+    status: TaskStatus
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    workers: list[QCTaskParticipantSummary] = Field(default_factory=list)
+
+
+class QCReworkAttemptSummary(BaseModel):
+    rework_task_id: int
+    task_instance_id: int
+    station_id: int | None = None
+    station_name: str | None = None
+    status: TaskStatus
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    workers: list[QCTaskParticipantSummary] = Field(default_factory=list)
 
 
 class QCCheckInstanceDetail(BaseModel):
@@ -110,7 +144,9 @@ class QCCheckInstanceDetail(BaseModel):
     media_assets: list[QCCheckMediaSummary]
     executions: list[QCExecutionRead]
     rework_tasks: list[QCReworkTaskSummary]
+    rework_attempts: list[QCReworkAttemptSummary] = Field(default_factory=list)
     evidence: list[QCEvidenceSummary]
+    trigger_task: QCTaskInstanceWithWorkersSummary | None = None
 
 
 class QCExecutionCreate(BaseModel):
@@ -160,6 +196,7 @@ class QCNotificationSummary(BaseModel):
 class QCLibraryWorkUnitSummary(BaseModel):
     work_unit_id: int
     module_number: int
+    project_name: str
     house_type_name: str
     status: str
     open_checks: int
@@ -171,6 +208,7 @@ class QCLibraryWorkUnitSummary(BaseModel):
 class QCLibraryWorkUnitDetail(BaseModel):
     work_unit_id: int
     module_number: int
+    project_name: str
     house_type_name: str
     status: str
     checks: list[QCCheckInstanceSummary]
