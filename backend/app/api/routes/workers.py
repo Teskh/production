@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.stations import Station
 from app.models.workers import Skill, Worker, WorkerSkill, WorkerSupervisor
 from app.schemas.workers import (
@@ -98,7 +99,11 @@ def list_workers(db: Session = Depends(get_db)) -> list[Worker]:
 
 
 @router.post("/", response_model=WorkerRead, status_code=status.HTTP_201_CREATED)
-def create_worker(payload: WorkerCreate, db: Session = Depends(get_db)) -> Worker:
+def create_worker(
+    payload: WorkerCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> Worker:
     geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
     geovictoria_identifier = _normalize_geovictoria_value(
         payload.geovictoria_identifier, "GeoVictoria identifier"
@@ -148,7 +153,9 @@ def list_supervisors(db: Session = Depends(get_db)) -> list[WorkerSupervisor]:
     "/supervisors", response_model=WorkerSupervisorRead, status_code=status.HTTP_201_CREATED
 )
 def create_supervisor(
-    payload: WorkerSupervisorCreate, db: Session = Depends(get_db)
+    payload: WorkerSupervisorCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> WorkerSupervisor:
     geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
     geovictoria_identifier = _normalize_geovictoria_value(
@@ -186,6 +193,7 @@ def update_supervisor(
     supervisor_id: int,
     payload: WorkerSupervisorUpdate,
     db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> WorkerSupervisor:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
@@ -216,7 +224,11 @@ def update_supervisor(
 
 
 @router.delete("/supervisors/{supervisor_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_supervisor(supervisor_id: int, db: Session = Depends(get_db)) -> None:
+def delete_supervisor(
+    supervisor_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
         raise HTTPException(
@@ -237,7 +249,11 @@ def list_skill_assignments(db: Session = Depends(get_db)) -> list[WorkerSkill]:
 
 
 @router.post("/skills", response_model=SkillRead, status_code=status.HTTP_201_CREATED)
-def create_skill(payload: SkillCreate, db: Session = Depends(get_db)) -> Skill:
+def create_skill(
+    payload: SkillCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> Skill:
     skill = Skill(**payload.model_dump())
     db.add(skill)
     db.commit()
@@ -254,7 +270,12 @@ def get_skill(skill_id: int, db: Session = Depends(get_db)) -> Skill:
 
 
 @router.put("/skills/{skill_id}", response_model=SkillRead)
-def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_db)) -> Skill:
+def update_skill(
+    skill_id: int,
+    payload: SkillUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> Skill:
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
@@ -266,7 +287,11 @@ def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_
 
 
 @router.delete("/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_skill(skill_id: int, db: Session = Depends(get_db)) -> None:
+def delete_skill(
+    skill_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Skill not found")
@@ -276,7 +301,10 @@ def delete_skill(skill_id: int, db: Session = Depends(get_db)) -> None:
 
 @router.put("/skills/{skill_id}/workers", response_model=list[WorkerRead])
 def set_skill_workers(
-    skill_id: int, payload: WorkerAssignment, db: Session = Depends(get_db)
+    skill_id: int,
+    payload: WorkerAssignment,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> list[Worker]:
     skill = db.get(Skill, skill_id)
     if not skill:
@@ -308,7 +336,12 @@ def get_worker(worker_id: int, db: Session = Depends(get_db)) -> Worker:
 
 
 @router.put("/{worker_id}", response_model=WorkerRead)
-def update_worker(worker_id: int, payload: WorkerUpdate, db: Session = Depends(get_db)) -> Worker:
+def update_worker(
+    worker_id: int,
+    payload: WorkerUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> Worker:
     worker = db.get(Worker, worker_id)
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
@@ -353,7 +386,11 @@ def update_worker(worker_id: int, payload: WorkerUpdate, db: Session = Depends(g
 
 
 @router.delete("/{worker_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_worker(worker_id: int, db: Session = Depends(get_db)) -> None:
+def delete_worker(
+    worker_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     worker = db.get(Worker, worker_id)
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
@@ -374,7 +411,10 @@ def list_worker_skills(worker_id: int, db: Session = Depends(get_db)) -> list[Sk
 
 @router.put("/{worker_id}/skills", response_model=list[SkillRead])
 def set_worker_skills(
-    worker_id: int, payload: SkillAssignment, db: Session = Depends(get_db)
+    worker_id: int,
+    payload: SkillAssignment,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> list[Skill]:
     worker = db.get(Worker, worker_id)
     if not worker:

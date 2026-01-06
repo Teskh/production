@@ -69,6 +69,15 @@ from app.services.qc_runtime import (
 router = APIRouter()
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 QC_EVIDENCE_DIR = MEDIA_GALLERY_DIR / "qc_evidence"
+QC_ROLE_VALUES = {"Calidad", "QC"}
+
+
+def _require_qc_admin(admin: AdminUser) -> AdminUser:
+    if admin.role not in QC_ROLE_VALUES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="QC role required"
+        )
+    return admin
 
 
 def _build_check_summary(
@@ -125,6 +134,7 @@ def qc_dashboard(
     _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCDashboardResponse:
+    _require_qc_admin(_admin)
     pending = list(
         db.execute(
             select(
@@ -203,6 +213,7 @@ def qc_check_instance_detail(
     _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCCheckInstanceDetail:
+    _require_qc_admin(_admin)
     instance = db.get(QCCheckInstance, check_instance_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
@@ -368,6 +379,7 @@ def execute_qc_check(
     admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCExecutionRead:
+    admin = _require_qc_admin(admin)
     instance = db.get(QCCheckInstance, check_instance_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
@@ -563,9 +575,10 @@ def create_manual_check(
 def upload_execution_evidence(
     execution_id: int,
     file: UploadFile = File(...),
-    _admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCEvidenceSummary:
+    _require_qc_admin(admin)
     execution = db.get(QCExecution, execution_id)
     if not execution:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found")

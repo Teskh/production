@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.enums import StationRole
 from app.models.stations import Station
 from app.schemas.stations import StationCreate, StationRead, StationUpdate
@@ -53,7 +54,11 @@ def _validate_station_payload(
 
 
 @router.post("/", response_model=StationRead, status_code=status.HTTP_201_CREATED)
-def create_station(payload: StationCreate, db: Session = Depends(get_db)) -> Station:
+def create_station(
+    payload: StationCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> Station:
     _validate_station_payload(
         role=payload.role,
         line_type=payload.line_type.value if payload.line_type else None,
@@ -76,7 +81,10 @@ def get_station(station_id: int, db: Session = Depends(get_db)) -> Station:
 
 @router.put("/{station_id}", response_model=StationRead)
 def update_station(
-    station_id: int, payload: StationUpdate, db: Session = Depends(get_db)
+    station_id: int,
+    payload: StationUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> Station:
     station = db.get(Station, station_id)
     if not station:
@@ -98,7 +106,11 @@ def update_station(
 
 
 @router.delete("/{station_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_station(station_id: int, db: Session = Depends(get_db)) -> None:
+def delete_station(
+    station_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     station = db.get(Station, station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")

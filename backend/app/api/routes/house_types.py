@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.house import HouseParameterValue, HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
     QCApplicability,
@@ -360,7 +361,11 @@ def list_house_types(db: Session = Depends(get_db)) -> list[HouseType]:
 
 
 @router.post("/", response_model=HouseTypeRead, status_code=status.HTTP_201_CREATED)
-def create_house_type(payload: HouseTypeCreate, db: Session = Depends(get_db)) -> HouseType:
+def create_house_type(
+    payload: HouseTypeCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> HouseType:
     house_type = HouseType(**payload.model_dump())
     db.add(house_type)
     db.commit()
@@ -378,7 +383,10 @@ def get_house_type(house_type_id: int, db: Session = Depends(get_db)) -> HouseTy
 
 @router.put("/{house_type_id}", response_model=HouseTypeRead)
 def update_house_type(
-    house_type_id: int, payload: HouseTypeUpdate, db: Session = Depends(get_db)
+    house_type_id: int,
+    payload: HouseTypeUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseType:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -392,7 +400,10 @@ def update_house_type(
 
 @router.delete("/{house_type_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_house_type(
-    house_type_id: int, force: bool = False, db: Session = Depends(get_db)
+    house_type_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> None:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -438,7 +449,10 @@ def list_house_subtypes(
     status_code=status.HTTP_201_CREATED,
 )
 def create_house_subtype(
-    house_type_id: int, payload: HouseSubTypeCreate, db: Session = Depends(get_db)
+    house_type_id: int,
+    payload: HouseSubTypeCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseSubType:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -460,7 +474,10 @@ def get_house_subtype(sub_type_id: int, db: Session = Depends(get_db)) -> HouseS
 
 @router.put("/subtypes/{sub_type_id}", response_model=HouseSubTypeRead)
 def update_house_subtype(
-    sub_type_id: int, payload: HouseSubTypeUpdate, db: Session = Depends(get_db)
+    sub_type_id: int,
+    payload: HouseSubTypeUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseSubType:
     subtype = db.get(HouseSubType, sub_type_id)
     if not subtype:
@@ -478,7 +495,11 @@ def update_house_subtype(
 
 
 @router.delete("/subtypes/{sub_type_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_house_subtype(sub_type_id: int, db: Session = Depends(get_db)) -> None:
+def delete_house_subtype(
+    sub_type_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     subtype = db.get(HouseSubType, sub_type_id)
     if not subtype:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="House subtype not found")

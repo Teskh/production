@@ -169,6 +169,7 @@ const Login: React.FC = () => {
   const [adminFirstName, setAdminFirstName] = useState('');
   const [adminLastName, setAdminLastName] = useState('');
   const [adminPin, setAdminPin] = useState('');
+  const [useSysadmin, setUseSysadmin] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [pinChangeOpen, setPinChangeOpen] = useState(false);
   const [pinChangeWorkerId, setPinChangeWorkerId] = useState<number | null>(null);
@@ -206,8 +207,9 @@ const Login: React.FC = () => {
           }
         }
         let normalizedContext = resolvedContext;
-        if (normalizedContext?.kind === 'station') {
-          const exists = stationData.some((station) => station.id === normalizedContext.stationId);
+        if (normalizedContext && normalizedContext.kind === 'station') {
+          const stationId = normalizedContext.stationId;
+          const exists = stationData.some((station) => station.id === stationId);
           if (!exists) {
             normalizedContext = null;
           }
@@ -215,7 +217,7 @@ const Login: React.FC = () => {
         setStationContext(normalizedContext);
         setStationPickerMode(modeFromContext(normalizedContext));
         let resolvedStationId: number | null = null;
-        if (normalizedContext?.kind === 'station') {
+        if (normalizedContext && normalizedContext.kind === 'station') {
           resolvedStationId = normalizedContext.stationId;
         }
         setSelectedStationId(resolvedStationId);
@@ -741,6 +743,29 @@ const Login: React.FC = () => {
                 </>
               ) : (
                 <>
+                  <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={useSysadmin}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setUseSysadmin(checked);
+                          if (checked) {
+                            setAdminFirstName('sysadmin');
+                            setAdminLastName('sysadmin');
+                            setAdminPin('');
+                          } else {
+                            setAdminFirstName('');
+                            setAdminLastName('');
+                            setAdminPin('');
+                          }
+                        }}
+                      />
+                      Usar sysadmin
+                    </label>
+                    <span className="text-xs text-gray-500">Contraseña via SYS_ADMIN_PASSWORD</span>
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Nombre</label>
                     <input
@@ -748,6 +773,7 @@ const Login: React.FC = () => {
                       className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
                       value={adminFirstName}
                       onChange={(event) => setAdminFirstName(event.target.value)}
+                      disabled={useSysadmin}
                     />
                   </div>
                   <div>
@@ -757,10 +783,13 @@ const Login: React.FC = () => {
                       className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
                       value={adminLastName}
                       onChange={(event) => setAdminLastName(event.target.value)}
+                      disabled={useSysadmin}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">PIN</label>
+                    <label className="block text-sm font-medium text-gray-700">
+                      {useSysadmin ? 'Contraseña' : 'PIN'}
+                    </label>
                     <input
                       type="password"
                       className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
@@ -795,6 +824,10 @@ const Login: React.FC = () => {
                 closePinModal();
                 setLoginError(null);
                 setQrScannerOpen(false);
+                setUseSysadmin(false);
+                setAdminFirstName('');
+                setAdminLastName('');
+                setAdminPin('');
               }}
               className="w-full flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
@@ -883,7 +916,8 @@ const Login: React.FC = () => {
                         const isActive =
                           option.mode.kind === stationPickerMode.kind &&
                           (option.mode.kind !== 'assembly_sequence' ||
-                            option.mode.sequenceOrder === stationPickerMode.sequenceOrder);
+                            (stationPickerMode.kind === 'assembly_sequence' &&
+                              option.mode.sequenceOrder === stationPickerMode.sequenceOrder));
                         const key =
                           option.mode.kind === 'assembly_sequence'
                             ? `assembly-${option.mode.sequenceOrder}`

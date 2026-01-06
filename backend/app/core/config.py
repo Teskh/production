@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
+# Load environment defaults from both the repo root and backend folder.
+# Repo root is preferred when both exist.
+load_dotenv(BASE_DIR.parent / ".env", override=False)
 load_dotenv(BASE_DIR / ".env", override=False)
 
 
@@ -42,6 +45,7 @@ class Settings:
     backup_scheduler_poll_seconds: int = int(
         os.getenv("BACKUP_SCHEDULER_POLL_SECONDS", "60")
     )
+    sys_admin_password: str | None = os.getenv("SYS_ADMIN_PASSWORD")
 
 
 settings = Settings()

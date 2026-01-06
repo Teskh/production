@@ -201,26 +201,27 @@ const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
   });
 
 const suggestHouseIdentifierBase = (projectName: string, items: QueueItem[]): string => {
-  const matches = items.filter((item) => item.project_name === projectName);
-  let bestMatch: { prefix: string; number: number; width: number } | null = null;
-  matches.forEach((item) => {
-    const match = item.house_identifier.match(/^(.*?)(\d+)$/);
-    if (!match) {
-      return;
-    }
-    const [, prefix, digits] = match;
-    const number = Number(digits);
-    if (Number.isNaN(number)) {
-      return;
-    }
-    if (!bestMatch || number > bestMatch.number) {
-      bestMatch = { prefix, number, width: digits.length };
-    }
-  });
+  const bestMatch = items
+    .filter((item) => item.project_name === projectName)
+    .reduce<{ prefix: string; value: number; width: number } | null>((best, item) => {
+      const match = item.house_identifier.match(/^(.*?)(\d+)$/);
+      if (!match) {
+        return best;
+      }
+      const [, prefix, digits] = match;
+      const value = Number(digits);
+      if (Number.isNaN(value)) {
+        return best;
+      }
+      if (!best || value > best.value) {
+        return { prefix, value, width: digits.length };
+      }
+      return best;
+    }, null);
   if (!bestMatch) {
     return '';
   }
-  const nextNumber = String(bestMatch.number + 1).padStart(bestMatch.width, '0');
+  const nextNumber = String(bestMatch.value + 1).padStart(bestMatch.width, '0');
   return `${bestMatch.prefix}${nextNumber}`;
 };
 

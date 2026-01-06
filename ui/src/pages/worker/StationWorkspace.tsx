@@ -558,10 +558,9 @@ const StationWorkspace: React.FC = () => {
           }
         }
         let normalizedContext = resolvedContext;
-        if (normalizedContext?.kind === 'station') {
-          const exists = stationData.some(
-            (station) => station.id === normalizedContext.stationId
-          );
+        if (normalizedContext && normalizedContext.kind === 'station') {
+          const stationId = normalizedContext.stationId;
+          const exists = stationData.some((station) => station.id === stationId);
           if (!exists) {
             normalizedContext = null;
           }
@@ -569,7 +568,7 @@ const StationWorkspace: React.FC = () => {
         setStationContext(normalizedContext);
         setStationPickerMode(modeFromContext(normalizedContext));
         let resolvedStationId: number | null = null;
-        if (normalizedContext?.kind === 'station') {
+        if (normalizedContext && normalizedContext.kind === 'station') {
           resolvedStationId = normalizedContext.stationId;
         } else if (normalizedContext) {
           const candidateId = session.station_id ?? storedStationId;
@@ -1672,15 +1671,16 @@ const StationWorkspace: React.FC = () => {
             </p>
             <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="space-y-2">
-                {contextOptions.map((option) => {
-                  const isActive =
-                    option.mode.kind === stationPickerMode.kind &&
-                    (option.mode.kind !== 'assembly_sequence' ||
-                      option.mode.sequenceOrder === stationPickerMode.sequenceOrder);
-                  const key =
-                    option.mode.kind === 'assembly_sequence'
-                      ? `assembly-${option.mode.sequenceOrder}`
-                      : option.label;
+	                {contextOptions.map((option) => {
+	                  const isActive =
+	                    option.mode.kind === stationPickerMode.kind &&
+	                    (option.mode.kind !== 'assembly_sequence' ||
+	                      (stationPickerMode.kind === 'assembly_sequence' &&
+	                        option.mode.sequenceOrder === stationPickerMode.sequenceOrder));
+	                  const key =
+	                    option.mode.kind === 'assembly_sequence'
+	                      ? `assembly-${option.mode.sequenceOrder}`
+	                      : option.label;
                   return (
                     <button
                       key={key}

@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin_auth,
+    admin_users,
     backups,
     comment_templates,
     geovictoria,
@@ -9,6 +10,8 @@ from app.api.routes import (
     house_types,
     panel_definitions,
     panel_linear_meters,
+    panel_task_history,
+    station_panels_finished,
     pause_reasons,
     pause_summary,
     production_queue,
@@ -27,6 +30,7 @@ from app.api.routes import (
 api_router = APIRouter()
 
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
+api_router.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
 api_router.include_router(backups.router, prefix="/backups", tags=["backups"])
 api_router.include_router(geovictoria.router, prefix="/geovictoria", tags=["geovictoria"])
 api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
@@ -43,6 +47,16 @@ api_router.include_router(
     panel_linear_meters.router,
     prefix="/panel-linear-meters",
     tags=["panel-linear-meters"],
+)
+api_router.include_router(
+    panel_task_history.router,
+    prefix="/panel-task-history",
+    tags=["panel-task-history"],
+)
+api_router.include_router(
+    station_panels_finished.router,
+    prefix="/station-panels-finished",
+    tags=["station-panels-finished"],
 )
 api_router.include_router(
     house_params.router, prefix="/house-parameters", tags=["house-parameters"]

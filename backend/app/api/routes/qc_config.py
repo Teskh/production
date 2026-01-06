@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
 from app.core.config import BASE_DIR
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
@@ -43,7 +43,7 @@ from app.schemas.qc import (
     QCTriggerUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_admin)])
 
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 

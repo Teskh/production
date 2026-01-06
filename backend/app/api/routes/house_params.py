@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.house import HouseParameter, HouseParameterValue, HouseType
 from app.schemas.parameters import (
     HouseParameterCreate,
@@ -23,7 +24,9 @@ def list_house_parameters(db: Session = Depends(get_db)) -> list[HouseParameter]
 
 @router.post("/", response_model=HouseParameterRead, status_code=status.HTTP_201_CREATED)
 def create_house_parameter(
-    payload: HouseParameterCreate, db: Session = Depends(get_db)
+    payload: HouseParameterCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseParameter:
     parameter = HouseParameter(**payload.model_dump())
     db.add(parameter)
@@ -44,7 +47,10 @@ def get_house_parameter(parameter_id: int, db: Session = Depends(get_db)) -> Hou
 
 @router.put("/{parameter_id}", response_model=HouseParameterRead)
 def update_house_parameter(
-    parameter_id: int, payload: HouseParameterUpdate, db: Session = Depends(get_db)
+    parameter_id: int,
+    payload: HouseParameterUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseParameter:
     parameter = db.get(HouseParameter, parameter_id)
     if not parameter:
@@ -59,7 +65,11 @@ def update_house_parameter(
 
 
 @router.delete("/{parameter_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_house_parameter(parameter_id: int, db: Session = Depends(get_db)) -> None:
+def delete_house_parameter(
+    parameter_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     parameter = db.get(HouseParameter, parameter_id)
     if not parameter:
         raise HTTPException(
@@ -83,7 +93,10 @@ def list_house_parameter_values(
     status_code=status.HTTP_201_CREATED,
 )
 def create_house_parameter_value(
-    parameter_id: int, payload: HouseParameterValueCreate, db: Session = Depends(get_db)
+    parameter_id: int,
+    payload: HouseParameterValueCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseParameterValue:
     if parameter_id != payload.parameter_id:
         raise HTTPException(
@@ -119,7 +132,10 @@ def get_house_parameter_value(
 
 @router.put("/values/{value_id}", response_model=HouseParameterValueRead)
 def update_house_parameter_value(
-    value_id: int, payload: HouseParameterValueUpdate, db: Session = Depends(get_db)
+    value_id: int,
+    payload: HouseParameterValueUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> HouseParameterValue:
     value = db.get(HouseParameterValue, value_id)
     if not value:
@@ -143,7 +159,11 @@ def update_house_parameter_value(
 
 
 @router.delete("/values/{value_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_house_parameter_value(value_id: int, db: Session = Depends(get_db)) -> None:
+def delete_house_parameter_value(
+    value_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     value = db.get(HouseParameterValue, value_id)
     if not value:
         raise HTTPException(

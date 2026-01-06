@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskExpectedDuration
 from app.schemas.tasks import (
@@ -42,7 +43,9 @@ def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicabi
     status_code=status.HTTP_201_CREATED,
 )
 def create_task_applicability(
-    payload: TaskApplicabilityCreate, db: Session = Depends(get_db)
+    payload: TaskApplicabilityCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> TaskApplicability:
     if _is_default_applicability_scope(
         payload.house_type_id,
@@ -96,6 +99,7 @@ def update_task_applicability(
     applicability_id: int,
     payload: TaskApplicabilityUpdate,
     db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> TaskApplicability:
     row = db.get(TaskApplicability, applicability_id)
     if not row:
@@ -148,7 +152,9 @@ def update_task_applicability(
 
 @router.delete("/applicability/{applicability_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task_applicability(
-    applicability_id: int, db: Session = Depends(get_db)
+    applicability_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> None:
     row = db.get(TaskApplicability, applicability_id)
     if not row:
@@ -166,7 +172,9 @@ def list_task_durations(db: Session = Depends(get_db)) -> list[TaskExpectedDurat
 
 @router.post("/durations", response_model=TaskExpectedDurationRead, status_code=status.HTTP_201_CREATED)
 def create_task_duration(
-    payload: TaskExpectedDurationCreate, db: Session = Depends(get_db)
+    payload: TaskExpectedDurationCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> TaskExpectedDuration:
     if not db.get(TaskDefinition, payload.task_definition_id):
         raise HTTPException(
@@ -207,7 +215,10 @@ def get_task_duration(
 
 @router.put("/durations/{duration_id}", response_model=TaskExpectedDurationRead)
 def update_task_duration(
-    duration_id: int, payload: TaskExpectedDurationUpdate, db: Session = Depends(get_db)
+    duration_id: int,
+    payload: TaskExpectedDurationUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> TaskExpectedDuration:
     row = db.get(TaskExpectedDuration, duration_id)
     if not row:
@@ -245,7 +256,11 @@ def update_task_duration(
 
 
 @router.delete("/durations/{duration_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task_duration(duration_id: int, db: Session = Depends(get_db)) -> None:
+def delete_task_duration(
+    duration_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     row = db.get(TaskExpectedDuration, duration_id)
     if not row:
         raise HTTPException(

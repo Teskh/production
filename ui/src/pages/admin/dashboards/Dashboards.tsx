@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ArrowUpRight, BarChart3, Ruler, Timer } from 'lucide-react';
+import { ArrowUpRight, BarChart3, ClipboardList, History, Ruler, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
@@ -23,6 +23,26 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Paneles', 'Estaciones', 'Pausas'],
     icon: Ruler,
+  },
+  {
+    id: 'panel-production-history',
+    name: 'Historico produccion paneles',
+    description:
+      'Consulta tareas terminadas, pausas y responsables por estacion y panel.',
+    path: '/admin/dashboards/stations',
+    status: 'ready',
+    tags: ['Paneles', 'Estaciones', 'Historico'],
+    icon: History,
+  },
+  {
+    id: 'panel-analysis',
+    name: 'Paneles finalizados por estacion',
+    description:
+      'Mide duraciones, pausas y tiempos ociosos para paneles que pasan por una estacion.',
+    path: '/admin/dashboards/panel-analysis',
+    status: 'ready',
+    tags: ['Paneles', 'Estaciones', 'Tiempo'],
+    icon: ClipboardList,
   },
   {
     id: 'tasks-analysis',

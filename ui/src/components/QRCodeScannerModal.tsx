@@ -260,7 +260,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
       const track = stream.getVideoTracks()[0];
       const capabilities = track ? (track as unknown as { getCapabilities?: () => Record<string, unknown> }).getCapabilities?.() : null;
       if (track && capabilities && 'torch' in capabilities) {
-        void track.applyConstraints({ advanced: [{ torch: true }] });
+        void track.applyConstraints({ advanced: [{ torch: true } as any] } as any);
       }
       setStatus('ready');
       animationFrameRef.current = requestAnimationFrame(scanFrame);

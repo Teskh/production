@@ -1,5 +1,6 @@
 from app.api.routes import (
     admin_auth,
+    admin_users,
     backups,
     comment_templates,
     geovictoria,
@@ -7,6 +8,8 @@ from app.api.routes import (
     house_types,
     panel_definitions,
     panel_linear_meters,
+    panel_task_history,
+    station_panels_finished,
     pause_reasons,
     pause_summary,
     production_queue,
@@ -24,6 +27,7 @@ from app.api.routes import (
 
 __all__ = [
     "admin_auth",
+    "admin_users",
     "backups",
     "comment_templates",
     "geovictoria",
@@ -31,6 +35,8 @@ __all__ = [
     "house_types",
     "panel_definitions",
     "panel_linear_meters",
+    "panel_task_history",
+    "station_panels_finished",
     "pause_reasons",
     "pause_summary",
     "production_queue",

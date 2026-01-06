@@ -612,7 +612,7 @@ const DashboardTasks: React.FC = () => {
         excluded.push(pointWithRatio);
       } else {
         included.push(pointWithRatio);
-        if (hypothesisDurations && predicate(pointWithRatio)) {
+        if (hypothesisDurations && predicate && predicate(pointWithRatio)) {
           hypothesisDurations.push(duration);
         }
       }

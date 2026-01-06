@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.enums import PanelUnitStatus, TaskExceptionType, TaskScope, TaskStatus, WorkUnitStatus
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.stations import Station
@@ -387,7 +388,9 @@ def module_status(
 
 @router.post("/batches", response_model=list[ProductionQueueItem], status_code=status.HTTP_201_CREATED)
 def create_batch(
-    payload: ProductionBatchCreate, db: Session = Depends(get_db)
+    payload: ProductionBatchCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> list[ProductionQueueItem]:
     project_name = payload.project_name.strip()
     if not project_name:
@@ -501,7 +504,9 @@ def create_batch(
 
 @router.put("/reorder", response_model=list[ProductionQueueItem])
 def reorder_queue(
-    payload: ProductionQueueReorder, db: Session = Depends(get_db)
+    payload: ProductionQueueReorder,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> list[ProductionQueueItem]:
     ordered_ids = payload.ordered_ids
     if not ordered_ids:
@@ -598,7 +603,10 @@ def _apply_queue_updates(
 
 @router.patch("/items/{work_unit_id}", response_model=ProductionQueueItem)
 def update_queue_item(
-    work_unit_id: int, payload: ProductionQueueUpdate, db: Session = Depends(get_db)
+    work_unit_id: int,
+    payload: ProductionQueueUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> ProductionQueueItem:
     unit = db.get(WorkUnit, work_unit_id)
     if not unit:
@@ -614,7 +622,9 @@ def update_queue_item(
 
 @router.patch("/items", response_model=list[ProductionQueueItem])
 def bulk_update_queue(
-    payload: ProductionQueueBulkUpdate, db: Session = Depends(get_db)
+    payload: ProductionQueueBulkUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> list[ProductionQueueItem]:
     if not payload.work_unit_ids:
         raise HTTPException(
@@ -639,7 +649,11 @@ def bulk_update_queue(
 
 
 @router.delete("/items/{work_unit_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_queue_item(work_unit_id: int, db: Session = Depends(get_db)) -> None:
+def delete_queue_item(
+    work_unit_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     unit = db.get(WorkUnit, work_unit_id)
     if not unit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue item not found")
@@ -658,7 +672,9 @@ def delete_queue_item(work_unit_id: int, db: Session = Depends(get_db)) -> None:
 
 @router.post("/items/bulk-delete", status_code=status.HTTP_204_NO_CONTENT)
 def bulk_delete_queue_items(
-    payload: ProductionQueueBulkDelete, db: Session = Depends(get_db)
+    payload: ProductionQueueBulkDelete,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> None:
     if not payload.work_unit_ids:
         raise HTTPException(

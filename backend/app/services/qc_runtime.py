@@ -53,7 +53,8 @@ def ensure_system_qc_user(db: Session) -> AdminUser:
         first_name=SYSTEM_QC_FIRST_NAME,
         last_name=SYSTEM_QC_LAST_NAME,
         pin=SYSTEM_QC_PIN,
-        role=AdminRole.QC,
+        role=AdminRole.QC.value,
+        active=True,
     )
     db.add(admin)
     db.flush()

@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.schemas.panels import (
     PanelDefinitionCreate,
@@ -20,7 +21,9 @@ def list_panel_definitions(db: Session = Depends(get_db)) -> list[PanelDefinitio
 
 @router.post("/", response_model=PanelDefinitionRead, status_code=status.HTTP_201_CREATED)
 def create_panel_definition(
-    payload: PanelDefinitionCreate, db: Session = Depends(get_db)
+    payload: PanelDefinitionCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> PanelDefinition:
     if not db.get(HouseType, payload.house_type_id):
         raise HTTPException(
@@ -61,6 +64,7 @@ def update_panel_definition(
     panel_definition_id: int,
     payload: PanelDefinitionUpdate,
     db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> PanelDefinition:
     panel_definition = db.get(PanelDefinition, panel_definition_id)
     if not panel_definition:
@@ -95,7 +99,9 @@ def update_panel_definition(
 
 @router.delete("/{panel_definition_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_panel_definition(
-    panel_definition_id: int, db: Session = Depends(get_db)
+    panel_definition_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> None:
     panel_definition = db.get(PanelDefinition, panel_definition_id)
     if not panel_definition:

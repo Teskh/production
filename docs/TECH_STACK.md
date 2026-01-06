@@ -27,3 +27,8 @@ Why this stack:
    - Fixed IP + port (or stable local hostname) so camera permission persists.
 3. **Kiosk mode**
    - Tablets launch into a single SPA URL; routing stays in-app.
+
+## 3) Required environment variables
+
+- `DATABASE_URL` (PostgreSQL connection string)
+- `SYS_ADMIN_PASSWORD` (password for the built-in `sysadmin` admin account)

@@ -1,124 +1,506 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { 
-  Camera, Check, X, MessageSquare, 
-  AlertTriangle, ChevronLeft, SkipForward, AlertCircle,
-  ChevronRight, Image
+import {
+  Camera,
+  Check,
+  X,
+  MessageSquare,
+  AlertTriangle,
+  ChevronLeft,
+  SkipForward,
+  AlertCircle,
+  ChevronRight,
+  Image,
 } from 'lucide-react';
-import { 
-  CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS 
-} from '../../services/qcMockData';
+import { CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS } from '../../services/qcMockData';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 const MOCK_GUIDANCE_IMAGES = [
   'https://placehold.co/600x400/3b82f6/white?text=Guidance+1',
   'https://placehold.co/600x400/3b82f6/white?text=Guidance+2',
 ];
 
+type QCFailureModeSummary = {
+  id: number;
+  check_definition_id: number | null;
+  name: string;
+  description: string | null;
+  default_severity_level: 'baja' | 'media' | 'critica' | null;
+  default_rework_description: string | null;
+};
+
+type QCCheckDefinitionSummary = {
+  id: number;
+  name: string;
+  guidance_text: string | null;
+  category_id: number | null;
+};
+
+type QCCheckInstanceSummary = {
+  id: number;
+  check_definition_id: number | null;
+  check_name: string | null;
+  scope: 'panel' | 'module' | 'aux';
+  work_unit_id: number;
+  panel_unit_id: number | null;
+  station_id: number | null;
+  station_name: string | null;
+  module_number: number;
+  panel_code: string | null;
+  status: 'Open' | 'Closed';
+  opened_at: string;
+};
+
+type QCCheckMediaSummary = {
+  id: number;
+  media_type: 'guidance' | 'reference';
+  uri: string;
+  created_at: string | null;
+};
+
+type QCCheckInstanceDetail = {
+  check_instance: QCCheckInstanceSummary;
+  check_definition: QCCheckDefinitionSummary | null;
+  failure_modes: QCFailureModeSummary[];
+  media_assets: QCCheckMediaSummary[];
+};
+
+type QCReworkState = {
+  id: number;
+  check_instance_id: number;
+  description: string;
+  module_number: number;
+  panel_code: string | null;
+  station_name: string | null;
+};
+
+type QCStep = {
+  id: string;
+  title: string;
+  desc: string;
+  required: boolean;
+  image?: string | null;
+};
+
+const apiRequest = async <T,>(path: string): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  return (await response.json()) as T;
+};
+
+const apiJsonRequest = async <T,>(path: string, payload: unknown, method = 'POST'): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const resolveMediaUri = (uri: string): string => {
+  if (!uri) {
+    return uri;
+  }
+  if (uri.startsWith('http://') || uri.startsWith('https://')) {
+    return uri;
+  }
+  if (uri.startsWith('/')) {
+    return `${API_BASE_URL}${uri}`;
+  }
+  return `${API_BASE_URL}/${uri}`;
+};
+
+const severityLevelById: Record<string, 'baja' | 'media' | 'critica'> = {
+  sev_baja: 'baja',
+  sev_media: 'media',
+  sev_critica: 'critica',
+};
+
 const QCExecution: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const checkId = location.state?.checkId;
-  
-  const checkInstance = PENDING_CHECKS.find(c => c.id === checkId);
-  const defId = checkInstance?.checkDefinitionId || location.state?.defId || 'chk_wall';
-  const checkDef = CHECK_DEFINITIONS[defId];
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const checkIdParam = queryParams.get('check');
+  const reworkIdParam = queryParams.get('rework');
+  const reworkState = location.state?.rework as QCReworkState | undefined;
+  const checkId =
+    Number(checkIdParam ?? location.state?.checkId ?? reworkState?.check_instance_id ?? 0) || null;
+
+  const [checkDetail, setCheckDetail] = useState<QCCheckInstanceDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [showCamera, setShowCamera] = useState(false);
   const [showFailModal, setShowFailModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
-  
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const [refImageIndex, setRefImageIndex] = useState(0);
   const [guideImageIndex, setGuideImageIndex] = useState(0);
-  
-  const [evidence, setEvidence] = useState<{url: string, id: string, type: 'image'|'video'}[]>([]);
+
+  type EvidenceItem = { url: string; id: string; type: 'image' | 'video'; file?: File };
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [notes, setNotes] = useState('');
-  const [failureData, setFailureData] = useState<{modeId: string, severityId: string} | null>(null);
+  const [failureData, setFailureData] = useState<{ modeId: string; severityId: string } | null>(null);
+  const [reworkText, setReworkText] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const steps = checkDef?.steps || [];
+  useEffect(() => {
+    let isMounted = true;
+    if (!checkId) {
+      setLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
+    const loadDetail = async () => {
+      try {
+        const data = await apiRequest<QCCheckInstanceDetail>(`/api/qc/check-instances/${checkId}`);
+        if (!isMounted) {
+          return;
+        }
+        setCheckDetail(data);
+        setErrorMessage(null);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'No se pudo cargar la revision.';
+        setErrorMessage(message);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+    loadDetail();
+    return () => {
+      isMounted = false;
+    };
+  }, [checkId]);
+
+  const mockCheckInstance = useMemo(
+    () =>
+      PENDING_CHECKS.find(
+        (check) => check.id === checkIdParam || check.id === location.state?.checkId
+      ),
+    [checkIdParam, location.state?.checkId]
+  );
+
+  const defId =
+    mockCheckInstance?.checkDefinitionId ||
+    location.state?.defId ||
+    (!checkDetail ? 'chk_wall' : undefined);
+  const checkDef = defId ? CHECK_DEFINITIONS[defId] : undefined;
+
+  const runtimeStep = useMemo<QCStep | null>(() => {
+    if (!checkDetail?.check_definition && !checkDetail?.check_instance?.check_name && !checkDef?.name) {
+      return null;
+    }
+    return {
+      id: 'runtime',
+      title:
+        checkDetail?.check_definition?.name ??
+        checkDetail?.check_instance?.check_name ??
+        checkDef?.name ??
+        'Revision QC',
+      desc: checkDetail?.check_definition?.guidance_text ?? checkDef?.guidance ?? 'Sin guia adicional.',
+      required: true,
+      image: null,
+    };
+  }, [checkDetail?.check_definition, checkDetail?.check_instance?.check_name, checkDef?.guidance, checkDef?.name]);
+
+  const steps: QCStep[] = checkDef?.steps?.length
+    ? (checkDef.steps as QCStep[])
+    : runtimeStep
+    ? [runtimeStep]
+    : [];
   const currentStepData = steps[currentStep];
-  
-  const referenceImages = steps
-    .map(s => s.image)
-    .filter((img): img is string => !!img);
-  
-  const guidanceImages = MOCK_GUIDANCE_IMAGES;
 
-  const handlePass = () => {
-    if (currentStep < steps.length - 1) {
-      setCurrentStep(prev => prev + 1);
-      setRefImageIndex(Math.min(currentStep + 1, referenceImages.length - 1));
-    } else {
-      navigate('/qc');
+  const referenceImages = useMemo(() => {
+    const runtimeRefs =
+      checkDetail?.media_assets
+        ?.filter((asset) => asset.media_type === 'reference')
+        .map((asset) => resolveMediaUri(asset.uri)) ?? [];
+    if (runtimeRefs.length) {
+      return runtimeRefs;
+    }
+    return steps.map((step) => step.image).filter((img): img is string => !!img);
+  }, [checkDetail?.media_assets, steps]);
+
+  const guidanceImages = useMemo(() => {
+    const runtimeGuides =
+      checkDetail?.media_assets
+        ?.filter((asset) => asset.media_type === 'guidance')
+        .map((asset) => resolveMediaUri(asset.uri)) ?? [];
+    if (runtimeGuides.length) {
+      return runtimeGuides;
+    }
+    return MOCK_GUIDANCE_IMAGES;
+  }, [checkDetail?.media_assets]);
+
+  const failureModes = useMemo(() => {
+    if (checkDetail?.failure_modes?.length) {
+      return checkDetail.failure_modes.map((mode) => {
+        const severityId =
+          mode.default_severity_level === 'critica'
+            ? 'sev_critica'
+            : mode.default_severity_level === 'media'
+            ? 'sev_media'
+            : mode.default_severity_level === 'baja'
+            ? 'sev_baja'
+            : 'sev_media';
+        return {
+          id: String(mode.id),
+          name: mode.name,
+          description: mode.description ?? '',
+          defaultSeverityId: severityId,
+          defaultReworkText: mode.default_rework_description ?? '',
+        };
+      });
+    }
+    return FAILURE_MODES;
+  }, [checkDetail?.failure_modes]);
+
+  useEffect(() => {
+    if (!failureData) {
+      setReworkText('');
+      return;
+    }
+    const mode = failureModes.find((item) => item.id === failureData.modeId);
+    setReworkText(mode?.defaultReworkText ?? '');
+  }, [failureData, failureModes]);
+
+  const handleEvidenceSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) {
+      return;
+    }
+    const additions: EvidenceItem[] = files.map((file) => ({
+      id: `${file.name}-${file.lastModified}-${file.size}`,
+      url: URL.createObjectURL(file),
+      type: file.type.startsWith('video') ? 'video' : 'image',
+      file,
+    }));
+    setEvidence((prev) => [...prev, ...additions]);
+    setShowCamera(false);
+    event.target.value = '';
+  };
+
+  const uploadEvidence = async (executionId: number) => {
+    const uploads = evidence.filter((item) => item.file);
+    for (const item of uploads) {
+      const formData = new FormData();
+      formData.append('file', item.file as File);
+      const response = await fetch(`${API_BASE_URL}/api/qc/executions/${executionId}/evidence`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `No se pudo subir evidencia (${response.status})`);
+      }
     }
   };
-  
+
+  const executeCheck = async (outcome: 'Pass' | 'Fail' | 'Skip' | 'Waive') => {
+    if (!checkId) {
+      setActionError('No se encontro la revision para completar.');
+      return;
+    }
+    if (isSubmitting) {
+      return;
+    }
+    if (outcome === 'Fail' && !failureData) {
+      setActionError('Seleccione un modo de falla antes de confirmar.');
+      return;
+    }
+    setIsSubmitting(true);
+    setActionError(null);
+    try {
+      const severity =
+        outcome === 'Fail' && failureData ? severityLevelById[failureData.severityId] : undefined;
+      if (outcome === 'Fail' && !severity) {
+        setActionError('Seleccione una severidad antes de confirmar.');
+        return;
+      }
+      const failureIds =
+        outcome === 'Fail' && failureData
+          ? [Number(failureData.modeId)].filter((value) => !Number.isNaN(value))
+          : [];
+      const payload = {
+        outcome,
+        notes: notes.trim() || null,
+        severity_level: outcome === 'Fail' ? severity : null,
+        failure_mode_ids: failureIds,
+        rework_description: outcome === 'Fail' ? reworkText.trim() || null : null,
+      };
+      const execution = await apiJsonRequest<{ id: number }>(
+        `/api/qc/check-instances/${checkId}/execute`,
+        payload
+      );
+      if (evidence.some((item) => item.file)) {
+        await uploadEvidence(execution.id);
+      }
+      navigate('/qc');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo completar la revision.';
+      setActionError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePass = () => {
+    if (isSubmitting) {
+      return;
+    }
+    if (currentStep < steps.length - 1) {
+      setCurrentStep((prev) => prev + 1);
+      if (referenceImages.length > 0) {
+        setRefImageIndex(Math.min(currentStep + 1, referenceImages.length - 1));
+      }
+    } else {
+      void executeCheck('Pass');
+    }
+  };
+
   const handleFailSubmit = () => {
     setShowFailModal(false);
-    navigate('/qc');
+    void executeCheck('Fail');
   };
 
   const handleCapture = () => {
-    const newImage = {
-      url: 'https://placehold.co/400x400/22c55e/white?text=Evidence',
-      id: Date.now().toString(),
-      type: 'image' as const
-    };
-    setEvidence([...evidence, newImage]);
-    setShowCamera(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
-  const nextRefImage = () => setRefImageIndex(i => (i + 1) % referenceImages.length);
-  const prevRefImage = () => setRefImageIndex(i => (i - 1 + referenceImages.length) % referenceImages.length);
-  const nextGuideImage = () => setGuideImageIndex(i => (i + 1) % guidanceImages.length);
-  const prevGuideImage = () => setGuideImageIndex(i => (i - 1 + guidanceImages.length) % guidanceImages.length);
+  const handleSkipStep = () => {
+    if (currentStep < steps.length - 1) {
+      setCurrentStep((prev) => prev + 1);
+    }
+  };
 
-  if (!checkDef) return <div className="h-screen flex items-center justify-center bg-slate-900 text-white">Cargando revision...</div>;
+  const handleSkipCheck = () => {
+    void executeCheck('Skip');
+  };
+
+  const nextRefImage = () => setRefImageIndex((i) => (i + 1) % referenceImages.length);
+  const prevRefImage = () =>
+    setRefImageIndex((i) => (i - 1 + referenceImages.length) % referenceImages.length);
+  const nextGuideImage = () => setGuideImageIndex((i) => (i + 1) % guidanceImages.length);
+  const prevGuideImage = () =>
+    setGuideImageIndex((i) => (i - 1 + guidanceImages.length) % guidanceImages.length);
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-900 text-white">
+        Cargando revision...
+      </div>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-900 text-white">
+        {errorMessage}
+      </div>
+    );
+  }
+
+  if (!checkDef && !checkDetail && !reworkIdParam) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-900 text-white">
+        Revision no encontrada.
+      </div>
+    );
+  }
+
+  const headerModule =
+    checkDetail?.check_instance.module_number ?? mockCheckInstance?.moduleNumber ?? 'Manual';
+  const headerStation =
+    checkDetail?.check_instance.station_name ?? mockCheckInstance?.stationName ?? 'Sin estacion';
+  const headerPanel =
+    checkDetail?.check_instance.panel_code ?? mockCheckInstance?.panelCode ?? null;
+  const headerTitle = checkDetail?.check_definition?.name ?? checkDef?.name ?? 'Revision QC';
 
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white overflow-hidden">
-      
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        multiple
+        onChange={handleEvidenceSelection}
+      />
       {/* Minimal Header */}
       <div className="flex items-center px-4 py-2 bg-slate-800/50 backdrop-blur-sm">
-        <button 
-          onClick={() => navigate('/qc')} 
+        <button
+          onClick={() => navigate('/qc')}
           className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>
         <div className="ml-2 text-sm text-slate-400">
-          <span className="font-medium text-white">{checkInstance?.moduleNumber || 'Manual'}</span>
+          <span className="font-medium text-white">{headerModule}</span>
           <span className="mx-2">•</span>
-          <span>Paso {currentStep + 1}/{steps.length}</span>
+          <span>
+            {headerStation}
+            {headerPanel ? ` · Panel ${headerPanel}` : ''}
+          </span>
+          {steps.length > 0 && (
+            <>
+              <span className="mx-2">•</span>
+              <span>
+                Paso {currentStep + 1}/{steps.length}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
       {/* Main Content: Two Carousels Side by Side */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        
         {/* Reference Images Carousel */}
         <div className="flex-1 relative bg-slate-800 flex items-center justify-center min-h-[30vh] lg:min-h-0">
           <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
             Referencia
           </div>
-          
+
           {referenceImages.length > 0 ? (
             <>
-              <img 
-                src={referenceImages[refImageIndex]} 
-                alt="Referencia" 
+              <img
+                src={referenceImages[refImageIndex]}
+                alt="Referencia"
                 className="max-w-full max-h-full object-contain p-4"
               />
-              
+
               {referenceImages.length > 1 && (
                 <>
-                  <button 
+                  <button
                     onClick={prevRefImage}
                     className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <button 
+                  <button
                     onClick={nextRefImage}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
                   >
@@ -126,10 +508,12 @@ const QCExecution: React.FC = () => {
                   </button>
                   <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
                     {referenceImages.map((_, i) => (
-                      <button 
+                      <button
                         key={i}
                         onClick={() => setRefImageIndex(i)}
-                        className={`w-2 h-2 rounded-full transition-colors ${i === refImageIndex ? 'bg-white' : 'bg-white/40'}`}
+                        className={`w-2 h-2 rounded-full transition-colors ${
+                          i === refImageIndex ? 'bg-white' : 'bg-white/40'
+                        }`}
                       />
                     ))}
                   </div>
@@ -153,24 +537,24 @@ const QCExecution: React.FC = () => {
           <div className="absolute top-3 left-3 bg-blue-600/80 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
             Guia Visual
           </div>
-          
+
           {guidanceImages.length > 0 ? (
             <>
-              <img 
-                src={guidanceImages[guideImageIndex]} 
-                alt="Guia" 
+              <img
+                src={guidanceImages[guideImageIndex]}
+                alt="Guia"
                 className="max-w-full max-h-full object-contain p-4"
               />
-              
+
               {guidanceImages.length > 1 && (
                 <>
-                  <button 
+                  <button
                     onClick={prevGuideImage}
                     className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <button 
+                  <button
                     onClick={nextGuideImage}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
                   >
@@ -178,10 +562,12 @@ const QCExecution: React.FC = () => {
                   </button>
                   <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
                     {guidanceImages.map((_, i) => (
-                      <button 
+                      <button
                         key={i}
                         onClick={() => setGuideImageIndex(i)}
-                        className={`w-2 h-2 rounded-full transition-colors ${i === guideImageIndex ? 'bg-white' : 'bg-white/40'}`}
+                        className={`w-2 h-2 rounded-full transition-colors ${
+                          i === guideImageIndex ? 'bg-white' : 'bg-white/40'
+                        }`}
                       />
                     ))}
                   </div>
@@ -199,26 +585,34 @@ const QCExecution: React.FC = () => {
 
       {/* Bottom Panel: Description + Actions */}
       <div className="bg-slate-800 border-t border-slate-700">
-        
         {/* Description */}
         <div className="px-4 py-3 border-b border-slate-700/50">
-          <h2 className="text-lg font-bold text-white">{currentStepData?.title || checkDef.name}</h2>
-          <p className="text-sm text-slate-300 mt-1">{currentStepData?.desc || checkDef.guidance}</p>
+          <h2 className="text-lg font-bold text-white">{currentStepData?.title || headerTitle}</h2>
+          <p className="text-sm text-slate-300 mt-1">
+            {currentStepData?.desc || checkDef?.guidance || 'Sin guia adicional.'}
+          </p>
+          {reworkState && (
+            <p className="text-xs text-slate-400 mt-2">Re-trabajo: {reworkState.description}</p>
+          )}
+          {actionError && (
+            <p className="mt-2 rounded-lg border border-red-500/40 bg-red-900/30 px-3 py-2 text-xs text-red-200">
+              {actionError}
+            </p>
+          )}
         </div>
-        
+
         {/* Actions Row */}
         <div className="flex items-center justify-between p-3 gap-3">
-          
           {/* Left: Tools */}
           <div className="flex items-center gap-2">
-            <button 
+            <button
               onClick={() => setShowCamera(true)}
               className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
             >
               <Camera className="w-4 h-4" />
               <span className="hidden sm:inline">Evidencia</span>
             </button>
-            <button 
+            <button
               onClick={() => setShowNotesModal(true)}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
                 notes ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'
@@ -227,12 +621,19 @@ const QCExecution: React.FC = () => {
               <MessageSquare className="w-4 h-4" />
               <span className="hidden sm:inline">Nota</span>
             </button>
-            
+
             {evidence.length > 0 && (
               <div className="flex -space-x-2 ml-2">
                 {evidence.slice(0, 3).map((ev) => (
-                  <div key={ev.id} className="w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden">
-                    <img src={ev.url} alt="ev" className="w-full h-full object-cover" />
+                  <div
+                    key={ev.id}
+                    className="w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden"
+                  >
+                    {ev.type === 'video' ? (
+                      <video src={ev.url} className="w-full h-full object-cover" />
+                    ) : (
+                      <img src={ev.url} alt="ev" className="w-full h-full object-cover" />
+                    )}
                   </div>
                 ))}
                 {evidence.length > 3 && (
@@ -246,25 +647,37 @@ const QCExecution: React.FC = () => {
 
           {/* Center: Secondary Actions */}
           <div className="hidden sm:flex items-center gap-1">
-            <button className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Omitir paso">
+            <button
+              onClick={handleSkipStep}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+              title="Omitir paso"
+              disabled={currentStep >= steps.length - 1}
+            >
               <SkipForward className="w-5 h-5" />
             </button>
-            <button className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Omitir revision">
+            <button
+              onClick={handleSkipCheck}
+              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+              title="Omitir revision"
+              disabled={isSubmitting}
+            >
               <AlertCircle className="w-5 h-5" />
             </button>
           </div>
 
           {/* Right: Main Actions */}
           <div className="flex items-center gap-2">
-            <button 
+            <button
               onClick={() => setShowFailModal(true)}
+              disabled={isSubmitting}
               className="flex items-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-xl font-bold transition-colors"
             >
               <X className="w-5 h-5" />
               <span className="hidden sm:inline">Fallar</span>
             </button>
-            <button 
+            <button
               onClick={handlePass}
+              disabled={isSubmitting}
               className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
             >
               <Check className="w-5 h-5" />
@@ -286,17 +699,17 @@ const QCExecution: React.FC = () => {
                 <span className="text-white/20 text-4xl font-thin">+</span>
               </div>
               <div className="absolute bottom-4 left-4 text-[10px] text-yellow-400 font-mono bg-black/50 px-2 py-1 rounded">
-                {checkInstance?.moduleNumber || 'MOD-XXX'} | {new Date().toLocaleTimeString()}
+                {headerModule} | {new Date().toLocaleTimeString()}
               </div>
             </div>
             <div className="mt-8 flex items-center gap-8">
-              <button 
+              <button
                 onClick={() => setShowCamera(false)}
                 className="p-4 rounded-full bg-slate-800 text-white hover:bg-slate-700"
               >
                 <X className="w-6 h-6" />
               </button>
-              <button 
+              <button
                 onClick={handleCapture}
                 className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
               >
@@ -319,16 +732,16 @@ const QCExecution: React.FC = () => {
               </button>
             </div>
             <div className="p-4">
-              <textarea 
+              <textarea
                 className="w-full h-32 bg-slate-900 border border-slate-600 rounded-lg p-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
                 placeholder="Escribe los detalles de observacion aqui..."
                 value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+                onChange={(event) => setNotes(event.target.value)}
                 autoFocus
               />
             </div>
             <div className="p-4 bg-slate-900/50 flex justify-end">
-              <button 
+              <button
                 onClick={() => setShowNotesModal(false)}
                 className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
               >
@@ -352,29 +765,31 @@ const QCExecution: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <div className="p-6 overflow-y-auto">
               <div className="mb-6">
                 <label className="block text-sm font-bold text-slate-300 mb-2">Modo de falla</label>
                 <div className="space-y-2">
-                  {FAILURE_MODES.map(mode => (
-                    <label 
+                  {failureModes.map((mode) => (
+                    <label
                       key={mode.id}
                       className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
-                        failureData?.modeId === mode.id 
-                          ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500' 
+                        failureData?.modeId === mode.id
+                          ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500'
                           : 'border-slate-600 hover:border-slate-500 bg-slate-900/50'
                       }`}
                     >
-                      <input 
-                        type="radio" 
-                        name="failureMode" 
+                      <input
+                        type="radio"
+                        name="failureMode"
                         className="mt-1 mr-3 text-red-600 focus:ring-red-500"
                         checked={failureData?.modeId === mode.id}
-                        onChange={() => setFailureData({ 
-                          modeId: mode.id, 
-                          severityId: mode.defaultSeverityId 
-                        })}
+                        onChange={() =>
+                          setFailureData({
+                            modeId: mode.id,
+                            severityId: mode.defaultSeverityId,
+                          })
+                        }
                       />
                       <div>
                         <div className="font-semibold text-white">{mode.name}</div>
@@ -389,13 +804,15 @@ const QCExecution: React.FC = () => {
                 <div className="mb-6">
                   <label className="block text-sm font-bold text-slate-300 mb-2">Severidad</label>
                   <div className="flex flex-wrap gap-2">
-                    {SEVERITY_LEVELS.map(sev => (
+                    {SEVERITY_LEVELS.map((sev) => (
                       <button
                         key={sev.id}
-                        onClick={() => setFailureData(prev => prev ? {...prev, severityId: sev.id} : null)}
+                        onClick={() =>
+                          setFailureData((prev) => (prev ? { ...prev, severityId: sev.id } : null))
+                        }
                         className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-                          failureData.severityId === sev.id 
-                            ? sev.color + ' border-current ring-1 ring-current'
+                          failureData.severityId === sev.id
+                            ? `${sev.color} border-current ring-1 ring-current`
                             : 'bg-slate-900 text-slate-400 border-slate-600 hover:bg-slate-700'
                         }`}
                       >
@@ -410,25 +827,28 @@ const QCExecution: React.FC = () => {
                 <label className="block text-sm font-bold text-slate-300 mb-2">
                   Instrucciones de retrabajo
                 </label>
-                <textarea 
+                <textarea
                   className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2 text-sm h-20 text-white placeholder-slate-500"
-                  defaultValue={failureData ? FAILURE_MODES.find(m => m.id === failureData.modeId)?.defaultReworkText : ''}
+                  value={reworkText}
+                  onChange={(event) => setReworkText(event.target.value)}
                 />
               </div>
             </div>
 
             <div className="p-4 border-t border-slate-700 bg-slate-900/50 flex justify-end gap-3 rounded-b-xl">
-              <button 
+              <button
                 onClick={() => setShowFailModal(false)}
                 className="px-5 py-2 text-slate-300 font-semibold hover:bg-slate-700 rounded-lg"
               >
                 Cancelar
               </button>
-              <button 
-                disabled={!failureData}
+              <button
+                disabled={!failureData || isSubmitting}
                 onClick={handleFailSubmit}
                 className={`px-5 py-2 text-white font-bold rounded-lg shadow-sm ${
-                  failureData ? 'bg-red-600 hover:bg-red-700' : 'bg-red-900 cursor-not-allowed opacity-50'
+                  failureData && !isSubmitting
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-red-900 cursor-not-allowed opacity-50'
                 }`}
               >
                 Confirmar falla

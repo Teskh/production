@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.admin import CommentTemplate
 from app.models.stations import Station
 from app.schemas.config import (
@@ -37,7 +38,9 @@ def list_comment_templates(db: Session = Depends(get_db)) -> list[CommentTemplat
 
 @router.post("/", response_model=CommentTemplateRead, status_code=status.HTTP_201_CREATED)
 def create_comment_template(
-    payload: CommentTemplateCreate, db: Session = Depends(get_db)
+    payload: CommentTemplateCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> CommentTemplate:
     _validate_station_ids(db, payload.applicable_station_ids)
     template = CommentTemplate(**payload.model_dump())
@@ -61,7 +64,10 @@ def get_comment_template(
 
 @router.put("/{template_id}", response_model=CommentTemplateRead)
 def update_comment_template(
-    template_id: int, payload: CommentTemplateUpdate, db: Session = Depends(get_db)
+    template_id: int,
+    payload: CommentTemplateUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> CommentTemplate:
     template = db.get(CommentTemplate, template_id)
     if not template:
@@ -79,7 +85,11 @@ def update_comment_template(
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_comment_template(template_id: int, db: Session = Depends(get_db)) -> None:
+def delete_comment_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     template = db.get(CommentTemplate, template_id)
     if not template:
         raise HTTPException(

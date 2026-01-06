@@ -1,13 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BadgeCheck,
   ChevronDown,
   ChevronRight,
   Filter,
   Plus,
   Search,
-  Shield,
-  Users,
 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
@@ -909,6 +906,27 @@ const Workers: React.FC = () => {
         </div>
       )}
 
+      <div className="inline-flex rounded-full border border-black/10 bg-white/70 p-1 text-xs font-semibold text-[var(--ink-muted)]">
+        <button
+          type="button"
+          onClick={() => setRosterMode('workers')}
+          className={`rounded-full px-4 py-2 transition-none ${
+            rosterMode === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
+          }`}
+        >
+          Trabajadores
+        </button>
+        <button
+          type="button"
+          onClick={() => setRosterMode('supervisors')}
+          className={`rounded-full px-4 py-2 transition-none ${
+            rosterMode === 'supervisors' ? 'bg-black/5 text-[var(--ink)]' : ''
+          }`}
+        >
+          Supervisores
+        </button>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-black/5 bg-white/80 p-4 shadow-sm backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -925,26 +943,6 @@ const Workers: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <div className="inline-flex rounded-full border border-black/10 bg-white p-1 text-xs font-semibold text-[var(--ink-muted)]">
-                <button
-                  type="button"
-                  onClick={() => setRosterMode('workers')}
-                  className={`rounded-full px-3 py-1 transition ${
-                    isWorkerMode ? 'bg-black/5 text-[var(--ink)]' : ''
-                  }`}
-                >
-                  Trabajadores
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRosterMode('supervisors')}
-                  className={`rounded-full px-3 py-1 transition ${
-                    !isWorkerMode ? 'bg-black/5 text-[var(--ink)]' : ''
-                  }`}
-                >
-                  Supervisores
-                </button>
-              </div>
               <label className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
                 <input

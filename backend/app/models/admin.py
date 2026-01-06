@@ -1,11 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import AdminRole
 
 
 class AdminUser(Base):
@@ -15,7 +14,8 @@ class AdminUser(Base):
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
     pin: Mapped[str] = mapped_column(String(10))
-    role: Mapped[AdminRole] = mapped_column(Enum(AdminRole))
+    role: Mapped[str] = mapped_column(String(50))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class AdminSession(Base):

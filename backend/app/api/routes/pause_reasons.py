@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
+from app.models.admin import AdminUser
 from app.models.admin import PauseReason
 from app.models.stations import Station
 from app.schemas.config import PauseReasonCreate, PauseReasonRead, PauseReasonUpdate
@@ -33,7 +34,9 @@ def list_pause_reasons(db: Session = Depends(get_db)) -> list[PauseReason]:
 
 @router.post("/", response_model=PauseReasonRead, status_code=status.HTTP_201_CREATED)
 def create_pause_reason(
-    payload: PauseReasonCreate, db: Session = Depends(get_db)
+    payload: PauseReasonCreate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> PauseReason:
     _validate_station_ids(db, payload.applicable_station_ids)
     reason = PauseReason(**payload.model_dump())
@@ -53,7 +56,10 @@ def get_pause_reason(reason_id: int, db: Session = Depends(get_db)) -> PauseReas
 
 @router.put("/{reason_id}", response_model=PauseReasonRead)
 def update_pause_reason(
-    reason_id: int, payload: PauseReasonUpdate, db: Session = Depends(get_db)
+    reason_id: int,
+    payload: PauseReasonUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
 ) -> PauseReason:
     reason = db.get(PauseReason, reason_id)
     if not reason:
@@ -69,7 +75,11 @@ def update_pause_reason(
 
 
 @router.delete("/{reason_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_pause_reason(reason_id: int, db: Session = Depends(get_db)) -> None:
+def delete_pause_reason(
+    reason_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> None:
     reason = db.get(PauseReason, reason_id)
     if not reason:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pause reason not found")

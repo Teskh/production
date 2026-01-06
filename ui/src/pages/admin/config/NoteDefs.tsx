@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, MessageSquare, Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { ChevronDown, Plus, Search, Settings2, Trash2 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';

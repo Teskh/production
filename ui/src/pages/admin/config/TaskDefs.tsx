@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
-  ClipboardCheck,
   Filter,
   ListChecks,
   Plus,

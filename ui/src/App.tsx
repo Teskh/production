@@ -20,9 +20,10 @@ import QCLibrary from './pages/qc/QCLibrary';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import Dashboards from './pages/admin/dashboards/Dashboards';
 import DashboardPanels from './pages/admin/dashboards/dashboard_panels';
+import DashboardStations from './pages/admin/dashboards/dashboard_stations';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
+import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
 import Personnel from './pages/admin/personnel/Personnel';
-import AdminTeam from './pages/admin/personnel/AdminTeam';
 import Assistance from './pages/admin/personnel/Assistance';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -67,7 +68,7 @@ function App() {
           {/* Personnel */}
           <Route path="workers" element={<Personnel />} />
           <Route path="specialties" element={<Personnel />} />
-          <Route path="team" element={<AdminTeam />} />
+          <Route path="admin-users" element={<Personnel />} />
           <Route path="assistance" element={<Assistance />} />
           
           {/* Planning */}
@@ -92,6 +93,8 @@ function App() {
           {/* Dashboards */}
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="dashboards/panels" element={<DashboardPanels />} />
+          <Route path="dashboards/stations" element={<DashboardStations />} />
+          <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
         </Route>
 

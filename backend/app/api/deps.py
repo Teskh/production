@@ -35,6 +35,8 @@ def get_current_admin(
     admin = db.get(AdminUser, session.admin_user_id)
     if not admin:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin user not found")
+    if not getattr(admin, "active", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin user inactive")
     return admin
 
 

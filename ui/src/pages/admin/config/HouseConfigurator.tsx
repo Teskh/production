@@ -1327,12 +1327,12 @@ const HouseConfigurator: React.FC = () => {
       return;
     }
 
-    const taskPayload = buildTaskPayload(panelDraft.applicable_task_ids, panelDraft.task_durations);
-    if ('error' in taskPayload) {
-      setPanelMessage(taskPayload.error);
-      setPanelSaving(false);
-      return;
-    }
+	    const taskPayload = buildTaskPayload(panelDraft.applicable_task_ids, panelDraft.task_durations);
+	    if ('error' in taskPayload) {
+	      setPanelMessage(taskPayload.error ?? 'Error al validar tareas del panel.');
+	      setPanelSaving(false);
+	      return;
+	    }
 
     const payload = {
       house_type_id: selectedTypeId,

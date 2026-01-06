@@ -3,9 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import ADMIN_SESSION_COOKIE, get_current_admin, get_db
+from app.core.config import settings
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import AdminSession, AdminUser
 from app.schemas.admin import AdminLoginRequest, AdminUserRead
+from app.services.admin_bootstrap import SYSADMIN_FIRST_NAME, ensure_sysadmin_user
 
 router = APIRouter()
 
@@ -14,15 +16,35 @@ router = APIRouter()
 def admin_login(
     payload: AdminLoginRequest, response: Response, db: Session = Depends(get_db)
 ) -> AdminUser:
-    stmt = (
-        select(AdminUser)
-        .where(AdminUser.first_name == payload.first_name)
-        .where(AdminUser.last_name == payload.last_name)
-        .where(AdminUser.pin == payload.pin)
-    )
-    admin = db.execute(stmt).scalar_one_or_none()
-    if not admin:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    normalized_first_name = payload.first_name.strip()
+    normalized_last_name = payload.last_name.strip()
+    normalized_pin = payload.pin.strip()
+
+    admin: AdminUser | None = None
+    if normalized_first_name.lower() == SYSADMIN_FIRST_NAME:
+        if not settings.sys_admin_password:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Sysadmin password not configured",
+            )
+        if normalized_pin != settings.sys_admin_password:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
+        admin = ensure_sysadmin_user(db)
+    else:
+        stmt = (
+            select(AdminUser)
+            .where(AdminUser.first_name == normalized_first_name)
+            .where(AdminUser.last_name == normalized_last_name)
+            .where(AdminUser.pin == normalized_pin)
+        )
+        admin = db.execute(stmt).scalar_one_or_none()
+        if not admin:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+            )
     token = new_session_token()
     expires_at = session_expiry()
     session = AdminSession(

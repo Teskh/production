@@ -60,3 +60,9 @@
 - Panel linear meters dashboard assumes `GET /api/panel-linear-meters` with `from_date`, `to_date`, `house_type_id`, `min_multiplier`, and `max_multiplier` params, returning per-panel-definition rows with station aggregates; W-stations are treated as stations with `Station.role == Panels`.
 - Outlier filtering for panel linear meters uses the ratio of summed panel-unit station duration to summed expected minutes for tasks recorded at that station; samples without expected minutes are retained and excluded from ratio filtering.
 - Pause summary assumes `GET /api/pause-summary` with `from_date`, `to_date`, and optional `house_type_id`, returning pause durations computed from `TaskPause.resumed_at` (or task completion), grouped by reason, filtered by `TaskPause.paused_at` in the date range for panel-scope tasks at panel stations.
+
+## 2026-01-12
+- Panel production history assumes a `GET /api/panel-task-history` endpoint filtered by `TaskInstance.completed_at` (date-only values treated as end-of-day) and defaults to completed panel-scope tasks, with pause durations calculated from `TaskPause.resumed_at` or task completion.
+
+## 2026-01-13
+- Station panels finished dashboard assumes `GET /api/station-panels-finished` filtered by `TaskInstance.completed_at` (and `TaskException.created_at` for skips) for the selected station/day; pass-through panels without task logs are not reported, and `available_at` is approximated from the latest completion at any prior panel station.
