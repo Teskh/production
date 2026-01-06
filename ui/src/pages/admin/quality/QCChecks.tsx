@@ -269,10 +269,8 @@ const QCChecks: React.FC = () => {
   const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
   const [checkDraft, setCheckDraft] = useState<CheckDraft>(emptyCheckDraft());
   const [selectedTab, setSelectedTab] = useState<
-    'definition' | 'triggers' | 'references' | 'applicability'
-  >(
-    'definition'
-  );
+    'definition' | 'failure_modes' | 'triggers' | 'references' | 'applicability'
+  >('definition');
   const [checkSearch, setCheckSearch] = useState('');
   const [checkStatus, setCheckStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -284,6 +282,7 @@ const QCChecks: React.FC = () => {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   const [selectedFailureId, setSelectedFailureId] = useState<number | null>(null);
+  const [isFailureModeDraftNew, setIsFailureModeDraftNew] = useState(false);
   const [failureDraft, setFailureDraft] = useState<FailureModeDraft>(
     emptyFailureModeDraft(null)
   );
@@ -505,6 +504,7 @@ const QCChecks: React.FC = () => {
       setCheckDraft(emptyCheckDraft());
       setFailureDraft(emptyFailureModeDraft(null));
       setSelectedFailureId(null);
+      setIsFailureModeDraftNew(false);
       setMediaStatus(null);
       return;
     }
@@ -519,6 +519,7 @@ const QCChecks: React.FC = () => {
     });
     setFailureDraft(emptyFailureModeDraft(selectedCheck.id));
     setSelectedFailureId(null);
+    setIsFailureModeDraftNew(false);
     setSelectedTriggerId(null);
     setTriggerDraft(emptyTriggerDraft());
     setSelectedApplicabilityId(null);
@@ -527,6 +528,9 @@ const QCChecks: React.FC = () => {
   }, [selectedCheck]);
 
   useEffect(() => {
+    if (isFailureModeDraftNew) {
+      return;
+    }
     if (!filteredFailureModes.length) {
       setSelectedFailureId(null);
       setFailureDraft(emptyFailureModeDraft(selectedCheckId));
@@ -545,7 +549,7 @@ const QCChecks: React.FC = () => {
       default_severity_level: first.default_severity_level,
       default_rework_description: first.default_rework_description ?? '',
     });
-  }, [filteredFailureModes, selectedFailureId, selectedCheckId]);
+  }, [filteredFailureModes, isFailureModeDraftNew, selectedFailureId, selectedCheckId]);
 
   const summaryLabel = useMemo(() => {
     const activeCount = checks.filter((check) => check.active).length;
@@ -759,6 +763,7 @@ const QCChecks: React.FC = () => {
         setFailureModes((prev) => sortByName([...prev, saved]));
       }
       setSelectedFailureId(saved.id);
+      setIsFailureModeDraftNew(false);
       setFailureDraft({
         id: saved.id,
         check_definition_id: saved.check_definition_id,
@@ -1094,6 +1099,7 @@ const QCChecks: React.FC = () => {
 
   const selectFailureMode = (mode: QCFailureMode) => {
     setSelectedFailureId(mode.id);
+    setIsFailureModeDraftNew(false);
     setFailureDraft({
       id: mode.id,
       check_definition_id: mode.check_definition_id,
@@ -1283,11 +1289,12 @@ const QCChecks: React.FC = () => {
   };
 
   const tabs: Array<{
-    key: 'definition' | 'triggers' | 'references' | 'applicability';
+    key: 'definition' | 'failure_modes' | 'triggers' | 'references' | 'applicability';
     label: string;
     icon?: typeof Image;
   }> = [
     { key: 'definition', label: 'Definicion' },
+    { key: 'failure_modes', label: 'Modos de falla' },
     { key: 'triggers', label: 'Gatillantes' },
     { key: 'references', label: 'Referencias', icon: Image },
     { key: 'applicability', label: 'Aplicabilidad' },
@@ -1380,7 +1387,8 @@ const QCChecks: React.FC = () => {
                   Editor de Check
                 </p>
                 <h2 className="mt-2 text-lg font-display text-[var(--ink)]">
-                  {checkDraft.id ? `Check #${checkDraft.id}` : 'Nuevo Check'}
+                  {checkDraft.name.trim() ||
+                    (checkDraft.id ? `Check #${checkDraft.id}` : 'Nuevo Check')}
                 </h2>
               </div>
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
@@ -1484,23 +1492,52 @@ const QCChecks: React.FC = () => {
                   />
                 </label>
 
+                {checkStatus && (
+                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                    {checkStatus}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleSaveCheck}
+                    disabled={saving}
+                    className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {saving ? 'Guardando...' : 'Guardar revision'}
+                  </button>
+                  <button
+                    onClick={handleDeleteCheck}
+                    disabled={saving || !checkDraft.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                  >
+                    <Trash2 className="h-4 w-4" /> Eliminar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'failure_modes' && (
+              <div className="mt-6 space-y-5">
                 <div className="rounded-2xl border border-black/5 bg-white p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
                         Modos de falla
                       </p>
-                        <p className="mt-1 text-xs text-[var(--ink-muted)]">
-                          {selectedCheckId
-                            ? 'Asignados a la revision.'
-                            : 'Cree una revision para asignar modos de falla.'}
-                        </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        {selectedCheckId
+                          ? 'Asignados a la revision.'
+                          : 'Cree una revision para asignar modos de falla.'}
+                      </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedFailureId(null);
+                        setIsFailureModeDraftNew(true);
                         setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+                        setFailureStatus(null);
                       }}
                       className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
                     >
@@ -1632,29 +1669,6 @@ const QCChecks: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                </div>
-
-                {checkStatus && (
-                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
-                    {checkStatus}
-                  </p>
-                )}
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={handleSaveCheck}
-                    disabled={saving}
-                    className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                  >
-                    {saving ? 'Guardando...' : 'Guardar revision'}
-                  </button>
-                  <button
-                    onClick={handleDeleteCheck}
-                    disabled={saving || !checkDraft.id}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
-                  >
-                    <Trash2 className="h-4 w-4" /> Eliminar
-                  </button>
                 </div>
               </div>
             )}

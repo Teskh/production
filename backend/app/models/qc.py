@@ -121,7 +121,12 @@ class QCCheckInstance(Base):
     )
     status: Mapped[QCCheckStatus] = mapped_column(Enum(QCCheckStatus))
     severity_level: Mapped[QCSeverityLevel | None] = mapped_column(
-        Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
+        Enum(
+            QCSeverityLevel,
+            name="qcseveritylevel",
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        nullable=True,
     )
     opened_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("admin_users.id"), nullable=True
@@ -156,7 +161,12 @@ class QCFailureModeDefinition(Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     default_severity_level: Mapped[QCSeverityLevel | None] = mapped_column(
-        Enum(QCSeverityLevel, name="qcseveritylevel"), nullable=True
+        Enum(
+            QCSeverityLevel,
+            name="qcseveritylevel",
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        nullable=True,
     )
     default_rework_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)

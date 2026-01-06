@@ -105,7 +105,7 @@ const NoteDefs: React.FC = () => {
   useEffect(() => {
     setHeader({
       title: 'Plantillas de comentarios',
-      kicker: 'Configuracion / Notas',
+      kicker: 'Configuracion / Comentarios',
     });
   }, [setHeader]);
 

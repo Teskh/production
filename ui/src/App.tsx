@@ -24,15 +24,13 @@ import DashboardStations from './pages/admin/dashboards/dashboard_stations';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
 import Personnel from './pages/admin/personnel/Personnel';
-import Assistance from './pages/admin/personnel/Assistance';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
 import Stations from './pages/admin/config/Stations';
 import HouseConfigurator from './pages/admin/config/HouseConfigurator';
 import HouseParams from './pages/admin/config/HouseParams';
 import TaskDefs from './pages/admin/config/TaskDefs';
-import PauseDefs from './pages/admin/config/PauseDefs';
-import NoteDefs from './pages/admin/config/NoteDefs';
+import PauseNoteDefs from './pages/admin/config/PauseNoteDefs';
 import Backups from './pages/admin/config/Backups';
 import QCChecks from './pages/admin/quality/QCChecks';
 
@@ -69,7 +67,7 @@ function App() {
           <Route path="workers" element={<Personnel />} />
           <Route path="specialties" element={<Personnel />} />
           <Route path="admin-users" element={<Personnel />} />
-          <Route path="assistance" element={<Assistance />} />
+          <Route path="assistance" element={<Navigate to="/admin/workers" replace />} />
           
           {/* Planning */}
           <Route path="line-status" element={<LineStatus />} />
@@ -83,8 +81,15 @@ function App() {
           <Route path="house-params" element={<HouseParams />} />
           <Route path="house-panels" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="task-defs" element={<TaskDefs />} />
-          <Route path="pause-defs" element={<PauseDefs />} />
-          <Route path="note-defs" element={<NoteDefs />} />
+          <Route path="pause-note-defs" element={<PauseNoteDefs />} />
+          <Route
+            path="pause-defs"
+            element={<Navigate to="/admin/pause-note-defs?tab=pausas" replace />}
+          />
+          <Route
+            path="note-defs"
+            element={<Navigate to="/admin/pause-note-defs?tab=comentarios" replace />}
+          />
           <Route path="backups" element={<Backups />} />
           
           {/* Quality Config */}

@@ -5,6 +5,7 @@ import {
   Filter,
   Plus,
   Search,
+  X,
 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
@@ -217,9 +218,15 @@ const Workers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [filterStation, setFilterStation] = useState<number | null>(null);
+  const [filterSkill, setFilterSkill] = useState<number | null>(null);
+  const [workerSkillsMap, setWorkerSkillsMap] = useState<Map<number, number[]>>(new Map());
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
+  const filterPanelRef = useRef<HTMLDivElement | null>(null);
 
   const isWorkerMode = rosterMode === 'workers';
+  const hasActiveFilters = filterStation !== null || filterSkill !== null;
 
   useEffect(() => {
     setHeader({
@@ -271,6 +278,33 @@ const Workers: React.FC = () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (workers.length === 0) return;
+    let active = true;
+    const loadAllWorkerSkills = async () => {
+      const skillsMap = new Map<number, number[]>();
+      await Promise.all(
+        workers.map(async (worker) => {
+          try {
+            const workerSkills = await apiRequest<Skill[]>(`/api/workers/${worker.id}/skills`);
+            if (active) {
+              skillsMap.set(worker.id, workerSkills.map((s) => s.id));
+            }
+          } catch {
+            skillsMap.set(worker.id, []);
+          }
+        })
+      );
+      if (active) {
+        setWorkerSkillsMap(skillsMap);
+      }
+    };
+    loadAllWorkerSkills();
+    return () => {
+      active = false;
+    };
+  }, [workers]);
 
   useEffect(() => {
     let active = true;
@@ -473,21 +507,33 @@ const Workers: React.FC = () => {
     [geoSuggestions]
   );
   const filteredWorkers = useMemo(() => {
+    let result = workers;
     const query = normalizeSearchValue(workerQuery.trim());
-    if (!query) {
-      return workers;
+    if (query) {
+      result = result.filter((worker) => {
+        const haystack = normalizeSearchValue(
+          [
+            worker.first_name,
+            worker.last_name,
+            worker.geovictoria_identifier ?? '',
+          ].join(' ')
+        );
+        return haystack.includes(query);
+      });
     }
-    return workers.filter((worker) => {
-      const haystack = normalizeSearchValue(
-        [
-          worker.first_name,
-          worker.last_name,
-          worker.geovictoria_identifier ?? '',
-        ].join(' ')
+    if (filterStation !== null) {
+      result = result.filter((worker) =>
+        worker.assigned_station_ids?.includes(filterStation)
       );
-      return haystack.includes(query);
-    });
-  }, [workerQuery, workers]);
+    }
+    if (filterSkill !== null) {
+      result = result.filter((worker) => {
+        const skills = workerSkillsMap.get(worker.id) ?? [];
+        return skills.includes(filterSkill);
+      });
+    }
+    return result;
+  }, [workerQuery, workers, filterStation, filterSkill, workerSkillsMap]);
   const filteredSupervisors = useMemo(() => {
     const query = normalizeSearchValue(supervisorQuery.trim());
     if (!query) {
@@ -591,6 +637,36 @@ const Workers: React.FC = () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [stationDropdownOpen]);
+
+  useEffect(() => {
+    if (!filterPanelOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!filterPanelRef.current) {
+        return;
+      }
+      if (!filterPanelRef.current.contains(event.target as Node)) {
+        setFilterPanelOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFilterPanelOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [filterPanelOpen]);
+
+  const clearFilters = () => {
+    setFilterStation(null);
+    setFilterSkill(null);
+  };
 
   const updateDraft = (patch: Partial<WorkerDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -914,7 +990,7 @@ const Workers: React.FC = () => {
             rosterMode === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
           }`}
         >
-          Trabajadores
+          Operadores
         </button>
         <button
           type="button"
@@ -958,14 +1034,112 @@ const Workers: React.FC = () => {
                 />
               </label>
               {isWorkerMode && (
-                <button className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm">
-                  <Filter className="h-4 w-4" /> Filtros
-                </button>
+                <div className="relative" ref={filterPanelRef}>
+                  <button
+                    type="button"
+                    onClick={() => setFilterPanelOpen((prev) => !prev)}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm ${
+                      hasActiveFilters
+                        ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.1)] text-[var(--accent)]'
+                        : 'border-black/10 bg-white'
+                    }`}
+                  >
+                    <Filter className="h-4 w-4" />
+                    Filtros
+                    {hasActiveFilters && (
+                      <span className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold text-white">
+                        {(filterStation !== null ? 1 : 0) + (filterSkill !== null ? 1 : 0)}
+                      </span>
+                    )}
+                  </button>
+                  {filterPanelOpen && (
+                    <div className="absolute right-0 z-20 mt-2 w-72 rounded-2xl border border-black/10 bg-white p-4 shadow-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-[var(--ink)]">Filtros</h3>
+                        {hasActiveFilters && (
+                          <button
+                            type="button"
+                            onClick={clearFilters}
+                            className="text-xs text-[var(--accent)] hover:underline"
+                          >
+                            Limpiar filtros
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        <label className="block text-xs text-[var(--ink-muted)]">
+                          Estacion asignada
+                          <select
+                            className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                            value={filterStation ?? ''}
+                            onChange={(e) =>
+                              setFilterStation(e.target.value ? Number(e.target.value) : null)
+                            }
+                          >
+                            <option value="">Todas las estaciones</option>
+                            {orderedStations.map((station) => (
+                              <option key={station.id} value={station.id}>
+                                {station.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block text-xs text-[var(--ink-muted)]">
+                          Especialidad (skill)
+                          <select
+                            className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                            value={filterSkill ?? ''}
+                            onChange={(e) =>
+                              setFilterSkill(e.target.value ? Number(e.target.value) : null)
+                            }
+                          >
+                            <option value="">Todas las especialidades</option>
+                            {skills.map((skill) => (
+                              <option key={skill.id} value={skill.id}>
+                                {skill.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
 
-          <div className="mt-4 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          {hasActiveFilters && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-[var(--ink-muted)]">Filtros activos:</span>
+              {filterStation !== null && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.1)] px-2 py-1 text-xs text-[var(--accent)]">
+                  Estacion: {stationNameById.get(filterStation) ?? 'Desconocida'}
+                  <button
+                    type="button"
+                    onClick={() => setFilterStation(null)}
+                    className="ml-1 hover:text-[var(--ink)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {filterSkill !== null && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.1)] px-2 py-1 text-xs text-[var(--accent)]">
+                  Especialidad: {skills.find((s) => s.id === filterSkill)?.name ?? 'Desconocida'}
+                  <button
+                    type="button"
+                    onClick={() => setFilterSkill(null)}
+                    className="ml-1 hover:text-[var(--ink)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden min-h-[400px]">
             {isWorkerMode && workers.length === 0 && !loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">
                 No se encontraron trabajadores. Agrega el primer trabajador para empezar.

@@ -2,9 +2,10 @@ import React, { useEffect, useState, useContext } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Users,
-  Calendar,
   Settings,
   FileText,
+  LogIn,
+  LogOut,
   Menu,
   X,
   Home,
@@ -68,6 +69,7 @@ const AdminLayout: React.FC = () => {
   const [header, setHeader] = useState<AdminHeaderState>(defaultHeader);
   const [admin, setAdmin] = useState<AdminSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [logoutLoading, setLogoutLoading] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -80,7 +82,6 @@ const AdminLayout: React.FC = () => {
       title: 'Personal',
       items: [
         { name: 'Trabajadores', path: '/admin/workers', icon: Users },
-        { name: 'Asistencia', path: '/admin/assistance', icon: Calendar },
       ],
     },
     {
@@ -102,14 +103,13 @@ const AdminLayout: React.FC = () => {
       items: [
         { name: 'Estaciones', path: '/admin/stations', icon: Settings },
         { name: 'Tareas', path: '/admin/task-defs', icon: ClipboardList },
-        { name: 'Pausas', path: '/admin/pause-defs', icon: Settings },
-        { name: 'Comentarios', path: '/admin/note-defs', icon: FileText },
+        { name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
         { name: 'Respaldos', path: '/admin/backups', icon: Database },
       ],
     },
     {
       title: 'Calidad',
-      items: [{ name: 'Revisiones de QC', path: '/admin/qc-checks', icon: CheckSquare }],
+      items: [{ name: 'Checks', path: '/admin/qc-checks', icon: CheckSquare }],
     },
   ];
 
@@ -148,6 +148,24 @@ const AdminLayout: React.FC = () => {
       active = false;
     };
   }, [navigate]);
+
+  const handleGoToLogin = () => {
+    navigate('/login');
+  };
+
+  const handleLogout = async () => {
+    setLogoutLoading(true);
+    try {
+      await fetch(`${API_BASE_URL}/api/admin/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {
+      // Ignore logout errors and still redirect to login.
+    } finally {
+      navigate('/login', { replace: true });
+    }
+  };
 
   if (authLoading) {
     return (
@@ -250,12 +268,29 @@ const AdminLayout: React.FC = () => {
                 </div>
                 <div className="flex-1" />
                 <div className="flex items-center gap-3">
-                  <div className="rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)]">
-                    Turno: Dia
-                  </div>
                   <div className="text-sm text-[var(--ink)]">
                     {[admin.first_name, admin.last_name].filter(Boolean).join(' ')}
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleGoToLogin}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)] hover:bg-black/5 transition"
+                  >
+                    <LogIn size={14} />
+                    Login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    disabled={logoutLoading}
+                    className={clsx(
+                      "inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)] hover:bg-black/5 transition",
+                      logoutLoading && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    <LogOut size={14} />
+                    {logoutLoading ? 'Saliendo...' : 'Salir'}
+                  </button>
                 </div>
               </header>
               <main className="flex-1 overflow-auto px-6 py-8">
