@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import func, select, text
+from sqlalchemy import exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -81,10 +81,28 @@ def _require_qc_admin(admin: AdminUser) -> AdminUser:
     return admin
 
 
+def _resolve_current_station(
+    db: Session,
+    work_unit_id: int | None,
+    panel_unit_id: int | None,
+) -> tuple[int | None, str | None]:
+    station_id = None
+    if panel_unit_id:
+        panel = db.get(PanelUnit, panel_unit_id)
+        station_id = panel.current_station_id if panel else None
+    if station_id is None and work_unit_id:
+        work_unit = db.get(WorkUnit, work_unit_id)
+        station_id = work_unit.current_station_id if work_unit else None
+    station_name = db.get(Station, station_id).name if station_id else None
+    return station_id, station_name
+
+
 def _build_check_summary(
     instance: QCCheckInstance,
     check_name: str | None,
     station_name: str | None,
+    current_station_id: int | None,
+    current_station_name: str | None,
     module_number: int,
     panel_code: str | None,
 ) -> QCCheckInstanceSummary:
@@ -98,6 +116,8 @@ def _build_check_summary(
         panel_unit_id=instance.panel_unit_id,
         station_id=instance.station_id,
         station_name=station_name,
+        current_station_id=current_station_id,
+        current_station_name=current_station_name,
         module_number=module_number,
         panel_code=panel_code,
         status=instance.status,
@@ -114,16 +134,24 @@ def _build_rework_summary(
     panel_code: str | None,
     station_id: int | None,
     station_name: str | None,
+    current_station_id: int | None,
+    current_station_name: str | None,
+    check_status: QCCheckStatus | None = None,
+    task_status: TaskStatus | None = None,
 ) -> QCReworkTaskSummary:
     return QCReworkTaskSummary(
         id=rework.id,
         check_instance_id=rework.check_instance_id,
         description=rework.description,
         status=rework.status,
+        check_status=check_status,
+        task_status=task_status,
         work_unit_id=work_unit_id,
         panel_unit_id=panel_unit_id,
         station_id=station_id,
         station_name=station_name,
+        current_station_id=current_station_id,
+        current_station_name=current_station_name,
         module_number=module_number,
         panel_code=panel_code,
         created_at=rework.created_at,
@@ -150,6 +178,9 @@ def qc_dashboard(
             .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
             .where(QCCheckInstance.status == QCCheckStatus.OPEN)
+            .where(
+                ~exists().where(QCReworkTask.check_instance_id == QCCheckInstance.id)
+            )
             .order_by(QCCheckInstance.opened_at.desc())
         )
     )
@@ -163,16 +194,26 @@ def qc_dashboard(
                 panel_code = panel.panel_definition.panel_code
         if not check_name:
             check_name = instance.ad_hoc_title
+        current_station_id, current_station_name = _resolve_current_station(
+            db, instance.work_unit_id, instance.panel_unit_id
+        )
         pending_checks.append(
-            _build_check_summary(instance, check_name, station_name, module_number, panel_code)
+            _build_check_summary(
+                instance,
+                check_name,
+                station_name,
+                current_station_id,
+                current_station_name,
+                module_number,
+                panel_code,
+            )
         )
 
     rework_rows = list(
         db.execute(
             select(
                 QCReworkTask,
-                QCCheckInstance.work_unit_id,
-                QCCheckInstance.panel_unit_id,
+                QCCheckInstance,
                 WorkUnit.module_number,
                 Station.id,
                 Station.name,
@@ -182,26 +223,49 @@ def qc_dashboard(
             .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
             .join(Station, QCCheckInstance.station_id == Station.id, isouter=True)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
-            .where(QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]))
+            .where(
+                or_(
+                    QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]),
+                    (QCReworkTask.status == QCReworkStatus.DONE)
+                    & (QCCheckInstance.status == QCCheckStatus.OPEN),
+                )
+            )
             .order_by(QCReworkTask.created_at.desc())
         )
     )
     rework_tasks: list[QCReworkTaskSummary] = []
-    for rework, work_unit_id, panel_unit_id, module_number, station_id, station_name, panel_unit_ref in rework_rows:
+    for rework, check_instance, module_number, station_id, station_name, panel_unit_ref in rework_rows:
         panel_code = None
         if panel_unit_ref:
             panel = db.get(PanelUnit, panel_unit_ref)
             if panel:
                 panel_code = panel.panel_definition.panel_code
+        task_status = (
+            db.execute(
+                select(TaskInstance.status)
+                .where(TaskInstance.rework_task_id == rework.id)
+                .order_by(TaskInstance.started_at.desc().nullslast(), TaskInstance.id.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        current_station_id, current_station_name = _resolve_current_station(
+            db, check_instance.work_unit_id, check_instance.panel_unit_id
+        )
         rework_tasks.append(
             _build_rework_summary(
                 rework,
-                work_unit_id,
-                panel_unit_id,
+                check_instance.work_unit_id,
+                check_instance.panel_unit_id,
                 module_number,
                 panel_code,
                 station_id,
                 station_name,
+                current_station_id,
+                current_station_name,
+                check_instance.status,
+                task_status,
             )
         )
 
@@ -229,7 +293,18 @@ def qc_check_instance_detail(
         if panel:
             panel_code = panel.panel_definition.panel_code
 
-    check_summary = _build_check_summary(instance, check_name, station_name, module_number, panel_code)
+    current_station_id, current_station_name = _resolve_current_station(
+        db, instance.work_unit_id, instance.panel_unit_id
+    )
+    check_summary = _build_check_summary(
+        instance,
+        check_name,
+        station_name,
+        current_station_id,
+        current_station_name,
+        module_number,
+        panel_code,
+    )
 
     failure_modes = list(
         db.execute(
@@ -338,6 +413,9 @@ def qc_check_instance_detail(
             .order_by(QCReworkTask.created_at.desc())
         ).scalars()
     )
+    current_station_id, current_station_name = _resolve_current_station(
+        db, instance.work_unit_id, instance.panel_unit_id
+    )
     rework_summaries = [
         _build_rework_summary(
             rework,
@@ -347,6 +425,19 @@ def qc_check_instance_detail(
             panel_code,
             instance.station_id,
             station_name,
+            current_station_id,
+            current_station_name,
+            instance.status,
+            (
+                db.execute(
+                    select(TaskInstance.status)
+                    .where(TaskInstance.rework_task_id == rework.id)
+                    .order_by(TaskInstance.started_at.desc().nullslast(), TaskInstance.id.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            ),
         )
         for rework in rework_rows
     ]
@@ -564,11 +655,16 @@ def create_manual_check(
     if payload.panel_unit_id:
         panel = db.get(PanelUnit, payload.panel_unit_id)
         panel_code = panel.panel_definition.panel_code if panel else None
+    current_station_id, current_station_name = _resolve_current_station(
+        db, payload.work_unit_id, payload.panel_unit_id
+    )
 
     return _build_check_summary(
         instance,
         check_def.name if check_def else payload.ad_hoc_title,
         station_name,
+        current_station_id,
+        current_station_name,
         work_unit.module_number,
         panel_code,
     )
@@ -1108,11 +1204,16 @@ def library_work_unit_detail(
         if instance.panel_unit_id:
             panel = db.get(PanelUnit, instance.panel_unit_id)
             panel_code = panel.panel_definition.panel_code if panel else None
+        current_station_id, current_station_name = _resolve_current_station(
+            db, instance.work_unit_id, instance.panel_unit_id
+        )
         check_summaries.append(
             _build_check_summary(
                 instance,
                 check_def.name if check_def else instance.ad_hoc_title,
                 station_name,
+                current_station_id,
+                current_station_name,
                 work_unit.module_number,
                 panel_code,
             )
@@ -1172,6 +1273,11 @@ def library_work_unit_detail(
         if check_instance and check_instance.panel_unit_id:
             panel = db.get(PanelUnit, check_instance.panel_unit_id)
             panel_code = panel.panel_definition.panel_code if panel else None
+        current_station_id, current_station_name = _resolve_current_station(
+            db,
+            check_instance.work_unit_id if check_instance else work_unit.id,
+            check_instance.panel_unit_id if check_instance else None,
+        )
         rework_summaries.append(
             _build_rework_summary(
                 rework,
@@ -1181,6 +1287,19 @@ def library_work_unit_detail(
                 panel_code,
                 check_instance.station_id if check_instance else None,
                 station_name,
+                current_station_id,
+                current_station_name,
+                check_instance.status if check_instance else None,
+                (
+                    db.execute(
+                        select(TaskInstance.status)
+                        .where(TaskInstance.rework_task_id == rework.id)
+                        .order_by(TaskInstance.started_at.desc().nullslast(), TaskInstance.id.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                ),
             )
         )
 

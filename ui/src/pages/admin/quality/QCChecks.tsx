@@ -1576,30 +1576,6 @@ const QCChecks: React.FC = () => {
                         />
                       </label>
                       <label className="text-sm text-[var(--ink-muted)]">
-                        Aplica a
-                        <select
-                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                          value={failureDraft.check_definition_id ?? selectedCheckId ?? ''}
-                          onChange={(event) =>
-                            setFailureDraft((prev) => ({
-                              ...prev,
-                              check_definition_id: event.target.value
-                                ? Number(event.target.value)
-                                : null,
-                            }))
-                          }
-                        >
-                          <option value="" disabled>
-                            Seleccione una revision
-                          </option>
-                          {checks.map((check) => (
-                            <option key={check.id} value={check.id}>
-                              {check.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="text-sm text-[var(--ink-muted)]">
                         Severidad sugerida
                         <select
                           className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"

@@ -8,6 +8,7 @@ from app.models.enums import (
     QCExecutionOutcome,
     QCReworkStatus,
     QCSeverityLevel,
+    TaskStatus,
     TaskScope,
 )
 
@@ -22,6 +23,8 @@ class QCCheckInstanceSummary(BaseModel):
     panel_unit_id: int | None = None
     station_id: int | None = None
     station_name: str | None = None
+    current_station_id: int | None = None
+    current_station_name: str | None = None
     module_number: int
     panel_code: str | None = None
     status: QCCheckStatus
@@ -34,10 +37,14 @@ class QCReworkTaskSummary(BaseModel):
     check_instance_id: int
     description: str
     status: QCReworkStatus
+    check_status: QCCheckStatus | None = None
+    task_status: TaskStatus | None = None
     work_unit_id: int
     panel_unit_id: int | None = None
     station_id: int | None = None
     station_name: str | None = None
+    current_station_id: int | None = None
+    current_station_name: str | None = None
     module_number: int
     panel_code: str | None = None
     created_at: datetime

@@ -79,9 +79,9 @@ const AdminLayout: React.FC = () => {
       items: [{ name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
     },
     {
-      title: 'Personal',
+      title: 'Equipo',
       items: [
-        { name: 'Trabajadores', path: '/admin/workers', icon: Users },
+        { name: 'Personal', path: '/admin/workers', icon: Users },
       ],
     },
     {
@@ -94,7 +94,7 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Definicion de Producto',
       items: [
-        { name: 'Config. Modulo/panel', path: '/admin/house-config', icon: Home },
+        { name: 'Casa/Panel/Módulo', path: '/admin/house-config', icon: Home },
         { name: 'Parametros', path: '/admin/house-params', icon: Settings },
       ],
     },

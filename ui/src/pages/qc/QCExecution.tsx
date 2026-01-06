@@ -146,8 +146,10 @@ const QCExecution: React.FC = () => {
   const [showCamera, setShowCamera] = useState(false);
   const [showFailModal, setShowFailModal] = useState(false);
   const [showNotesModal, setShowNotesModal] = useState(false);
+  const [showEvidenceRequiredModal, setShowEvidenceRequiredModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [evidenceGateError, setEvidenceGateError] = useState<string | null>(null);
 
   const [refImageIndex, setRefImageIndex] = useState(0);
   const [guideImageIndex, setGuideImageIndex] = useState(0);
@@ -305,9 +307,14 @@ const QCExecution: React.FC = () => {
       file,
     }));
     setEvidence((prev) => [...prev, ...additions]);
+    setEvidenceGateError(null);
+    setActionError(null);
     setShowCamera(false);
     event.target.value = '';
   };
+
+  const evidenceRequiredForOutcome = (outcome: 'Pass' | 'Fail' | 'Skip' | 'Waive') =>
+    outcome === 'Pass' || outcome === 'Fail';
 
   const uploadEvidence = async (executionId: number) => {
     const uploads = evidence.filter((item) => item.file);
@@ -332,6 +339,13 @@ const QCExecution: React.FC = () => {
       return;
     }
     if (isSubmitting) {
+      return;
+    }
+    if (evidenceRequiredForOutcome(outcome) && evidence.length === 0) {
+      const message = 'Agregue evidencia antes de aprobar o fallar esta revision.';
+      setEvidenceGateError(message);
+      setActionError(message);
+      setShowEvidenceRequiredModal(true);
       return;
     }
     if (outcome === 'Fail' && selectedFailureModeIds.length === 0) {
@@ -393,6 +407,13 @@ const QCExecution: React.FC = () => {
   };
 
   const handleFailSubmit = () => {
+    if (evidence.length === 0) {
+      const message = 'Agregue evidencia antes de registrar una falla.';
+      setEvidenceGateError(message);
+      setActionError(message);
+      setShowEvidenceRequiredModal(true);
+      return;
+    }
     setShowFailModal(false);
     void executeCheck('Fail');
   };
@@ -412,6 +433,8 @@ const QCExecution: React.FC = () => {
   const handleSkipCheck = () => {
     void executeCheck('Skip');
   };
+
+  const canSubmitFail = selectedFailureModeIds.length > 0 && !!selectedSeverityId;
 
   const nextRefImage = () => setRefImageIndex((i) => (i + 1) % referenceImages.length);
   const prevRefImage = () =>
@@ -623,6 +646,9 @@ const QCExecution: React.FC = () => {
             >
               <Camera className="w-4 h-4" />
               <span className="hidden sm:inline">Evidencia</span>
+              {evidence.length === 0 && evidenceGateError && (
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-400" aria-hidden="true" />
+              )}
             </button>
             <button
               onClick={() => setShowNotesModal(true)}
@@ -700,6 +726,51 @@ const QCExecution: React.FC = () => {
       </div>
 
       {/* --- Modals --- */}
+
+      {/* Evidence Required Modal */}
+      {showEvidenceRequiredModal && (
+        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 w-full max-w-md rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+              <div className="flex items-center gap-2 text-amber-300">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-bold text-white">Evidencia requerida</h3>
+              </div>
+              <button
+                onClick={() => setShowEvidenceRequiredModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-slate-200">
+                {evidenceGateError ?? 'Agregue evidencia antes de continuar.'}
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                Adjunte una foto o video para poder cerrar la revision.
+              </p>
+            </div>
+            <div className="p-4 bg-slate-900/50 flex justify-end gap-3">
+              <button
+                onClick={() => setShowEvidenceRequiredModal(false)}
+                className="px-4 py-2 text-slate-300 font-semibold hover:bg-slate-700 rounded-lg"
+              >
+                Volver
+              </button>
+              <button
+                onClick={() => {
+                  setShowEvidenceRequiredModal(false);
+                  handleCapture();
+                }}
+                className="px-4 py-2 bg-amber-500 text-slate-900 font-semibold rounded-lg hover:bg-amber-400"
+              >
+                Adjuntar evidencia
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Camera Overlay */}
       {showCamera && (
@@ -779,6 +850,20 @@ const QCExecution: React.FC = () => {
             </div>
 
             <div className="p-6 overflow-y-auto">
+              {evidence.length === 0 && (
+                <div className="mb-5 rounded-lg border border-amber-500/40 bg-amber-900/20 px-3 py-2">
+                  <p className="text-xs text-amber-200">
+                    Adjunte evidencia (foto/video) antes de confirmar la falla.
+                  </p>
+                  <button
+                    onClick={handleCapture}
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-amber-400"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Adjuntar evidencia
+                  </button>
+                </div>
+              )}
               <div className="mb-6">
                 <label className="block text-sm font-bold text-slate-300 mb-2">Modos de falla</label>
                 <div className="space-y-2">
@@ -855,10 +940,10 @@ const QCExecution: React.FC = () => {
                 Cancelar
               </button>
               <button
-                disabled={!failureData || isSubmitting}
+                disabled={!canSubmitFail || isSubmitting || evidence.length === 0}
                 onClick={handleFailSubmit}
                 className={`px-5 py-2 text-white font-bold rounded-lg shadow-sm ${
-                  failureData && !isSubmitting
+                  canSubmitFail && !isSubmitting && evidence.length > 0
                     ? 'bg-red-600 hover:bg-red-700'
                     : 'bg-red-900 cursor-not-allowed opacity-50'
                 }`}

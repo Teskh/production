@@ -85,6 +85,11 @@ type GeoLinkedPerson = {
   last_name: string;
 };
 
+type WorkersProps = {
+  initialRosterMode?: RosterMode;
+  hideRosterTabs?: boolean;
+};
+
 const emptyWorkerDraft = (): WorkerDraft => ({
   geovictoria_id: '',
   geovictoria_identifier: '',
@@ -193,9 +198,12 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   return (await response.json()) as T;
 };
 
-const Workers: React.FC = () => {
+const Workers: React.FC<WorkersProps> = ({
+  initialRosterMode = 'workers',
+  hideRosterTabs = false,
+}) => {
   const { setHeader } = useAdminHeader();
-  const [rosterMode, setRosterMode] = useState<RosterMode>('workers');
+  const [rosterMode, setRosterMode] = useState<RosterMode>(initialRosterMode);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [supervisors, setSupervisors] = useState<WorkerSupervisor[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
@@ -227,6 +235,10 @@ const Workers: React.FC = () => {
 
   const isWorkerMode = rosterMode === 'workers';
   const hasActiveFilters = filterStation !== null || filterSkill !== null;
+
+  useEffect(() => {
+    setRosterMode(initialRosterMode);
+  }, [initialRosterMode]);
 
   useEffect(() => {
     setHeader({
@@ -982,26 +994,28 @@ const Workers: React.FC = () => {
         </div>
       )}
 
-      <div className="inline-flex rounded-full border border-black/10 bg-white/70 p-1 text-xs font-semibold text-[var(--ink-muted)]">
-        <button
-          type="button"
-          onClick={() => setRosterMode('workers')}
-          className={`rounded-full px-4 py-2 transition-none ${
-            rosterMode === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
-          }`}
-        >
-          Operadores
-        </button>
-        <button
-          type="button"
-          onClick={() => setRosterMode('supervisors')}
-          className={`rounded-full px-4 py-2 transition-none ${
-            rosterMode === 'supervisors' ? 'bg-black/5 text-[var(--ink)]' : ''
-          }`}
-        >
-          Supervisores
-        </button>
-      </div>
+      {!hideRosterTabs && (
+        <div className="inline-flex rounded-full border border-black/10 bg-white/70 p-1 text-xs font-semibold text-[var(--ink-muted)]">
+          <button
+            type="button"
+            onClick={() => setRosterMode('workers')}
+            className={`rounded-full px-4 py-2 transition-none ${
+              rosterMode === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
+            }`}
+          >
+            Operadores
+          </button>
+          <button
+            type="button"
+            onClick={() => setRosterMode('supervisors')}
+            className={`rounded-full px-4 py-2 transition-none ${
+              rosterMode === 'supervisors' ? 'bg-black/5 text-[var(--ink)]' : ''
+            }`}
+          >
+            Supervisores
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-3xl border border-black/5 bg-white/80 p-4 shadow-sm backdrop-blur">

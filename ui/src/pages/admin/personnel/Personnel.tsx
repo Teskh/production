@@ -6,12 +6,18 @@ import AdminUsers from './AdminUsers';
 import Specialties from './Specialties';
 import Workers from './Workers';
 
-type PersonnelTab = 'workers' | 'specialties' | 'admin-users';
+type PersonnelTab = 'operators' | 'supervisors' | 'specialties' | 'admin-users';
 
-const getTabFromPath = (pathname: string, isSysadmin: boolean): PersonnelTab => {
+const getTabFromPath = (
+  pathname: string,
+  search: string,
+  isSysadmin: boolean
+): PersonnelTab => {
   if (pathname.includes('specialties')) return 'specialties';
   if (pathname.includes('admin-users') && isSysadmin) return 'admin-users';
-  return 'workers';
+  const params = new URLSearchParams(search);
+  if (params.get('tab') === 'supervisors') return 'supervisors';
+  return 'operators';
 };
 
 const Personnel: React.FC = () => {
@@ -21,32 +27,48 @@ const Personnel: React.FC = () => {
   const isSysadmin = isSysadminUser(admin);
   
   const [activeTab, setActiveTab] = useState<PersonnelTab>(() =>
-    getTabFromPath(location.pathname, isSysadmin)
+    getTabFromPath(location.pathname, location.search, isSysadmin)
   );
 
-  if (location.pathname.includes('admin-users') && !isSysadmin && activeTab !== 'workers') {
+  if (location.pathname.includes('admin-users') && !isSysadmin && activeTab !== 'operators') {
     navigate('/admin/workers', { replace: true });
-    setActiveTab('workers');
+    setActiveTab('operators');
   }
 
   const handleTabChange = (tab: PersonnelTab) => {
     if (tab === activeTab) return;
     setActiveTab(tab);
-    const path = tab === 'workers' ? '/admin/workers' : tab === 'specialties' ? '/admin/specialties' : '/admin/admin-users';
+    const path =
+      tab === 'operators'
+        ? '/admin/workers'
+        : tab === 'supervisors'
+        ? '/admin/workers?tab=supervisors'
+        : tab === 'specialties'
+        ? '/admin/specialties'
+        : '/admin/admin-users';
     window.history.replaceState(null, '', path);
   };
 
   return (
     <div className="space-y-6">
-      <div className="inline-flex rounded-full border border-black/10 bg-white/70 p-1 text-xs font-semibold text-[var(--ink-muted)]">
+      <div className="inline-flex flex-wrap rounded-full border border-black/10 bg-white/70 p-1 text-xs font-semibold text-[var(--ink-muted)]">
         <button
           type="button"
-          onClick={() => handleTabChange('workers')}
+          onClick={() => handleTabChange('operators')}
           className={`rounded-full px-4 py-2 transition-none ${
-            activeTab === 'workers' ? 'bg-black/5 text-[var(--ink)]' : ''
+            activeTab === 'operators' ? 'bg-black/5 text-[var(--ink)]' : ''
           }`}
         >
-          Trabajadores
+          Operadores
+        </button>
+        <button
+          type="button"
+          onClick={() => handleTabChange('supervisors')}
+          className={`rounded-full px-4 py-2 transition-none ${
+            activeTab === 'supervisors' ? 'bg-black/5 text-[var(--ink)]' : ''
+          }`}
+        >
+          Supervisores
         </button>
         <button
           type="button"
@@ -65,8 +87,8 @@ const Personnel: React.FC = () => {
               activeTab === 'admin-users' ? 'bg-black/5 text-[var(--ink)]' : ''
             }`}
           >
-            Equipo admin
-          </button>
+          Equipo Admin
+        </button>
         )}
       </div>
       <div className="min-h-[600px]">
@@ -75,7 +97,11 @@ const Personnel: React.FC = () => {
         ) : activeTab === 'admin-users' ? (
           <AdminUsers />
         ) : (
-          <Workers />
+          <Workers
+            key={activeTab}
+            initialRosterMode={activeTab === 'supervisors' ? 'supervisors' : 'workers'}
+            hideRosterTabs
+          />
         )}
       </div>
     </div>
