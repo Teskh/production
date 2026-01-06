@@ -389,6 +389,7 @@ const StationWorkspace: React.FC = () => {
 
   const workItems = snapshot?.work_items ?? [];
   const isW1 = selectedStation?.role === 'Panels' && selectedStation.sequence_order === 1;
+  const isMagazineStation = selectedStation?.role === 'Magazine';
   const { recommendedItem, inProgressItems, plannedItems, otherItems, plannedTotalCount } =
     useMemo(() => {
       if (!isW1) {
@@ -1848,7 +1849,7 @@ const StationWorkspace: React.FC = () => {
                     Modulo {selectedWorkItem.module_number}
                   </p>
                 </div>
-                {selectedWorkItem.other_tasks.length > 0 && (
+                {!isMagazineStation && selectedWorkItem.other_tasks.length > 0 && (
                   <button
                     onClick={() => setActiveModal('other_tasks')}
                     className="rounded-full border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
@@ -1859,7 +1860,8 @@ const StationWorkspace: React.FC = () => {
               </div>
 
               {selectedWorkItem.tasks.length === 0 &&
-              selectedWorkItem.backlog_tasks.length === 0 ? (
+              selectedWorkItem.backlog_tasks.length === 0 &&
+              (!isMagazineStation || selectedWorkItem.other_tasks.length === 0) ? (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
                   No hay tareas de estacion asignadas para este elemento.
                 </div>
@@ -1869,6 +1871,16 @@ const StationWorkspace: React.FC = () => {
                     <div className="space-y-3">
                       {selectedReworkTasks.map((rework) => renderReworkCard(rework))}
                       {sortTasksForDisplay(selectedWorkItem.tasks).map((task) =>
+                        renderTaskCard(task, selectedWorkItem)
+                      )}
+                    </div>
+                  )}
+                  {isMagazineStation && selectedWorkItem.other_tasks.length > 0 && (
+                    <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-3">
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-gray-400 font-semibold">
+                        Otras tareas
+                      </p>
+                      {sortTasksForDisplay(selectedWorkItem.other_tasks).map((task) =>
                         renderTaskCard(task, selectedWorkItem)
                       )}
                     </div>

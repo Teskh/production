@@ -1,14 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Calendar,
-  Lock,
-  MapPin,
-  QrCode,
-  Shield,
-  User,
-} from 'lucide-react';
-import QRCodeScannerModal from '../components/QRCodeScannerModal';
+import { Calendar, Lock, MapPin, Settings, User } from 'lucide-react';
+import LoginSettings from './LoginSettings';
 import type { StationContext } from '../utils/stationContext';
 import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
@@ -16,8 +9,8 @@ import {
   formatStationContext,
   formatStationLabel,
   getAssemblySequenceOrders,
-  getContextLabel,
   getStationsForContext,
+  isStationInContext,
   parseStationContext,
 } from '../utils/stationContext';
 
@@ -31,11 +24,14 @@ type Station = {
   sequence_order: number | null;
 };
 
-type StationPickerMode =
-  | { kind: 'station_list' }
-  | { kind: 'panel_line' }
-  | { kind: 'aux' }
-  | { kind: 'assembly_sequence'; sequenceOrder: number };
+type TaskScope = 'panel' | 'module' | 'aux';
+
+type TaskDefinition = {
+  id: number;
+  scope: TaskScope;
+  default_station_sequence: number | null;
+  active?: boolean;
+};
 
 type Worker = {
   id: number;
@@ -78,7 +74,53 @@ type WorkerSessionResponse = {
   idle_timeout_seconds: number | null;
 };
 
-const WORKER_THRESHOLD = 6;
+const WORKER_THRESHOLD = 12;
+
+type TaskCoverage = {
+  panelSequences: Set<number>;
+  moduleSequences: Set<number>;
+  auxSequences: Set<number>;
+  auxUnassigned: boolean;
+  moduleUnassigned: boolean;
+};
+
+const buildTaskCoverage = (tasks: TaskDefinition[]): TaskCoverage => {
+  const coverage: TaskCoverage = {
+    panelSequences: new Set<number>(),
+    moduleSequences: new Set<number>(),
+    auxSequences: new Set<number>(),
+    auxUnassigned: false,
+    moduleUnassigned: false,
+  };
+
+  tasks.forEach((task) => {
+    if (task.active === false) {
+      return;
+    }
+    if (task.default_station_sequence === null) {
+      if (task.scope === 'aux') {
+        coverage.auxUnassigned = true;
+      }
+      if (task.scope === 'module') {
+        coverage.moduleUnassigned = true;
+      }
+      return;
+    }
+    if (task.scope === 'panel') {
+      coverage.panelSequences.add(task.default_station_sequence);
+      return;
+    }
+    if (task.scope === 'module') {
+      coverage.moduleSequences.add(task.default_station_sequence);
+      return;
+    }
+    if (task.scope === 'aux') {
+      coverage.auxSequences.add(task.default_station_sequence);
+    }
+  });
+
+  return coverage;
+};
 
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
@@ -112,22 +154,6 @@ const parseStoredStationId = (value: string | null): number | null => {
   return Number.isNaN(id) ? null : id;
 };
 
-const modeFromContext = (context: StationContext | null): StationPickerMode => {
-  if (!context) {
-    return { kind: 'station_list' };
-  }
-  if (context.kind === 'panel_line') {
-    return { kind: 'panel_line' };
-  }
-  if (context.kind === 'aux') {
-    return { kind: 'aux' };
-  }
-  if (context.kind === 'assembly_sequence') {
-    return { kind: 'assembly_sequence', sequenceOrder: context.sequenceOrder };
-  }
-  return { kind: 'station_list' };
-};
-
 const persistStationContext = (context: StationContext | null) => {
   if (!context) {
     localStorage.removeItem(STATION_CONTEXT_STORAGE_KEY);
@@ -146,8 +172,9 @@ const persistSpecificStationId = (stationId: number | null) => {
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  const [isAdmin, setIsAdmin] = useState(false);
   const [stations, setStations] = useState<Station[]>([]);
+  const [taskDefinitions, setTaskDefinitions] = useState<TaskDefinition[]>([]);
+  const [taskDefinitionsReady, setTaskDefinitionsReady] = useState(false);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [queuePreview, setQueuePreview] = useState<ProductionQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,11 +182,8 @@ const Login: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
   const [stationContext, setStationContext] = useState<StationContext | null>(null);
-  const [showContextPicker, setShowContextPicker] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showStationPicker, setShowStationPicker] = useState(false);
-  const [stationPickerMode, setStationPickerMode] = useState<StationPickerMode>({
-    kind: 'station_list',
-  });
   const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [pinModalWorkerId, setPinModalWorkerId] = useState<number | null>(null);
@@ -170,28 +194,34 @@ const Login: React.FC = () => {
   const [adminLastName, setAdminLastName] = useState('');
   const [adminPin, setAdminPin] = useState('');
   const [useSysadmin, setUseSysadmin] = useState(false);
+  const [adminSubmitting, setAdminSubmitting] = useState(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pinChangeOpen, setPinChangeOpen] = useState(false);
   const [pinChangeWorkerId, setPinChangeWorkerId] = useState<number | null>(null);
   const [pinChangeDraft, setPinChangeDraft] = useState('');
   const [pinChangeConfirm, setPinChangeConfirm] = useState('');
   const [pinChangeError, setPinChangeError] = useState<string | null>(null);
-  const [qrScannerOpen, setQrScannerOpen] = useState(false);
-  const [qrScanValue, setQrScanValue] = useState<string | null>(null);
-  const [qrScanHint, setQrScanHint] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [stationData, workerData, queueData] = await Promise.all([
+        const taskPromise = apiRequest<TaskDefinition[]>('/api/task-definitions').then(
+          (data) => ({ ok: true, data }),
+          () => ({ ok: false, data: [] as TaskDefinition[] })
+        );
+        const [stationData, workerData, queueData, taskResult] = await Promise.all([
           apiRequest<Station[]>('/api/stations'),
           apiRequest<Worker[]>('/api/workers'),
           apiRequest<ProductionQueueItem[]>('/api/production-queue?include_completed=false'),
+          taskPromise,
         ]);
         setStations(stationData);
         setWorkers(workerData.filter((worker) => worker.active));
         setQueuePreview(queueData.slice(0, 8));
+        setTaskDefinitions(taskResult.data);
+        setTaskDefinitionsReady(taskResult.ok);
         const storedContext = parseStationContext(
           localStorage.getItem(STATION_CONTEXT_STORAGE_KEY)
         );
@@ -215,24 +245,22 @@ const Login: React.FC = () => {
           }
         }
         setStationContext(normalizedContext);
-        setStationPickerMode(modeFromContext(normalizedContext));
         let resolvedStationId: number | null = null;
         if (normalizedContext && normalizedContext.kind === 'station') {
           resolvedStationId = normalizedContext.stationId;
+        } else if (normalizedContext && storedStationId) {
+          const station = stationData.find((item) => item.id === storedStationId) ?? null;
+          if (station && isStationInContext(station, normalizedContext)) {
+            resolvedStationId = storedStationId;
+          } else {
+            persistSpecificStationId(null);
+          }
         }
         setSelectedStationId(resolvedStationId);
         if (!normalizedContext) {
-          setShowContextPicker(true);
-        } else if (normalizedContext.kind !== 'station') {
+          setShowSettings(true);
+        } else if (normalizedContext.kind !== 'station' && !resolvedStationId) {
           setShowStationPicker(true);
-        }
-        if (
-          normalizedContext &&
-          normalizedContext.kind !== 'station' &&
-          storedStationId &&
-          !resolvedStationId
-        ) {
-          persistSpecificStationId(null);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'No se pudo cargar la informacion de inicio de sesion.';
@@ -265,74 +293,52 @@ const Login: React.FC = () => {
 
   const shouldUseDropdown = showAllWorkers || availableWorkers.length > WORKER_THRESHOLD;
 
+  const taskCoverage = useMemo(() => buildTaskCoverage(taskDefinitions), [taskDefinitions]);
+
+  const stationHasTasks = React.useCallback(
+    (station: Station): boolean => {
+      if (!taskDefinitionsReady) {
+        return true;
+      }
+      if (station.role === 'Panels') {
+        return (
+          station.sequence_order !== null &&
+          taskCoverage.panelSequences.has(station.sequence_order)
+        );
+      }
+      if (station.role === 'Assembly') {
+        return (
+          station.sequence_order !== null &&
+          taskCoverage.moduleSequences.has(station.sequence_order)
+        );
+      }
+      if (station.role === 'AUX') {
+        if (
+          station.sequence_order !== null &&
+          (taskCoverage.auxSequences.has(station.sequence_order) ||
+            taskCoverage.moduleSequences.has(station.sequence_order))
+        ) {
+          return true;
+        }
+        return taskCoverage.auxUnassigned || taskCoverage.moduleUnassigned;
+      }
+      return true;
+    },
+    [taskCoverage, taskDefinitionsReady]
+  );
+
   const stationLabel = selectedStation ? formatStationLabel(selectedStation) : 'Sin estacion seleccionada';
-  const contextLabel = useMemo(
-    () => getContextLabel(stationContext, stations),
-    [stationContext, stations]
-  );
-  const stationSelectionLabel = selectedStation
-    ? formatStationLabel(selectedStation)
-    : 'Selecciona estacion';
+  const stationIndicatorLabel = selectedStation ? formatStationLabel(selectedStation) : 'Selecciona estacion';
+  const canSelectStation = stationContext !== null && stationContext.kind !== 'station';
+  const stationSelectionRequired = canSelectStation && !selectedStationId;
 
-  const assemblySequenceOrders = useMemo(
-    () => getAssemblySequenceOrders(stations),
-    [stations]
-  );
-
-  const contextOptions = useMemo(() => {
-    const options: Array<{
-      label: string;
-      mode: StationPickerMode;
-      context: StationContext | null;
-    }> = [
-      { label: 'Estacion especifica', mode: { kind: 'station_list' }, context: null },
-    ];
-    if (stations.some((station) => station.role === 'Panels')) {
-      options.push({
-        label: 'Linea de paneles',
-        mode: { kind: 'panel_line' },
-        context: { kind: 'panel_line' },
-      });
+  const assemblySequenceOrders = useMemo(() => {
+    const orders = getAssemblySequenceOrders(stations);
+    if (!taskDefinitionsReady) {
+      return orders;
     }
-    assemblySequenceOrders.forEach((order) => {
-      const station = stations.find(
-        (item) => item.role === 'Assembly' && item.sequence_order === order
-      );
-      options.push({
-        label: station ? `Ensamble - ${station.name}` : `Secuencia de ensamble ${order}`,
-        mode: { kind: 'assembly_sequence', sequenceOrder: order },
-        context: { kind: 'assembly_sequence', sequenceOrder: order },
-      });
-    });
-    if (stations.some((station) => station.role === 'AUX')) {
-      options.push({
-        label: 'Auxiliar',
-        mode: { kind: 'aux' },
-        context: { kind: 'aux' },
-      });
-    }
-    return options;
-  }, [assemblySequenceOrders, stations]);
-
-  const stationPickerStations = useMemo(() => {
-    if (stationPickerMode.kind === 'panel_line') {
-      return getStationsForContext(stations, { kind: 'panel_line' });
-    }
-    if (stationPickerMode.kind === 'aux') {
-      return getStationsForContext(stations, { kind: 'aux' });
-    }
-    if (stationPickerMode.kind === 'assembly_sequence') {
-      return getStationsForContext(stations, {
-        kind: 'assembly_sequence',
-        sequenceOrder: stationPickerMode.sequenceOrder,
-      });
-    }
-    return [...stations].sort((a, b) => a.id - b.id);
-  }, [stationPickerMode, stations]);
-
-  const stationSelectionRequired =
-    stationContext !== null && stationContext.kind !== 'station' && !selectedStationId;
-  const contextSelectionRequired = stationContext === null;
+    return orders.filter((order) => taskCoverage.moduleSequences.has(order));
+  }, [stations, taskCoverage, taskDefinitionsReady]);
 
   const sessionStations = useMemo(() => {
     if (!stationContext || stationContext.kind === 'station') {
@@ -341,45 +347,102 @@ const Login: React.FC = () => {
     return getStationsForContext(stations, stationContext);
   }, [stationContext, stations]);
 
-  const handleContextModeSelect = (mode: StationPickerMode, context: StationContext | null) => {
-    setStationPickerMode(mode);
-    if (!context) {
-      return;
-    }
-    setStationContext(context);
-    persistStationContext(context);
-    setSelectedStationId(null);
-    persistSpecificStationId(null);
+  const sessionStationOptions = useMemo(
+    () => sessionStations.filter((station) => stationHasTasks(station)),
+    [sessionStations, stationHasTasks]
+  );
+
+  const panelStations = useMemo(() => {
+    return [...stations]
+      .filter((station) => station.role === 'Panels')
+      .filter((station) => stationHasTasks(station))
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0));
+  }, [stations, stationHasTasks]);
+
+  const assemblyStations = useMemo(() => {
+    return [...stations]
+      .filter((station) => station.role === 'Assembly')
+      .filter((station) => stationHasTasks(station))
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0));
+  }, [stations, stationHasTasks]);
+
+  const resetWorkerSelection = () => {
     setSelectedWorkerId(null);
     setShowAllWorkers(false);
-    setShowContextPicker(false);
+  };
+
+  const applyStationContext = (context: StationContext | null) => {
+    setStationContext(context);
+    persistStationContext(context);
+    resetWorkerSelection();
+  };
+
+  const handleGroupContextSelect = (context: StationContext) => {
+    applyStationContext(context);
+    setSelectedStationId(null);
+    persistSpecificStationId(null);
+    setShowSettings(false);
     setShowStationPicker(true);
   };
 
-  const handleConfigStationSelect = (stationId: number) => {
+  const handleSpecificStationSelect = (stationId: number) => {
     const context: StationContext = { kind: 'station', stationId };
-    setStationContext(context);
-    persistStationContext(context);
-    setStationPickerMode(modeFromContext(context));
+    applyStationContext(context);
     setSelectedStationId(stationId);
     persistSpecificStationId(stationId);
-    setSelectedWorkerId(null);
-    setShowAllWorkers(false);
-    setShowContextPicker(false);
+    setShowSettings(false);
     setShowStationPicker(false);
   };
+
+  useEffect(() => {
+    if (!canSelectStation || showStationPicker || showSettings || pinModalOpen || pinChangeOpen) {
+      return;
+    }
+    if (!selectedStationId) {
+      setShowStationPicker(true);
+      return;
+    }
+    let timer = window.setTimeout(() => setShowStationPicker(true), 45000);
+    const resetTimer = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setShowStationPicker(true), 45000);
+    };
+    const events: Array<keyof WindowEventMap> = [
+      'mousemove',
+      'mousedown',
+      'touchstart',
+      'keydown',
+      'scroll',
+    ];
+    events.forEach((event) => window.addEventListener(event, resetTimer));
+    return () => {
+      window.clearTimeout(timer);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [canSelectStation, pinChangeOpen, pinModalOpen, selectedStationId, showSettings, showStationPicker]);
+
+  useEffect(() => {
+    if (!taskDefinitionsReady || !canSelectStation || !selectedStationId) {
+      return;
+    }
+    const station = stations.find((item) => item.id === selectedStationId);
+    if (station && !stationHasTasks(station)) {
+      setSelectedStationId(null);
+      persistSpecificStationId(null);
+      setShowStationPicker(true);
+    }
+  }, [canSelectStation, selectedStationId, stationHasTasks, stations, taskDefinitionsReady]);
 
   const handleSessionStationSelect = (stationId: number) => {
     setSelectedStationId(stationId);
     persistSpecificStationId(stationId);
-    setSelectedWorkerId(null);
-    setShowAllWorkers(false);
+    resetWorkerSelection();
     setShowStationPicker(false);
   };
 
   const handleAdminLogin = async () => {
-    setSubmitting(true);
-    setLoginError(null);
+    setAdminSubmitting(true);
+    setAdminError(null);
     try {
       await apiRequest('/api/admin/login', {
         method: 'POST',
@@ -392,10 +455,29 @@ const Login: React.FC = () => {
       navigate('/admin');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Fallo el inicio de sesion de admin.';
-      setLoginError(message);
+      setAdminError(message);
     } finally {
-      setSubmitting(false);
+      setAdminSubmitting(false);
     }
+  };
+
+  const handleSysadminToggle = (checked: boolean) => {
+    setUseSysadmin(checked);
+    setAdminError(null);
+    if (checked) {
+      setAdminFirstName('sysadmin');
+      setAdminLastName('sysadmin');
+      setAdminPin('');
+      return;
+    }
+    setAdminFirstName('');
+    setAdminLastName('');
+    setAdminPin('');
+  };
+
+  const handleOpenQcDashboard = () => {
+    setShowSettings(false);
+    navigate('/qc');
   };
 
   const openPinChange = (workerId: number) => {
@@ -486,24 +568,6 @@ const Login: React.FC = () => {
     }
   };
 
-  const handleQrDetected = (value: string) => {
-    const normalized = value.trim();
-    if (!normalized) {
-      return;
-    }
-    setQrScanValue(normalized);
-    setLoginError(null);
-    const matchedWorker = workers.find((worker) => String(worker.id) === normalized);
-    if (matchedWorker) {
-      setSelectedWorkerId(matchedWorker.id);
-      setShowAllWorkers(true);
-      setQrScanHint(`Coincide con ${formatWorkerDisplayName(matchedWorker)}.`);
-      handleWorkerSelection(matchedWorker.id);
-    } else {
-      setQrScanHint('Escaneo capturado. Aun no hay coincidencia de trabajador.');
-    }
-  };
-
   const openPinModal = (workerId: number) => {
     setPinModalWorkerId(workerId);
     setPinModalValue('');
@@ -577,16 +641,37 @@ const Login: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col lg:flex-row">
       <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 bg-white shadow-xl z-10">
-        <div className="mx-auto w-full max-w-sm lg:w-96">
-          <div className="mb-8">
-            <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
-              {isAdmin ? 'Portal de Admin' : 'Ingreso de Trabajador'}
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              {isAdmin
-                ? 'Ingresa tus credenciales para administrar el sistema.'
-                : 'Confirma la estacion y selecciona tu identidad para comenzar.'}
-            </p>
+        <div className="mx-auto w-full max-w-2xl">
+          <div className="flex items-center justify-between gap-4">
+            <button
+              type="button"
+              disabled={!canSelectStation}
+              onClick={() => {
+                if (canSelectStation) {
+                  setShowStationPicker(true);
+                }
+              }}
+              className={`flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                canSelectStation
+                  ? 'border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-900'
+                  : 'border-slate-200 text-slate-500'
+              }`}
+            >
+              <MapPin className="h-4 w-4" />
+              <span>{stationIndicatorLabel}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+              aria-label="Abrir ajustes"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="mt-8 mb-6">
+            <h2 className="text-3xl font-extrabold text-gray-900">Ingreso a plataforma</h2>
           </div>
 
           {statusMessage && (
@@ -607,234 +692,74 @@ const Login: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-6">
-              {!isAdmin ? (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      Contexto de estacion
-                    </label>
-                    <div className="mt-1 flex items-center justify-between gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-600">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="h-4 w-4" />
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-gray-700">
-                            {contextLabel}
-                          </span>
-                          {stationContext && stationContext.kind !== 'station' && (
-                            <span className="text-xs text-gray-500">
-                              Estacion: {stationSelectionLabel}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {stationContext && stationContext.kind !== 'station' && (
-                          <button
-                            onClick={() => setShowStationPicker(true)}
-                            className="text-xs font-semibold uppercase text-blue-600 hover:text-blue-800"
-                          >
-                            Seleccionar estacion
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            setStationPickerMode(modeFromContext(stationContext));
-                            setShowContextPicker(true);
-                          }}
-                          className="text-xs font-semibold uppercase text-gray-500 hover:text-gray-700"
-                        >
-                          Configurar
-                        </button>
-                      </div>
+              <div>
+                <label htmlFor="worker" className="sr-only">
+                  Quien eres?
+                </label>
+                {shouldUseDropdown ? (
+                  <div className="relative">
+                    <select
+                      id="worker"
+                      className="block w-full rounded-md border border-gray-300 bg-white py-4 pl-4 pr-10 text-base focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      value={selectedWorkerId ?? ''}
+                      onChange={(event) => {
+                        const workerId = Number(event.target.value);
+                        if (!Number.isNaN(workerId)) {
+                          handleWorkerSelection(workerId);
+                        }
+                      }}
+                    >
+                      <option value="" disabled>
+                        Selecciona tu nombre
+                      </option>
+                      {availableWorkers.map((worker) => (
+                        <option key={worker.id} value={worker.id}>
+                          {formatWorkerDisplayName(worker)}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                      <User className="h-5 w-5 text-gray-400" />
                     </div>
                   </div>
-
-                  <div>
-                    <label htmlFor="worker" className="block text-sm font-medium text-gray-700 mb-2">
-                      Quien eres?
-                    </label>
-                    {shouldUseDropdown ? (
-                      <div className="relative">
-                        <select
-                          id="worker"
-                          className="block w-full rounded-md border border-gray-300 bg-white py-3 pl-3 pr-10 text-base focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                          value={selectedWorkerId ?? ''}
-                          onChange={(event) => {
-                            const workerId = Number(event.target.value);
-                            if (!Number.isNaN(workerId)) {
-                              handleWorkerSelection(workerId);
-                            }
-                          }}
-                        >
-                          <option value="" disabled>
-                            Selecciona tu nombre
-                          </option>
-                          {availableWorkers.map((worker) => (
-                            <option key={worker.id} value={worker.id}>
-                              {formatWorkerDisplayName(worker)}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                          <User className="h-5 w-5 text-gray-400" />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-2">
-                        {availableWorkers.map((worker) => (
-                          <button
-                            key={worker.id}
-                            onClick={() => handleWorkerSelection(worker.id)}
-                            className={`w-full rounded-md border px-4 py-3 text-left transition-colors flex items-center justify-between ${
-                              selectedWorkerId === worker.id
-                                ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
-                                : 'border-gray-300 hover:bg-gray-50'
-                            }`}
-                          >
-                            <span
-                              className={`font-medium ${
-                                selectedWorkerId === worker.id ? 'text-blue-900' : 'text-gray-900'
-                              }`}
-                            >
-                              {formatWorkerDisplayName(worker)}
-                            </span>
-                            {selectedWorkerId === worker.id && (
-                              <span className="h-2 w-2 rounded-full bg-blue-500" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      {!showAllWorkers ? (
-                        <button
-                          onClick={() => setShowAllWorkers(true)}
-                          className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
-                        >
-                          No estas en tu estacion? Inicia sesion
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setShowAllWorkers(false)}
-                          className="text-sm text-gray-500 hover:text-gray-700 hover:underline"
-                        >
-                          Mostrar solo trabajadores de la estacion
-                        </button>
-                      )}
-
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                    {availableWorkers.map((worker) => (
                       <button
-                        className="ml-auto flex items-center text-sm text-blue-600 hover:text-blue-500"
-                        type="button"
-                        onClick={() => setQrScannerOpen(true)}
+                        key={worker.id}
+                        onClick={() => handleWorkerSelection(worker.id)}
+                        className={`w-full rounded-md border px-4 py-4 text-left transition-colors flex items-center justify-between ${
+                          selectedWorkerId === worker.id
+                            ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
+                            : 'border-gray-300 hover:bg-gray-50'
+                        }`}
                       >
-                        <QrCode className="mr-1 h-4 w-4" /> Escanear QR
+                        <span
+                          className={`font-medium ${
+                            selectedWorkerId === worker.id ? 'text-blue-900' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatWorkerDisplayName(worker)}
+                        </span>
+                        {selectedWorkerId === worker.id && (
+                          <span className="h-2 w-2 rounded-full bg-blue-500" />
+                        )}
                       </button>
-                    </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                    {qrScanValue && (
-                      <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                        <span className="font-semibold">Ultimo escaneo:</span> {qrScanValue}
-                        {qrScanHint ? ` - ${qrScanHint}` : ''}
-                      </div>
-                    )}
-                  </div>
-
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={useSysadmin}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setUseSysadmin(checked);
-                          if (checked) {
-                            setAdminFirstName('sysadmin');
-                            setAdminLastName('sysadmin');
-                            setAdminPin('');
-                          } else {
-                            setAdminFirstName('');
-                            setAdminLastName('');
-                            setAdminPin('');
-                          }
-                        }}
-                      />
-                      Usar sysadmin
-                    </label>
-                    <span className="text-xs text-gray-500">Contraseña via SYS_ADMIN_PASSWORD</span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Nombre</label>
-                    <input
-                      type="text"
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                      value={adminFirstName}
-                      onChange={(event) => setAdminFirstName(event.target.value)}
-                      disabled={useSysadmin}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Apellido</label>
-                    <input
-                      type="text"
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                      value={adminLastName}
-                      onChange={(event) => setAdminLastName(event.target.value)}
-                      disabled={useSysadmin}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">
-                      {useSysadmin ? 'Contraseña' : 'PIN'}
-                    </label>
-                    <input
-                      type="password"
-                      className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                      value={adminPin}
-                      onChange={(event) => setAdminPin(event.target.value)}
-                    />
-                  </div>
-                </>
-              )}
-
-              {isAdmin && (
-                <div>
-                  <button
-                    onClick={handleAdminLogin}
-                    disabled={submitting}
-                    className={`w-full flex justify-center items-center py-3 px-4 rounded-md text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-                      submitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                  >
-                    Entrar como Admin
-                  </button>
-                </div>
-              )}
+              <div>
+                <button
+                  onClick={() => setShowAllWorkers((prev) => !prev)}
+                  className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                >
+                  No estas en tu estacion? Inicia sesion
+                </button>
+              </div>
             </div>
           )}
-
-          <div className="mt-6">
-            <button
-              onClick={() => {
-                setIsAdmin(!isAdmin);
-                setSelectedWorkerId(null);
-                closePinModal();
-                setLoginError(null);
-                setQrScannerOpen(false);
-                setUseSysadmin(false);
-                setAdminFirstName('');
-                setAdminLastName('');
-                setAdminPin('');
-              }}
-              className="w-full flex justify-center items-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <Shield className="w-4 h-4 mr-2 text-gray-500" />
-              {isAdmin ? 'Cambiar a ingreso de trabajador' : 'Ingreso Admin'}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -889,107 +814,29 @@ const Login: React.FC = () => {
         </div>
       </div>
 
-      {showContextPicker && (
-        <div className="fixed inset-0 z-50 overflow-y-auto">
-          <div className="flex items-center justify-center min-h-screen px-4 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
-              <div className="absolute inset-0 bg-gray-500 opacity-75" />
-            </div>
-
-            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">
-              &#8203;
-            </span>
-
-            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                <div className="sm:flex sm:items-start">
-                  <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">
-                    <MapPin className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Contexto de estacion</h3>
-                    <p className="mt-2 text-sm text-gray-500">
-                      Define el contexto del kiosco y luego elige la estacion para esta sesion.
-                    </p>
-                    <div className="mt-4 space-y-2">
-                      {contextOptions.map((option) => {
-                        const isActive =
-                          option.mode.kind === stationPickerMode.kind &&
-                          (option.mode.kind !== 'assembly_sequence' ||
-                            (stationPickerMode.kind === 'assembly_sequence' &&
-                              option.mode.sequenceOrder === stationPickerMode.sequenceOrder));
-                        const key =
-                          option.mode.kind === 'assembly_sequence'
-                            ? `assembly-${option.mode.sequenceOrder}`
-                            : option.label;
-                        return (
-                          <button
-                            key={key}
-                            onClick={() => handleContextModeSelect(option.mode, option.context)}
-                            className={`w-full text-left px-4 py-3 border rounded-md transition-colors ${
-                              isActive
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-gray-300 hover:bg-gray-50'
-                            }`}
-                          >
-                            <span className="font-semibold block">{option.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {stationPickerMode.kind === 'station_list' ? (
-                      <div className="mt-5">
-                        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                          Estaciones
-                        </p>
-                        <div className="mt-2 grid grid-cols-1 gap-2">
-                          {stationPickerStations.map((station) => (
-                            <button
-                              key={station.id}
-                              onClick={() => handleConfigStationSelect(station.id)}
-                              className={`w-full text-left px-4 py-3 border rounded-md transition-colors ${
-                                selectedStationId === station.id
-                                  ? 'border-blue-500 bg-blue-50'
-                                  : 'border-gray-300 hover:bg-blue-50 hover:border-blue-500'
-                              }`}
-                            >
-                              <span className="font-semibold block">{station.name}</span>
-                              <span className="text-xs text-gray-500">
-                                {station.role}
-                                {station.line_type ? ` - Linea ${station.line_type}` : ''}
-                              </span>
-                            </button>
-                          ))}
-                          {stationPickerStations.length === 0 && (
-                            <div className="rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                              No hay estaciones disponibles para este contexto.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-5 rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                        La seleccion de estacion ocurre despues de elegir el contexto.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {!contextSelectionRequired && (
-                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
-                  <button
-                    type="button"
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto"
-                    onClick={() => setShowContextPicker(false)}
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <LoginSettings
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        stationContext={stationContext}
+        selectedStation={selectedStation}
+        panelStations={panelStations}
+        assemblyStations={assemblyStations}
+        assemblySequenceOrders={assemblySequenceOrders}
+        onSelectGroupContext={handleGroupContextSelect}
+        onSelectSpecificStation={handleSpecificStationSelect}
+        onOpenQc={handleOpenQcDashboard}
+        onAdminLogin={handleAdminLogin}
+        adminFirstName={adminFirstName}
+        adminLastName={adminLastName}
+        adminPin={adminPin}
+        adminError={adminError}
+        adminSubmitting={adminSubmitting}
+        useSysadmin={useSysadmin}
+        onAdminFirstNameChange={setAdminFirstName}
+        onAdminLastNameChange={setAdminLastName}
+        onAdminPinChange={setAdminPin}
+        onUseSysadminChange={handleSysadminToggle}
+      />
 
       {showStationPicker && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -1002,37 +849,43 @@ const Login: React.FC = () => {
               &#8203;
             </span>
 
-            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
-              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                <div className="sm:flex sm:items-start">
-                  <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">
-                    <MapPin className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Seleccionar estacion</h3>
-                    <p className="mt-2 text-sm text-gray-500">
-                      Elige la estacion para esta sesion.
-                    </p>
-                    <div className="mt-4 grid grid-cols-1 gap-2">
-                      {sessionStations.map((station) => (
-                        <button
-                          key={station.id}
-                          onClick={() => handleSessionStationSelect(station.id)}
-                          className="w-full text-left px-4 py-3 border border-gray-300 rounded-md hover:bg-blue-50 hover:border-blue-500 transition-colors"
-                        >
-                          <span className="font-semibold block">{station.name}</span>
-                          <span className="text-xs text-gray-500">
-                            {station.role}
-                            {station.line_type ? ` - Linea ${station.line_type}` : ''}
-                          </span>
-                        </button>
-                      ))}
-                      {sessionStations.length === 0 && (
-                        <div className="rounded-md border border-dashed border-gray-200 px-4 py-3 text-xs text-gray-500">
-                          No hay estaciones disponibles para este contexto.
-                        </div>
-                      )}
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-5xl sm:w-full">
+              <div className="bg-white px-5 pt-6 pb-4 sm:p-8">
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
+                      <MapPin className="h-6 w-6 text-blue-600" />
                     </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">Seleccionar estacion</h3>
+                      <p className="text-sm text-gray-500">
+                        Elige una estacion activa para esta sesion.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                    {sessionStationOptions.map((station) => (
+                      <button
+                        key={station.id}
+                        onClick={() => handleSessionStationSelect(station.id)}
+                        className="w-full rounded-md border border-gray-300 px-4 py-4 text-left transition-colors hover:bg-blue-50 hover:border-blue-500"
+                      >
+                        <div className="flex items-center gap-2">
+                          {station.line_type && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                              Linea {station.line_type}
+                            </span>
+                          )}
+                          <span className="font-semibold text-gray-900">{station.name}</span>
+                        </div>
+                        <span className="mt-1 block text-xs text-gray-500">{station.role}</span>
+                      </button>
+                    ))}
+                    {sessionStationOptions.length === 0 && (
+                      <div className="col-span-full rounded-md border border-dashed border-gray-200 px-4 py-4 text-sm text-gray-500">
+                        No hay estaciones con tareas definidas para este contexto.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1159,11 +1012,6 @@ const Login: React.FC = () => {
         </div>
       )}
 
-      <QRCodeScannerModal
-        open={qrScannerOpen && !isAdmin}
-        onClose={() => setQrScannerOpen(false)}
-        onDetected={handleQrDetected}
-      />
     </div>
   );
 };

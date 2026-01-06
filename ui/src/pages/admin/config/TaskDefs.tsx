@@ -45,6 +45,11 @@ type Skill = {
   name: string;
 };
 
+type WorkerSkillAssignment = {
+  worker_id: number;
+  skill_id: number;
+};
+
 type Worker = {
   id: number;
   first_name: string;
@@ -167,6 +172,7 @@ const TaskDefs: React.FC = () => {
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [skillAssignments, setSkillAssignments] = useState<WorkerSkillAssignment[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(emptyTaskDraft());
@@ -215,12 +221,14 @@ const TaskDefs: React.FC = () => {
       setLoading(true);
       setStatusMessage(null);
       try {
-        const [taskData, skillData, workerData, stationData] = await Promise.all([
-          apiRequest<TaskDefinition[]>('/api/task-definitions'),
-          apiRequest<Skill[]>('/api/workers/skills'),
-          apiRequest<Worker[]>('/api/workers'),
-          apiRequest<Station[]>('/api/stations'),
-        ]);
+        const [taskData, skillData, workerData, stationData, assignmentData] =
+          await Promise.all([
+            apiRequest<TaskDefinition[]>('/api/task-definitions'),
+            apiRequest<Skill[]>('/api/workers/skills'),
+            apiRequest<Worker[]>('/api/workers'),
+            apiRequest<Station[]>('/api/stations'),
+            apiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
+          ]);
         if (!active) {
           return;
         }
@@ -229,6 +237,7 @@ const TaskDefs: React.FC = () => {
         setSkills(sortSkills(skillData));
         setWorkers(sortWorkers(workerData));
         setStations(stationData);
+        setSkillAssignments(assignmentData);
         setSelectedTaskId(null);
       } catch (error) {
         if (active) {
@@ -411,6 +420,19 @@ const TaskDefs: React.FC = () => {
     [workers]
   );
 
+  const workerSkillsMap = useMemo(() => {
+    const map = new Map<number, number[]>();
+    skillAssignments.forEach((assignment) => {
+      const list = map.get(assignment.worker_id);
+      if (list) {
+        list.push(assignment.skill_id);
+      } else {
+        map.set(assignment.worker_id, [assignment.skill_id]);
+      }
+    });
+    return map;
+  }, [skillAssignments]);
+
   const filteredTasks = useMemo(() => {
     let result = tasks;
     if (scopeFilter !== 'all') {
@@ -517,21 +539,33 @@ const TaskDefs: React.FC = () => {
           formatWorkerName(worker).toLowerCase().includes(needle)
         )
       : activeWorkers;
-    if (crewPriorityStationIds.size === 0) {
+    if (crewPriorityStationIds.size === 0 && draft.skill_id === null) {
       return matching;
     }
     const prioritized: Worker[] = [];
+    const skillMatches: Worker[] = [];
+    const stationMatches: Worker[] = [];
     const others: Worker[] = [];
     matching.forEach((worker) => {
       const assigned = worker.assigned_station_ids ?? [];
-      if (assigned.some((stationId) => crewPriorityStationIds.has(stationId))) {
+      const matchesStation = assigned.some((stationId) =>
+        crewPriorityStationIds.has(stationId)
+      );
+      const workerSkills = workerSkillsMap.get(worker.id) ?? [];
+      const matchesSkill =
+        draft.skill_id !== null ? workerSkills.includes(draft.skill_id) : false;
+      if (matchesStation && (matchesSkill || draft.skill_id === null)) {
         prioritized.push(worker);
+      } else if (matchesSkill) {
+        skillMatches.push(worker);
+      } else if (matchesStation) {
+        stationMatches.push(worker);
       } else {
         others.push(worker);
       }
     });
-    return [...prioritized, ...others];
-  }, [crewQuery, crewPriorityStationIds, workers]);
+    return [...prioritized, ...skillMatches, ...stationMatches, ...others];
+  }, [crewQuery, crewPriorityStationIds, draft.skill_id, workerSkillsMap, workers]);
 
   const dependencySummaryLabel = useMemo(() => {
     if (draft.dependencies_json.length === 0) {

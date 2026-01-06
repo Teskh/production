@@ -242,6 +242,48 @@ def _build_task_lists(
     return station_tasks, other_tasks, backlog_tasks
 
 
+def _station_has_module_tasks(
+    station: Station,
+    task_definitions: list[TaskDefinition],
+    applicability_map: dict[int, list[TaskApplicability]],
+    work_order: WorkOrder,
+    work_unit: WorkUnit,
+) -> bool:
+    if station.sequence_order is None:
+        return False
+    for task in task_definitions:
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
+            applicability_map.get(task.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            work_unit.module_number,
+            None,
+        )
+        if applies and station_sequence_order == station.sequence_order:
+            return True
+    return False
+
+
+def _first_applicable_assembly_station(
+    stations: list[Station],
+    task_definitions: list[TaskDefinition],
+    applicability_map: dict[int, list[TaskApplicability]],
+    work_order: WorkOrder,
+    work_unit: WorkUnit,
+) -> Station | None:
+    for candidate in stations:
+        if _station_has_module_tasks(
+            candidate,
+            task_definitions,
+            applicability_map,
+            work_order,
+            work_unit,
+        ):
+            return candidate
+    return None
+
+
 @router.get("/{station_id}/snapshot", response_model=StationSnapshot)
 def station_snapshot(
     station_id: int,
@@ -600,16 +642,39 @@ def station_snapshot(
             stmt = stmt.where(WorkUnit.current_station_id == station.id)
         rows = list(db.execute(stmt).all())
         if station.role == StationRole.ASSEMBLY and station.sequence_order is not None:
-            first_station = (
+            line_stations = list(
                 db.execute(
                     select(Station)
                     .where(Station.role == StationRole.ASSEMBLY)
                     .where(Station.line_type == station.line_type)
                     .order_by(Station.sequence_order)
-                    .limit(1)
-                ).scalar_one_or_none()
+                ).scalars()
             )
-            if first_station and first_station.id == station.id:
+            first_station = line_stations[0] if line_stations else None
+            if first_station:
+                all_module_tasks = list(
+                    db.execute(
+                        select(TaskDefinition)
+                        .where(TaskDefinition.active == True)
+                        .where(TaskDefinition.scope == TaskScope.MODULE)
+                        .where(TaskDefinition.is_rework == False)
+                    ).scalars()
+                )
+                applicability_map_all: dict[int, list[TaskApplicability]] = {}
+                if all_module_tasks:
+                    all_module_task_ids = [task.id for task in all_module_tasks]
+                    applicability_rows_all = list(
+                        db.execute(
+                            select(TaskApplicability).where(
+                                TaskApplicability.task_definition_id.in_(
+                                    all_module_task_ids
+                                )
+                            )
+                        ).scalars()
+                    )
+                    for row in applicability_rows_all:
+                        applicability_map_all.setdefault(row.task_definition_id, []).append(row)
+
                 magazine_rows = list(
                     db.execute(
                         select(WorkUnit, WorkOrder, HouseType, HouseSubType)
@@ -622,7 +687,18 @@ def station_snapshot(
                 existing_ids = {work_unit.id for work_unit, *_ in rows}
                 for row in magazine_rows:
                     if row[0].id not in existing_ids:
-                        rows.append(row)
+                        work_unit, work_order, *_ = row
+                        target_station = _first_applicable_assembly_station(
+                            line_stations,
+                            all_module_tasks,
+                            applicability_map_all,
+                            work_order,
+                            work_unit,
+                        )
+                        if target_station is None:
+                            target_station = first_station
+                        if target_station and target_station.id == station.id:
+                            rows.append(row)
         for work_unit, work_order, house_type, sub_type in rows:
             task_instances = list(
                 db.execute(
