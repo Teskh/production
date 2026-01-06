@@ -5,7 +5,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_current_worker, get_db
@@ -688,6 +689,7 @@ def _get_or_create_rework_task_definition(db: Session, scope: TaskScope) -> Task
     )
     if task:
         return task
+    _ensure_task_definition_sequence(db)
     task = TaskDefinition(
         name=name,
         scope=scope,
@@ -700,9 +702,51 @@ def _get_or_create_rework_task_definition(db: Session, scope: TaskScope) -> Task
         dependencies_json=None,
     )
     db.add(task)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.execute(
+                select(TaskDefinition)
+                .where(TaskDefinition.is_rework == True)
+                .where(TaskDefinition.scope == scope)
+            )
+            .scalars()
+            .first()
+        )
+        if existing:
+            return existing
+        _ensure_task_definition_sequence(db)
+        task = TaskDefinition(
+            name=name,
+            scope=scope,
+            default_station_sequence=None,
+            active=True,
+            skippable=False,
+            concurrent_allowed=False,
+            advance_trigger=False,
+            is_rework=True,
+            dependencies_json=None,
+        )
+        db.add(task)
+        db.flush()
     db.refresh(task)
     return task
+
+
+def _ensure_task_definition_sequence(db: Session) -> None:
+    try:
+        max_id = db.execute(select(func.max(TaskDefinition.id))).scalar() or 0
+        db.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('task_definitions', 'id'), :value)"
+            ),
+            {"value": max_id},
+        )
+    except Exception:
+        # Non-Postgres or sequence mismatch can be ignored.
+        return
 
 
 def _active_rework_instance(db: Session, rework_task_id: int) -> TaskInstance | None:

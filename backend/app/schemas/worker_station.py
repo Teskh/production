@@ -53,6 +53,7 @@ class StationQCReworkTask(BaseModel):
     check_name: str | None = None
     description: str
     status: str
+    task_status: str | None = None
     work_unit_id: int
     panel_unit_id: int | None = None
     module_number: int

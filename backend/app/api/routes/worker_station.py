@@ -775,6 +775,16 @@ def station_snapshot(
             )
             for evidence, media in evidence_rows:
                 evidence_uris.append(f"/media_gallery/{media.storage_key}")
+        task_status = (
+            db.execute(
+                select(TaskInstance.status)
+                .where(TaskInstance.rework_task_id == rework.id)
+                .order_by(TaskInstance.started_at.desc().nullslast(), TaskInstance.id.desc())
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
         qc_rework_tasks.append(
             StationQCReworkTask(
                 id=rework.id,
@@ -782,6 +792,7 @@ def station_snapshot(
                 check_name=check_definition.name if check_definition else check_instance.ad_hoc_title,
                 description=rework.description,
                 status=rework.status.value,
+                task_status=task_status.value if task_status else None,
                 work_unit_id=rework_work_unit.id,
                 panel_unit_id=panel_unit.id if panel_unit else None,
                 module_number=rework_work_unit.module_number,

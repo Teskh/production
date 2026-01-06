@@ -153,6 +153,7 @@ type StationQCReworkTask = {
   check_name: string | null;
   description: string;
   status: string;
+  task_status: string | null;
   work_unit_id: number;
   panel_unit_id: number | null;
   module_number: number;
@@ -1142,6 +1143,8 @@ const StationWorkspace: React.FC = () => {
       Done: 'border-gray-200 bg-gray-50/70 opacity-70',
       Canceled: 'border-gray-200 bg-gray-50/70 opacity-70',
     };
+    const isPaused = rework.task_status === 'Paused';
+    const isActive = rework.task_status === 'InProgress';
     return (
       <div
         key={rework.id}
@@ -1165,6 +1168,11 @@ const StationWorkspace: React.FC = () => {
               >
                 {formatReworkStatus(rework.status)}
               </span>
+              {isPaused && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
+                  Pausado
+                </span>
+              )}
             </div>
             {rework.check_name && (
               <p className="mt-1 text-xs text-gray-500">Check: {rework.check_name}</p>
@@ -1195,20 +1203,24 @@ const StationWorkspace: React.FC = () => {
             )}
             {rework.status === 'InProgress' && (
               <>
-                <button
-                  onClick={() => handleReworkStart(rework)}
-                  className="inline-flex items-center gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-5 py-3 text-base font-semibold text-blue-700 hover:bg-blue-100"
-                  disabled={submitting}
-                >
-                  <Play className="h-5 w-5" /> Continuar
-                </button>
-                <button
-                  onClick={() => handleReworkPause(rework)}
-                  className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
-                  disabled={submitting}
-                >
-                  <Pause className="h-5 w-5" /> Pausa
-                </button>
+                {isPaused && (
+                  <button
+                    onClick={() => handleReworkStart(rework)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-5 py-3 text-base font-semibold text-blue-700 hover:bg-blue-100"
+                    disabled={submitting}
+                  >
+                    <Play className="h-5 w-5" /> Continuar
+                  </button>
+                )}
+                {isActive && (
+                  <button
+                    onClick={() => handleReworkPause(rework)}
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                    disabled={submitting}
+                  >
+                    <Pause className="h-5 w-5" /> Pausa
+                  </button>
+                )}
                 <button
                   onClick={() => handleReworkComplete(rework)}
                   className="inline-flex items-center gap-2.5 rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white hover:bg-emerald-700"
@@ -2275,6 +2287,11 @@ const StationWorkspace: React.FC = () => {
                   >
                     {formatReworkStatus(selectedRework.status)}
                   </span>
+                  {selectedRework.task_status === 'Paused' && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
+                      Pausado
+                    </span>
+                  )}
                 </div>
                 {selectedRework.check_name && (
                   <p className="mt-2 text-xs text-gray-500">
