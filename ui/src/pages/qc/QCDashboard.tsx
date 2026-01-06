@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ClipboardCheck, Wrench } from 'lucide-react';
 import clsx from 'clsx';
-import { useQCLayoutStatus } from '../../layouts/QCLayout';
+import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayout';
 
 const REFRESH_INTERVAL_MS = 20000;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -86,16 +86,8 @@ const reworkTaskStatusLabels: Record<string, string> = {
   Completed: 'Completado',
 };
 
-const apiRequest = async <T,>(path: string): Promise<T> => {
-  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
-  }
-  return (await response.json()) as T;
-};
-
 const QCDashboard: React.FC = () => {
+  const location = useLocation();
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [dashboard, setDashboard] = useState<QCDashboardResponse>({
     pending_checks: [],
@@ -103,17 +95,39 @@ const QCDashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isUnauthorized, setIsUnauthorized] = useState(false);
+  const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
+  const canExecuteChecks = Boolean(qcSession);
+  const blockedMessage =
+    location.state?.blocked === 'qc-auth'
+      ? 'Inicia sesion para ejecutar inspecciones QC.'
+      : null;
 
   useEffect(() => {
     let isMounted = true;
     const loadDashboard = async () => {
       try {
-        const data = await apiRequest<QCDashboardResponse>('/api/qc/dashboard');
+        const response = await fetch(`${API_BASE_URL}/api/qc/dashboard`, {
+          credentials: 'include',
+        });
         if (!isMounted) {
           return;
         }
+        if (response.status === 401) {
+          setDashboard({ pending_checks: [], rework_tasks: [] });
+          setIsUnauthorized(true);
+          setErrorMessage(null);
+          setLoading(false);
+          return;
+        }
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Solicitud fallida (${response.status})`);
+        }
+        const data = (await response.json()) as QCDashboardResponse;
         setDashboard(data);
+        setIsUnauthorized(false);
         setErrorMessage(null);
         setLastUpdated(new Date());
       } catch (error) {
@@ -149,11 +163,25 @@ const QCDashboard: React.FC = () => {
   const reworkTasks = useMemo(() => dashboard.rework_tasks, [dashboard.rework_tasks]);
   const baseCardClass =
     'group rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md';
+  const disabledCardClass = clsx(baseCardClass, 'pointer-events-none opacity-70');
   const locationLabel = (stationName: string | null, currentName: string | null) =>
     currentName ?? stationName ?? 'Sin estacion';
+  const unauthorizedMessage = isUnauthorized
+    ? 'Inicia sesion para ver inspecciones pendientes y re-trabajos.'
+    : null;
 
   return (
     <div className="space-y-6">
+      {(unauthorizedMessage || blockedMessage) && (
+        <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
+          {blockedMessage ?? unauthorizedMessage}
+          {!canExecuteChecks ? (
+            <Link className="ml-2 font-semibold text-[var(--ink)] underline" to="/login">
+              Iniciar sesion
+            </Link>
+          ) : null}
+        </div>
+      )}
       {errorMessage && (
         <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
           {errorMessage}
@@ -184,33 +212,47 @@ const QCDashboard: React.FC = () => {
                 No hay revisiones abiertas en este momento.
               </div>
             ) : null}
-            {pendingChecks.map((check) => (
-              <Link
-                key={check.id}
-                to={`/qc/execute?check=${check.id}`}
-                state={{ checkId: check.id }}
-                className={baseCardClass}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-[var(--ink)]">
-                      {check.check_name ?? 'Inspeccion sin titulo'}
-                    </p>
-                    <p className="text-xs text-[var(--ink-muted)]">
-                      {check.module_number}
-                      {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
-                      en {locationLabel(check.station_name, check.current_station_name)}
-                    </p>
+            {pendingChecks.map((check) => {
+              const cardContent = (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--ink)]">
+                        {check.check_name ?? 'Inspeccion sin titulo'}
+                      </p>
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        {check.module_number}
+                        {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
+                        en {locationLabel(check.station_name, check.current_station_name)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
-                    {scopeLabels[check.scope]}
-                  </span>
-                  <span>Creado {formatTimestamp(check.opened_at)}</span>
-                </div>
-              </Link>
-            ))}
+                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
+                      {scopeLabels[check.scope]}
+                    </span>
+                    <span>Creado {formatTimestamp(check.opened_at)}</span>
+                  </div>
+                </>
+              );
+              if (!canExecuteChecks) {
+                return (
+                  <div key={check.id} className={disabledCardClass} aria-disabled="true">
+                    {cardContent}
+                  </div>
+                );
+              }
+              return (
+                <Link
+                  key={check.id}
+                  to={`/qc/execute?check=${check.id}`}
+                  state={{ checkId: check.id }}
+                  className={baseCardClass}
+                >
+                  {cardContent}
+                </Link>
+              );
+            })}
           </div>
         </section>
 
@@ -269,6 +311,13 @@ const QCDashboard: React.FC = () => {
                     key={task.id}
                     className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm opacity-70"
                   >
+                    {cardContent}
+                  </div>
+                );
+              }
+              if (!canExecuteChecks) {
+                return (
+                  <div key={task.id} className={disabledCardClass} aria-disabled="true">
                     {cardContent}
                   </div>
                 );

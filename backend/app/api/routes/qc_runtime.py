@@ -160,10 +160,8 @@ def _build_rework_summary(
 
 @router.get("/dashboard", response_model=QCDashboardResponse)
 def qc_dashboard(
-    _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCDashboardResponse:
-    _require_qc_admin(_admin)
     pending = list(
         db.execute(
             select(

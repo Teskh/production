@@ -15,6 +15,7 @@ import {
 import { CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS } from '../../services/qcMockData';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
 
 const MOCK_GUIDANCE_IMAGES = [
   'https://placehold.co/600x400/3b82f6/white?text=Guidance+1',
@@ -141,6 +142,8 @@ const QCExecution: React.FC = () => {
   const [checkDetail, setCheckDetail] = useState<QCCheckInstanceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [canExecute, setCanExecute] = useState(false);
 
   const [currentStep, setCurrentStep] = useState(0);
   const [showCamera, setShowCamera] = useState(false);
@@ -163,7 +166,57 @@ const QCExecution: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
+    let active = true;
+    const verifySession = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/admin/me`, {
+          credentials: 'include',
+        });
+        if (!active) {
+          return;
+        }
+        if (response.status === 401) {
+          navigate('/qc', { replace: true, state: { blocked: 'qc-auth' } });
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('No se pudo verificar la sesion de QC.');
+        }
+        const data = (await response.json()) as { role?: string };
+        if (!data.role || !QC_ROLE_VALUES.has(data.role)) {
+          navigate('/qc', { replace: true, state: { blocked: 'qc-auth' } });
+          return;
+        }
+        setCanExecute(true);
+      } catch {
+        if (active) {
+          navigate('/qc', { replace: true, state: { blocked: 'qc-auth' } });
+        }
+      } finally {
+        if (active) {
+          setAuthLoading(false);
+        }
+      }
+    };
+    void verifySession();
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
+
+  useEffect(() => {
     let isMounted = true;
+    if (authLoading) {
+      return () => {
+        isMounted = false;
+      };
+    }
+    if (!canExecute) {
+      setLoading(false);
+      return () => {
+        isMounted = false;
+      };
+    }
     if (!checkId) {
       setLoading(false);
       return () => {
@@ -194,7 +247,7 @@ const QCExecution: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [checkId]);
+  }, [authLoading, canExecute, checkId]);
 
   const mockCheckInstance = useMemo(
     () =>
@@ -442,6 +495,14 @@ const QCExecution: React.FC = () => {
   const nextGuideImage = () => setGuideImageIndex((i) => (i + 1) % guidanceImages.length);
   const prevGuideImage = () =>
     setGuideImageIndex((i) => (i - 1 + guidanceImages.length) % guidanceImages.length);
+
+  if (authLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-900 text-white">
+        Verificando sesion...
+      </div>
+    );
+  }
 
   if (loading) {
     return (

@@ -35,6 +35,7 @@ type Worker = {
   last_name: string;
   active: boolean;
   login_required: boolean;
+  assigned_station_ids?: number[] | null;
 };
 
 const firstNamePart = (value: string): string => {
@@ -1318,10 +1319,11 @@ const StationWorkspace: React.FC = () => {
       return;
     }
     const dependencyBlocked = !isDependenciesSatisfied(task);
-    const workerRestricted = !isWorkerAllowed(task, false);
+    const workerParticipating = task.current_worker_participating ?? false;
+    const workerRestricted = !isWorkerAllowed(task, workerParticipating);
     const dependencyMessage = dependencyBlockedLabel(task);
     const workerMessage = workerRestrictionLabel(task);
-    const concurrencyBlocked = !canStartTask(task);
+    const concurrencyBlocked = !canStartTask(task, task.task_instance_id);
     if (dependencyBlocked || workerRestricted || concurrencyBlocked) {
       setError(
         buildBlockReason({
@@ -1611,16 +1613,52 @@ const StationWorkspace: React.FC = () => {
     setCrewSelection(Array.from(baseSelection) as number[]);
   };
 
-  const filteredCrew = useMemo(() => {
-    const query = crewQuery.trim().toLowerCase();
-    if (!query) {
-      return crewWorkers;
+  const crewGroups = useMemo(() => {
+    const taskCrewIds = selectedTask
+      ? regularCrewByTaskId[selectedTask.task_definition_id] ?? []
+      : [];
+    const regularCrewIdSet = new Set<number>(taskCrewIds);
+    const stationAssignedIdSet = new Set<number>();
+
+    if (selectedStationId) {
+      crewWorkers.forEach((item) => {
+        if (item.assigned_station_ids?.includes(selectedStationId)) {
+          stationAssignedIdSet.add(item.id);
+        }
+      });
     }
-    return crewWorkers.filter((item) => {
+
+    const normalizedQuery = crewQuery.trim().toLowerCase();
+    const matchesQuery = (item: Worker) => {
+      if (!normalizedQuery) {
+        return true;
+      }
       const name = `${item.first_name} ${item.last_name}`.toLowerCase();
-      return name.includes(query);
-    });
-  }, [crewQuery, crewWorkers]);
+      return name.includes(normalizedQuery);
+    };
+
+    const compare = (a: Worker, b: Worker) =>
+      formatWorkerDisplayName(a).localeCompare(formatWorkerDisplayName(b));
+
+    const regularCrew = crewWorkers
+      .filter((item) => regularCrewIdSet.has(item.id))
+      .filter(matchesQuery)
+      .sort(compare);
+
+    const stationAssigned = crewWorkers
+      .filter((item) => !regularCrewIdSet.has(item.id))
+      .filter((item) => stationAssignedIdSet.has(item.id))
+      .filter(matchesQuery)
+      .sort(compare);
+
+    const others = crewWorkers
+      .filter((item) => !regularCrewIdSet.has(item.id))
+      .filter((item) => !stationAssignedIdSet.has(item.id))
+      .filter(matchesQuery)
+      .sort(compare);
+
+    return { regularCrew, stationAssigned, others };
+  }, [crewQuery, crewWorkers, regularCrewByTaskId, selectedStationId, selectedTask]);
 
   const toggleCrewWorker = (workerId: number) => {
     setCrewSelection((prev) =>
@@ -1631,8 +1669,15 @@ const StationWorkspace: React.FC = () => {
   const crewStartDependencyBlocked = selectedTask
     ? !isDependenciesSatisfied(selectedTask)
     : false;
-  const crewStartWorkerRestricted = selectedTask ? !isWorkerAllowed(selectedTask, false) : false;
-  const crewStartConcurrencyBlocked = selectedTask ? !canStartTask(selectedTask) : false;
+  const crewStartWorkerParticipating = selectedTask
+    ? selectedTask.current_worker_participating ?? false
+    : false;
+  const crewStartWorkerRestricted = selectedTask
+    ? !isWorkerAllowed(selectedTask, crewStartWorkerParticipating)
+    : false;
+  const crewStartConcurrencyBlocked = selectedTask
+    ? !canStartTask(selectedTask, selectedTask.task_instance_id)
+    : false;
   const crewStartDependencyMessage = selectedTask ? dependencyBlockedLabel(selectedTask) : '';
   const crewStartWorkerMessage = selectedTask ? workerRestrictionLabel(selectedTask) : '';
   const crewStartBlocked =
@@ -2229,24 +2274,84 @@ const StationWorkspace: React.FC = () => {
               value={crewQuery}
               onChange={(event) => setCrewQuery(event.target.value)}
             />
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto">
-              {filteredCrew.map((crewWorker) => (
-                <label
-                  key={crewWorker.id}
-                  className="flex items-center gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                    checked={crewSelection.includes(crewWorker.id)}
-                    onChange={() => toggleCrewWorker(crewWorker.id)}
-                  />
-                  {formatWorkerDisplayName(crewWorker)}
-                </label>
-              ))}
-              {filteredCrew.length === 0 && (
-                <div className="text-sm text-gray-500">No se encontraron trabajadores.</div>
+            <div className="mt-4 max-h-60 overflow-y-auto space-y-4">
+              {crewGroups.regularCrew.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Equipo regular
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {crewGroups.regularCrew.map((crewWorker) => (
+                      <label
+                        key={crewWorker.id}
+                        className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/40 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                          checked={crewSelection.includes(crewWorker.id)}
+                          onChange={() => toggleCrewWorker(crewWorker.id)}
+                        />
+                        {formatWorkerDisplayName(crewWorker)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
               )}
+
+              {crewGroups.stationAssigned.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Asignados a la estacion
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {crewGroups.stationAssigned.map((crewWorker) => (
+                      <label
+                        key={crewWorker.id}
+                        className="flex items-center gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                          checked={crewSelection.includes(crewWorker.id)}
+                          onChange={() => toggleCrewWorker(crewWorker.id)}
+                        />
+                        {formatWorkerDisplayName(crewWorker)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {crewGroups.others.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                    Otros trabajadores
+                  </p>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {crewGroups.others.map((crewWorker) => (
+                      <label
+                        key={crewWorker.id}
+                        className="flex items-center gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                          checked={crewSelection.includes(crewWorker.id)}
+                          onChange={() => toggleCrewWorker(crewWorker.id)}
+                        />
+                        {formatWorkerDisplayName(crewWorker)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {crewGroups.regularCrew.length === 0 &&
+                crewGroups.stationAssigned.length === 0 &&
+                crewGroups.others.length === 0 && (
+                  <div className="text-sm text-gray-500">No se encontraron trabajadores.</div>
+                )}
             </div>
             <div className="mt-6 flex gap-3">
               <button

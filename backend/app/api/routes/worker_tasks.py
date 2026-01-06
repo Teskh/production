@@ -287,13 +287,6 @@ def start_task(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task scope mismatch")
     worker_ids = payload.worker_ids or [worker.id]
     unique_worker_ids = sorted(set(worker_ids))
-    if not task_def.concurrent_allowed:
-        for worker_id in unique_worker_ids:
-            if _has_active_nonconcurrent_task(db, worker_id):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="One or more workers already have an active task",
-                )
     allowed_worker_ids = _allowed_worker_ids(db, task_def.id)
     if allowed_worker_ids is not None:
         if any(worker_id not in allowed_worker_ids for worker_id in unique_worker_ids):
@@ -415,7 +408,49 @@ def start_task(
         .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
     ).scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task already active")
+        if not task_def.concurrent_allowed:
+            for worker_id in unique_worker_ids:
+                if _has_active_nonconcurrent_task(db, worker_id, exclude_instance_id=existing.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="One or more workers already have an active task",
+                    )
+        if unique_worker_ids:
+            existing_workers = list(
+                db.execute(select(Worker.id).where(Worker.id.in_(unique_worker_ids))).scalars()
+            )
+            if len(existing_workers) != len(unique_worker_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="One or more workers not found",
+                )
+        for worker_id in unique_worker_ids:
+            participation = db.execute(
+                select(TaskParticipation)
+                .where(TaskParticipation.task_instance_id == existing.id)
+                .where(TaskParticipation.worker_id == worker_id)
+                .where(TaskParticipation.left_at.is_(None))
+            ).scalar_one_or_none()
+            if participation:
+                continue
+            db.add(
+                TaskParticipation(
+                    task_instance_id=existing.id,
+                    worker_id=worker_id,
+                    joined_at=utc_now(),
+                )
+            )
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    if not task_def.concurrent_allowed:
+        for worker_id in unique_worker_ids:
+            if _has_active_nonconcurrent_task(db, worker_id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="One or more workers already have an active task",
+                )
 
     instance = TaskInstance(
         task_definition_id=payload.task_definition_id,

@@ -33,6 +33,10 @@ export const useQCSession = (): AdminSession => {
   return context;
 };
 
+export const useOptionalQCSession = (): AdminSession | null => {
+  return useContext(QCSessionContext);
+};
+
 export const useQCLayoutStatus = () => {
   const context = useContext(QCLayoutStatusContext);
   if (!context) {
@@ -53,6 +57,7 @@ const QCLayout: React.FC = () => {
   const navItems = [
     { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
+    { name: 'Checks', path: '/qc/checks', icon: ShieldCheck },
   ];
 
   useEffect(() => {
@@ -67,7 +72,7 @@ const QCLayout: React.FC = () => {
           return;
         }
         if (response.status === 401) {
-          navigate('/login', { replace: true });
+          setAdmin(null);
           return;
         }
         if (!response.ok) {
@@ -75,13 +80,13 @@ const QCLayout: React.FC = () => {
         }
         const data = (await response.json()) as AdminSession;
         if (!QC_ROLE_VALUES.has(data.role)) {
-          navigate('/login', { replace: true });
+          setAdmin(null);
           return;
         }
         setAdmin(data);
       } catch {
         if (active) {
-          navigate('/login', { replace: true });
+          setAdmin(null);
         }
       } finally {
         if (active) {
@@ -114,13 +119,7 @@ const QCLayout: React.FC = () => {
     );
   }
 
-  if (!admin) {
-    return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#fef6e7,_#f2eadb_50%,_#e9e0d0_100%)] flex items-center justify-center text-sm text-[var(--ink-muted)]">
-        Sesion invalida.
-      </div>
-    );
-  }
+  const isAuthenticated = Boolean(admin);
 
   return (
     <QCSessionContext.Provider value={admin}>
@@ -170,16 +169,28 @@ const QCLayout: React.FC = () => {
               </nav>
 
               <div className="flex-1" />
-              <div className="hidden sm:flex items-center gap-3 rounded-full border border-black/10 bg-white px-4 py-2 text-xs text-[var(--ink-muted)]">
-                Sesion: {admin.first_name} {admin.last_name}
-              </div>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-              >
-                <LogOut className="h-4 w-4" /> Salir
-              </button>
+              {isAuthenticated ? (
+                <>
+                  <div className="hidden sm:flex items-center gap-3 rounded-full border border-black/10 bg-white px-4 py-2 text-xs text-[var(--ink-muted)]">
+                    Sesion: {admin?.first_name} {admin?.last_name}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                  >
+                    <LogOut className="h-4 w-4" /> Salir
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate('/login')}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                >
+                  <LogOut className="h-4 w-4" /> Iniciar sesion
+                </button>
+              )}
             </header>
             {(status.refreshIntervalMs || status.lastUpdated) && (
               <div className="flex flex-wrap items-center justify-end gap-3 border-b border-black/5 bg-white/65 px-6 py-3 text-xs text-[var(--ink-muted)] backdrop-blur">

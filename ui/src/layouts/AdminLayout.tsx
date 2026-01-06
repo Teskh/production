@@ -10,7 +10,6 @@ import {
   X,
   Home,
   ClipboardList,
-  CheckSquare,
   Layers,
   Database,
   BarChart3,
@@ -106,10 +105,6 @@ const AdminLayout: React.FC = () => {
         { name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
         { name: 'Respaldos', path: '/admin/backups', icon: Database },
       ],
-    },
-    {
-      title: 'Calidad',
-      items: [{ name: 'Checks', path: '/admin/qc-checks', icon: CheckSquare }],
     },
   ];
 

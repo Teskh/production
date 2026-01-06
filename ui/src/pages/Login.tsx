@@ -858,29 +858,51 @@ const Login: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900">Seleccionar estacion</h3>
-                      <p className="text-sm text-gray-500">
-                        Elige una estacion activa para esta sesion.
-                      </p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    {sessionStationOptions.map((station) => (
-                      <button
-                        key={station.id}
-                        onClick={() => handleSessionStationSelect(station.id)}
-                        className="w-full rounded-md border border-gray-300 px-4 py-4 text-left transition-colors hover:bg-blue-50 hover:border-blue-500"
-                      >
-                        <div className="flex items-center gap-2">
-                          {station.line_type && (
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                              Linea {station.line_type}
+                    {sessionStationOptions.map((station) => {
+                      const isAssembly = station.role === 'Assembly';
+                      const showSmallName = isAssembly && station.line_type;
+                      const mainLabel =
+                        isAssembly && station.line_type
+                          ? `Linea ${station.line_type}`
+                          : station.name;
+                      return (
+                        <button
+                          key={station.id}
+                          onClick={() => handleSessionStationSelect(station.id)}
+                          className="w-full rounded-md border border-gray-300 px-4 py-4 text-left transition-colors hover:bg-blue-50 hover:border-blue-500"
+                        >
+                          {isAssembly ? (
+                            <div>
+                              <span className="text-lg font-semibold text-gray-900">
+                                {mainLabel}
+                              </span>
+                              {showSmallName && (
+                                <span className="mt-1 block text-xs text-gray-500">
+                                  {station.name}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {station.line_type && (
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                                  Linea {station.line_type}
+                                </span>
+                              )}
+                              <span className="font-semibold text-gray-900">{station.name}</span>
+                            </div>
+                          )}
+                          {!isAssembly && (
+                            <span className="mt-1 block text-xs text-gray-500">
+                              {station.role}
                             </span>
                           )}
-                          <span className="font-semibold text-gray-900">{station.name}</span>
-                        </div>
-                        <span className="mt-1 block text-xs text-gray-500">{station.role}</span>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                     {sessionStationOptions.length === 0 && (
                       <div className="col-span-full rounded-md border border-dashed border-gray-200 px-4 py-4 text-sm text-gray-500">
                         No hay estaciones con tareas definidas para este contexto.

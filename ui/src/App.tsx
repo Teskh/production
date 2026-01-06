@@ -54,6 +54,7 @@ function App() {
         <Route path="/qc" element={<QCLayout />}>
           <Route index element={<QCDashboard />} />
           <Route path="library" element={<QCLibrary />} />
+          <Route path="checks" element={<QCChecks />} />
         </Route>
         
         {/* QC Execution - Standalone (tablet optimized, no layout wrapper) */}
@@ -92,9 +93,6 @@ function App() {
           />
           <Route path="backups" element={<Backups />} />
           
-          {/* Quality Config */}
-          <Route path="qc-checks" element={<QCChecks />} />
-
           {/* Dashboards */}
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="dashboards/panels" element={<DashboardPanels />} />
