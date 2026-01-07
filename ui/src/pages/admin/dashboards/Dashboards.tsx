@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, BarChart3, ClipboardList, Clock, History, Ruler, Star, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
@@ -67,11 +67,29 @@ const dashboards: DashboardCard[] = [
 ];
 
 const FAVORITES_KEY = 'admin.dashboards.favorites';
+const getStoredFavorites = (): string[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const stored = window.localStorage.getItem(FAVORITES_KEY);
+    if (!stored) {
+      return [];
+    }
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((id): id is string => typeof id === 'string');
+  } catch {
+    return [];
+  }
+};
 
 const Dashboards: React.FC = () => {
   const { setHeader } = useAdminHeader();
-  const [favorites, setFavorites] = useState<string[]>([]);
-  const hasLoadedFavorites = useRef(false);
+  const [favorites, setFavorites] = useState<string[]>(getStoredFavorites);
 
   useEffect(() => {
     setHeader({
@@ -81,24 +99,6 @@ const Dashboards: React.FC = () => {
   }, [setHeader]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(FAVORITES_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setFavorites(parsed.filter((id): id is string => typeof id === 'string'));
-        }
-      } catch {
-        setFavorites([]);
-      }
-    }
-    hasLoadedFavorites.current = true;
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoadedFavorites.current) {
-      return;
-    }
     window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
   }, [favorites]);
 
