@@ -4,7 +4,6 @@ import {
   Users,
   Settings,
   FileText,
-  LogIn,
   LogOut,
   Menu,
   X,
@@ -149,10 +148,6 @@ const AdminLayout: React.FC = () => {
     };
   }, [navigate]);
 
-  const handleGoToLogin = () => {
-    navigate('/login');
-  };
-
   const handleLogout = async () => {
     setLogoutLoading(true);
     try {
@@ -271,14 +266,6 @@ const AdminLayout: React.FC = () => {
                   <div className="text-sm text-[var(--ink)]">
                     {[admin.first_name, admin.last_name].filter(Boolean).join(' ')}
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleGoToLogin}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1 text-xs text-[var(--ink-muted)] hover:bg-black/5 transition"
-                  >
-                    <LogIn size={14} />
-                    Login
-                  </button>
                   <button
                     type="button"
                     onClick={handleLogout}

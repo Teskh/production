@@ -31,6 +31,7 @@ SECTION_OPTIONS = (
     ("module_production", "Module Production Plan"),
     ("task_logs", "Task Logs (module)"),
     ("panel_task_logs", "Panel Task Logs"),
+    ("task_pauses", "Task Pauses"),
 )
 
 

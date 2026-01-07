@@ -229,6 +229,22 @@ const normalizeSearch = (value: string): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
 
+const resolveMediaUrl = (uri: string): string => {
+  if (!uri) {
+    return '';
+  }
+  if (/^(https?:)?\/\//i.test(uri) || uri.startsWith('data:') || uri.startsWith('blob:')) {
+    return uri;
+  }
+  if (!API_BASE_URL) {
+    return uri;
+  }
+  if (uri.startsWith('/')) {
+    return `${API_BASE_URL}${uri}`;
+  }
+  return `${API_BASE_URL}/${uri}`;
+};
+
 const normalizeStationName = (station: Station) => {
   const trimmed = station.name.trim();
   if (!station.line_type) {
@@ -1713,7 +1729,7 @@ const QCChecks: React.FC = () => {
                           className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
                         >
                           <img
-                            src={`${API_BASE_URL}${media.uri}`}
+                            src={resolveMediaUrl(media.uri)}
                             alt="Guia"
                             className="h-40 w-full object-cover sm:h-48"
                           />
@@ -1821,7 +1837,7 @@ const QCChecks: React.FC = () => {
                           className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
                         >
                           <img
-                            src={`${API_BASE_URL}${media.uri}`}
+                            src={resolveMediaUrl(media.uri)}
                             alt="Referencia"
                             className="h-40 w-full object-cover sm:h-48"
                           />

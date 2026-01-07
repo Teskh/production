@@ -171,7 +171,7 @@ const LoginSettings: React.FC<LoginSettingsProps> = ({
         <div className="inline-block w-full transform overflow-hidden rounded-xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:align-middle sm:max-w-5xl">
           <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Ajustes del kiosco</h2>
+              <h2 className="text-lg font-semibold text-slate-900">Ajustes</h2>
               <p className="mt-1 text-xs text-slate-500">
                 Configura accesos rapidos y el contexto de estacion.
               </p>
@@ -198,7 +198,7 @@ const LoginSettings: React.FC<LoginSettingsProps> = ({
                     onClick={onOpenQc}
                     className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
                   >
-                    <span>QC Dashboard</span>
+                    <span>Calidad</span>
                     <Eye className="h-4 w-4 text-slate-400" />
                   </button>
                   <button
@@ -206,7 +206,7 @@ const LoginSettings: React.FC<LoginSettingsProps> = ({
                     onClick={() => setAdminOpen((prev) => !prev)}
                     className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
                   >
-                    <span>Admin Dashboard</span>
+                    <span>Menú Admin</span>
                     <Shield className="h-4 w-4 text-slate-400" />
                   </button>
                 </div>

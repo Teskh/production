@@ -35,6 +35,7 @@
 - Login schedule preview uses `/api/production-queue` as the nearest available backend view until station-specific schedule endpoints are implemented.
 - Skip-reason suggestions reuse pause reasons because no dedicated skip reason configuration exists yet.
 - W1 panel recommendations include both generic (sub_type_id NULL) and subtype-specific panel definitions for the module sequence.
+- Assistance dashboard uses `GET /api/geovictoria/attendance` to fetch GeoVictoria `AttendanceBook` + `Consolidated` payloads for a worker (using GeoVictoria identifier/RUT for `UserIds`), returning raw payloads and deriving day-level entry/exit/lunch fields client-side via best-effort key matching.
 
 ## 2026-01-07
 - QR login MVP uses the browser `BarcodeDetector` API with `getUserMedia` and a center ROI crop; decoded values are shown in the login UI and only matched to workers when the payload equals a worker ID, with no backend session wiring yet.
@@ -66,3 +67,8 @@
 
 ## 2026-01-13
 - Station panels finished dashboard assumes `GET /api/station-panels-finished` filtered by `TaskInstance.completed_at` (and `TaskException.created_at` for skips) for the selected station/day; pass-through panels without task logs are not reported, and `available_at` is approximated from the latest completion at any prior panel station.
+- GeoVictoria name proposal script writes a minimal XLSX (sheet1 + shared strings only) for the updated partidas file, and keeps unmatched names unchanged in the new GeoVictoria column.
+
+## 2026-01-14
+- Partidas task import treats the sheet as module-scope tasks, maps `ESTACION` to `TaskDefinition.default_station_sequence` using ARMADO=11/ESTACION 1=12, and overwrites applicability for the selected house type by deleting + recreating module-scope rows.
+- Regular crew assignments are rebuilt for tasks listed in partidas using exact normalized name matches (prefering the GeoVictoria column when present), with GeoVictoria IDs pulled from the API when available; missing workers are created and assigned stations by matching `Station.sequence_order` to the derived `ESTACION` sequence.

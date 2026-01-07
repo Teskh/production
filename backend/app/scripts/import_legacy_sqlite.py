@@ -341,6 +341,15 @@ def _parse_datetime(raw: str | None) -> datetime | None:
             return None
 
 
+def _normalize_text(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    stripped = str(raw).strip()
+    if not stripped:
+        return None
+    return " ".join(stripped.split()).lower()
+
+
 def _map_station_id(
     raw: str | None, warnings: list[str], context: str
 ) -> int | None:
@@ -1929,6 +1938,192 @@ def _import_panel_task_logs(
             )
 
 
+def _import_task_pauses(
+    conn: sqlite3.Connection,
+    session: Session,
+    warnings: list[str],
+    allow_existing: bool,
+) -> None:
+    session.flush()
+    if not _table_exists(conn, "TaskPauses"):
+        warnings.append("TaskPauses table not found; skipping")
+        return
+
+    pause_rows = _fetch_rows(
+        conn,
+        """
+        SELECT task_pause_id, task_log_id, panel_task_log_id, paused_at, resumed_at,
+               reason, rework_task_log_id
+        FROM TaskPauses
+        ORDER BY task_pause_id
+        """,
+    )
+    if not pause_rows:
+        return
+
+    task_instance_lookup = {
+        (
+            row.task_definition_id,
+            row.work_unit_id,
+            row.station_id,
+            row.panel_unit_id,
+        ): row.id
+        for row in session.execute(select(TaskInstance)).scalars()
+    }
+    if not task_instance_lookup:
+        warnings.append("task_pauses: no task_instances found; skipping")
+        return
+
+    reason_lookup = {
+        _normalize_text(row.name): row.id
+        for row in session.execute(select(PauseReason)).scalars()
+        if _normalize_text(row.name)
+    }
+
+    panel_lookup: dict[tuple[int, int], int] = {
+        (row.work_unit_id, row.panel_definition_id): row.id
+        for row in session.execute(
+            select(
+                PanelUnit.id, PanelUnit.work_unit_id, PanelUnit.panel_definition_id
+            )
+        )
+    }
+
+    task_log_map: dict[int, int] = {}
+    if _table_exists(conn, "TaskLogs"):
+        task_log_rows = _fetch_rows(
+            conn,
+            """
+            SELECT task_log_id, plan_id, task_definition_id,
+                   station_start, station_finish
+            FROM TaskLogs
+            """,
+        )
+        for row in task_log_rows:
+            station_id = _resolve_station_id(
+                row["station_start"],
+                row["station_finish"],
+                warnings,
+                f"task_log_id {row['task_log_id']}",
+            )
+            if station_id is None:
+                continue
+            key = (row["task_definition_id"], row["plan_id"], station_id, None)
+            instance_id = task_instance_lookup.get(key)
+            if instance_id is None:
+                warnings.append(
+                    f"task_pauses task_log_id {row['task_log_id']}: "
+                    "task_instance not found"
+                )
+                continue
+            task_log_map[row["task_log_id"]] = instance_id
+    else:
+        warnings.append("task_pauses: TaskLogs table not found")
+
+    panel_task_log_map: dict[int, int] = {}
+    if _table_exists(conn, "PanelTaskLogs"):
+        panel_task_log_rows = _fetch_rows(
+            conn,
+            """
+            SELECT panel_task_log_id, plan_id, panel_definition_id, task_definition_id,
+                   station_start, station_finish
+            FROM PanelTaskLogs
+            """,
+        )
+        for row in panel_task_log_rows:
+            station_id = _resolve_station_id(
+                row["station_start"],
+                row["station_finish"],
+                warnings,
+                f"panel_task_log_id {row['panel_task_log_id']}",
+            )
+            if station_id is None:
+                continue
+            panel_key = (row["plan_id"], row["panel_definition_id"])
+            panel_unit_id = panel_lookup.get(panel_key)
+            if panel_unit_id is None:
+                warnings.append(
+                    f"task_pauses panel_task_log_id {row['panel_task_log_id']}: "
+                    "panel_unit not found"
+                )
+                continue
+            key = (
+                row["task_definition_id"],
+                row["plan_id"],
+                station_id,
+                panel_unit_id,
+            )
+            instance_id = task_instance_lookup.get(key)
+            if instance_id is None:
+                warnings.append(
+                    f"task_pauses panel_task_log_id {row['panel_task_log_id']}: "
+                    "task_instance not found"
+                )
+                continue
+            panel_task_log_map[row["panel_task_log_id"]] = instance_id
+    else:
+        warnings.append("task_pauses: PanelTaskLogs table not found")
+
+    for row in pause_rows:
+        task_pause_id = row["task_pause_id"]
+        task_log_id = row["task_log_id"]
+        panel_task_log_id = row["panel_task_log_id"]
+        rework_task_log_id = row["rework_task_log_id"]
+
+        if task_log_id and panel_task_log_id:
+            warnings.append(
+                f"task_pause_id {task_pause_id}: "
+                "both task_log_id and panel_task_log_id set; using task_log_id"
+            )
+
+        task_instance_id = None
+        if task_log_id:
+            task_instance_id = task_log_map.get(task_log_id)
+        elif panel_task_log_id:
+            task_instance_id = panel_task_log_map.get(panel_task_log_id)
+        elif rework_task_log_id:
+            warnings.append(
+                f"task_pause_id {task_pause_id}: rework_task_log_id not supported"
+            )
+            continue
+        else:
+            warnings.append(
+                f"task_pause_id {task_pause_id}: missing task_log_id"
+            )
+            continue
+
+        if task_instance_id is None:
+            warnings.append(
+                f"task_pause_id {task_pause_id}: task_instance not found"
+            )
+            continue
+
+        paused_at = _parse_datetime(row["paused_at"])
+        if paused_at is None:
+            warnings.append(
+                f"task_pause_id {task_pause_id}: invalid paused_at"
+            )
+            continue
+        resumed_at = _parse_datetime(row["resumed_at"])
+
+        raw_reason = row["reason"]
+        normalized = _normalize_text(raw_reason)
+        reason_id = reason_lookup.get(normalized) if normalized else None
+        reason_text = None
+        if reason_id is None and raw_reason:
+            reason_text = str(raw_reason).strip()
+
+        pause = TaskPause(
+            id=task_pause_id,
+            task_instance_id=task_instance_id,
+            reason_id=reason_id,
+            reason_text=reason_text,
+            paused_at=paused_at,
+            resumed_at=resumed_at,
+        )
+        _persist(session, pause, allow_existing)
+
+
 def _report(sqlite_path: Path) -> int:
     conn = _connect_sqlite(sqlite_path)
     cursor = conn.cursor()
@@ -2055,6 +2250,8 @@ def _import(
                     "task_participations",
                     allow_existing,
                 )
+            if "task_pauses" in sections:
+                _ensure_empty(session, TaskPause, "task_pauses", allow_existing)
 
         if "tasks" in sections:
             _import_tasks(conn, session, warnings, allow_existing)
@@ -2086,6 +2283,8 @@ def _import(
             _import_task_logs(conn, session, warnings, allow_existing)
         if "panel_task_logs" in sections:
             _import_panel_task_logs(conn, session, warnings, allow_existing)
+        if "task_pauses" in sections:
+            _import_task_pauses(conn, session, warnings, allow_existing)
 
         if "workers" in sections:
             _import_worker_skills(conn, session, warnings, allow_existing)
@@ -2135,7 +2334,7 @@ def main() -> int:
         help=(
             "Comma-separated sections (tasks,houses,panels,pause_reasons,"
             "comment_templates,module_task_templates,workers,specialties,"
-            "module_production,task_logs,panel_task_logs)."
+            "module_production,task_logs,panel_task_logs,task_pauses)."
         ),
     )
     parser.add_argument(

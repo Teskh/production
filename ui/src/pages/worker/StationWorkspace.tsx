@@ -285,6 +285,7 @@ const StationWorkspace: React.FC = () => {
   const [regularCrewByTaskId, setRegularCrewByTaskId] = useState<Record<number, number[]>>({});
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
+  const snapshotRequestIdRef = useRef(0);
   const autoFocusAppliedRef = useRef(false);
   const lastSelectedWorkItemRef = useRef<{
     work_unit_id: number;
@@ -581,16 +582,26 @@ const StationWorkspace: React.FC = () => {
   }, [navigate]);
 
   const loadSnapshot = useCallback(async (stationId: number) => {
+    const requestId = snapshotRequestIdRef.current + 1;
+    snapshotRequestIdRef.current = requestId;
     setSnapshotLoading(true);
     try {
       const data = await apiRequest<StationSnapshot>(`/api/worker-stations/${stationId}/snapshot`);
+      if (snapshotRequestIdRef.current !== requestId) {
+        return;
+      }
       setSnapshot(data);
       setError(null);
     } catch (err) {
+      if (snapshotRequestIdRef.current !== requestId) {
+        return;
+      }
       const message = err instanceof Error ? err.message : 'No se pudo cargar la estacion.';
       setError(message);
     } finally {
-      setSnapshotLoading(false);
+      if (snapshotRequestIdRef.current === requestId) {
+        setSnapshotLoading(false);
+      }
     }
   }, []);
 
@@ -1966,7 +1977,7 @@ const StationWorkspace: React.FC = () => {
             )}
             <h3 className="text-lg font-semibold text-gray-900">Contexto de estacion</h3>
             <p className="mt-2 text-sm text-gray-500">
-              Define el contexto del kiosco y luego elige la estacion para esta sesion.
+              Define la estación del tablet.
             </p>
             <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto">
               <div className="space-y-2">

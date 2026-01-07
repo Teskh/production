@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import Any, Mapping
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
+from app.api.deps import get_db
 from app.core.config import settings
-from app.schemas.geovictoria import GeoVictoriaWorker, GeoVictoriaWorkerSummary
+from app.models.workers import Worker
+from app.schemas.geovictoria import (
+    GeoVictoriaAttendanceResponse,
+    GeoVictoriaWorker,
+    GeoVictoriaWorkerSummary,
+)
 
 router = APIRouter()
 
@@ -54,6 +62,81 @@ def _get_token() -> str:
     _TOKEN_CACHE["token"] = token
     _TOKEN_CACHE["expires_at"] = now + settings.geovictoria_token_ttl_seconds
     return token
+
+
+def _post_geovictoria(endpoint: str, payload: Mapping[str, Any]) -> Any:
+    token = _get_token()
+    url = f"{settings.geovictoria_base_url}/{endpoint.lstrip('/')}"
+    try:
+        resp = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+            timeout=60,
+        )
+        if resp.status_code in (401, 403):
+            _TOKEN_CACHE["token"] = None
+            _TOKEN_CACHE["expires_at"] = 0.0
+            token = _get_token()
+            resp = httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+                timeout=60,
+            )
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"GeoVictoria request failed: {exc}",
+        ) from exc
+    return resp.json()
+
+
+def _parse_date_input(raw: str, *, end_of_day: bool) -> datetime:
+    normalized = raw.strip().replace(" ", "T")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format",
+        ) from exc
+    if len(raw.strip()) == 10:
+        if end_of_day:
+            return dt.replace(hour=23, minute=59, second=59)
+        return dt.replace(hour=0, minute=0, second=0)
+    return dt
+
+
+def _to_compact(dt_value: datetime) -> str:
+    return dt_value.strftime("%Y%m%d%H%M%S")
+
+
+def _resolve_range(
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    days: int,
+) -> tuple[datetime, datetime]:
+    if start_date or end_date:
+        if not start_date or not end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date and end_date must both be provided",
+            )
+        start_dt = _parse_date_input(start_date, end_of_day=False)
+        end_dt = _parse_date_input(end_date, end_of_day=True)
+        if end_dt < start_dt:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_date must be after start_date",
+            )
+        return start_dt, end_dt
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=days)
+    return start_dt, end_dt
 
 
 def _extract_users(payload: Any) -> list[Mapping[str, Any]]:
@@ -194,3 +277,55 @@ def get_worker(geovictoria_id: str) -> GeoVictoriaWorker:
         if user.geovictoria_id == target:
             return user
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GeoVictoria worker not found")
+
+
+@router.get("/attendance", response_model=GeoVictoriaAttendanceResponse)
+def get_attendance(
+    worker_id: int = Query(..., ge=1),
+    days: int = Query(30, ge=1, le=365),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_db),
+) -> GeoVictoriaAttendanceResponse:
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    if not worker.geovictoria_identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Worker is not linked to a GeoVictoria identifier",
+        )
+    geovictoria_id = (worker.geovictoria_id or "").strip()
+    geovictoria_identifier = worker.geovictoria_identifier.strip()
+    if not geovictoria_identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Worker is not linked to a GeoVictoria identifier",
+        )
+
+    start_dt, end_dt = _resolve_range(
+        start_date=start_date,
+        end_date=end_date,
+        days=days,
+    )
+    payload = {
+        "StartDate": _to_compact(start_dt),
+        "EndDate": _to_compact(end_dt),
+        "UserIds": geovictoria_identifier,
+    }
+    consolidated_payload = {**payload, "IncludeAll": 0}
+
+    attendance = _post_geovictoria("AttendanceBook", payload)
+    consolidated = _post_geovictoria("Consolidated", consolidated_payload)
+
+    return GeoVictoriaAttendanceResponse(
+        worker_id=worker.id,
+        worker_first_name=worker.first_name,
+        worker_last_name=worker.last_name,
+        geovictoria_id=geovictoria_id or geovictoria_identifier,
+        geovictoria_identifier=geovictoria_identifier,
+        start_date=start_dt.isoformat(),
+        end_date=end_dt.isoformat(),
+        attendance=attendance,
+        consolidated=consolidated,
+    )

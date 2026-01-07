@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { ArrowUpRight, BarChart3, ClipboardList, History, Ruler, Timer } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, BarChart3, ClipboardList, Clock, History, Ruler, Star, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayout';
 
@@ -54,10 +54,24 @@ const dashboards: DashboardCard[] = [
     tags: ['Paneles', 'Estaciones', 'Tareas'],
     icon: Timer,
   },
+  {
+    id: 'assistance-activity',
+    name: 'Asistencias y actividad',
+    description:
+      'Consulta marcajes de GeoVictoria y actividad registrada por trabajador.',
+    path: '/admin/dashboards/assistance',
+    status: 'ready',
+    tags: ['Personal', 'GeoVictoria', 'Actividad'],
+    icon: Clock,
+  },
 ];
+
+const FAVORITES_KEY = 'admin.dashboards.favorites';
 
 const Dashboards: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const hasLoadedFavorites = useRef(false);
 
   useEffect(() => {
     setHeader({
@@ -65,6 +79,42 @@ const Dashboards: React.FC = () => {
       kicker: 'Analitica',
     });
   }, [setHeader]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(FAVORITES_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setFavorites(parsed.filter((id): id is string => typeof id === 'string'));
+        }
+      } catch {
+        setFavorites([]);
+      }
+    }
+    hasLoadedFavorites.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedFavorites.current) {
+      return;
+    }
+    window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
+  }, [favorites]);
+
+  const favoriteDashboards = useMemo(
+    () => dashboards.filter((dashboard) => favorites.includes(dashboard.id)),
+    [favorites],
+  );
+
+  const nonFavoriteDashboards = useMemo(
+    () => dashboards.filter((dashboard) => !favorites.includes(dashboard.id)),
+    [favorites],
+  );
+
+  const toggleFavorite = (id: string) => {
+    setFavorites((prev) => (prev.includes(id) ? prev.filter((fav) => fav !== id) : [...prev, id]));
+  };
 
   return (
     <div className="space-y-6">
@@ -85,8 +135,80 @@ const Dashboards: React.FC = () => {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-black/5 bg-white/80 px-6 py-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Favoritos</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-[var(--accent-soft)] bg-white/80 px-4 py-2 text-xs text-[var(--ink)]">
+            <Star className="h-4 w-4 text-[var(--accent)]" />
+            {favorites.length} favoritos
+          </div>
+        </div>
+        {favoriteDashboards.length === 0 ? (
+          <div className="mt-5 rounded-2xl border border-dashed border-black/10 bg-white/70 px-5 py-6 text-sm text-[var(--ink-muted)]">
+            Aun no tienes favoritos. Marca un dashboard con la estrella para fijarlo aqui.
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {favoriteDashboards.map((dashboard, index) => (
+              <div
+                key={dashboard.id}
+                className="group rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm transition hover:-translate-y-1 hover:border-black/10"
+                style={{ animationDelay: `${index * 80}ms` }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
+                    <dashboard.icon className="h-5 w-5" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleFavorite(dashboard.id)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--accent)] transition hover:border-black/20"
+                    aria-label="Quitar de favoritos"
+                  >
+                    <Star className="h-4 w-4 fill-[var(--accent)]" />
+                  </button>
+                </div>
+                <h3 className="mt-4 text-lg font-semibold text-[var(--ink)]">{dashboard.name}</h3>
+                <p className="mt-2 text-sm text-[var(--ink-muted)]">{dashboard.description}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {dashboard.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded-full border border-black/10 bg-white px-2.5 py-1 text-[11px] uppercase tracking-[0.15em] text-[var(--ink-muted)]"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-5">
+                  {dashboard.status === 'ready' ? (
+                    <Link
+                      to={dashboard.path}
+                      className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-black"
+                    >
+                      Abrir dashboard
+                      <ArrowUpRight className="h-4 w-4" />
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]"
+                      disabled
+                    >
+                      En camino
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {dashboards.map((dashboard, index) => (
+        {nonFavoriteDashboards.map((dashboard, index) => (
           <div
             key={dashboard.id}
             className="group rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm transition hover:-translate-y-1 hover:border-black/10"
@@ -96,15 +218,25 @@ const Dashboards: React.FC = () => {
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
                 <dashboard.icon className="h-5 w-5" />
               </div>
-              <span
-                className={
-                  dashboard.status === 'ready'
-                    ? 'rounded-full bg-[var(--leaf)]/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--leaf)]'
-                    : 'rounded-full bg-black/5 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
-                }
-              >
-                {dashboard.status === 'ready' ? 'Disponible' : 'Planeado'}
-              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={
+                    dashboard.status === 'ready'
+                      ? 'rounded-full bg-[var(--leaf)]/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--leaf)]'
+                      : 'rounded-full bg-black/5 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+                  }
+                >
+                  {dashboard.status === 'ready' ? 'Disponible' : 'Planeado'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => toggleFavorite(dashboard.id)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--accent)]"
+                  aria-label="Agregar a favoritos"
+                >
+                  <Star className="h-4 w-4" />
+                </button>
+              </div>
             </div>
             <h2 className="mt-4 text-lg font-semibold text-[var(--ink)]">{dashboard.name}</h2>
             <p className="mt-2 text-sm text-[var(--ink-muted)]">{dashboard.description}</p>
