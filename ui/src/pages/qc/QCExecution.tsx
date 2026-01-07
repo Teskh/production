@@ -11,6 +11,7 @@ import {
   AlertCircle,
   ChevronRight,
   Image,
+  RotateCw,
 } from 'lucide-react';
 import { CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS } from '../../services/qcMockData';
 
@@ -65,6 +66,12 @@ type QCCheckInstanceDetail = {
   check_definition: QCCheckDefinitionSummary | null;
   failure_modes: QCFailureModeSummary[];
   media_assets: QCCheckMediaSummary[];
+};
+
+type ProductionQueueItemSummary = {
+  id: number;
+  planned_sequence: number;
+  house_identifier: string;
 };
 
 type QCReworkState = {
@@ -163,7 +170,25 @@ const QCExecution: React.FC = () => {
   const [selectedFailureModeIds, setSelectedFailureModeIds] = useState<string[]>([]);
   const [selectedSeverityId, setSelectedSeverityId] = useState<string | null>(null);
   const [reworkText, setReworkText] = useState('');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('environment');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [captureFlash, setCaptureFlash] = useState(false);
+  const refTouchState = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null);
+  const guideTouchState = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null);
+  const [workUnitMeta, setWorkUnitMeta] = useState<ProductionQueueItemSummary | null>(null);
+  const [previewEvidenceId, setPreviewEvidenceId] = useState<string | null>(null);
+  const evidenceUrlsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    return () => {
+      evidenceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      evidenceUrlsRef.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -248,6 +273,33 @@ const QCExecution: React.FC = () => {
       isMounted = false;
     };
   }, [authLoading, canExecute, checkId]);
+
+  useEffect(() => {
+    const workUnitId = checkDetail?.check_instance.work_unit_id;
+    if (!workUnitId) {
+      setWorkUnitMeta(null);
+      return;
+    }
+    let active = true;
+    const loadWorkUnitMeta = async () => {
+      try {
+        const items = await apiRequest<ProductionQueueItemSummary[]>('/api/production-queue');
+        if (!active) {
+          return;
+        }
+        const match = items.find((item) => item.id === workUnitId) ?? null;
+        setWorkUnitMeta(match);
+      } catch {
+        if (active) {
+          setWorkUnitMeta(null);
+        }
+      }
+    };
+    void loadWorkUnitMeta();
+    return () => {
+      active = false;
+    };
+  }, [checkDetail?.check_instance.work_unit_id]);
 
   const mockCheckInstance = useMemo(
     () =>
@@ -349,22 +401,166 @@ const QCExecution: React.FC = () => {
     }
   }, [failureModes, reworkText, selectedFailureModeIds, selectedSeverityId]);
 
-  const handleEvidenceSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    if (!files.length) {
+  const headerModule =
+    checkDetail?.check_instance.module_number ?? mockCheckInstance?.moduleNumber ?? 'Manual';
+  const headerStation =
+    checkDetail?.check_instance.station_name ?? mockCheckInstance?.stationName ?? 'Sin estacion';
+  const headerPanel =
+    checkDetail?.check_instance.panel_code ?? mockCheckInstance?.panelCode ?? null;
+  const headerTitle = checkDetail?.check_definition?.name ?? checkDef?.name ?? 'Revision QC';
+
+  const formatStampDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}/${month}/${day}`;
+  };
+
+  const buildWatermarkLines = (date: Date) => {
+    const parts: string[] = [];
+    if (workUnitMeta?.house_identifier) {
+      parts.push(`Casa ${workUnitMeta.house_identifier}`);
+    }
+    if (headerModule) {
+      parts.push(`Modulo ${headerModule}`);
+    }
+    if (workUnitMeta?.planned_sequence && workUnitMeta.planned_sequence > 0) {
+      parts.push(`Sec ${workUnitMeta.planned_sequence}`);
+    }
+    if (headerPanel) {
+      parts.push(`Panel ${headerPanel}`);
+    }
+    const lines: string[] = [];
+    if (parts.length > 0) {
+      lines.push(parts.join(' · '));
+    }
+    if (headerTitle) {
+      lines.push(headerTitle);
+    }
+    lines.push(formatStampDate(date));
+    return lines.filter(Boolean);
+  };
+
+  const stopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!showCamera) {
+      stopCamera();
+      setCameraReady(false);
+      setCameraError(null);
       return;
     }
-    const additions: EvidenceItem[] = files.map((file) => ({
-      id: `${file.name}-${file.lastModified}-${file.size}`,
-      url: URL.createObjectURL(file),
-      type: file.type.startsWith('video') ? 'video' : 'image',
-      file,
-    }));
-    setEvidence((prev) => [...prev, ...additions]);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Este navegador no soporta camara.');
+      setCameraReady(false);
+      return;
+    }
+    let active = true;
+    const startCamera = async () => {
+      setCameraError(null);
+      setCameraReady(false);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: cameraFacingMode },
+          audio: false,
+        });
+        if (!active) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stopCamera();
+        cameraStreamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+        }
+        setCameraReady(true);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : 'No se pudo abrir la camara.';
+        setCameraError(message);
+        setCameraReady(false);
+      }
+    };
+    void startCamera();
+    return () => {
+      active = false;
+      stopCamera();
+    };
+  }, [cameraFacingMode, showCamera]);
+
+  const handleCameraCapture = async () => {
+    if (!videoRef.current || !canvasRef.current) {
+      setCameraError('No se pudo acceder a la camara.');
+      return;
+    }
+    const video = videoRef.current;
+    if (!video.videoWidth || !video.videoHeight) {
+      setCameraError('La camara aun no esta lista.');
+      return;
+    }
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setCameraError('No se pudo preparar la captura.');
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const stampDate = new Date();
+    const watermarkLines = buildWatermarkLines(stampDate);
+    if (watermarkLines.length > 0) {
+      const padding = Math.max(12, Math.round(canvas.width * 0.02));
+      const fontSize = Math.max(14, Math.round(canvas.width * 0.02));
+      const lineHeight = Math.round(fontSize * 1.25);
+      context.font = `600 ${fontSize}px sans-serif`;
+      context.textBaseline = 'top';
+      const maxLineWidth = Math.max(
+        ...watermarkLines.map((line) => context.measureText(line).width)
+      );
+      const boxWidth = Math.min(canvas.width - padding * 2, maxLineWidth + padding * 2);
+      const boxHeight = watermarkLines.length * lineHeight + padding * 2;
+      const x = padding;
+      const y = canvas.height - boxHeight - padding;
+      context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      context.fillRect(x, y, boxWidth, boxHeight);
+      context.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      watermarkLines.forEach((line, index) => {
+        context.fillText(line, x + padding, y + padding + index * lineHeight);
+      });
+    }
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/webp', 0.9)
+    );
+    if (!blob) {
+      setCameraError('No se pudo capturar la foto.');
+      return;
+    }
+    const fileName = `qc-${checkId ?? 'check'}-${Date.now()}.webp`;
+    const file = new File([blob], fileName, { type: blob.type || 'image/webp' });
+    const url = URL.createObjectURL(blob);
+    evidenceUrlsRef.current.add(url);
+    setEvidence((prev) => [
+      ...prev,
+      {
+        id: `${file.name}-${file.lastModified}-${file.size}`,
+        url,
+        type: 'image',
+        file,
+      },
+    ]);
+    setCaptureFlash(true);
+    window.setTimeout(() => setCaptureFlash(false), 160);
     setEvidenceGateError(null);
     setActionError(null);
-    setShowCamera(false);
-    event.target.value = '';
   };
 
   const evidenceRequiredForOutcome = (outcome: 'Pass' | 'Fail' | 'Skip' | 'Waive') =>
@@ -382,7 +578,7 @@ const QCExecution: React.FC = () => {
       });
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(text || `No se pudo subir evidencia (${response.status})`);
+        throw new Error(text || `No se pudo subir registro (${response.status})`);
       }
     }
   };
@@ -396,7 +592,7 @@ const QCExecution: React.FC = () => {
       return;
     }
     if (evidenceRequiredForOutcome(outcome) && evidence.length === 0) {
-      const message = 'Agregue evidencia antes de aprobar o fallar esta revision.';
+      const message = 'Agregue registro antes de aprobar o fallar esta revision.';
       setEvidenceGateError(message);
       setActionError(message);
       setShowEvidenceRequiredModal(true);
@@ -462,7 +658,7 @@ const QCExecution: React.FC = () => {
 
   const handleFailSubmit = () => {
     if (evidence.length === 0) {
-      const message = 'Agregue evidencia antes de registrar una falla.';
+      const message = 'Agregue registro antes de registrar una falla.';
       setEvidenceGateError(message);
       setActionError(message);
       setShowEvidenceRequiredModal(true);
@@ -472,11 +668,62 @@ const QCExecution: React.FC = () => {
     void executeCheck('Fail');
   };
 
-  const handleCapture = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
+  const closeCamera = () => {
+    setShowCamera(false);
+    setCameraError(null);
+    setPreviewEvidenceId(null);
+  };
+
+  const openRegistroCamera = () => {
+    setShowCamera(true);
+    setCameraError(null);
+  };
+
+  const removeEvidenceItem = (id: string) => {
+    setEvidence((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.url) {
+        URL.revokeObjectURL(target.url);
+        evidenceUrlsRef.current.delete(target.url);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+    if (previewEvidenceId === id) {
+      setPreviewEvidenceId(null);
     }
   };
+
+  const handleTouchStart =
+    (stateRef: React.MutableRefObject<{ startX: number; startY: number; tracking: boolean } | null>) =>
+    (event: React.TouchEvent) => {
+      const touch = event.touches[0];
+      stateRef.current = { startX: touch.clientX, startY: touch.clientY, tracking: true };
+    };
+
+  const handleTouchEnd =
+    (
+      stateRef: React.MutableRefObject<{ startX: number; startY: number; tracking: boolean } | null>,
+      onPrev: () => void,
+      onNext: () => void
+    ) =>
+    (event: React.TouchEvent) => {
+      const state = stateRef.current;
+      if (!state?.tracking) {
+        return;
+      }
+      const touch = event.changedTouches[0];
+      const deltaX = touch.clientX - state.startX;
+      const deltaY = touch.clientY - state.startY;
+      stateRef.current = null;
+      if (Math.abs(deltaX) < 50 || Math.abs(deltaX) < Math.abs(deltaY)) {
+        return;
+      }
+      if (deltaX > 0) {
+        onPrev();
+      } else {
+        onNext();
+      }
+    };
 
   const handleSkipStep = () => {
     if (currentStep < steps.length - 1) {
@@ -489,6 +736,9 @@ const QCExecution: React.FC = () => {
   };
 
   const canSubmitFail = selectedFailureModeIds.length > 0 && !!selectedSeverityId;
+  const previewEvidence = previewEvidenceId
+    ? evidence.find((item) => item.id === previewEvidenceId) ?? null
+    : null;
 
   const nextRefImage = () => setRefImageIndex((i) => (i + 1) % referenceImages.length);
   const prevRefImage = () =>
@@ -529,24 +779,8 @@ const QCExecution: React.FC = () => {
     );
   }
 
-  const headerModule =
-    checkDetail?.check_instance.module_number ?? mockCheckInstance?.moduleNumber ?? 'Manual';
-  const headerStation =
-    checkDetail?.check_instance.station_name ?? mockCheckInstance?.stationName ?? 'Sin estacion';
-  const headerPanel =
-    checkDetail?.check_instance.panel_code ?? mockCheckInstance?.panelCode ?? null;
-  const headerTitle = checkDetail?.check_definition?.name ?? checkDef?.name ?? 'Revision QC';
-
   return (
     <div className="flex flex-col h-screen bg-slate-900 text-white overflow-hidden">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*,video/*"
-        className="hidden"
-        multiple
-        onChange={handleEvidenceSelection}
-      />
       {/* Minimal Header */}
       <div className="flex items-center px-4 py-2 bg-slate-800/50 backdrop-blur-sm">
         <button
@@ -623,6 +857,13 @@ const QCExecution: React.FC = () => {
               <span className="text-sm">Sin imagen de referencia</span>
             </div>
           )}
+          {referenceImages.length > 1 && (
+            <div
+              className="absolute inset-0"
+              onTouchStart={handleTouchStart(refTouchState)}
+              onTouchEnd={handleTouchEnd(refTouchState, prevRefImage, nextRefImage)}
+            />
+          )}
         </div>
 
         {/* Divider */}
@@ -677,6 +918,13 @@ const QCExecution: React.FC = () => {
               <span className="text-sm">Sin guia visual</span>
             </div>
           )}
+          {guidanceImages.length > 1 && (
+            <div
+              className="absolute inset-0"
+              onTouchStart={handleTouchStart(guideTouchState)}
+              onTouchEnd={handleTouchEnd(guideTouchState, prevGuideImage, nextGuideImage)}
+            />
+          )}
         </div>
       </div>
 
@@ -703,11 +951,11 @@ const QCExecution: React.FC = () => {
           {/* Left: Tools */}
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowCamera(true)}
+              onClick={openRegistroCamera}
               className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
             >
               <Camera className="w-4 h-4" />
-              <span className="hidden sm:inline">Evidencia</span>
+              <span className="hidden sm:inline">Registro</span>
               {evidence.length === 0 && evidenceGateError && (
                 <span className="inline-block w-2 h-2 rounded-full bg-amber-400" aria-hidden="true" />
               )}
@@ -727,13 +975,27 @@ const QCExecution: React.FC = () => {
                 {evidence.slice(0, 3).map((ev) => (
                   <div
                     key={ev.id}
-                    className="w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden"
+                    className="relative w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden cursor-pointer"
+                    onClick={() => {
+                      setPreviewEvidenceId(ev.id);
+                      openRegistroCamera();
+                    }}
                   >
                     {ev.type === 'video' ? (
                       <video src={ev.url} className="w-full h-full object-cover" />
                     ) : (
-                      <img src={ev.url} alt="ev" className="w-full h-full object-cover" />
+                      <img src={ev.url} alt="Registro" className="w-full h-full object-cover" />
                     )}
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeEvidenceItem(ev.id);
+                      }}
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-black/80 text-white text-[10px] flex items-center justify-center"
+                      aria-label="Eliminar registro"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
                   </div>
                 ))}
                 {evidence.length > 3 && (
@@ -796,7 +1058,7 @@ const QCExecution: React.FC = () => {
             <div className="p-4 border-b border-slate-700 flex justify-between items-center">
               <div className="flex items-center gap-2 text-amber-300">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-bold text-white">Evidencia requerida</h3>
+                <h3 className="font-bold text-white">Registro requerido</h3>
               </div>
               <button
                 onClick={() => setShowEvidenceRequiredModal(false)}
@@ -807,10 +1069,10 @@ const QCExecution: React.FC = () => {
             </div>
             <div className="p-4">
               <p className="text-sm text-slate-200">
-                {evidenceGateError ?? 'Agregue evidencia antes de continuar.'}
+                {evidenceGateError ?? 'Agregue registro antes de continuar.'}
               </p>
               <p className="mt-2 text-xs text-slate-400">
-                Adjunte una foto o video para poder cerrar la revision.
+                Adjunte una foto para poder cerrar la revision.
               </p>
             </div>
             <div className="p-4 bg-slate-900/50 flex justify-end gap-3">
@@ -823,11 +1085,11 @@ const QCExecution: React.FC = () => {
               <button
                 onClick={() => {
                   setShowEvidenceRequiredModal(false);
-                  handleCapture();
+                  openRegistroCamera();
                 }}
                 className="px-4 py-2 bg-amber-500 text-slate-900 font-semibold rounded-lg hover:bg-amber-400"
               >
-                Adjuntar evidencia
+                Abrir camara
               </button>
             </div>
           </div>
@@ -837,31 +1099,130 @@ const QCExecution: React.FC = () => {
       {/* Camera Overlay */}
       {showCamera && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
-          <div className="flex-1 flex flex-col items-center justify-center relative bg-slate-900">
-            <p className="text-white/50 text-sm absolute top-8">Simulador de camara</p>
-            <div className="w-full max-w-md aspect-[4/3] border border-white/20 relative flex items-center justify-center">
-              <div className="w-48 h-48 border-2 border-white/30 rounded-lg flex items-center justify-center">
-                <span className="text-white/20 text-4xl font-thin">+</span>
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900/90 border-b border-slate-800">
+            <div className="text-sm text-slate-200 font-semibold">Registro</div>
+            <button
+              onClick={closeCamera}
+              className="px-4 py-1.5 rounded-full bg-emerald-500 text-slate-900 font-semibold hover:bg-emerald-400"
+            >
+              Listo
+            </button>
+          </div>
+          <div className="flex-1 relative bg-slate-950">
+            {cameraError ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
+                <p className="text-red-300 text-sm">{cameraError}</p>
+                <p className="text-xs text-slate-400 mt-2">
+                  Habilite permisos de camara en el navegador.
+                </p>
               </div>
-              <div className="absolute bottom-4 left-4 text-[10px] text-yellow-400 font-mono bg-black/50 px-2 py-1 rounded">
-                {headerModule} | {new Date().toLocaleTimeString()}
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center px-4 py-6">
+                <div className="w-full max-w-4xl aspect-[4/3] border border-white/10 relative overflow-hidden rounded-xl bg-black">
+                  <video
+                    ref={videoRef}
+                    className="w-full h-full object-cover"
+                    playsInline
+                    muted
+                    autoPlay
+                  />
+                  {captureFlash && <div className="absolute inset-0 bg-white/70" />}
+                  <div className="absolute bottom-3 left-3 text-[11px] text-white/90 font-mono bg-black/60 px-2 py-1 rounded leading-snug">
+                    {buildWatermarkLines(new Date()).map((line) => (
+                      <div key={line}>{line}</div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="mt-8 flex items-center gap-8">
-              <button
-                onClick={() => setShowCamera(false)}
-                className="p-4 rounded-full bg-slate-800 text-white hover:bg-slate-700"
-              >
-                <X className="w-6 h-6" />
-              </button>
-              <button
-                onClick={handleCapture}
-                className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center hover:scale-105 transition-transform"
-              >
-                <div className="w-16 h-16 bg-white rounded-full"></div>
-              </button>
-              <div className="w-14" />
-            </div>
+            )}
+            <canvas ref={canvasRef} className="hidden" />
+            {previewEvidence && (
+              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col">
+                <div className="flex-1 flex items-center justify-center p-4">
+                  {previewEvidence.type === 'video' ? (
+                    <video src={previewEvidence.url} controls className="max-h-full max-w-full" />
+                  ) : (
+                    <img src={previewEvidence.url} alt="Registro" className="max-h-full max-w-full" />
+                  )}
+                </div>
+                <div className="p-4 flex items-center justify-between">
+                  <button
+                    onClick={() => setPreviewEvidenceId(null)}
+                    className="px-4 py-2 text-slate-200 font-semibold hover:bg-slate-800 rounded-lg"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    onClick={() => removeEvidenceItem(previewEvidence.id)}
+                    className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-500"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            )}
+            {!cameraError && (
+              <>
+                {evidence.length > 0 && (
+                  <div className="absolute bottom-6 left-4 right-36 flex items-center gap-3 overflow-x-auto pb-2">
+                    {evidence.map((item) => (
+                      <div
+                        key={item.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setPreviewEvidenceId(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            setPreviewEvidenceId(item.id);
+                          }
+                        }}
+                        className="relative w-16 h-16 rounded-lg border border-slate-700 overflow-hidden shrink-0"
+                      >
+                        {item.type === 'video' ? (
+                          <video src={item.url} className="w-full h-full object-cover" />
+                        ) : (
+                          <img src={item.url} alt="Registro" className="w-full h-full object-cover" />
+                        )}
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeEvidenceItem(item.id);
+                          }}
+                          className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] flex items-center justify-center"
+                          aria-label="Eliminar registro"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() =>
+                    setCameraFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
+                  }
+                  className="absolute bottom-6 right-28 p-3 rounded-full bg-slate-800 text-white hover:bg-slate-700"
+                  title="Cambiar camara"
+                >
+                  <RotateCw className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={handleCameraCapture}
+                  disabled={!cameraReady}
+                  className={`absolute bottom-6 right-6 w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
+                    cameraReady
+                      ? 'border-white hover:scale-105'
+                      : 'border-slate-600 opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  <div
+                    className={`w-16 h-16 rounded-full ${
+                      cameraReady ? 'bg-white' : 'bg-slate-600'
+                    }`}
+                  />
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -915,14 +1276,14 @@ const QCExecution: React.FC = () => {
               {evidence.length === 0 && (
                 <div className="mb-5 rounded-lg border border-amber-500/40 bg-amber-900/20 px-3 py-2">
                   <p className="text-xs text-amber-200">
-                    Adjunte evidencia (foto/video) antes de confirmar la falla.
+                    Adjunte registro fotografico antes de confirmar la falla.
                   </p>
                   <button
-                    onClick={handleCapture}
+                    onClick={openRegistroCamera}
                     className="mt-2 inline-flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-900 hover:bg-amber-400"
                   >
                     <Camera className="w-4 h-4" />
-                    Adjuntar evidencia
+                    Abrir camara
                   </button>
                 </div>
               )}

@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Eye, MapPin, Shield, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Eye, MapPin, Maximize2, Minimize2, Shield, X } from 'lucide-react';
 import type { StationContext } from '../utils/stationContext';
 import { formatStationContext, formatStationLabel } from '../utils/stationContext';
 
@@ -116,6 +116,9 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     initialState.groupMode
   );
   const [adminOpen, setAdminOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const lastTapRef = useRef(0);
 
   const currentContextLabel = useMemo(() => {
     if (!stationContext) {
@@ -163,12 +166,57 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     onAdminLogin();
   };
 
+  useEffect(() => {
+    const root = document.documentElement;
+    const canFullscreen = Boolean(root?.requestFullscreen);
+    setFullscreenAvailable(canFullscreen);
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    handleFullscreenChange();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = async () => {
+    if (!fullscreenAvailable) {
+      return;
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await document.documentElement.requestFullscreen();
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!fullscreenAvailable || document.fullscreenElement) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) {
+      return;
+    }
+    const now = Date.now();
+    const lastTap = lastTapRef.current;
+    lastTapRef.current = now;
+    if (now - lastTap < 300) {
+      document.documentElement.requestFullscreen();
+      lastTapRef.current = 0;
+    }
+  };
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+    <div className="fixed inset-0 z-50 overflow-y-auto" onTouchEnd={handleTouchEnd}>
       <div className="flex min-h-screen items-center justify-center px-4 text-center sm:block sm:p-0">
         <div className="fixed inset-0 bg-slate-900/60" onClick={onClose} aria-hidden="true" />
 
@@ -184,14 +232,30 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                 Configura accesos rapidos y el contexto de estacion.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-              aria-label="Cerrar ajustes"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleFullscreen}
+                disabled={!fullscreenAvailable}
+                className={`rounded-full p-2 transition ${
+                  fullscreenAvailable
+                    ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                    : 'cursor-not-allowed text-slate-300'
+                }`}
+                aria-label={isFullscreen ? 'Salir pantalla completa' : 'Activar pantalla completa'}
+                title={isFullscreen ? 'Salir pantalla completa' : 'Activar pantalla completa'}
+              >
+                {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Cerrar ajustes"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1fr_1.4fr]">

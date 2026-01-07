@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -34,6 +34,7 @@ const QCLayout: React.FC = () => {
   const [loginPin, setLoginPin] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const lastTapRef = useRef(0);
   const navItems = [
     { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
@@ -155,10 +156,31 @@ const QCLayout: React.FC = () => {
 
   const isAuthenticated = Boolean(admin);
 
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const root = document.documentElement;
+    if (!root?.requestFullscreen || document.fullscreenElement) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) {
+      return;
+    }
+    const now = Date.now();
+    const lastTap = lastTapRef.current;
+    lastTapRef.current = now;
+    if (now - lastTap < 300) {
+      root.requestFullscreen();
+      lastTapRef.current = 0;
+    }
+  };
+
   return (
     <QCSessionContext.Provider value={admin}>
       <QCLayoutStatusContext.Provider value={{ status, setStatus }}>
-        <div className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef6e7,_#f2eadb_50%,_#e9e0d0_100%)]">
+        <div
+          className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef6e7,_#f2eadb_50%,_#e9e0d0_100%)]"
+          onTouchEnd={handleTouchEnd}
+        >
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute left-6 top-6 h-28 w-28 rounded-full bg-[rgba(242,98,65,0.18)] blur-2xl animate-drift" />
             <div className="absolute right-10 bottom-10 h-36 w-36 rounded-full bg-[rgba(15,27,45,0.12)] blur-3xl" />

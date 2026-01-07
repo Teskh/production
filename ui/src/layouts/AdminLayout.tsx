@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Users,
@@ -34,6 +34,7 @@ const AdminLayout: React.FC = () => {
   const [admin, setAdmin] = useState<AdminSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const lastTapRef = useRef(0);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -140,10 +141,31 @@ const AdminLayout: React.FC = () => {
     );
   }
 
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const root = document.documentElement;
+    if (!root?.requestFullscreen || document.fullscreenElement) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) {
+      return;
+    }
+    const now = Date.now();
+    const lastTap = lastTapRef.current;
+    lastTapRef.current = now;
+    if (now - lastTap < 300) {
+      root.requestFullscreen();
+      lastTapRef.current = 0;
+    }
+  };
+
   return (
     <AdminHeaderContext.Provider value={{ header, setHeader }}>
       <AdminSessionContext.Provider value={admin}>
-        <div className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef9f2,_#f2ede1_45%,_#e7e2d8_100%)]">
+        <div
+          className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef9f2,_#f2ede1_45%,_#e7e2d8_100%)]"
+          onTouchEnd={handleTouchEnd}
+        >
           <div className="pointer-events-none absolute inset-0">
             <div className="absolute right-12 top-10 h-32 w-32 rounded-full bg-[rgba(242,98,65,0.2)] blur-2xl animate-drift" />
             <div className="absolute left-10 bottom-16 h-40 w-40 rounded-full bg-[rgba(47,107,79,0.15)] blur-3xl" />
