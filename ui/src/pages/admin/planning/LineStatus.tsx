@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { ArrowRight, ArrowDown, Box, Settings } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const LineStatus: React.FC = () => {
   const { setHeader } = useAdminHeader();

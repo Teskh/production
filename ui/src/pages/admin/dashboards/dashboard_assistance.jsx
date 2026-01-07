@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';

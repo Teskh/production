@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Filter, Image, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
-import { useOptionalAdminHeader } from '../../../layouts/AdminLayout';
+import { useOptionalAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 

@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 

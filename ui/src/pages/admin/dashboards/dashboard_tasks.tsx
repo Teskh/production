@@ -7,7 +7,7 @@ import {
   Sliders,
   Users,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatDateTime, formatMinutesWithUnit } from '../../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -366,9 +366,9 @@ const DashboardTasks: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [panelsError, setPanelsError] = useState('');
-  const [panelsLoading, setPanelsLoading] = useState(false);
+  const [panelsLoading, setPanelsLoading] = useState(true);
   const [stationsError, setStationsError] = useState('');
-  const [stationsLoading, setStationsLoading] = useState(false);
+  const [stationsLoading, setStationsLoading] = useState(true);
 
   useEffect(() => {
     setHeader({
@@ -396,21 +396,21 @@ const DashboardTasks: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    setPanelsLoading(true);
-    setPanelsError('');
-    apiRequest<PanelDefinition[]>('/api/panel-definitions')
-      .then((data) => {
+    const loadPanels = async () => {
+      try {
+        const data = await apiRequest<PanelDefinition[]>('/api/panel-definitions');
         if (!active) return;
         setPanelDefinitions(Array.isArray(data) ? data : []);
-      })
-      .catch((err: Error) => {
+      } catch (err) {
         if (!active) return;
+        const message = err instanceof Error ? err.message : 'Error cargando paneles';
         setPanelDefinitions([]);
-        setPanelsError(err.message || 'Error cargando paneles');
-      })
-      .finally(() => {
+        setPanelsError(message);
+      } finally {
         if (active) setPanelsLoading(false);
-      });
+      }
+    };
+    void loadPanels();
     return () => {
       active = false;
     };
@@ -450,21 +450,21 @@ const DashboardTasks: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    setStationsLoading(true);
-    setStationsError('');
-    apiRequest<Station[]>('/api/stations')
-      .then((data) => {
+    const loadStations = async () => {
+      try {
+        const data = await apiRequest<Station[]>('/api/stations');
         if (!active) return;
         setStations(Array.isArray(data) ? data : []);
-      })
-      .catch((err: Error) => {
+      } catch (err) {
         if (!active) return;
+        const message = err instanceof Error ? err.message : 'Error cargando estaciones';
         setStations([]);
-        setStationsError(err.message || 'Error cargando estaciones');
-      })
-      .finally(() => {
+        setStationsError(message);
+      } finally {
         if (active) setStationsLoading(false);
-      });
+      }
+    };
+    void loadStations();
     return () => {
       active = false;
     };
@@ -491,23 +491,17 @@ const DashboardTasks: React.FC = () => {
       });
   }, [panelDefinitions, selectedHouseType]);
 
-  useEffect(() => {
-    if (!selectedHouseTypeId) {
-      setSelectedPanelId('');
-      return;
+  const effectiveSelectedPanelId = useMemo(() => {
+    if (!selectedHouseTypeId || !panelsForHouse.length) {
+      return '';
     }
-    if (!panelsForHouse.length) {
-      setSelectedPanelId('');
-      return;
-    }
-    if (!panelsForHouse.find((panel) => String(panel.id) === String(selectedPanelId))) {
-      setSelectedPanelId(String(panelsForHouse[0]?.id ?? ''));
-    }
+    const exists = panelsForHouse.some((panel) => String(panel.id) === String(selectedPanelId));
+    return exists ? selectedPanelId : String(panelsForHouse[0]?.id ?? '');
   }, [panelsForHouse, selectedHouseTypeId, selectedPanelId]);
 
   const selectedPanel = useMemo(
-    () => panelsForHouse.find((panel) => String(panel.id) === String(selectedPanelId)) || null,
-    [panelsForHouse, selectedPanelId],
+    () => panelsForHouse.find((panel) => String(panel.id) === String(effectiveSelectedPanelId)) || null,
+    [panelsForHouse, effectiveSelectedPanelId],
   );
 
   const sequenceByStationId = useMemo(() => {
@@ -548,13 +542,26 @@ const DashboardTasks: React.FC = () => {
     return tasksForPanel.filter((task) => Number(task.default_station_sequence ?? NaN) === seq);
   }, [tasksForPanel, selectedPanel, selectedStationId, sequenceByStationId]);
 
-  useEffect(() => {
-    if (!selectedTaskId) return;
+  const effectiveSelectedTaskId = useMemo(() => {
+    if (!selectedTaskId) return '';
     const exists = filteredTasksForSelection.some((task) => String(task.id) === String(selectedTaskId));
-    if (!exists) {
-      setSelectedTaskId('');
-    }
+    return exists ? selectedTaskId : '';
   }, [filteredTasksForSelection, selectedTaskId]);
+
+  const selectionErrorMessage = useMemo(() => {
+    if (!selectedHouseTypeId || !effectiveSelectedPanelId) {
+      return '';
+    }
+    if (!selectedStationId) {
+      return 'Debe seleccionar una estacion para ver el analisis.';
+    }
+    return '';
+  }, [selectedHouseTypeId, effectiveSelectedPanelId, selectedStationId]);
+
+  const selectionReady = Boolean(selectedHouseTypeId && effectiveSelectedPanelId && selectedStationId);
+  const displayAnalysisData = selectionReady ? analysisData : null;
+  const displayError = selectionErrorMessage || (selectionReady ? error : '');
+  const displayLoading = selectionReady && loading;
 
   const panelLabel = (panel: PanelDefinition | null): string => {
     if (!panel) return '-';
@@ -584,14 +591,16 @@ const DashboardTasks: React.FC = () => {
 
   const analysisSummary = useMemo(() => {
     const predicate = hypothesis.predicate;
-    const points = Array.isArray(analysisData?.data_points) ? analysisData?.data_points ?? [] : [];
+    const points = Array.isArray(displayAnalysisData?.data_points)
+      ? displayAnalysisData?.data_points ?? []
+      : [];
     if (!points.length) {
       return {
         included: [] as AnalysisPoint[],
         excluded: [] as AnalysisPoint[],
         histogram: buildHistogramData([], effectiveBinSize, predicate),
         average: null as number | null,
-        expectedReference: analysisData?.expected_reference_minutes ?? null,
+        expectedReference: displayAnalysisData?.expected_reference_minutes ?? null,
         hypothesisMatches: predicate ? 0 : null,
         hypothesisMatchAverage: null as number | null,
       };
@@ -633,16 +642,22 @@ const DashboardTasks: React.FC = () => {
       excluded,
       histogram,
       average,
-      expectedReference: analysisData?.expected_reference_minutes ?? null,
+      expectedReference: displayAnalysisData?.expected_reference_minutes ?? null,
       hypothesisMatches: predicate ? histogram.totalMatches : null,
       hypothesisMatchAverage: predicate ? hypothesisMatchAverage : null,
     };
-  }, [analysisData, effectiveBinSize, effectiveMaxMultiplier, effectiveMinMultiplier, hypothesis.predicate]);
+  }, [
+    displayAnalysisData,
+    effectiveBinSize,
+    effectiveMaxMultiplier,
+    effectiveMinMultiplier,
+    hypothesis.predicate,
+  ]);
 
   const workerNamesFromAnalysis = useMemo(() => {
-    if (!analysisData || !Array.isArray(analysisData.data_points)) return [] as string[];
+    if (!displayAnalysisData || !Array.isArray(displayAnalysisData.data_points)) return [] as string[];
     const names = new Set<string>();
-    analysisData.data_points.forEach((point) => {
+    displayAnalysisData.data_points.forEach((point) => {
       if (typeof point?.worker_name === 'string' && point.worker_name.trim()) {
         point.worker_name
           .split(',')
@@ -658,7 +673,7 @@ const DashboardTasks: React.FC = () => {
       }
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
-  }, [analysisData]);
+  }, [displayAnalysisData]);
 
   const workerOptionsForHypothesis = useMemo(() => {
     if (workerNamesFromAnalysis.length) return workerNamesFromAnalysis;
@@ -736,58 +751,51 @@ const DashboardTasks: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!selectedHouseTypeId || !selectedPanelId) {
-      setAnalysisData(null);
-      setError('');
-      setLoading(false);
-      return;
+    if (!selectedHouseTypeId || !effectiveSelectedPanelId || !selectedStationId) {
+      return undefined;
     }
-
-    if (!selectedStationId) {
-      setAnalysisData(null);
-      setError('Debe seleccionar una estacion para ver el analisis.');
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    setLoading(true);
-    setError('');
+    const loadAnalysis = async () => {
+      setLoading(true);
+      setError('');
 
-    const params = new URLSearchParams();
-    params.append('house_type_id', String(selectedHouseTypeId));
-    params.append('panel_definition_id', String(selectedPanelId));
-    if (selectedTaskId) params.append('task_definition_id', String(selectedTaskId));
-    if (selectedStationId) params.append('station_id', String(selectedStationId));
-    if (selectedWorkerId) params.append('worker_id', String(selectedWorkerId));
-    if (fromDate) params.append('from_date', `${fromDate} 00:00:00`);
-    if (toDate) params.append('to_date', `${toDate} 23:59:59`);
+      const params = new URLSearchParams();
+      params.append('house_type_id', String(selectedHouseTypeId));
+      params.append('panel_definition_id', String(effectiveSelectedPanelId));
+      if (effectiveSelectedTaskId) params.append('task_definition_id', String(effectiveSelectedTaskId));
+      if (selectedStationId) params.append('station_id', String(selectedStationId));
+      if (selectedWorkerId) params.append('worker_id', String(selectedWorkerId));
+      if (fromDate) params.append('from_date', `${fromDate} 00:00:00`);
+      if (toDate) params.append('to_date', `${toDate} 23:59:59`);
 
-    apiRequest<TaskAnalysisResponse>(`/api/task-analysis?${params.toString()}`)
-      .then((result) => {
-        if (!cancelled) {
-          setAnalysisData(result);
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) {
-          setAnalysisData(null);
-          setError(err.message || 'Error obteniendo analisis');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
+      apiRequest<TaskAnalysisResponse>(`/api/task-analysis?${params.toString()}`)
+        .then((result) => {
+          if (!cancelled) {
+            setAnalysisData(result);
+          }
+        })
+        .catch((err: Error) => {
+          if (!cancelled) {
+            setAnalysisData(null);
+            setError(err.message || 'Error obteniendo analisis');
+          }
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        });
+    };
+
+    void loadAnalysis();
 
     return () => {
       cancelled = true;
     };
   }, [
     selectedHouseTypeId,
-    selectedPanelId,
-    selectedTaskId,
+    effectiveSelectedPanelId,
+    effectiveSelectedTaskId,
     selectedStationId,
     selectedWorkerId,
     fromDate,
@@ -1067,7 +1075,7 @@ const DashboardTasks: React.FC = () => {
                 <td className="px-3 py-2">{formatDateTime(row.completed_at)}</td>
                 <td className="px-3 py-2">{row.worker_name || '-'}</td>
                 <td className="px-3 py-2">
-                  {analysisData?.mode === 'panel' ? (
+                  {displayAnalysisData?.mode === 'panel' ? (
                     row.task_breakdown && row.task_breakdown.length ? (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-[var(--ink-muted)]">Ver tareas</summary>
@@ -1151,9 +1159,10 @@ const DashboardTasks: React.FC = () => {
             Panel
             <select
               className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
-              value={selectedPanelId}
+              value={effectiveSelectedPanelId}
               onChange={(event) => {
                 setSelectedPanelId(event.target.value);
+                setSelectedTaskId('');
                 setAnalysisData(null);
               }}
               disabled={!selectedHouseTypeId || panelsLoading}
@@ -1175,6 +1184,7 @@ const DashboardTasks: React.FC = () => {
               onChange={(event) => {
                 const value = event.target.value;
                 setSelectedStationId(value);
+                setSelectedTaskId('');
                 setAnalysisData(null);
               }}
             >
@@ -1191,12 +1201,12 @@ const DashboardTasks: React.FC = () => {
             Tarea (opcional)
             <select
               className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
-              value={selectedTaskId}
+              value={effectiveSelectedTaskId}
               onChange={(event) => {
                 setSelectedTaskId(event.target.value);
                 setAnalysisData(null);
               }}
-              disabled={!selectedPanelId}
+              disabled={!effectiveSelectedPanelId}
             >
               <option value="">Todas las tareas del panel</option>
               {filteredTasksForSelection.map((task) => (
@@ -1446,25 +1456,25 @@ const DashboardTasks: React.FC = () => {
         )}
       </section>
 
-      {error && (
+      {displayError && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {displayError}
         </div>
       )}
 
-      {loading && !error && selectedHouseTypeId && selectedPanelId && (
+      {displayLoading && !displayError && (
         <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)]">
           Actualizando analisis...
         </div>
       )}
 
-      {analysisData && (
+      {displayAnalysisData && (
         <section className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
               <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
               <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                {analysisData.data_points?.length || 0}
+                {displayAnalysisData.data_points?.length || 0}
               </p>
             </div>
             <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
@@ -1478,7 +1488,7 @@ const DashboardTasks: React.FC = () => {
             <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
               <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
               <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                {formatMinutesWithUnit(analysisData.stats?.average_duration)}
+                {formatMinutesWithUnit(displayAnalysisData.stats?.average_duration)}
               </p>
             </div>
           </div>
@@ -1541,7 +1551,7 @@ const DashboardTasks: React.FC = () => {
         </section>
       )}
 
-      {!analysisData && !loading && !error && (
+      {!displayAnalysisData && !displayLoading && !displayError && (
         <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
           Seleccione tipo de casa, panel y estacion para ver el analisis.
         </div>

@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Plus, Search, Settings2, Trash2 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -309,7 +309,7 @@ const PauseDefs: React.FC = () => {
     });
   };
 
-  const buildScopeLabel = (stationIds: number[] | null): string => {
+  const buildScopeLabel = useCallback((stationIds: number[] | null): string => {
     if (stationIds === null) {
       return 'Todas las estaciones';
     }
@@ -321,7 +321,7 @@ const PauseDefs: React.FC = () => {
       return names.join(', ');
     }
     return `${names[0]}, ${names[1]} +${names.length - 2}`;
-  };
+  }, [stationNameById]);
 
   const draftStationLabel = useMemo(() => {
     if (!draft) {
@@ -330,7 +330,7 @@ const PauseDefs: React.FC = () => {
     return draft.all_stations
       ? 'Todas las estaciones'
       : buildScopeLabel(draft.applicable_station_ids);
-  }, [draft, stationNameById]);
+  }, [buildScopeLabel, draft]);
 
   const buildPayload = (current: PauseDraft) => {
     const name = current.name.trim();

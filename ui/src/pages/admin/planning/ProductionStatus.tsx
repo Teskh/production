@@ -3,7 +3,7 @@ import {
   ArrowRight, Layers, GripVertical, 
   Calendar, Edit
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const ProductionStatus: React.FC = () => {
   const { setHeader } = useAdminHeader();

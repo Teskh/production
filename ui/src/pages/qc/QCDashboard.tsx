@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Wrench } from 'lucide-react';
 import clsx from 'clsx';
-import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayout';
+import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutContext';
 
 const REFRESH_INTERVAL_MS = 20000;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -147,7 +147,10 @@ const QCDashboard: React.FC = () => {
     };
     loadDashboard();
     const intervalId = window.setInterval(loadDashboard, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {

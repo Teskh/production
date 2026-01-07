@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const AdminTeam: React.FC = () => {
   const { setHeader } = useAdminHeader();

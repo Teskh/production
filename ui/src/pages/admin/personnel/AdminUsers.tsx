@@ -5,7 +5,7 @@ import {
   isSysadminUser,
   useAdminHeader,
   useAdminSession,
-} from '../../../layouts/AdminLayout';
+} from '../../../layouts/AdminLayoutContext';
 import AdminUsersPanel from './AdminUsersPanel';
 
 const AdminUsers: React.FC = () => {

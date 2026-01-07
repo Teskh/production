@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Download, Filter, RefreshCcw } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatDateTime, formatMinutesWithUnit } from '../../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -218,7 +218,7 @@ const DashboardStations: React.FC = () => {
     setSortDir(key === 'started_at' || key === 'completed_at' ? 'desc' : 'asc');
   };
 
-  const applyFilters = (arr: PanelTaskHistoryRow[]) => {
+  const applyFilters = useCallback((arr: PanelTaskHistoryRow[]) => {
     const contains = (value: unknown, needle: string) =>
       String(value || '').toLowerCase().includes(needle.trim().toLowerCase());
     return arr.filter((row) => {
@@ -234,9 +234,9 @@ const DashboardStations: React.FC = () => {
         contains(row.notes, filters.notes)
       );
     });
-  };
+  }, [filters]);
 
-  const sortRows = (arr: PanelTaskHistoryRow[]) => {
+  const sortRows = useCallback((arr: PanelTaskHistoryRow[]) => {
     const multiplier = sortDir === 'asc' ? 1 : -1;
     const toDate = (value: unknown) => {
       if (!value) return null;
@@ -246,30 +246,34 @@ const DashboardStations: React.FC = () => {
       } catch {
         return null;
       }
-	    };
-	    return [...arr].sort((a, b) => {
-	      let va: number | string = 0;
-	      let vb: number | string = 0;
-	      const rawA: unknown = a[sortKey];
-	      const rawB: unknown = b[sortKey];
-	      if (sortKey === 'started_at' || sortKey === 'completed_at') {
-	        va = toDate(rawA)?.getTime() ?? 0;
-	        vb = toDate(rawB)?.getTime() ?? 0;
-	      } else if (sortKey === 'duration_minutes' || sortKey === 'expected_minutes' || sortKey === 'module_number') {
-	        va = Number(rawA ?? -1);
-	        vb = Number(rawB ?? -1);
-	      } else {
-	        va = String(rawA ?? '').toLowerCase();
-	        vb = String(rawB ?? '').toLowerCase();
-	      }
-	      if (va < vb) return -1 * multiplier;
-	      if (va > vb) return 1 * multiplier;
-	      return 0;
-	    });
-	  };
+    };
+    return [...arr].sort((a, b) => {
+      let va: number | string = 0;
+      let vb: number | string = 0;
+      const rawA: unknown = a[sortKey];
+      const rawB: unknown = b[sortKey];
+      if (sortKey === 'started_at' || sortKey === 'completed_at') {
+        va = toDate(rawA)?.getTime() ?? 0;
+        vb = toDate(rawB)?.getTime() ?? 0;
+      } else if (
+        sortKey === 'duration_minutes' ||
+        sortKey === 'expected_minutes' ||
+        sortKey === 'module_number'
+      ) {
+        va = Number(rawA ?? -1);
+        vb = Number(rawB ?? -1);
+      } else {
+        va = String(rawA ?? '').toLowerCase();
+        vb = String(rawB ?? '').toLowerCase();
+      }
+      if (va < vb) return -1 * multiplier;
+      if (va > vb) return 1 * multiplier;
+      return 0;
+    });
+  }, [sortDir, sortKey]);
 
-  const filteredRows = useMemo(() => applyFilters(rows), [rows, filters]);
-  const tableRows = useMemo(() => sortRows(filteredRows), [filteredRows, sortKey, sortDir]);
+  const filteredRows = useMemo(() => applyFilters(rows), [rows, applyFilters]);
+  const tableRows = useMemo(() => sortRows(filteredRows), [filteredRows, sortRows]);
 
   const SortableTh: React.FC<{ label: string; col: SortKey }> = ({ label, col }) => (
     <th

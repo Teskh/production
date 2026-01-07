@@ -389,7 +389,7 @@ const StationWorkspace: React.FC = () => {
     return getStationsForContext(stations, stationContext);
   }, [stationContext, stations]);
 
-  const workItems = snapshot?.work_items ?? [];
+  const workItems = useMemo(() => snapshot?.work_items ?? [], [snapshot?.work_items]);
   const isW1 = selectedStation?.role === 'Panels' && selectedStation.sequence_order === 1;
   const isMagazineStation = selectedStation?.role === 'Magazine';
   const { recommendedItem, inProgressItems, plannedItems, otherItems, plannedTotalCount } =
@@ -437,9 +437,11 @@ const StationWorkspace: React.FC = () => {
 
   const pauseReasons = snapshot?.pause_reasons ?? [];
   const commentTemplates = snapshot?.comment_templates ?? [];
-  const activeNonConcurrentTaskIds =
-    snapshot?.worker_active_nonconcurrent_task_instance_ids ?? [];
-  const qcReworkTasks = snapshot?.qc_rework_tasks ?? [];
+  const activeNonConcurrentTaskIds = useMemo(
+    () => snapshot?.worker_active_nonconcurrent_task_instance_ids ?? [],
+    [snapshot?.worker_active_nonconcurrent_task_instance_ids]
+  );
+  const qcReworkTasks = useMemo(() => snapshot?.qc_rework_tasks ?? [], [snapshot?.qc_rework_tasks]);
   const qcNotificationCount = snapshot?.qc_notification_count ?? 0;
   const selectedReworkTasks = useMemo(() => {
     if (!selectedWorkItem) {

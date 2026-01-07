@@ -280,11 +280,12 @@ const QCExecution: React.FC = () => {
     };
   }, [checkDetail?.check_definition, checkDetail?.check_instance?.check_name, checkDef?.guidance, checkDef?.name]);
 
-  const steps: QCStep[] = checkDef?.steps?.length
-    ? (checkDef.steps as QCStep[])
-    : runtimeStep
-    ? [runtimeStep]
-    : [];
+  const steps = useMemo<QCStep[]>(() => {
+    if (checkDef?.steps?.length) {
+      return checkDef.steps as QCStep[];
+    }
+    return runtimeStep ? [runtimeStep] : [];
+  }, [checkDef?.steps, runtimeStep]);
   const currentStepData = steps[currentStep];
 
   const referenceImages = useMemo(() => {

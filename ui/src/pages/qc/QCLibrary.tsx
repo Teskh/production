@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
@@ -15,7 +15,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { useOptionalQCSession } from '../../layouts/QCLayout';
+import { useOptionalQCSession } from '../../layouts/QCLayoutContext';
 import { formatDateTimeShort } from '../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -279,14 +279,14 @@ const QCLibrary: React.FC = () => {
     title: string;
   } | null>(null);
 
-  const closeModuleOverlay = () => {
+  const closeModuleOverlay = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete('module');
     next.delete('check');
     setSearchParams(next, { replace: true });
     setWorkUnitDetail(null);
     setDetailError(null);
-  };
+  }, [searchParams, setSearchParams]);
 
   const openModuleOverlay = (workUnitId: number) => {
     const next = new URLSearchParams(searchParams);
@@ -295,13 +295,13 @@ const QCLibrary: React.FC = () => {
     setSearchParams(next, { replace: true });
   };
 
-  const closeCheckOverlay = () => {
+  const closeCheckOverlay = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete('check');
     setSearchParams(next, { replace: true });
     setCheckDetail(null);
     setCheckDetailError(null);
-  };
+  }, [searchParams, setSearchParams]);
 
   const openCheckOverlay = (checkId: number) => {
     const next = new URLSearchParams(searchParams);
@@ -667,7 +667,7 @@ const QCLibrary: React.FC = () => {
       if (selectedCheckId) return closeCheckOverlay();
       if (selectedWorkUnitId) return closeModuleOverlay();
     };
-  }, [mediaViewer, selectedCheckId, selectedWorkUnitId]);
+  }, [closeCheckOverlay, closeModuleOverlay, mediaViewer, selectedCheckId, selectedWorkUnitId]);
 
   if (isUnauthorized) {
     return (

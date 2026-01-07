@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, BarChart3, ClipboardList, Clock, History, Ruler, Star, Timer } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useAdminHeader } from '../../../layouts/AdminLayout';
+import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 type DashboardCard = {
   id: string;

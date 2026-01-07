@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -10,47 +10,14 @@ import {
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
+import {
+  QCLayoutStatusContext,
+  QCSessionContext,
+  type AdminSession,
+  type QCLayoutStatus,
+} from './QCLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-
-type AdminSession = {
-  id: number;
-  first_name: string;
-  last_name: string;
-  role: string;
-  active: boolean;
-};
-
-type QCLayoutStatus = {
-  refreshIntervalMs?: number;
-  lastUpdated?: Date;
-};
-
-const QCSessionContext = React.createContext<AdminSession | null>(null);
-const QCLayoutStatusContext = React.createContext<{
-  status: QCLayoutStatus;
-  setStatus: React.Dispatch<React.SetStateAction<QCLayoutStatus>>;
-} | null>(null);
-
-export const useQCSession = (): AdminSession => {
-  const context = useContext(QCSessionContext);
-  if (!context) {
-    throw new Error('useQCSession must be used within QCLayout.');
-  }
-  return context;
-};
-
-export const useOptionalQCSession = (): AdminSession | null => {
-  return useContext(QCSessionContext);
-};
-
-export const useQCLayoutStatus = () => {
-  const context = useContext(QCLayoutStatusContext);
-  if (!context) {
-    throw new Error('useQCLayoutStatus must be used within QCLayout.');
-  }
-  return context;
-};
 
 const formatTime = (date: Date): string =>
   date.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });

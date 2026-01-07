@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { isSysadminUser, useAdminSession } from '../../../layouts/AdminLayout';
+import { isSysadminUser, useAdminSession } from '../../../layouts/AdminLayoutContext';
 import AdminUsers from './AdminUsers';
 import Specialties from './Specialties';
 import Workers from './Workers';

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Users,
@@ -14,57 +14,19 @@ import {
   BarChart3,
 } from 'lucide-react';
 import clsx from 'clsx';
+import {
+  AdminHeaderContext,
+  AdminSessionContext,
+  isSysadminUser,
+  type AdminHeaderState,
+  type AdminSession,
+} from './AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-
-type AdminHeaderState = {
-  title: string;
-  kicker?: string;
-};
-
-type AdminHeaderContextValue = {
-  header: AdminHeaderState;
-  setHeader: React.Dispatch<React.SetStateAction<AdminHeaderState>>;
-};
-
-export type AdminSession = {
-  id: number;
-  first_name: string;
-  last_name: string;
-  role: string;
-  active: boolean;
-};
 
 const defaultHeader: AdminHeaderState = {
   title: 'Area de Administracion',
 };
-
-const AdminHeaderContext = React.createContext<AdminHeaderContextValue | null>(null);
-const AdminSessionContext = React.createContext<AdminSession | null>(null);
-
-export const useAdminHeader = (): AdminHeaderContextValue => {
-  const context = useContext(AdminHeaderContext);
-  if (!context) {
-    throw new Error('useAdminHeader must be used within AdminLayout.');
-  }
-  return context;
-};
-
-export const useOptionalAdminHeader = (): AdminHeaderContextValue | null => {
-  return useContext(AdminHeaderContext);
-};
-
-export const useAdminSession = (): AdminSession => {
-  const context = useContext(AdminSessionContext);
-  if (!context) {
-    throw new Error('useAdminSession must be used within AdminLayout.');
-  }
-  return context;
-};
-
-export const isSysadminUser = (admin: Pick<AdminSession, 'first_name' | 'last_name'>): boolean =>
-  admin.first_name.trim().toLowerCase() === 'sysadmin' &&
-  admin.last_name.trim().toLowerCase() === 'sysadmin';
 
 const AdminLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);

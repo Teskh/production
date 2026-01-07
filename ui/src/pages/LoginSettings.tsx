@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Eye, MapPin, Shield, X } from 'lucide-react';
 import type { StationContext } from '../utils/stationContext';
-import { formatStationLabel } from '../utils/stationContext';
+import { formatStationContext, formatStationLabel } from '../utils/stationContext';
 
 type Station = {
   id: number;
@@ -45,7 +45,44 @@ const normalizeStationName = (station: Station) => {
   return normalized || trimmed;
 };
 
-const LoginSettings: React.FC<LoginSettingsProps> = ({
+const buildInitialContextState = (
+  stationContext: StationContext | null,
+  selectedStation: Station | null
+) => {
+  if (!stationContext) {
+    return {
+      contextMode: null,
+      specificType: null,
+      groupMode: null,
+    };
+  }
+  if (stationContext.kind === 'station') {
+    let specificType: 'panel' | 'assembly' | null = null;
+    if (selectedStation?.role === 'Panels') {
+      specificType = 'panel';
+    } else if (selectedStation?.role === 'Assembly') {
+      specificType = 'assembly';
+    }
+    return {
+      contextMode: 'specific',
+      specificType,
+      groupMode: null,
+    };
+  }
+  const groupMode =
+    stationContext.kind === 'panel_line'
+      ? 'panel_line'
+      : stationContext.kind === 'aux'
+      ? 'aux'
+      : 'assembly_sequence';
+  return {
+    contextMode: 'group',
+    specificType: null,
+    groupMode,
+  };
+};
+
+const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   open,
   stationContext,
   selectedStation,
@@ -68,46 +105,17 @@ const LoginSettings: React.FC<LoginSettingsProps> = ({
   onUseSysadminChange,
   onClose,
 }) => {
-  const [contextMode, setContextMode] = useState<'group' | 'specific' | null>(null);
-  const [specificType, setSpecificType] = useState<'panel' | 'assembly' | null>(null);
+  const initialState = buildInitialContextState(stationContext, selectedStation);
+  const [contextMode, setContextMode] = useState<'group' | 'specific' | null>(
+    initialState.contextMode
+  );
+  const [specificType, setSpecificType] = useState<'panel' | 'assembly' | null>(
+    initialState.specificType
+  );
   const [groupMode, setGroupMode] = useState<'panel_line' | 'assembly_sequence' | 'aux' | null>(
-    null
+    initialState.groupMode
   );
   const [adminOpen, setAdminOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setAdminOpen(false);
-    if (!stationContext) {
-      setContextMode(null);
-      setSpecificType(null);
-      setGroupMode(null);
-      return;
-    }
-    if (stationContext.kind === 'station') {
-      setContextMode('specific');
-      if (selectedStation?.role === 'Panels') {
-        setSpecificType('panel');
-      } else if (selectedStation?.role === 'Assembly') {
-        setSpecificType('assembly');
-      } else {
-        setSpecificType(null);
-      }
-      setGroupMode(null);
-      return;
-    }
-    setContextMode('group');
-    if (stationContext.kind === 'panel_line') {
-      setGroupMode('panel_line');
-    } else if (stationContext.kind === 'aux') {
-      setGroupMode('aux');
-    } else {
-      setGroupMode('assembly_sequence');
-    }
-    setSpecificType(null);
-  }, [open, selectedStation, stationContext]);
 
   const currentContextLabel = useMemo(() => {
     if (!stationContext) {
@@ -485,6 +493,16 @@ const LoginSettings: React.FC<LoginSettingsProps> = ({
       </div>
     </div>
   );
+};
+
+const LoginSettings: React.FC<LoginSettingsProps> = (props) => {
+  if (!props.open) {
+    return null;
+  }
+  const contextKey = `${props.stationContext ? formatStationContext(props.stationContext) : 'none'}:${
+    props.selectedStation?.id ?? 'none'
+  }`;
+  return <LoginSettingsContent key={contextKey} {...props} />;
 };
 
 export default LoginSettings;

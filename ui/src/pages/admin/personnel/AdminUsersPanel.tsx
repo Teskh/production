@@ -137,7 +137,6 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
 
   useEffect(() => {
     void refresh(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -445,4 +444,3 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
 };
 
 export default AdminUsersPanel;
-
