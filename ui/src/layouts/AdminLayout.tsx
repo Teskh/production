@@ -76,7 +76,7 @@ const AdminLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const isSysadmin = isSysadminUser(admin);
+  const isSysadmin = admin ? isSysadminUser(admin) : false;
   const menuItems = [
     {
       title: 'Analitica',

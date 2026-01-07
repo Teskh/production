@@ -19,6 +19,7 @@ import { useOptionalQCSession } from '../../layouts/QCLayout';
 import { formatDateTimeShort } from '../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const PAGE_SIZE = 50;
 
 type QCExecutionOutcome = 'Pass' | 'Fail' | 'Waive' | 'Skip';
 type QCCheckStatus = 'Open' | 'Closed';
@@ -249,6 +250,8 @@ const QCLibrary: React.FC = () => {
 
   const [workUnits, setWorkUnits] = useState<QCLibraryWorkUnitSummary[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(true);
+  const [loadingMoreUnits, setLoadingMoreUnits] = useState(false);
+  const [hasMoreUnits, setHasMoreUnits] = useState(false);
   const [unitsError, setUnitsError] = useState<string | null>(null);
   const [isUnauthorized, setIsUnauthorized] = useState(false);
 
@@ -311,6 +314,8 @@ const QCLibrary: React.FC = () => {
     if (!qcSession) {
       setWorkUnits([]);
       setLoadingUnits(false);
+      setLoadingMoreUnits(false);
+      setHasMoreUnits(false);
       setIsUnauthorized(true);
       return () => {
         mounted = false;
@@ -320,12 +325,19 @@ const QCLibrary: React.FC = () => {
     const loadUnits = async () => {
       setLoadingUnits(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units`, {
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: '0',
+          include_planned: 'false',
+          sort: 'newest',
+        });
+        const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
           credentials: 'include',
         });
         if (!mounted) return;
         if (response.status === 401) {
           setWorkUnits([]);
+          setHasMoreUnits(false);
           setIsUnauthorized(true);
           setUnitsError(null);
           return;
@@ -336,6 +348,7 @@ const QCLibrary: React.FC = () => {
         }
         const data = (await response.json()) as QCLibraryWorkUnitSummary[];
         setWorkUnits(data);
+        setHasMoreUnits(data.length === PAGE_SIZE);
         setUnitsError(null);
         setIsUnauthorized(false);
       } catch (error) {
@@ -353,6 +366,53 @@ const QCLibrary: React.FC = () => {
       mounted = false;
     };
   }, [qcSession]);
+
+  const loadMoreUnits = async () => {
+    if (!qcSession) return;
+    if (loadingUnits || loadingMoreUnits || !hasMoreUnits) return;
+    setLoadingMoreUnits(true);
+    try {
+      const offset = workUnits.length;
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        include_planned: 'false',
+        sort: 'newest',
+      });
+      const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (response.status === 401) {
+        setWorkUnits([]);
+        setHasMoreUnits(false);
+        setIsUnauthorized(true);
+        setUnitsError(null);
+        return;
+      }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      const data = (await response.json()) as QCLibraryWorkUnitSummary[];
+      setWorkUnits((prev) => {
+        const next = [...prev];
+        const existing = new Set(prev.map((unit) => unit.work_unit_id));
+        for (const unit of data) {
+          if (existing.has(unit.work_unit_id)) continue;
+          next.push(unit);
+        }
+        return next;
+      });
+      setHasMoreUnits(data.length === PAGE_SIZE);
+      setUnitsError(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo cargar mas modulos.';
+      setUnitsError(message);
+    } finally {
+      setLoadingMoreUnits(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -404,6 +464,7 @@ const QCLibrary: React.FC = () => {
   const filteredUnits = useMemo(() => {
     const needle = searchTerm.trim().toLowerCase();
     return workUnits.filter((unit) => {
+      if (unit.status === 'Planned') return false;
       if (projectFilter !== '__all__' && unit.project_name !== projectFilter) return false;
       if (statusFilter !== '__all__' && unit.status !== statusFilter) return false;
       if (unfulfilledOnly && unit.open_checks + unit.open_rework === 0) return false;
@@ -709,7 +770,9 @@ const QCLibrary: React.FC = () => {
 
       <section className="rounded-3xl border border-black/10 bg-white/80 shadow-sm overflow-hidden">
         <div className="border-b border-black/5 bg-white/70 px-5 py-4 text-sm text-[var(--ink-muted)]">
-          {loadingUnits ? 'Cargando modulos...' : `${filteredUnits.length} modulos`}
+          {loadingUnits
+            ? 'Cargando modulos...'
+            : `Mostrando ${filteredUnits.length} de ${workUnits.length} modulos cargados`}
         </div>
         <div className="divide-y divide-black/5">
           {loadingUnits && !filteredUnits.length ? (
@@ -766,6 +829,18 @@ const QCLibrary: React.FC = () => {
             </button>
           ))}
         </div>
+        {hasMoreUnits ? (
+          <div className="border-t border-black/5 bg-white/60 px-5 py-4">
+            <button
+              type="button"
+              onClick={loadMoreUnits}
+              disabled={loadingMoreUnits}
+              className="inline-flex items-center justify-center rounded-2xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loadingMoreUnits ? `Cargando ${PAGE_SIZE}...` : `Cargar ${PAGE_SIZE} mas`}
+            </button>
+          </div>
+        ) : null}
       </section>
 
       {selectedWorkUnitId ? (

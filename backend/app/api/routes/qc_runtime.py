@@ -4,8 +4,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import exists, func, or_, select, text
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from sqlalchemy import case, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.models.enums import (
     QCReworkStatus,
     TaskScope,
     TaskStatus,
+    WorkUnitStatus,
 )
 from app.models.house import HouseType
 from app.models.qc import (
@@ -1211,17 +1212,42 @@ def cancel_rework_task(
 
 @router.get("/library/work-units", response_model=list[QCLibraryWorkUnitSummary])
 def list_library_work_units(
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    include_planned: bool = Query(default=True),
+    sort: str = Query(default="planned_sequence"),
     _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> list[QCLibraryWorkUnitSummary]:
-    work_rows = list(
-        db.execute(
-            select(WorkUnit, WorkOrder, HouseType)
-            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
-            .join(HouseType, WorkOrder.house_type_id == HouseType.id)
-            .order_by(WorkUnit.planned_sequence)
-        )
+    stmt = (
+        select(WorkUnit, WorkOrder, HouseType)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
     )
+    if not include_planned:
+        stmt = stmt.where(WorkUnit.status != WorkUnitStatus.PLANNED)
+    if sort == "newest":
+        last_exec_ts = (
+            select(func.max(QCExecution.performed_at))
+            .join(QCCheckInstance, QCExecution.check_instance_id == QCCheckInstance.id)
+            .where(QCCheckInstance.work_unit_id == WorkUnit.id)
+            .correlate(WorkUnit)
+            .scalar_subquery()
+        )
+        activity_ts = func.coalesce(last_exec_ts, WorkUnit.planned_start_datetime)
+        stmt = stmt.order_by(
+            case((activity_ts.is_(None), 1), else_=0),
+            activity_ts.desc(),
+            WorkUnit.id.desc(),
+        )
+    else:
+        stmt = stmt.order_by(WorkUnit.planned_sequence)
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    work_rows = list(db.execute(stmt))
 
     summaries: list[QCLibraryWorkUnitSummary] = []
     for work_unit, work_order, house_type in work_rows:
