@@ -56,7 +56,6 @@
 
 ## 2026-01-08
 - Login panel goal summary assumes `GET /api/station-panels-finished` only counts a panel once all applicable tasks for the station are satisfied (including skips), and uses the latest completion/skip at prior panel stations to count pass-through panels with no tasks.
-- Worker badge printing uses a locally uploaded logo stored in browser storage because no official logo asset or URL is defined in the repo yet.
 - Worker badge printing defaults to the ID-1 size (86 x 54 mm) as the standardized badge format.
 
 ## 2026-01-10
@@ -78,3 +77,5 @@
 ## 2026-01-14
 - Partidas task import treats the sheet as module-scope tasks, maps `ESTACION` to `TaskDefinition.default_station_sequence` using ARMADO=11/ESTACION 1=12, and overwrites applicability for the selected house type by deleting + recreating module-scope rows.
 - Regular crew assignments are rebuilt for tasks listed in partidas using exact normalized name matches (prefering the GeoVictoria column when present), with GeoVictoria IDs pulled from the API when available; missing workers are created and assigned stations by matching `Station.sequence_order` to the derived `ESTACION` sequence.
+- Worker badge printing assumes the official logo lives at `ui/public/logo.png` and is referenced via `/logo.png`.
+- Worker badge name parsing uses the first token as the first name and the second-to-last token as the first surname (assuming the last two tokens are surnames).

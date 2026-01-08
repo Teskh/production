@@ -17,7 +17,6 @@ type WorkerBadgePrinterProps = {
 };
 
 type PaperSize = 'a4' | 'letter';
-type BadgeMode = 'single' | 'batch';
 
 type QRCodeMatrix = {
   moduleCount: number;
@@ -625,10 +624,19 @@ const getPrimaryNamePart = (value: string): string => {
 const getNameParts = (
   worker: WorkerBadgePerson
 ): { first: string; last: string; full: string } => {
-  const first = getPrimaryNamePart(worker.first_name);
-  const last = getPrimaryNamePart(worker.last_name);
-  if (!first && !last) {
+  const tokens = `${worker.first_name} ${worker.last_name}`
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0) {
     return { first: 'Trabajador', last: '', full: 'Trabajador' };
+  }
+  const first = tokens[0] ?? '';
+  let last = '';
+  if (tokens.length === 2) {
+    last = tokens[1];
+  } else if (tokens.length >= 3) {
+    last = tokens[tokens.length - 2];
   }
   if (!first) {
     return { first: last, last: '', full: last };
@@ -650,7 +658,6 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   workers,
   defaultWorkerId,
 }) => {
-  const [mode, setMode] = useState<BadgeMode>('single');
   const [paperSize, setPaperSize] = useState<PaperSize>('a4');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
@@ -705,14 +712,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
     return orderedWorkers.filter((worker) => selectedIds.has(worker.id));
   }, [orderedWorkers, selectedIds]);
 
-  useEffect(() => {
-    if (mode !== 'single' || selectedIds.size <= 1) {
-      return;
-    }
-    const firstSelected =
-      selectedWorkers[0]?.id ?? Array.from(selectedIds.values())[0] ?? null;
-    setSelectedIds(firstSelected ? new Set([firstSelected]) : new Set());
-  }, [mode, selectedIds, selectedWorkers]);
+
 
   const badgeItems = useMemo(() => {
     const qrCache = new Map<string, { path: string; moduleCount: number; truncated: boolean }>();
@@ -820,10 +820,6 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
     });
   };
 
-  const handleSingleSelect = (workerId: number | null) => {
-    setSelectedIds(workerId ? new Set([workerId]) : new Set());
-  };
-
   const handleSelectAllFiltered = () => {
     setSelectedIds(new Set(filteredWorkers.map((worker) => worker.id)));
   };
@@ -862,11 +858,15 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         overflow: visible !important;
         background: #fff !important;
         display: block !important;
+        padding: 0 !important;
       }
+      .badge-modal-content > .grid { display: block !important; }
       .badge-print-only { 
         display: block !important; 
         position: static !important;
+        overflow: hidden !important;
       }
+      .badge-page-outer:last-child { page-break-after: avoid !important; }
       .badge-page-outer { 
         width: ${paper.width}mm !important; 
         height: ${paper.height}mm !important;
@@ -961,105 +961,61 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
 
         <div className="grid flex-1 min-h-0 gap-6 p-6 lg:grid-cols-[340px_minmax(0,1fr)]">
           <div className="badge-no-print min-h-0 space-y-5 overflow-auto pr-2">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500">Modo</div>
-              <div className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-500">
-                <button
-                  type="button"
-                  onClick={() => setMode('single')}
-                  className={`rounded-full px-4 py-2 ${
-                    mode === 'single' ? 'bg-white text-slate-900 shadow-sm' : ''
-                  }`}
-                >
-                  Individual
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('batch')}
-                  className={`rounded-full px-4 py-2 ${
-                    mode === 'batch' ? 'bg-white text-slate-900 shadow-sm' : ''
-                  }`}
-                >
-                  Lote
-                </button>
-              </div>
-            </div>
-
             <div className="space-y-3">
               <div className="text-xs uppercase tracking-wide text-slate-500">Seleccion</div>
-              {mode === 'single' ? (
-                <select
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={selectedWorkers[0]?.id ?? ''}
-                  onChange={(event) =>
-                    handleSingleSelect(event.target.value ? Number(event.target.value) : null)
-                  }
+              <input
+                type="search"
+                placeholder="Buscar trabajador"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={handleSelectAllFiltered}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 hover:bg-slate-50"
                 >
-                  <option value="">Sin seleccionar</option>
-                  {orderedWorkers.map((worker) => (
-                    <option key={worker.id} value={worker.id}>
+                  Seleccionar filtrados
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 hover:bg-slate-50"
+                >
+                  Limpiar
+                </button>
+                <span className="text-slate-500">
+                  {selectedIds.size} seleccionados
+                </span>
+              </div>
+              <div className="max-h-56 overflow-auto rounded-2xl border border-slate-200 bg-white">
+                {filteredWorkers.map((worker) => (
+                  <label
+                    key={worker.id}
+                    className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(worker.id)}
+                      onChange={() => toggleWorker(worker.id)}
+                    />
+                    <span className="flex-1 text-slate-700">
                       {buildDisplayName(worker)}
-                      {!worker.active ? ' (Inactivo)' : ''}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <input
-                    type="search"
-                    placeholder="Buscar trabajador"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                  />
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <button
-                      type="button"
-                      onClick={handleSelectAllFiltered}
-                      className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 hover:bg-slate-50"
-                    >
-                      Seleccionar filtrados
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedIds(new Set())}
-                      className="rounded-full border border-slate-200 px-3 py-1 text-slate-600 hover:bg-slate-50"
-                    >
-                      Limpiar
-                    </button>
-                    <span className="text-slate-500">
-                      {selectedIds.size} seleccionados
                     </span>
-                  </div>
-                  <div className="max-h-56 overflow-auto rounded-2xl border border-slate-200 bg-white">
-                    {filteredWorkers.map((worker) => (
-                      <label
-                        key={worker.id}
-                        className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(worker.id)}
-                          onChange={() => toggleWorker(worker.id)}
-                        />
-                        <span className="flex-1 text-slate-700">
-                          {buildDisplayName(worker)}
-                        </span>
-                        {!worker.active && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
-                            Inactivo
-                          </span>
-                        )}
-                      </label>
-                    ))}
-                    {filteredWorkers.length === 0 && (
-                      <div className="px-3 py-4 text-xs text-slate-500">
-                        No hay resultados para la busqueda.
-                      </div>
+                    {!worker.active && (
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                        Inactivo
+                      </span>
                     )}
+                  </label>
+                ))}
+                {filteredWorkers.length === 0 && (
+                  <div className="px-3 py-4 text-xs text-slate-500">
+                    No hay resultados para la busqueda.
                   </div>
-                </>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -1160,13 +1116,13 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                           }`}
                           style={{ width: `${BADGE_WIDTH_MM}mm`, height: `${BADGE_HEIGHT_MM}mm` }}
                         >
-                          <div className="badge-card-inner flex h-full w-full items-center justify-between gap-3 px-4 py-3">
-                            <div className="badge-name-section flex h-full min-w-0 flex-1 flex-col justify-center gap-2">
+                          <div className="badge-card-inner flex h-full w-full items-center justify-between gap-4 px-5 py-3">
+                            <div className="badge-name-section flex h-full min-w-0 flex-1 flex-col justify-center gap-3">
                               <div className="badge-name-text text-left text-[15px] font-semibold uppercase leading-tight text-slate-900">
                                 <div>{badge.firstName}</div>
                                 {badge.lastName && <div>{badge.lastName}</div>}
                               </div>
-                              <div className="badge-logo-container flex w-full items-end" style={{ height: '10mm' }}>
+                              <div className="badge-logo-container flex w-full items-end mt-1" style={{ height: '10mm' }}>
                                 <img
                                   src={logoSrc}
                                   alt="Logo"
@@ -1174,7 +1130,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 />
                               </div>
                             </div>
-                            <div className="badge-qr-container flex items-center justify-center">
+                            <div className="badge-qr-container flex items-center justify-center pr-1">
                               <svg
                                 width={`${QR_SIZE_MM}mm`}
                                 height={`${QR_SIZE_MM}mm`}
@@ -1258,8 +1214,8 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                               width: '100%',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              gap: '0.75rem',
-                              padding: '0.75rem 1rem',
+                              gap: '1rem',
+                              padding: '0.75rem 1.25rem',
                             }}
                           >
                             <div
@@ -1271,7 +1227,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 flex: 1,
                                 flexDirection: 'column',
                                 justifyContent: 'center',
-                                gap: '0.5rem',
+                                gap: '0.75rem',
                               }}
                             >
                               <div
@@ -1295,6 +1251,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                   width: '100%',
                                   alignItems: 'flex-end',
                                   height: '10mm',
+                                  marginTop: '0.25rem',
                                 }}
                               >
                                 <img
@@ -1310,6 +1267,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
+                                paddingRight: '0.25rem',
                               }}
                             >
                               <svg
