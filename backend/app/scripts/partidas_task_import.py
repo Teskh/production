@@ -299,6 +299,19 @@ def _ensure_worker_sequence(session) -> None:
     )
 
 
+def _ensure_task_definition_sequence(session) -> None:
+    sequence = session.execute(
+        text("SELECT pg_get_serial_sequence('task_definitions', 'id')")
+    ).scalar()
+    if not sequence:
+        return
+    max_id = session.execute(text("SELECT MAX(id) FROM task_definitions")).scalar() or 0
+    session.execute(
+        text("SELECT setval(:sequence, :value, true)"),
+        {"sequence": sequence, "value": max_id},
+    )
+
+
 def run_partidas_import(
     *,
     house_type_id: int,
@@ -362,6 +375,7 @@ def run_partidas_import(
             ).scalars()
         }
         created = 0
+        _ensure_task_definition_sequence(session)
         for name in task_names:
             if name in existing_tasks:
                 continue

@@ -12,7 +12,6 @@ import {
   RefreshCcw,
   Save,
   Search,
-  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -1986,7 +1985,7 @@ const HouseConfigurator: React.FC = () => {
                     {selectedType ? selectedType.name : 'Nuevo tipo de casa'}
                   </h2>
                 </div>
-                <Sparkles className="h-5 w-5 text-[var(--ink-muted)]" />
+                <Pencil className="h-5 w-5 text-[var(--ink-muted)]" />
               </div>
 
               <div className="mt-4 space-y-4">

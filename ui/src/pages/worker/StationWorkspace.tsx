@@ -1770,7 +1770,7 @@ const StationWorkspace: React.FC = () => {
           </p>
           {stationContext && stationContext.kind !== 'station' && (
             <p className="text-xs text-gray-400">
-              Contexto: {contextLabel} - {stationSelectionLabel}
+              {contextLabel} - {stationSelectionLabel}
             </p>
           )}
         </div>
@@ -2556,6 +2556,8 @@ const StationWorkspace: React.FC = () => {
                   concurrencyBlocked: resumeConcurrencyBlocked,
                   concurrencyAction: 'resuming',
                 });
+                const taskNameKey = buildTaskNameKey(task, selectedWorkItem.id);
+                const isTaskNameExpanded = expandedTaskNames.has(taskNameKey);
                 return (
                   <div
                     key={task.task_definition_id}
@@ -2564,9 +2566,20 @@ const StationWorkspace: React.FC = () => {
                       isCompleted && 'bg-gray-50/70 opacity-70'
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-gray-900">{task.name}</div>
-                      {statusBadge(task.status)}
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleTaskNameExpansion(taskNameKey)}
+                        title={task.name}
+                        aria-expanded={isTaskNameExpanded}
+                        className={clsx(
+                          'min-w-0 flex-1 text-left text-sm font-semibold text-gray-900',
+                          isTaskNameExpanded ? 'whitespace-normal break-words' : 'truncate'
+                        )}
+                      >
+                        {task.name}
+                      </button>
+                      <div className="shrink-0">{statusBadge(task.status)}</div>
                     </div>
                     {restrictionNote &&
                       (task.status === 'NotStarted' || task.status === 'Paused') && (

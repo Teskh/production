@@ -52,3 +52,4 @@ docs/references/
 # backups
 *.dump
 backend/media_gallery/
+backend/backups/
