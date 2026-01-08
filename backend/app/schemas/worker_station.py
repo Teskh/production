@@ -68,6 +68,7 @@ class StationQCReworkTask(BaseModel):
 class StationSnapshot(BaseModel):
     station: StationRead
     work_items: list[StationWorkItem]
+    planned_total_count: int | None = None
     pause_reasons: list[PauseReasonRead]
     comment_templates: list[CommentTemplateRead]
     worker_active_nonconcurrent_task_instance_ids: list[int] = Field(default_factory=list)

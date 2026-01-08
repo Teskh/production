@@ -10,15 +10,9 @@ import {
   ChevronRight,
   Image,
 } from 'lucide-react';
-import { CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS } from '../../services/qcMockData';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
-
-const MOCK_GUIDANCE_IMAGES = [
-  'https://placehold.co/600x400/3b82f6/white?text=Guidance+1',
-  'https://placehold.co/600x400/3b82f6/white?text=Guidance+2',
-];
 
 type QCFailureModeSummary = {
   id: number;
@@ -132,6 +126,12 @@ const severityLevelById: Record<string, 'baja' | 'media' | 'critica'> = {
   sev_media: 'media',
   sev_critica: 'critica',
 };
+
+const SEVERITY_LEVELS = [
+  { id: 'sev_baja', name: 'Baja', color: 'bg-emerald-600 text-white' },
+  { id: 'sev_media', name: 'Media', color: 'bg-amber-500 text-slate-900' },
+  { id: 'sev_critica', name: 'Critica', color: 'bg-red-600 text-white' },
+];
 
 const QCExecution: React.FC = () => {
   const navigate = useNavigate();
@@ -297,22 +297,8 @@ const QCExecution: React.FC = () => {
     };
   }, [checkDetail?.check_instance.work_unit_id]);
 
-  const mockCheckInstance = useMemo(
-    () =>
-      PENDING_CHECKS.find(
-        (check) => check.id === checkIdParam || check.id === location.state?.checkId
-      ),
-    [checkIdParam, location.state?.checkId]
-  );
-
-  const defId =
-    mockCheckInstance?.checkDefinitionId ||
-    location.state?.defId ||
-    (!checkDetail ? 'chk_wall' : undefined);
-  const checkDef = defId ? CHECK_DEFINITIONS[defId] : undefined;
-
   const runtimeStep = useMemo<QCStep | null>(() => {
-    if (!checkDetail?.check_definition && !checkDetail?.check_instance?.check_name && !checkDef?.name) {
+    if (!checkDetail?.check_definition && !checkDetail?.check_instance?.check_name) {
       return null;
     }
     return {
@@ -320,20 +306,16 @@ const QCExecution: React.FC = () => {
       title:
         checkDetail?.check_definition?.name ??
         checkDetail?.check_instance?.check_name ??
-        checkDef?.name ??
         'Revision QC',
-      desc: checkDetail?.check_definition?.guidance_text ?? checkDef?.guidance ?? 'Sin guia adicional.',
+      desc: checkDetail?.check_definition?.guidance_text ?? 'Sin guia adicional.',
       required: true,
       image: null,
     };
-  }, [checkDetail?.check_definition, checkDetail?.check_instance?.check_name, checkDef?.guidance, checkDef?.name]);
+  }, [checkDetail?.check_definition, checkDetail?.check_instance?.check_name]);
 
   const steps = useMemo<QCStep[]>(() => {
-    if (checkDef?.steps?.length) {
-      return checkDef.steps as QCStep[];
-    }
     return runtimeStep ? [runtimeStep] : [];
-  }, [checkDef?.steps, runtimeStep]);
+  }, [runtimeStep]);
   const currentStepData = steps[currentStep];
 
   const referenceImages = useMemo(() => {
@@ -355,7 +337,7 @@ const QCExecution: React.FC = () => {
     if (runtimeGuides.length) {
       return runtimeGuides;
     }
-    return MOCK_GUIDANCE_IMAGES;
+    return [];
   }, [checkDetail?.media_assets]);
 
   const failureModes = useMemo(() => {
@@ -378,7 +360,7 @@ const QCExecution: React.FC = () => {
         };
       });
     }
-    return FAILURE_MODES;
+    return [];
   }, [checkDetail?.failure_modes]);
 
   useEffect(() => {
@@ -398,12 +380,15 @@ const QCExecution: React.FC = () => {
   }, [failureModes, reworkText, selectedFailureModeIds, selectedSeverityId]);
 
   const headerModule =
-    checkDetail?.check_instance.module_number ?? mockCheckInstance?.moduleNumber ?? 'Manual';
+    checkDetail?.check_instance.module_number ?? reworkState?.module_number ?? 'Manual';
   const headerStation =
-    checkDetail?.check_instance.station_name ?? mockCheckInstance?.stationName ?? 'Sin estacion';
+    checkDetail?.check_instance.station_name ?? reworkState?.station_name ?? 'Sin estacion';
   const headerPanel =
-    checkDetail?.check_instance.panel_code ?? mockCheckInstance?.panelCode ?? null;
-  const headerTitle = checkDetail?.check_definition?.name ?? checkDef?.name ?? 'Revision QC';
+    checkDetail?.check_instance.panel_code ?? reworkState?.panel_code ?? null;
+  const headerTitle =
+    checkDetail?.check_definition?.name ??
+    checkDetail?.check_instance?.check_name ??
+    'Revision QC';
 
   const formatStampDate = (date: Date) => {
     const year = date.getFullYear();
@@ -757,7 +742,7 @@ const QCExecution: React.FC = () => {
     );
   }
 
-  if (!checkDef && !checkDetail && !reworkIdParam) {
+  if (!checkDetail && !reworkIdParam) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-900 text-white">
         Revision no encontrada.
@@ -920,7 +905,7 @@ const QCExecution: React.FC = () => {
         <div className="px-4 py-3 border-b border-slate-700/50">
           <h2 className="text-lg font-bold text-white">{currentStepData?.title || headerTitle}</h2>
           <p className="text-sm text-slate-300 mt-1">
-            {currentStepData?.desc || checkDef?.guidance || 'Sin guia adicional.'}
+            {currentStepData?.desc || 'Sin guia adicional.'}
           </p>
           {reworkState && (
             <p className="text-xs text-slate-400 mt-2">Estado: {reworkState.description}</p>
@@ -1250,37 +1235,43 @@ const QCExecution: React.FC = () => {
               )}
               <div className="mb-6">
                 <label className="block text-sm font-bold text-slate-300 mb-2">Modos de falla</label>
-                <div className="space-y-2">
-                  {failureModes.map((mode) => (
-                    <label
-                      key={mode.id}
-                      className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
-                        selectedFailureModeIds.includes(mode.id)
-                          ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500'
-                          : 'border-slate-600 hover:border-slate-500 bg-slate-900/50'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        name={`failureMode-${mode.id}`}
-                        className="mt-1 mr-3 text-red-600 focus:ring-red-500"
-                        checked={selectedFailureModeIds.includes(mode.id)}
-                        onChange={() => {
-                          setSelectedFailureModeIds((prev) => {
-                            if (prev.includes(mode.id)) {
-                              return prev.filter((id) => id !== mode.id);
-                            }
-                            return [...prev, mode.id];
-                          });
-                        }}
-                      />
-                      <div>
-                        <div className="font-semibold text-white">{mode.name}</div>
-                        <div className="text-xs text-slate-400">{mode.description}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
+                {failureModes.length === 0 ? (
+                  <p className="text-xs text-slate-400">
+                    Sin modos de falla configurados para esta revision.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {failureModes.map((mode) => (
+                      <label
+                        key={mode.id}
+                        className={`flex items-start p-3 border rounded-lg cursor-pointer transition-all ${
+                          selectedFailureModeIds.includes(mode.id)
+                            ? 'border-red-500 bg-red-900/30 ring-1 ring-red-500'
+                            : 'border-slate-600 hover:border-slate-500 bg-slate-900/50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          name={`failureMode-${mode.id}`}
+                          className="mt-1 mr-3 text-red-600 focus:ring-red-500"
+                          checked={selectedFailureModeIds.includes(mode.id)}
+                          onChange={() => {
+                            setSelectedFailureModeIds((prev) => {
+                              if (prev.includes(mode.id)) {
+                                return prev.filter((id) => id !== mode.id);
+                              }
+                              return [...prev, mode.id];
+                            });
+                          }}
+                        />
+                        <div>
+                          <div className="font-semibold text-white">{mode.name}</div>
+                          <div className="text-xs text-slate-400">{mode.description}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {selectedFailureModeIds.length > 0 && (

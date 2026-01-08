@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -287,6 +287,7 @@ def _first_applicable_assembly_station(
 @router.get("/{station_id}/snapshot", response_model=StationSnapshot)
 def station_snapshot(
     station_id: int,
+    planned_limit: int | None = Query(default=None, ge=1, le=100),
     db: Session = Depends(get_db),
     _worker: Worker = Depends(get_current_worker),
 ) -> StationSnapshot:
@@ -417,6 +418,7 @@ def station_snapshot(
         }
 
     work_items: list[StationWorkItem] = []
+    planned_total_count: int | None = None
 
     if station.role == StationRole.PANELS:
         rows = list(
@@ -534,7 +536,17 @@ def station_snapshot(
                 for panel_def in panel_defs:
                     panel_defs_by_house.setdefault(panel_def.house_type_id, []).append(panel_def)
 
-                planned_items: list[tuple[tuple[int, int, str], StationWorkItem]] = []
+                planned_candidates: list[
+                    tuple[
+                        tuple[int, int, str],
+                        WorkUnit,
+                        WorkOrder,
+                        HouseType,
+                        HouseSubType | None,
+                        PanelDefinition,
+                        PanelUnit | None,
+                    ]
+                ] = []
 
                 for work_unit, work_order, house_type, sub_type in planned_rows:
                     defs_for_house = panel_defs_by_house.get(work_order.house_type_id, [])
@@ -556,10 +568,49 @@ def station_snapshot(
                         candidates = general + specific
                     else:
                         candidates = general
+                    candidates = sorted(
+                        candidates,
+                        key=lambda panel_def: (
+                            panel_def.panel_sequence_number or 9999,
+                            panel_def.panel_code or "",
+                        ),
+                    )
                     for panel_def in candidates:
                         panel_unit = panel_unit_map.get((work_unit.id, panel_def.id))
                         if panel_unit and panel_unit.status != PanelUnitStatus.PLANNED:
                             continue
+                        sort_key = (
+                            work_unit.planned_sequence,
+                            panel_def.panel_sequence_number or 9999,
+                            panel_def.panel_code or "",
+                        )
+                        planned_candidates.append(
+                            (
+                                sort_key,
+                                work_unit,
+                                work_order,
+                                house_type,
+                                sub_type,
+                                panel_def,
+                                panel_unit,
+                            )
+                        )
+
+                planned_candidates.sort(key=lambda item: item[0])
+                planned_total_count = len(planned_candidates)
+                if planned_limit is not None:
+                    planned_candidates = planned_candidates[:planned_limit]
+                if planned_candidates:
+                    planned_items: list[StationWorkItem] = []
+                    for idx, (
+                        _sort_key,
+                        work_unit,
+                        work_order,
+                        house_type,
+                        sub_type,
+                        panel_def,
+                        panel_unit,
+                    ) in enumerate(planned_candidates):
                         panel_unit_id = panel_unit.id if panel_unit else None
                         status_value = (
                             panel_unit.status.value
@@ -587,44 +638,32 @@ def station_snapshot(
                             _worker.id,
                             station.sequence_order,
                         )
-                        sort_key = (
-                            work_unit.planned_sequence,
-                            panel_def.panel_sequence_number or 9999,
-                            panel_def.panel_code or "",
-                        )
                         planned_items.append(
-                            (
-                                sort_key,
-                                StationWorkItem(
-                                    id=(
-                                        f"panel-{panel_unit_id}"
-                                        if panel_unit_id is not None
-                                        else f"planned-{work_unit.id}-{panel_def.id}"
-                                    ),
-                                    scope=TaskScope.PANEL,
-                                    work_unit_id=work_unit.id,
-                                    panel_unit_id=panel_unit_id,
-                                    panel_definition_id=panel_def.id,
-                                    module_number=work_unit.module_number,
-                                    project_name=work_order.project_name,
-                                    house_identifier=work_order.house_identifier
-                                    or f"WO-{work_order.id}",
-                                    house_type_name=house_type.name,
-                                    sub_type_name=sub_type.name if sub_type else None,
-                                    panel_code=panel_def.panel_code,
-                                    status=status_value,
-                                    tasks=tasks,
-                                    other_tasks=other_tasks,
-                                    backlog_tasks=backlog_tasks,
-                                    recommended=False,
+                            StationWorkItem(
+                                id=(
+                                    f"panel-{panel_unit_id}"
+                                    if panel_unit_id is not None
+                                    else f"planned-{work_unit.id}-{panel_def.id}"
                                 ),
+                                scope=TaskScope.PANEL,
+                                work_unit_id=work_unit.id,
+                                panel_unit_id=panel_unit_id,
+                                panel_definition_id=panel_def.id,
+                                module_number=work_unit.module_number,
+                                project_name=work_order.project_name,
+                                house_identifier=work_order.house_identifier
+                                or f"WO-{work_order.id}",
+                                house_type_name=house_type.name,
+                                sub_type_name=sub_type.name if sub_type else None,
+                                panel_code=panel_def.panel_code,
+                                status=status_value,
+                                tasks=tasks,
+                                other_tasks=other_tasks,
+                                backlog_tasks=backlog_tasks,
+                                recommended=idx == 0,
                             )
                         )
-
-                planned_items.sort(key=lambda item: item[0])
-                if planned_items:
-                    planned_items[0][1].recommended = True
-                work_items.extend(item for _, item in planned_items)
+                    work_items.extend(planned_items)
     else:
         stmt = (
             select(WorkUnit, WorkOrder, HouseType, HouseSubType)
@@ -756,7 +795,40 @@ def station_snapshot(
                 )
             )
 
-    work_items.sort(key=lambda item: (item.project_name, item.house_identifier, item.module_number))
+    if station.role == StationRole.PANELS and station.sequence_order == 1:
+        in_progress_items = [
+            item for item in work_items if item.status == PanelUnitStatus.IN_PROGRESS.value
+        ]
+        planned_items = [
+            item for item in work_items if item.status == PanelUnitStatus.PLANNED.value
+        ]
+        planned_ids = {item.id for item in planned_items}
+        in_progress_ids = {item.id for item in in_progress_items}
+        other_items = [
+            item
+            for item in work_items
+            if item.id not in planned_ids and item.id not in in_progress_ids
+        ]
+        in_progress_items.sort(
+            key=lambda item: (
+                item.project_name,
+                item.house_identifier,
+                item.module_number,
+                item.panel_code or "",
+            )
+        )
+        other_items.sort(
+            key=lambda item: (
+                item.project_name,
+                item.house_identifier,
+                item.module_number,
+            )
+        )
+        work_items = in_progress_items + planned_items + other_items
+    else:
+        work_items.sort(
+            key=lambda item: (item.project_name, item.house_identifier, item.module_number)
+        )
 
     active_participation_ids = set(
         db.execute(
@@ -899,4 +971,5 @@ def station_snapshot(
         worker_active_nonconcurrent_task_instance_ids=sorted(active_nonconcurrent_ids),
         qc_rework_tasks=qc_rework_tasks,
         qc_notification_count=len(qc_notification_count),
+        planned_total_count=planned_total_count,
     )

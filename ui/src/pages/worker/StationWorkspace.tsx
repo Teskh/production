@@ -137,6 +137,7 @@ type StationWorkItem = {
 type StationSnapshot = {
   station: Station;
   work_items: StationWorkItem[];
+  planned_total_count?: number;
   pause_reasons: PauseReason[];
   comment_templates: CommentTemplate[];
   worker_active_nonconcurrent_task_instance_ids?: number[];
@@ -418,6 +419,7 @@ const StationWorkspace: React.FC = () => {
   const workItems = useMemo(() => snapshot?.work_items ?? [], [snapshot?.work_items]);
   const isW1 = selectedStation?.role === 'Panels' && selectedStation.sequence_order === 1;
   const isMagazineStation = selectedStation?.role === 'Magazine';
+  const plannedTotalOverride = snapshot?.planned_total_count;
   const { recommendedItem, inProgressItems, plannedItems, otherItems, plannedTotalCount } =
     useMemo(() => {
       if (!isW1) {
@@ -457,9 +459,9 @@ const StationWorkspace: React.FC = () => {
         inProgressItems: inProgress,
         plannedItems: planned,
         otherItems: other,
-        plannedTotalCount: plannedCount,
+        plannedTotalCount: plannedTotalOverride ?? plannedCount,
       };
-    }, [isW1, workItems]);
+    }, [isW1, plannedTotalOverride, workItems]);
 
   const pauseReasons = snapshot?.pause_reasons ?? [];
   const commentTemplates = snapshot?.comment_templates ?? [];
@@ -614,7 +616,9 @@ const StationWorkspace: React.FC = () => {
     snapshotRequestIdRef.current = requestId;
     setSnapshotLoading(true);
     try {
-      const data = await apiRequest<StationSnapshot>(`/api/worker-stations/${stationId}/snapshot`);
+      const data = await apiRequest<StationSnapshot>(
+        `/api/worker-stations/${stationId}/snapshot?planned_limit=${MAX_W1_PLANNED}`
+      );
       if (snapshotRequestIdRef.current !== requestId) {
         return;
       }
