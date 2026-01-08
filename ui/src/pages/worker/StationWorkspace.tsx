@@ -344,14 +344,6 @@ const StationWorkspace: React.FC = () => {
     });
   }, []);
 
-  const contextLabel = useMemo(
-    () => getContextLabel(stationContext, stations),
-    [stationContext, stations]
-  );
-  const stationSelectionLabel = selectedStation
-    ? formatStationLabel(selectedStation)
-    : 'Seleccionar estacion';
-
   const assemblySequenceOrders = useMemo(
     () => getAssemblySequenceOrders(stations),
     [stations]
@@ -465,6 +457,7 @@ const StationWorkspace: React.FC = () => {
 
   const pauseReasons = snapshot?.pause_reasons ?? [];
   const commentTemplates = snapshot?.comment_templates ?? [];
+  const hasLongCommentTemplateList = commentTemplates.length > 6;
   const activeNonConcurrentTaskIds = useMemo(
     () => snapshot?.worker_active_nonconcurrent_task_instance_ids ?? [],
     [snapshot?.worker_active_nonconcurrent_task_instance_ids]
@@ -935,6 +928,7 @@ const StationWorkspace: React.FC = () => {
       Paused: 'bg-amber-100 text-amber-700 border-amber-200',
       Completed: 'bg-emerald-100 text-emerald-700 border-emerald-200',
       Skipped: 'bg-slate-100 text-slate-600 border-slate-200',
+      Planned: 'bg-slate-100 text-slate-600 border-slate-200',
     };
     const labels: Record<string, string> = {
       NotStarted: 'Pendiente',
@@ -942,6 +936,7 @@ const StationWorkspace: React.FC = () => {
       Paused: 'En pausa',
       Completed: 'Completada',
       Skipped: 'Omitida',
+      Planned: 'Sin comenzar',
     };
     return (
       <span
@@ -1772,11 +1767,6 @@ const StationWorkspace: React.FC = () => {
                 }`
               : 'Selecciona una estacion para comenzar.'}
           </p>
-          {stationContext && stationContext.kind !== 'station' && (
-            <p className="text-xs text-gray-400">
-              {contextLabel} - {stationSelectionLabel}
-            </p>
-          )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">
@@ -1888,7 +1878,7 @@ const StationWorkspace: React.FC = () => {
                     </p>
                     {plannedTotalCount > plannedItems.length && (
                       <p className="text-[11px] text-gray-400">
-                        Mostrando siguientes {plannedItems.length} de {plannedTotalCount} paneles.
+                        Mostrando siguientes {plannedItems.length} paneles.
                       </p>
                     )}
                     {plannedItems.map((item) =>
@@ -2273,7 +2263,12 @@ const StationWorkspace: React.FC = () => {
               </div>
             )}
             {commentTemplates.length > 0 && (
-              <div className="mt-4 grid grid-cols-1 gap-2">
+              <div
+                className={clsx(
+                  'mt-4 grid gap-2',
+                  hasLongCommentTemplateList ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'
+                )}
+              >
                 {commentTemplates.map((template) => (
                   <button
                     key={template.id}

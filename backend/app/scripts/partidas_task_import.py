@@ -422,11 +422,13 @@ def run_partidas_import(
                     entry.station_sequence
                 )
 
-        stations_by_sequence = {
-            station.sequence_order: station.id
-            for station in session.execute(select(Station)).scalars()
-            if station.sequence_order is not None
-        }
+        stations_by_sequence: dict[int, list[int]] = {}
+        for station in session.execute(select(Station)).scalars():
+            if station.sequence_order is None:
+                continue
+            stations_by_sequence.setdefault(station.sequence_order, []).append(station.id)
+        for station_ids in stations_by_sequence.values():
+            station_ids.sort()
 
         task_workers: dict[int, set[int]] = {}
         missing_workers: set[str] = set()
@@ -484,7 +486,7 @@ def run_partidas_import(
                         first_name=first,
                         last_name=last,
                         pin=None,
-                        login_required=True,
+                        login_required=False,
                         active=True,
                         assigned_station_ids=assigned_station_ids,
                         supervisor_id=None,
@@ -633,19 +635,19 @@ def _station_ids_for_worker(
     normalized_name: str,
     display_name: str,
     worker_station_sequences: dict[str, set[int]],
-    stations_by_sequence: dict[int, int],
+    stations_by_sequence: dict[int, list[int]],
     warnings: list[str],
 ) -> list[int] | None:
     sequences = worker_station_sequences.get(normalized_name, set())
     station_ids: list[int] = []
     for seq in sorted(sequences):
-        station_id = stations_by_sequence.get(seq)
-        if station_id is None:
+        station_list = stations_by_sequence.get(seq)
+        if not station_list:
             warnings.append(
                 f"No station found with sequence {seq} for worker '{display_name}'."
             )
             continue
-        station_ids.append(station_id)
+        station_ids.extend(station_list)
     return station_ids or None
 
 
