@@ -652,6 +652,18 @@ const buildDisplayName = (worker: WorkerBadgePerson): string => {
   return getNameParts(worker).full;
 };
 
+const getDynamicFontSize = (text: string, baseSize: number, maxWidthMm: number) => {
+  const charCount = text.length;
+  if (charCount === 0) return `${baseSize}px`;
+  // Heuristic factor for uppercase bold characters (W is wider than I)
+  const factor = baseSize > 15 ? 0.65 : 0.55;
+  const estimatedWidthPx = charCount * baseSize * factor;
+  const maxWidthPx = maxWidthMm * MM_TO_PX;
+  if (estimatedWidthPx <= maxWidthPx) return `${baseSize}px`;
+  const calculated = maxWidthPx / (charCount * factor);
+  return `${Math.max(calculated, 8).toFixed(1)}px`;
+};
+
 const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   open,
   onClose,
@@ -826,61 +838,81 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
 
   const printStyles = `
     .badge-print-only { display: none; }
-    @page { size: ${paper.pageLabel}; margin: 0; }
+    @page { 
+      size: ${paper.pageLabel}; 
+      margin: 0; 
+    }
     @media print {
       html, body { 
         background: #fff !important; 
         margin: 0 !important; 
         padding: 0 !important;
+        height: auto !important;
+        min-height: 100% !important;
+        overflow: visible !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
       body > *:not(.badge-modal-root) { display: none !important; }
-      .badge-no-print, .badge-screen-only { display: none !important; height: 0 !important; overflow: hidden !important; }
+      .badge-no-print, .badge-screen-only { 
+        display: none !important; 
+        visibility: hidden !important;
+        height: 0 !important; 
+        width: 0 !important;
+        overflow: hidden !important; 
+        margin: 0 !important;
+        padding: 0 !important;
+      }
       .badge-modal-root { 
         position: absolute !important;
         top: 0 !important;
         left: 0 !important;
         width: 100% !important;
+        height: auto !important;
         display: block !important; 
         padding: 0 !important;
-        background: #fff !important;
+        margin: 0 !important;
+        background: transparent !important;
         z-index: 999999 !important;
       }
       .badge-modal-content { 
         position: static !important;
-        max-width: none !important; 
-        width: auto !important; 
-        height: auto !important; 
-        max-height: none !important; 
-        border-radius: 0 !important; 
-        box-shadow: none !important;
-        overflow: visible !important;
-        background: #fff !important;
         display: block !important;
+        width: 100% !important;
+        height: auto !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
         padding: 0 !important;
+        margin: 0 !important;
       }
-      .badge-modal-content .grid { display: contents !important; }
-      .badge-modal-content .flex { display: contents !important; }
+      .badge-modal-content .grid, 
+      .badge-modal-content .flex { 
+        display: block !important; 
+        margin: 0 !important;
+        padding: 0 !important;
+        gap: 0 !important;
+      }
       .badge-print-only { 
         display: block !important; 
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: auto !important;
-        height: auto !important;
-        overflow: visible !important;
-        z-index: 999999 !important;
-        background: #fff !important;
+        position: static !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
       .badge-page-outer { 
         width: ${paper.width}mm !important; 
         height: ${paper.height}mm !important;
-        border-radius: 0 !important;
+        page-break-after: avoid !important;
+        break-after: avoid !important;
         overflow: hidden !important;
         box-sizing: border-box !important;
+        background: #fff !important;
       }
-      .badge-page-break { page-break-after: always !important; }
+      .badge-page-break { 
+        page-break-after: always !important; 
+        break-after: page !important;
+      }
       .badge-page { 
         box-shadow: none !important; 
         border: none !important; 
@@ -1150,10 +1182,16 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 />
                               </div>
                               <div className="badge-name-text mb-1 flex flex-col gap-0.5 text-left text-slate-900">
-                                <div className="badge-first-name text-[22px] font-extrabold uppercase leading-none truncate">
+                                <div 
+                                  className="badge-first-name font-extrabold uppercase leading-none"
+                                  style={{ fontSize: getDynamicFontSize(badge.firstName, 22, 33) }}
+                                >
                                   {badge.firstName}
                                 </div>
-                                <div className="badge-last-name text-[13px] font-medium uppercase tracking-wide text-slate-500 truncate">
+                                <div 
+                                  className="badge-last-name font-medium uppercase tracking-wide text-slate-500"
+                                  style={{ fontSize: getDynamicFontSize(badge.lastName, 13, 33) }}
+                                >
                                   {badge.lastName}
                                 </div>
                               </div>
@@ -1285,7 +1323,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 <div
                                   className="badge-first-name"
                                   style={{
-                                    fontSize: '22px',
+                                    fontSize: getDynamicFontSize(badge.firstName, 22, 33),
                                     fontWeight: 800,
                                     textTransform: 'uppercase',
                                     lineHeight: 1,
@@ -1296,7 +1334,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 <div
                                   className="badge-last-name"
                                   style={{
-                                    fontSize: '13px',
+                                    fontSize: getDynamicFontSize(badge.lastName, 13, 33),
                                     fontWeight: 500,
                                     textTransform: 'uppercase',
                                     color: '#64748b',
