@@ -570,23 +570,26 @@ const DashboardPanelAnalysis: React.FC = () => {
       list.push(panel);
     };
 
-    if (Array.isArray(data?.panels_passed_today_list)) {
-      data.panels_passed_today_list.forEach(pushIfNew);
-    }
-
-    panelTaskRows.forEach((panel) => {
-      const finish = panel.satisfied_at;
-      if (!finish) return;
-      pushIfNew({
-        plan_id: panel.plan_id,
-        panel_definition_id: panel.panel_definition_id,
-        panel_code: panel.panel_code,
-        house_identifier: panel.house_identifier,
-        module_number: panel.module_number,
-        panel_area: panel.panel_area,
-        satisfied_at: finish,
+    const backendList = Array.isArray(data?.panels_passed_today_list)
+      ? data.panels_passed_today_list
+      : [];
+    if (backendList.length > 0) {
+      backendList.forEach(pushIfNew);
+    } else {
+      panelTaskRows.forEach((panel) => {
+        const finish = panel.satisfied_at;
+        if (!finish) return;
+        pushIfNew({
+          plan_id: panel.plan_id,
+          panel_definition_id: panel.panel_definition_id,
+          panel_code: panel.panel_code,
+          house_identifier: panel.house_identifier,
+          module_number: panel.module_number,
+          panel_area: panel.panel_area,
+          satisfied_at: finish,
+        });
       });
-    });
+    }
 
     const areaTotal = list.reduce((acc, item) => {
       const area = toFiniteNumber(item?.panel_area);

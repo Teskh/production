@@ -55,7 +55,7 @@
 - Adaptive sampling updates apply to any `QCTrigger` for the same check definition that includes the triggering `task_definition_id`.
 
 ## 2026-01-08
-- Login panel goal summary assumes `GET /api/station-panels-finished` counts panels that passed through a station today even when no tasks were performed at that station (pass-through + skips).
+- Login panel goal summary assumes `GET /api/station-panels-finished` only counts a panel once all applicable tasks for the station are satisfied (including skips), and uses the latest completion/skip at prior panel stations to count pass-through panels with no tasks.
 
 ## 2026-01-10
 - Task analysis dashboard assumes a `GET /api/task-analysis` endpoint that accepts `house_type_id`, `panel_definition_id`, `task_definition_id`, `station_id`, `worker_id`, `from_date`, and `to_date` query params and returns `data_points`, `stats.average_duration`, and `expected_reference_minutes` in the legacy shape until the backend analytics routes are rebuilt.
@@ -70,7 +70,7 @@
 - Panel production history assumes a `GET /api/panel-task-history` endpoint filtered by `TaskInstance.completed_at` (date-only values treated as end-of-day) and defaults to completed panel-scope tasks, with pause durations calculated from `TaskPause.resumed_at` or task completion.
 
 ## 2026-01-13
-- Station panels finished dashboard assumes `GET /api/station-panels-finished` filtered by `TaskInstance.completed_at` (and `TaskException.created_at` for skips) for the selected station/day; pass-through panels without task logs are not reported, and `available_at` is approximated from the latest completion at any prior panel station.
+- Station panels finished dashboard assumes `GET /api/station-panels-finished` counts panels only after all applicable tasks at the station are satisfied (including skips), and pass-through panels without task logs use the latest completion/skip at any prior panel station as their pass timestamp.
 - GeoVictoria name proposal script writes a minimal XLSX (sheet1 + shared strings only) for the updated partidas file, and keeps unmatched names unchanged in the new GeoVictoria column.
 
 ## 2026-01-14
