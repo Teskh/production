@@ -15,12 +15,15 @@ from sqlalchemy import delete, select, text
 from app.db.session import SessionLocal
 from app.models import (
     HouseType,
+    Skill,
     TaskApplicability,
     TaskDefinition,
     TaskExpectedDuration,
+    TaskSkillRequirement,
     TaskWorkerRestriction,
     Station,
     Worker,
+    WorkerSkill,
 )
 from app.models.enums import RestrictionType, TaskScope
 from app.scripts.geovictoria_name_proposals import GeoVictoriaUser, fetch_geovictoria_users
@@ -40,6 +43,7 @@ class PartidaEntry:
     duration_minutes: float | None
     worker_names: list[str]
     station_sequence: int | None
+    specialty: str | None
 
 
 def _read_xlsx_rows(path: Path) -> list[list[str]]:
@@ -115,6 +119,10 @@ def _normalize_name(value: str) -> str:
     return re.sub(r"\s+", " ", value)
 
 
+def _normalize_specialty(value: str) -> str:
+    return _normalize_name(value)
+
+
 def _split_names(cell: str) -> list[str]:
     if ";" in cell:
         parts = [part.strip() for part in cell.split(";")]
@@ -188,6 +196,10 @@ def _partidas_entries(
         station_idx = header.index("ESTACION")
     except ValueError as exc:
         raise RuntimeError("Missing 'ESTACION' column in partidas sheet.") from exc
+    try:
+        specialty_idx = header.index("Especialidad")
+    except ValueError as exc:
+        raise RuntimeError("Missing 'Especialidad' column in partidas sheet.") from exc
 
     workers_idx = None
     geovictoria_idx = None
@@ -212,6 +224,9 @@ def _partidas_entries(
             continue
         station_text = row[station_idx].strip() if station_idx < len(row) else ""
         station_sequence = _parse_station_sequence(station_text)
+        specialty = (
+            row[specialty_idx].strip() if specialty_idx < len(row) else ""
+        ) or None
 
         duration = None
         if duration_idx < len(row):
@@ -232,6 +247,7 @@ def _partidas_entries(
                 duration_minutes=duration,
                 worker_names=worker_names,
                 station_sequence=station_sequence,
+                specialty=specialty,
             )
         )
     return entries
@@ -353,19 +369,36 @@ def run_partidas_import(
 
         task_names = sorted({entry.task_name for entry in entries})
         task_station_sequence: dict[str, int | None] = {}
+        task_specialty_names: dict[str, str] = {}
+        specialties_by_key: dict[str, str] = {}
         for entry in entries:
             if entry.task_name not in task_station_sequence:
                 task_station_sequence[entry.task_name] = entry.station_sequence
-                continue
-            existing_station = task_station_sequence[entry.task_name]
-            if (
-                entry.station_sequence is not None
-                and existing_station is not None
-                and entry.station_sequence != existing_station
-            ):
-                warnings.append(
-                    f"Task '{entry.task_name}' has multiple station values; "
-                    f"using {existing_station}."
+            else:
+                existing_station = task_station_sequence[entry.task_name]
+                if (
+                    entry.station_sequence is not None
+                    and existing_station is not None
+                    and entry.station_sequence != existing_station
+                ):
+                    warnings.append(
+                        f"Task '{entry.task_name}' has multiple station values; "
+                        f"using {existing_station}."
+                    )
+            if entry.specialty:
+                specialty_key = _normalize_specialty(entry.specialty)
+                if not specialty_key:
+                    continue
+                existing_specialty = task_specialty_names.get(entry.task_name)
+                if existing_specialty is None:
+                    task_specialty_names[entry.task_name] = entry.specialty.strip()
+                elif _normalize_specialty(existing_specialty) != specialty_key:
+                    warnings.append(
+                        f"Task '{entry.task_name}' has multiple specialties; "
+                        f"using {existing_specialty}."
+                    )
+                specialties_by_key.setdefault(
+                    specialty_key, entry.specialty.strip()
                 )
 
         existing_tasks = {
@@ -396,6 +429,54 @@ def run_partidas_import(
             created += 1
         session.flush()
         output.append(f"Tasks created: {created}")
+
+        existing_skills: dict[str, Skill] = {}
+        for skill in session.execute(select(Skill)).scalars():
+            key = _normalize_specialty(skill.name)
+            if key:
+                existing_skills.setdefault(key, skill)
+        skills_created = 0
+        for key, name in specialties_by_key.items():
+            if key in existing_skills:
+                continue
+            skill = Skill(name=name)
+            session.add(skill)
+            existing_skills[key] = skill
+            skills_created += 1
+        if skills_created:
+            session.flush()
+        output.append(f"Specialties created: {skills_created}")
+
+        task_skill_ids: dict[str, int] = {}
+        for task_name, specialty in task_specialty_names.items():
+            key = _normalize_specialty(specialty)
+            skill = existing_skills.get(key)
+            if not skill:
+                warnings.append(
+                    f"Specialty '{specialty}' not found for task '{task_name}'."
+                )
+                continue
+            task_skill_ids[task_name] = skill.id
+
+        if task_skill_ids:
+            task_ids_for_skills = [
+                existing_tasks[name].id for name in task_skill_ids
+            ]
+            session.execute(
+                delete(TaskSkillRequirement).where(
+                    TaskSkillRequirement.task_definition_id.in_(task_ids_for_skills)
+                )
+            )
+            task_skills_added = 0
+            for task_name, skill_id in task_skill_ids.items():
+                task_id = existing_tasks[task_name].id
+                session.add(
+                    TaskSkillRequirement(
+                        task_definition_id=task_id, skill_id=skill_id
+                    )
+                )
+                task_skills_added += 1
+            output.append(f"Task specialties assigned: {task_skills_added}")
 
         workers = list(session.execute(select(Worker)).scalars())
         lookup, duplicates = _worker_lookup(workers)
@@ -433,6 +514,7 @@ def run_partidas_import(
         task_workers: dict[int, set[int]] = {}
         missing_workers: set[str] = set()
         created_workers = 0
+        worker_skill_pairs: set[tuple[int, int]] = set()
         if entries:
             _ensure_worker_sequence(session)
         for entry in entries:
@@ -498,9 +580,33 @@ def run_partidas_import(
                     if geovictoria_id is None and geovictoria_identifier is None:
                         missing_workers.add(name)
                 task_workers[task_id].add(worker.id)
+                if entry.specialty:
+                    specialty_key = _normalize_specialty(entry.specialty)
+                    skill = existing_skills.get(specialty_key)
+                    if skill:
+                        worker_skill_pairs.add((worker.id, skill.id))
 
         if created_workers:
             output.append(f"Workers created: {created_workers}")
+
+        if worker_skill_pairs:
+            existing_worker_ids = sorted({pair[0] for pair in worker_skill_pairs})
+            existing_pairs = set(
+                session.execute(
+                    select(WorkerSkill.worker_id, WorkerSkill.skill_id).where(
+                        WorkerSkill.worker_id.in_(existing_worker_ids)
+                    )
+                ).all()
+            )
+            worker_skills_added = 0
+            for pair in sorted(worker_skill_pairs):
+                if pair in existing_pairs:
+                    continue
+                worker_id, skill_id = pair
+                session.add(WorkerSkill(worker_id=worker_id, skill_id=skill_id))
+                worker_skills_added += 1
+            if worker_skills_added:
+                output.append(f"Worker specialties assigned: {worker_skills_added}")
 
         task_ids = [existing_tasks[name].id for name in task_names]
         if reset_regular_crew and task_ids:
