@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Lock, MapPin, Settings, User } from 'lucide-react';
+import { Calendar, Lock, MapPin, QrCode, Settings, User } from 'lucide-react';
 import LoginSettings from './LoginSettings';
+import QRCodeScannerModal from '../components/QRCodeScannerModal';
 import type { StationContext } from '../utils/stationContext';
 import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
@@ -15,6 +16,7 @@ import {
 } from '../utils/stationContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const QR_SCANNING_STORAGE_KEY = 'login_qr_scanning_enabled';
 
 type Station = {
   id: number;
@@ -55,6 +57,36 @@ const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'
   const first = firstNamePart(worker.first_name);
   const last = firstNamePart(worker.last_name);
   return [first, last].filter(Boolean).join(' ');
+};
+
+const formatWorkerFullName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string =>
+  `${worker.first_name} ${worker.last_name}`.trim();
+
+const normalizeQrValue = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const findWorkerByQrValue = (value: string, list: Worker[]): Worker | null => {
+  const normalized = normalizeQrValue(value);
+  if (!normalized) {
+    return null;
+  }
+  const fullMatch =
+    list.find(
+      (worker) => normalizeQrValue(formatWorkerFullName(worker)) === normalized
+    ) ?? null;
+  if (fullMatch) {
+    return fullMatch;
+  }
+  return (
+    list.find(
+      (worker) => normalizeQrValue(formatWorkerDisplayName(worker)) === normalized
+    ) ?? null
+  );
 };
 
 type ProductionQueueItem = {
@@ -202,6 +234,14 @@ const Login: React.FC = () => {
   const [pinChangeDraft, setPinChangeDraft] = useState('');
   const [pinChangeConfirm, setPinChangeConfirm] = useState('');
   const [pinChangeError, setPinChangeError] = useState<string | null>(null);
+  const [qrScanningEnabled, setQrScanningEnabled] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return localStorage.getItem(QR_SCANNING_STORAGE_KEY) === 'true';
+  });
+  const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const lastTapRef = useRef(0);
 
   useEffect(() => {
     const load = async () => {
@@ -271,6 +311,18 @@ const Login: React.FC = () => {
     };
     load();
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    setFullscreenAvailable(Boolean(root?.requestFullscreen));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    localStorage.setItem(QR_SCANNING_STORAGE_KEY, String(qrScanningEnabled));
+  }, [qrScanningEnabled]);
 
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? null,
@@ -488,12 +540,16 @@ const Login: React.FC = () => {
     setPinChangeOpen(true);
   };
 
-  const handleWorkerLogin = async (worker: Worker, workerPin?: string | null) => {
+  const handleWorkerLogin = async (
+    worker: Worker,
+    workerPin?: string | null,
+    options?: { skipPinRequirement?: boolean }
+  ) => {
     if (!selectedStationId) {
       setLoginError('Selecciona una estacion antes de iniciar tu turno.');
       return;
     }
-    if (worker.login_required && !workerPin) {
+    if (worker.login_required && !workerPin && !options?.skipPinRequirement) {
       setLoginError('Se requiere PIN para este trabajador.');
       return;
     }
@@ -505,7 +561,7 @@ const Login: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           worker_id: worker.id,
-          pin: worker.login_required ? workerPin : null,
+          pin: worker.login_required && !options?.skipPinRequirement ? workerPin : null,
           station_id: selectedStationId,
         }),
       });
@@ -526,6 +582,40 @@ const Login: React.FC = () => {
       setPinModalError(message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleQrDetected = (value: string) => {
+    const matchedWorker = findWorkerByQrValue(value, workers);
+    if (submitting) {
+      return;
+    }
+    if (!matchedWorker) {
+      return;
+    }
+    setSelectedWorkerId(matchedWorker.id);
+    if (!selectedStationId) {
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
+      setShowStationPicker(true);
+      return;
+    }
+    void handleWorkerLogin(matchedWorker, null, { skipPinRequirement: true });
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!fullscreenAvailable || document.fullscreenElement) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) {
+      return;
+    }
+    const now = Date.now();
+    const lastTap = lastTapRef.current;
+    lastTapRef.current = now;
+    if (now - lastTap < 300) {
+      void document.documentElement.requestFullscreen();
+      lastTapRef.current = 0;
     }
   };
 
@@ -639,7 +729,10 @@ const Login: React.FC = () => {
   }, [queuePreview]);
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col lg:flex-row">
+    <div
+      className="min-h-screen bg-gray-100 flex flex-col lg:flex-row"
+      onTouchEnd={handleTouchEnd}
+    >
       <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 bg-white shadow-xl z-10">
         <div className="mx-auto w-full max-w-2xl">
           <div className="flex items-center justify-between gap-4">
@@ -660,14 +753,27 @@ const Login: React.FC = () => {
               <MapPin className="h-4 w-4" />
               <span>{stationIndicatorLabel}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
-              aria-label="Abrir ajustes"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-3">
+              <span
+                className="flex h-9 w-9 items-center justify-center"
+                title={qrScanningEnabled ? 'Escaneo QR activo' : 'Escaneo QR inactivo'}
+                aria-hidden="true"
+              >
+                <QrCode
+                  className={`h-4 w-4 ${
+                    qrScanningEnabled ? 'text-slate-900' : 'text-slate-300'
+                  }`}
+                />
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                aria-label="Abrir ajustes"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+            </div>
           </div>
 
           <div className="mt-8 mb-6">
@@ -836,6 +942,15 @@ const Login: React.FC = () => {
         onAdminLastNameChange={setAdminLastName}
         onAdminPinChange={setAdminPin}
         onUseSysadminChange={handleSysadminToggle}
+        qrScanningEnabled={qrScanningEnabled}
+        onQrScanningChange={setQrScanningEnabled}
+      />
+
+      <QRCodeScannerModal
+        open={qrScanningEnabled}
+        onClose={() => setQrScanningEnabled(false)}
+        onDetected={handleQrDetected}
+        variant="background"
       />
 
       {showStationPicker && (

@@ -5,6 +5,7 @@ type QRCodeScannerModalProps = {
   open: boolean;
   onClose: () => void;
   onDetected: (value: string) => void;
+  variant?: 'modal' | 'background';
 };
 
 type DetectedBarcode = {
@@ -24,7 +25,12 @@ const FLASH_DURATION_MS = 140;
 const FULL_FRAME_INTERVAL = 8;
 const USE_GRAYSCALE = false;
 
-const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, onDetected }) => {
+const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({
+  open,
+  onClose,
+  onDetected,
+  variant = 'modal',
+}) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -219,14 +225,11 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
     setStatus('starting');
     setErrorMessage(null);
     try {
-      const videoConstraints: MediaTrackConstraints & {
-        advanced?: Array<Record<string, unknown>>;
-      } = {
-        facingMode: { ideal: 'environment' },
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: { ideal: 'user' },
         width: { ideal: 1280 },
         height: { ideal: 720 },
         frameRate: { ideal: 30, max: 30 },
-        advanced: [{ focusMode: 'continuous' }],
       };
       const stream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
@@ -257,11 +260,6 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
         throw new Error('BarcodeDetector no esta disponible.');
       }
       detectorRef.current = new Detector({ formats: ['qr_code'] });
-      const track = stream.getVideoTracks()[0];
-      const capabilities = track ? (track as unknown as { getCapabilities?: () => Record<string, unknown> }).getCapabilities?.() : null;
-      if (track && capabilities && 'torch' in capabilities) {
-        void track.applyConstraints({ advanced: [{ torch: true } as any] } as any);
-      }
       setStatus('ready');
       animationFrameRef.current = requestAnimationFrame(scanFrame);
     } catch (error) {
@@ -293,6 +291,15 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({ open, onClose, 
 
   if (!open) {
     return null;
+  }
+
+  if (variant === 'background') {
+    return (
+      <div className="sr-only" aria-hidden="true">
+        <video ref={videoRef} muted playsInline autoPlay />
+        <canvas ref={canvasRef} />
+      </div>
+    );
   }
 
   const statusLabel = (() => {

@@ -39,7 +39,7 @@
 
 ## 2026-01-07
 - QR login MVP uses the browser `BarcodeDetector` API with `getUserMedia` and a center ROI crop; decoded values are shown in the login UI and only matched to workers when the payload equals a worker ID, with no backend session wiring yet.
-- QC registro photo watermarks use `work_orders.house_identifier` for the house name and `work_units.planned_sequence` from `/api/production-queue` as the production sequence number, since QC check detail payloads do not expose those fields.
+- QC registro photo watermarks use `work_orders.house_identifier` for the house name via `/api/production-queue`, since QC check detail payloads do not expose the house identifier.
 
 ## 2026-01-08
 - Legacy module production rows are grouped by project name + house identifier + house type + subtype to create `work_orders`, with `work_units.id` set to the legacy `plan_id` and `work_orders.planned_sequence` set to the smallest module sequence in the group.

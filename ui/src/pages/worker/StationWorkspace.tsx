@@ -60,6 +60,19 @@ type Station = {
   sequence_order: number | null;
 };
 
+const formatStationRoleLabel = (role: Station['role']): string => {
+  if (role === 'Panels') {
+    return 'Paneles';
+  }
+  if (role === 'Assembly') {
+    return 'Ensamble';
+  }
+  if (role === 'AUX') {
+    return 'Auxiliares';
+  }
+  return role;
+};
+
 type StationPickerMode =
   | { kind: 'station_list' }
   | { kind: 'panel_line' }
@@ -98,6 +111,9 @@ type StationTask = {
   current_worker_participating?: boolean;
   backlog?: boolean;
 };
+
+const buildTaskNameKey = (task: StationTask, workItemId: string): string =>
+  `${workItemId}-${task.task_instance_id ?? `definition-${task.task_definition_id}`}`;
 
 type StationWorkItem = {
   id: string;
@@ -281,6 +297,7 @@ const StationWorkspace: React.FC = () => {
   const [commentError, setCommentError] = useState<string | null>(null);
   const [crewWorkers, setCrewWorkers] = useState<Worker[]>([]);
   const [crewSelection, setCrewSelection] = useState<number[]>([]);
+  const [expandedTaskNames, setExpandedTaskNames] = useState<Set<string>>(() => new Set());
   const [crewQuery, setCrewQuery] = useState('');
   const [regularCrewByTaskId, setRegularCrewByTaskId] = useState<Record<number, number[]>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -314,6 +331,18 @@ const StationWorkspace: React.FC = () => {
     };
   }, [selectedWorkItem]);
 
+  const toggleTaskNameExpansion = useCallback((key: string) => {
+    setExpandedTaskNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
   const contextLabel = useMemo(
     () => getContextLabel(stationContext, stations),
     [stationContext, stations]
@@ -337,24 +366,21 @@ const StationWorkspace: React.FC = () => {
     ];
     if (stations.some((station) => station.role === 'Panels')) {
       options.push({
-        label: 'Linea de paneles',
+        label: getContextLabel({ kind: 'panel_line' }, stations),
         mode: { kind: 'panel_line' },
         context: { kind: 'panel_line' },
       });
     }
     assemblySequenceOrders.forEach((order) => {
-      const station = stations.find(
-        (item) => item.role === 'Assembly' && item.sequence_order === order
-      );
       options.push({
-        label: station ? `Ensamble - ${station.name}` : `Secuencia de ensamble ${order}`,
+        label: getContextLabel({ kind: 'assembly_sequence', sequenceOrder: order }, stations),
         mode: { kind: 'assembly_sequence', sequenceOrder: order },
         context: { kind: 'assembly_sequence', sequenceOrder: order },
       });
     });
     if (stations.some((station) => station.role === 'AUX')) {
       options.push({
-        label: 'Auxiliar',
+        label: getContextLabel({ kind: 'aux' }, stations),
         mode: { kind: 'aux' },
         context: { kind: 'aux' },
       });
@@ -996,6 +1022,8 @@ const StationWorkspace: React.FC = () => {
       concurrencyAction: 'joining',
     });
     const completeLabel = task.advance_trigger ? 'Terminar y avanzar' : 'Terminar';
+    const taskNameKey = buildTaskNameKey(task, workItem.id);
+    const isTaskNameExpanded = expandedTaskNames.has(taskNameKey);
     return (
       <div
         key={task.task_definition_id}
@@ -1012,11 +1040,22 @@ const StationWorkspace: React.FC = () => {
       >
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold text-gray-900">{task.name}</h3>
-              {statusBadge(task.status)}
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => toggleTaskNameExpansion(taskNameKey)}
+                title={task.name}
+                aria-expanded={isTaskNameExpanded}
+                className={clsx(
+                  'min-w-0 flex-1 text-left text-lg font-semibold text-gray-900',
+                  isTaskNameExpanded ? 'whitespace-normal break-words' : 'truncate'
+                )}
+              >
+                {task.name}
+              </button>
+              <div className="shrink-0">{statusBadge(task.status)}</div>
               {task.advance_trigger && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-100 text-slate-600 border-slate-200">
+                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-slate-100 text-slate-600 border-slate-200">
                   Avanza estacion
                 </span>
               )}
@@ -1724,8 +1763,8 @@ const StationWorkspace: React.FC = () => {
           </h1>
           <p className="mt-1 text-sm text-gray-500">
             {selectedStation
-              ? `${selectedStation.role}${
-                  selectedStation.line_type ? ` - Linea ${selectedStation.line_type}` : ''
+              ? `${formatStationRoleLabel(selectedStation.role)}${
+                  selectedStation.line_type ? ` - Línea ${selectedStation.line_type}` : ''
                 }`
               : 'Selecciona una estacion para comenzar.'}
           </p>
@@ -2027,8 +2066,8 @@ const StationWorkspace: React.FC = () => {
                     >
                       <div className="font-semibold text-gray-900">{station.name}</div>
                       <div className="text-xs text-gray-500">
-                        {station.role}
-                        {station.line_type ? ` - Linea ${station.line_type}` : ''}
+                        {formatStationRoleLabel(station.role)}
+                        {station.line_type ? ` - Línea ${station.line_type}` : ''}
                       </div>
                     </button>
                   ))}
@@ -2078,8 +2117,8 @@ const StationWorkspace: React.FC = () => {
                 >
                   <div className="font-semibold text-gray-900">{station.name}</div>
                   <div className="text-xs text-gray-500">
-                    {station.role}
-                    {station.line_type ? ` - Linea ${station.line_type}` : ''}
+                    {formatStationRoleLabel(station.role)}
+                    {station.line_type ? ` - Línea ${station.line_type}` : ''}
                   </div>
                 </button>
               ))}

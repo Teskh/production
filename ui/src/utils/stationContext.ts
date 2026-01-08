@@ -16,6 +16,8 @@ export const STATION_CONTEXT_STORAGE_KEY = 'selectedStationContext';
 export const SPECIFIC_STATION_ID_STORAGE_KEY = 'selectedSpecificStationId';
 export const AUTOFOCUS_PREV_CONTEXT_KEY = 'autoFocusPrevStationContext';
 
+const formatLineName = (value: string): string => value.replace(/^Linea\b/i, 'Línea');
+
 export const parseStationContext = (value: string | null): StationContext | null => {
   if (!value) {
     return null;
@@ -57,8 +59,9 @@ export const formatStationContext = (context: StationContext): string => {
 
 export const formatStationLabel = (station: StationSummary): string => {
   const lineLabel =
-    station.role === 'Assembly' && station.line_type ? ` - Line ${station.line_type}` : '';
-  return `${station.name}${lineLabel}`;
+    station.role === 'Assembly' && station.line_type ? ` - Línea ${station.line_type}` : '';
+  const baseName = formatLineName(station.name);
+  return `${baseName}${lineLabel}`;
 };
 
 export const isStationInContext = (
@@ -123,17 +126,20 @@ export const getContextLabel = (
     return 'No context selected';
   }
   if (context.kind === 'panel_line') {
-    return 'Panel line';
+    return 'Paneles';
   }
   if (context.kind === 'aux') {
-    return 'Auxiliary';
+    return 'Auxiliares';
   }
   if (context.kind === 'assembly_sequence') {
     const station = stations.find(
       (item) =>
         item.role === 'Assembly' && item.sequence_order === context.sequenceOrder
     );
-    return station ? `Assembly - ${station.name}` : `Assembly sequence ${context.sequenceOrder}`;
+    if (station) {
+      return formatLineName(station.name);
+    }
+    return `Línea ${context.sequenceOrder}`;
   }
   const station = stations.find((item) => item.id === context.stationId);
   return station ? formatStationLabel(station) : `Station ${context.stationId}`;

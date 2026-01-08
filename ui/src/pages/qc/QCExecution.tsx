@@ -7,11 +7,8 @@ import {
   MessageSquare,
   AlertTriangle,
   ChevronLeft,
-  SkipForward,
-  AlertCircle,
   ChevronRight,
   Image,
-  RotateCw,
 } from 'lucide-react';
 import { CHECK_DEFINITIONS, PENDING_CHECKS, FAILURE_MODES, SEVERITY_LEVELS } from '../../services/qcMockData';
 
@@ -70,7 +67,7 @@ type QCCheckInstanceDetail = {
 
 type ProductionQueueItemSummary = {
   id: number;
-  planned_sequence: number;
+  project_name: string;
   house_identifier: string;
 };
 
@@ -174,7 +171,6 @@ const QCExecution: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('environment');
   const [cameraReady, setCameraReady] = useState(false);
   const [captureFlash, setCaptureFlash] = useState(false);
   const refTouchState = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null);
@@ -418,14 +414,14 @@ const QCExecution: React.FC = () => {
 
   const buildWatermarkLines = (date: Date) => {
     const parts: string[] = [];
+    if (workUnitMeta?.project_name) {
+      parts.push(workUnitMeta.project_name);
+    }
     if (workUnitMeta?.house_identifier) {
       parts.push(`Casa ${workUnitMeta.house_identifier}`);
     }
     if (headerModule) {
       parts.push(`Modulo ${headerModule}`);
-    }
-    if (workUnitMeta?.planned_sequence && workUnitMeta.planned_sequence > 0) {
-      parts.push(`Sec ${workUnitMeta.planned_sequence}`);
     }
     if (headerPanel) {
       parts.push(`Panel ${headerPanel}`);
@@ -466,7 +462,7 @@ const QCExecution: React.FC = () => {
       setCameraReady(false);
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: cameraFacingMode },
+          video: { facingMode: 'environment' },
           audio: false,
         });
         if (!active) {
@@ -494,7 +490,7 @@ const QCExecution: React.FC = () => {
       active = false;
       stopCamera();
     };
-  }, [cameraFacingMode, showCamera]);
+  }, [showCamera]);
 
   const handleCameraCapture = async () => {
     if (!videoRef.current || !canvasRef.current) {
@@ -725,16 +721,6 @@ const QCExecution: React.FC = () => {
       }
     };
 
-  const handleSkipStep = () => {
-    if (currentStep < steps.length - 1) {
-      setCurrentStep((prev) => prev + 1);
-    }
-  };
-
-  const handleSkipCheck = () => {
-    void executeCheck('Skip');
-  };
-
   const canSubmitFail = selectedFailureModeIds.length > 0 && !!selectedSeverityId;
   const previewEvidence = previewEvidenceId
     ? evidence.find((item) => item.id === previewEvidenceId) ?? null
@@ -937,7 +923,7 @@ const QCExecution: React.FC = () => {
             {currentStepData?.desc || checkDef?.guidance || 'Sin guia adicional.'}
           </p>
           {reworkState && (
-            <p className="text-xs text-slate-400 mt-2">Re-trabajo: {reworkState.description}</p>
+            <p className="text-xs text-slate-400 mt-2">Estado: {reworkState.description}</p>
           )}
           {actionError && (
             <p className="mt-2 rounded-lg border border-red-500/40 bg-red-900/30 px-3 py-2 text-xs text-red-200">
@@ -1005,26 +991,6 @@ const QCExecution: React.FC = () => {
                 )}
               </div>
             )}
-          </div>
-
-          {/* Center: Secondary Actions */}
-          <div className="hidden sm:flex items-center gap-1">
-            <button
-              onClick={handleSkipStep}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
-              title="Omitir paso"
-              disabled={currentStep >= steps.length - 1}
-            >
-              <SkipForward className="w-5 h-5" />
-            </button>
-            <button
-              onClick={handleSkipCheck}
-              className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
-              title="Omitir revision"
-              disabled={isSubmitting}
-            >
-              <AlertCircle className="w-5 h-5" />
-            </button>
           </div>
 
           {/* Right: Main Actions */}
@@ -1101,12 +1067,7 @@ const QCExecution: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900/90 border-b border-slate-800">
             <div className="text-sm text-slate-200 font-semibold">Registro</div>
-            <button
-              onClick={closeCamera}
-              className="px-4 py-1.5 rounded-full bg-emerald-500 text-slate-900 font-semibold hover:bg-emerald-400"
-            >
-              Listo
-            </button>
+            <div />
           </div>
           <div className="flex-1 relative bg-slate-950">
             {cameraError ? (
@@ -1164,7 +1125,7 @@ const QCExecution: React.FC = () => {
             {!cameraError && (
               <>
                 {evidence.length > 0 && (
-                  <div className="absolute bottom-6 left-4 right-36 flex items-center gap-3 overflow-x-auto pb-2">
+                  <div className="absolute bottom-6 left-4 right-44 flex items-center gap-3 overflow-x-auto pb-2">
                     {evidence.map((item) => (
                       <div
                         key={item.id}
@@ -1173,6 +1134,7 @@ const QCExecution: React.FC = () => {
                         onClick={() => setPreviewEvidenceId(item.id)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
                             setPreviewEvidenceId(item.id);
                           }
                         }}
@@ -1197,30 +1159,29 @@ const QCExecution: React.FC = () => {
                     ))}
                   </div>
                 )}
-                <button
-                  onClick={() =>
-                    setCameraFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))
-                  }
-                  className="absolute bottom-6 right-28 p-3 rounded-full bg-slate-800 text-white hover:bg-slate-700"
-                  title="Cambiar camara"
-                >
-                  <RotateCw className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={handleCameraCapture}
-                  disabled={!cameraReady}
-                  className={`absolute bottom-6 right-6 w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
-                    cameraReady
-                      ? 'border-white hover:scale-105'
-                      : 'border-slate-600 opacity-50 cursor-not-allowed'
-                  }`}
-                >
-                  <div
-                    className={`w-16 h-16 rounded-full ${
-                      cameraReady ? 'bg-white' : 'bg-slate-600'
+                <div className="absolute bottom-6 right-6 flex items-center gap-3">
+                  <button
+                    onClick={closeCamera}
+                    className="px-4 py-2 rounded-full bg-emerald-500 text-slate-900 font-semibold hover:bg-emerald-400"
+                  >
+                    Listo
+                  </button>
+                  <button
+                    onClick={handleCameraCapture}
+                    disabled={!cameraReady}
+                    className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
+                      cameraReady
+                        ? 'border-white hover:scale-105'
+                        : 'border-slate-600 opacity-50 cursor-not-allowed'
                     }`}
-                  />
-                </button>
+                  >
+                    <div
+                      className={`w-16 h-16 rounded-full ${
+                        cameraReady ? 'bg-white' : 'bg-slate-600'
+                      }`}
+                    />
+                  </button>
+                </div>
               </>
             )}
           </div>

@@ -608,7 +608,7 @@ def execute_qc_check(
             if mode and mode.default_rework_description:
                 rework_description = mode.default_rework_description
         if not rework_description:
-            rework_description = "Rework required"
+            rework_description = "Re-trabajo requerido"
         rework = QCReworkTask(
             check_instance_id=instance.id,
             description=rework_description,

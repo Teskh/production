@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, MapPin, Maximize2, Minimize2, Shield, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Eye, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
 import type { StationContext } from '../utils/stationContext';
 import { formatStationContext, formatStationLabel } from '../utils/stationContext';
 
@@ -32,6 +32,8 @@ type LoginSettingsProps = {
   onAdminLastNameChange: (value: string) => void;
   onAdminPinChange: (value: string) => void;
   onUseSysadminChange: (checked: boolean) => void;
+  qrScanningEnabled: boolean;
+  onQrScanningChange: (enabled: boolean) => void;
   onClose: () => void;
 };
 
@@ -103,6 +105,8 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   onAdminLastNameChange,
   onAdminPinChange,
   onUseSysadminChange,
+  qrScanningEnabled,
+  onQrScanningChange,
   onClose,
 }) => {
   const initialState = buildInitialContextState(stationContext, selectedStation);
@@ -118,7 +122,6 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   const [adminOpen, setAdminOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
-  const lastTapRef = useRef(0);
 
   const currentContextLabel = useMemo(() => {
     if (!stationContext) {
@@ -194,29 +197,13 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     await document.documentElement.requestFullscreen();
   };
 
-  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!fullscreenAvailable || document.fullscreenElement) {
-      return;
-    }
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('button, input, textarea, select, a')) {
-      return;
-    }
-    const now = Date.now();
-    const lastTap = lastTapRef.current;
-    lastTapRef.current = now;
-    if (now - lastTap < 300) {
-      document.documentElement.requestFullscreen();
-      lastTapRef.current = 0;
-    }
-  };
 
   if (!open) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto" onTouchEnd={handleTouchEnd}>
+    <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-screen items-center justify-center px-4 text-center sm:block sm:p-0">
         <div className="fixed inset-0 bg-slate-900/60" onClick={onClose} aria-hidden="true" />
 
@@ -352,6 +339,45 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                     </button>
                   </form>
                 )}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-slate-500" />
+                      <h3 className="text-sm font-semibold text-slate-800">Escaneo QR</h3>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Activa el escaneo continuo para inicio rapido.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={qrScanningEnabled}
+                    onClick={() => onQrScanningChange(!qrScanningEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
+                      qrScanningEnabled
+                        ? 'border-slate-900 bg-slate-900'
+                        : 'border-slate-200 bg-slate-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                        qrScanningEnabled ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      qrScanningEnabled ? 'bg-emerald-400' : 'bg-slate-300'
+                    }`}
+                  />
+                  {qrScanningEnabled ? 'Activo' : 'Inactivo'}
+                </div>
               </div>
             </section>
 
