@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Printer, Upload, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Printer, X } from 'lucide-react';
 
 type WorkerBadgePerson = {
   id: number;
@@ -24,12 +25,13 @@ type QRCodeMatrix = {
   truncated: boolean;
 };
 
-const LOGO_STORAGE_KEY = 'worker_badge_logo_src';
+const LOGO_SRC = '/logo.png';
 const BADGE_WIDTH_MM = 86;
 const BADGE_HEIGHT_MM = 54;
 const BADGE_GAP_MM = 6;
 const PAGE_MARGIN_MM = 10;
-const QR_SIZE_MM = 26;
+const QR_SIZE_MM = 32;
+const MM_TO_PX = 3.7795;
 // Minimal QR generator (version 4, ECC M) to keep printing offline and dependency-free.
 const QR_TYPE_NUMBER = 4;
 const QR_ERROR_CORRECTION_LEVEL = 0;
@@ -612,8 +614,34 @@ const buildQrPath = (modules: boolean[][]): string => {
   return path.join('');
 };
 
+const getPrimaryNamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.split(/\s+/)[0];
+};
+
+const getNameParts = (
+  worker: WorkerBadgePerson
+): { first: string; last: string; full: string } => {
+  const first = getPrimaryNamePart(worker.first_name);
+  const last = getPrimaryNamePart(worker.last_name);
+  if (!first && !last) {
+    return { first: 'Trabajador', last: '', full: 'Trabajador' };
+  }
+  if (!first) {
+    return { first: last, last: '', full: last };
+  }
+  return {
+    first,
+    last,
+    full: [first, last].filter(Boolean).join(' ').trim(),
+  };
+};
+
 const buildDisplayName = (worker: WorkerBadgePerson): string => {
-  return [worker.first_name, worker.last_name].filter(Boolean).join(' ').trim() || 'Trabajador';
+  return getNameParts(worker).full;
 };
 
 const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
@@ -626,29 +654,11 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   const [paperSize, setPaperSize] = useState<PaperSize>('a4');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
-  const [logoSrc, setLogoSrc] = useState<string | null>(null);
   const [showCutLines, setShowCutLines] = useState(true);
+  const [previewScale, setPreviewScale] = useState(1);
+  const previewRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    const stored = window.localStorage.getItem(LOGO_STORAGE_KEY);
-    if (stored) {
-      setLogoSrc(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    if (logoSrc) {
-      window.localStorage.setItem(LOGO_STORAGE_KEY, logoSrc);
-    } else {
-      window.localStorage.removeItem(LOGO_STORAGE_KEY);
-    }
-  }, [logoSrc]);
+  const logoSrc = LOGO_SRC;
 
   useEffect(() => {
     if (!open) {
@@ -707,20 +717,73 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   const badgeItems = useMemo(() => {
     const qrCache = new Map<string, { path: string; moduleCount: number; truncated: boolean }>();
     return selectedWorkers.map((worker) => {
-      const name = buildDisplayName(worker);
-      const cached = qrCache.get(name);
+      const { first, last, full } = getNameParts(worker);
+      const cached = qrCache.get(full);
       if (cached) {
-        return { id: worker.id, name, ...cached };
+        return { id: worker.id, name: full, firstName: first, lastName: last, ...cached };
       }
-      const matrix = createQrCodeMatrix(name);
+      const matrix = createQrCodeMatrix(full);
       const path = buildQrPath(matrix.modules);
       const entry = { path, moduleCount: matrix.moduleCount, truncated: matrix.truncated };
-      qrCache.set(name, entry);
-      return { id: worker.id, name, ...entry };
+      qrCache.set(full, entry);
+      return { id: worker.id, name: full, firstName: first, lastName: last, ...entry };
     });
   }, [selectedWorkers]);
 
   const paper = PAPER_SIZES[paperSize];
+
+  useEffect(() => {
+    if (!open || typeof window === 'undefined') {
+      return;
+    }
+    const element = previewRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateScale = () => {
+      const { clientWidth, clientHeight } = element;
+      const styles = window.getComputedStyle(element);
+      const paddingX =
+        parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const paddingY =
+        parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      const availableWidth = clientWidth - paddingX;
+      const availableHeight = clientHeight - paddingY;
+      if (!availableWidth || !availableHeight) {
+        return;
+      }
+      const pageWidthPx = paper.width * MM_TO_PX;
+      const pageHeightPx = paper.height * MM_TO_PX;
+      const nextScale = Math.min(
+        1,
+        availableWidth / pageWidthPx,
+        availableHeight / pageHeightPx
+      );
+      if (Number.isFinite(nextScale)) {
+        setPreviewScale(nextScale);
+      }
+    };
+
+    updateScale();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateScale);
+      return () => {
+        window.removeEventListener('resize', updateScale);
+      };
+    }
+
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(element);
+    window.addEventListener('resize', updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateScale);
+    };
+  }, [open, paper.height, paper.width]);
+
+  const scaledPageWidth = paper.width * previewScale;
+  const scaledPageHeight = paper.height * previewScale;
   const columns = Math.max(
     1,
     Math.floor((paper.width - PAGE_MARGIN_MM * 2 + BADGE_GAP_MM) / (BADGE_WIDTH_MM + BADGE_GAP_MM))
@@ -743,20 +806,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   }, [badgeItems, badgesPerPage]);
 
   const truncatedCount = badgeItems.filter((item) => item.truncated).length;
-  const hasLogo = Boolean(logoSrc);
-  const canPrint = badgeItems.length > 0 && hasLogo;
-
-  const handleLogoUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setLogoSrc(typeof reader.result === 'string' ? reader.result : null);
-    };
-    reader.readAsDataURL(file);
-  };
+  const canPrint = badgeItems.length > 0;
 
   const toggleWorker = (workerId: number) => {
     setSelectedIds((prev) => {
@@ -779,14 +829,108 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   };
 
   const printStyles = `
+    .badge-print-only { display: none; }
     @page { size: ${paper.pageLabel}; margin: 0; }
     @media print {
-      body { background: #fff; }
-      .badge-no-print { display: none !important; }
-      .badge-modal-root { position: static !important; display: block !important; padding: 0 !important; }
-      .badge-modal-content { max-width: none !important; width: auto !important; border-radius: 0 !important; box-shadow: none !important; }
-      .badge-print-root { padding: 0 !important; background: #fff !important; border: none !important; }
-      .badge-page { box-shadow: none !important; border: none !important; margin: 0 auto !important; }
+      html, body { 
+        background: #fff !important; 
+        margin: 0 !important; 
+        padding: 0 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      body > *:not(.badge-modal-root) { display: none !important; }
+      .badge-no-print, .badge-screen-only { display: none !important; }
+      .badge-modal-root { 
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        display: block !important; 
+        padding: 0 !important;
+        background: #fff !important;
+        z-index: 999999 !important;
+      }
+      .badge-modal-content { 
+        position: static !important;
+        max-width: none !important; 
+        width: auto !important; 
+        height: auto !important; 
+        max-height: none !important; 
+        border-radius: 0 !important; 
+        box-shadow: none !important;
+        overflow: visible !important;
+        background: #fff !important;
+        display: block !important;
+      }
+      .badge-print-only { 
+        display: block !important; 
+        position: static !important;
+      }
+      .badge-page-outer { 
+        width: ${paper.width}mm !important; 
+        height: ${paper.height}mm !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
+      }
+      .badge-page { 
+        box-shadow: none !important; 
+        border: none !important; 
+        margin: 0 !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+      }
+      .badge-card {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: #fff !important;
+      }
+      .badge-card-inner {
+        display: flex !important;
+        height: 100% !important;
+        width: 100% !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 0.75rem !important;
+        padding: 0.75rem 1rem !important;
+      }
+      .badge-name-section {
+        display: flex !important;
+        height: 100% !important;
+        min-width: 0 !important;
+        flex: 1 !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        gap: 0.5rem !important;
+      }
+      .badge-name-text {
+        text-align: left !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        line-height: 1.25 !important;
+        color: #0f172a !important;
+      }
+      .badge-logo-container {
+        display: flex !important;
+        width: 100% !important;
+        align-items: flex-end !important;
+        height: 10mm !important;
+      }
+      .badge-logo-container img {
+        height: 100% !important;
+        width: auto !important;
+        object-fit: contain !important;
+      }
+      .badge-qr-container {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+      .badge-qr-container svg {
+        display: block !important;
+      }
     }
   `;
 
@@ -794,11 +938,11 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
     return null;
   }
 
-  return (
+  return createPortal(
     <div className="badge-modal-root fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
       <style>{printStyles}</style>
       <div className="badge-no-print absolute inset-0 bg-slate-900/70" onClick={onClose} />
-      <div className="badge-modal-content relative w-full max-w-6xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+      <div className="badge-modal-content relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
         <div className="badge-no-print flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
             <h3 className="text-lg font-semibold text-slate-900">Credenciales QR</h3>
@@ -815,8 +959,8 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
           </button>
         </div>
 
-        <div className="grid gap-6 p-6 lg:grid-cols-[340px_minmax(0,1fr)]">
-          <div className="badge-no-print space-y-5">
+        <div className="grid flex-1 min-h-0 gap-6 p-6 lg:grid-cols-[340px_minmax(0,1fr)]">
+          <div className="badge-no-print min-h-0 space-y-5 overflow-auto pr-2">
             <div>
               <div className="text-xs uppercase tracking-wide text-slate-500">Modo</div>
               <div className="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-500">
@@ -919,41 +1063,6 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
             </div>
 
             <div className="space-y-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">Logo oficial</div>
-              <div className="flex items-center gap-3">
-                <div className="h-12 w-12 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                  {logoSrc && <img src={logoSrc} alt="Logo" className="h-full w-full object-contain" />}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                    <Upload className="h-3.5 w-3.5" />
-                    Cargar logo
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleLogoUpload}
-                    />
-                  </label>
-                  {logoSrc && (
-                    <button
-                      type="button"
-                      onClick={() => setLogoSrc(null)}
-                      className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                    >
-                      Quitar
-                    </button>
-                  )}
-                </div>
-              </div>
-              {!logoSrc && (
-                <p className="text-xs text-amber-600">
-                  Carga el logo oficial para habilitar la impresion.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-3">
               <div className="text-xs uppercase tracking-wide text-slate-500">Impresion</div>
               <div className="grid gap-3 text-sm text-slate-600">
                 <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
@@ -991,7 +1100,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="flex min-h-0 flex-col space-y-4">
             <div className="badge-no-print flex items-center justify-between text-sm text-slate-600">
               <div>
                 {badgeItems.length === 0
@@ -1009,70 +1118,84 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
               </button>
             </div>
 
-            <div className="badge-print-root space-y-6 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div
+              ref={previewRef}
+              className="badge-print-root badge-screen-only flex-1 min-h-0 space-y-6 overflow-auto rounded-2xl border border-slate-200 bg-slate-50 p-4"
+            >
               {pages.map((page, pageIndex) => (
                 <div
                   key={`page-${pageIndex}`}
-                  className="badge-page mx-auto overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                  className="badge-page-outer mx-auto overflow-hidden rounded-2xl"
                   style={{
-                    width: `${paper.width}mm`,
-                    height: `${paper.height}mm`,
-                    padding: `${PAGE_MARGIN_MM}mm`,
+                    width: `${scaledPageWidth}mm`,
+                    height: `${scaledPageHeight}mm`,
                     pageBreakAfter: pageIndex === pages.length - 1 ? 'auto' : 'always',
                   }}
                 >
                   <div
-                    className="grid"
+                    className="badge-page badge-page-preview h-full w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
                     style={{
-                      gridTemplateColumns: `repeat(${columns}, ${BADGE_WIDTH_MM}mm)`,
-                      gridAutoRows: `${BADGE_HEIGHT_MM}mm`,
-                      gap: `${BADGE_GAP_MM}mm`,
-                      justifyContent: 'center',
-                      alignContent: 'start',
+                      width: `${paper.width}mm`,
+                      height: `${paper.height}mm`,
+                      padding: `${PAGE_MARGIN_MM}mm`,
+                      transform: `scale(${previewScale})`,
+                      transformOrigin: 'top left',
                     }}
                   >
-                    {page.map((badge) => (
-                      <div
-                        key={badge.id}
-                        className={`flex items-center justify-center rounded-xl bg-white ${
-                          showCutLines ? 'border border-dashed border-slate-300' : ''
-                        }`}
-                        style={{ width: `${BADGE_WIDTH_MM}mm`, height: `${BADGE_HEIGHT_MM}mm` }}
-                      >
-                        <div className="flex h-full w-full flex-col items-center justify-between px-4 py-3">
-                          <div className="flex h-8 w-full items-center justify-center">
-                            {logoSrc && (
-                              <img
-                                src={logoSrc}
-                                alt="Logo"
-                                className="h-full max-h-8 w-auto object-contain"
-                              />
-                            )}
-                          </div>
-                          <div className="flex items-center justify-center">
-                            <svg
-                              width={`${QR_SIZE_MM}mm`}
-                              height={`${QR_SIZE_MM}mm`}
-                              viewBox={`0 0 ${badge.moduleCount} ${badge.moduleCount}`}
-                              className="text-black"
-                              shapeRendering="crispEdges"
-                            >
-                              <rect
-                                x="0"
-                                y="0"
-                                width={badge.moduleCount}
-                                height={badge.moduleCount}
-                                fill="white"
-                              />
-                              <path d={badge.path} fill="currentColor" />
-                            </svg>
-                          </div>
-                          <div className="w-full text-center text-[10px] font-semibold uppercase tracking-wide text-slate-900">
-                            {badge.name}
+                    <div
+                      className="grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${columns}, ${BADGE_WIDTH_MM}mm)`,
+                        gridAutoRows: `${BADGE_HEIGHT_MM}mm`,
+                        gap: `${BADGE_GAP_MM}mm`,
+                        justifyContent: 'center',
+                        alignContent: 'start',
+                      }}
+                    >
+                      {page.map((badge) => (
+                        <div
+                          key={badge.id}
+                          className={`badge-card flex items-center justify-center rounded-xl bg-white ${
+                            showCutLines ? 'border border-dashed border-slate-300' : ''
+                          }`}
+                          style={{ width: `${BADGE_WIDTH_MM}mm`, height: `${BADGE_HEIGHT_MM}mm` }}
+                        >
+                          <div className="badge-card-inner flex h-full w-full items-center justify-between gap-3 px-4 py-3">
+                            <div className="badge-name-section flex h-full min-w-0 flex-1 flex-col justify-center gap-2">
+                              <div className="badge-name-text text-left text-[15px] font-semibold uppercase leading-tight text-slate-900">
+                                <div>{badge.firstName}</div>
+                                {badge.lastName && <div>{badge.lastName}</div>}
+                              </div>
+                              <div className="badge-logo-container flex w-full items-end" style={{ height: '10mm' }}>
+                                <img
+                                  src={logoSrc}
+                                  alt="Logo"
+                                  className="h-full w-auto object-contain"
+                                />
+                              </div>
+                            </div>
+                            <div className="badge-qr-container flex items-center justify-center">
+                              <svg
+                                width={`${QR_SIZE_MM}mm`}
+                                height={`${QR_SIZE_MM}mm`}
+                                viewBox={`0 0 ${badge.moduleCount} ${badge.moduleCount}`}
+                                style={{ color: 'black' }}
+                                shapeRendering="crispEdges"
+                              >
+                                <rect
+                                  x="0"
+                                  y="0"
+                                  width={badge.moduleCount}
+                                  height={badge.moduleCount}
+                                  fill="white"
+                                />
+                                <path d={badge.path} fill="currentColor" />
+                              </svg>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1081,6 +1204,138 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                   Vista previa disponible cuando selecciones trabajadores.
                 </div>
               )}
+            </div>
+
+            <div className="badge-print-only">
+              {pages.map((page, pageIndex) => (
+                <div
+                  key={`print-page-${pageIndex}`}
+                  className="badge-page-outer"
+                  style={{
+                    width: `${paper.width}mm`,
+                    height: `${paper.height}mm`,
+                    pageBreakAfter: pageIndex === pages.length - 1 ? 'auto' : 'always',
+                  }}
+                >
+                  <div
+                    className="badge-page"
+                    style={{
+                      width: `${paper.width}mm`,
+                      height: `${paper.height}mm`,
+                      padding: `${PAGE_MARGIN_MM}mm`,
+                      background: '#fff',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${columns}, ${BADGE_WIDTH_MM}mm)`,
+                        gridAutoRows: `${BADGE_HEIGHT_MM}mm`,
+                        gap: `${BADGE_GAP_MM}mm`,
+                        justifyContent: 'center',
+                        alignContent: 'start',
+                      }}
+                    >
+                      {page.map((badge) => (
+                        <div
+                          key={badge.id}
+                          className="badge-card"
+                          style={{
+                            width: `${BADGE_WIDTH_MM}mm`,
+                            height: `${BADGE_HEIGHT_MM}mm`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: '#fff',
+                            border: showCutLines ? '1px dashed #cbd5e1' : 'none',
+                          }}
+                        >
+                          <div
+                            className="badge-card-inner"
+                            style={{
+                              display: 'flex',
+                              height: '100%',
+                              width: '100%',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '0.75rem',
+                              padding: '0.75rem 1rem',
+                            }}
+                          >
+                            <div
+                              className="badge-name-section"
+                              style={{
+                                display: 'flex',
+                                height: '100%',
+                                minWidth: 0,
+                                flex: 1,
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                gap: '0.5rem',
+                              }}
+                            >
+                              <div
+                                className="badge-name-text"
+                                style={{
+                                  textAlign: 'left',
+                                  fontSize: '15px',
+                                  fontWeight: 600,
+                                  textTransform: 'uppercase',
+                                  lineHeight: 1.25,
+                                  color: '#0f172a',
+                                }}
+                              >
+                                <div>{badge.firstName}</div>
+                                {badge.lastName && <div>{badge.lastName}</div>}
+                              </div>
+                              <div
+                                className="badge-logo-container"
+                                style={{
+                                  display: 'flex',
+                                  width: '100%',
+                                  alignItems: 'flex-end',
+                                  height: '10mm',
+                                }}
+                              >
+                                <img
+                                  src={logoSrc}
+                                  alt="Logo"
+                                  style={{ height: '100%', width: 'auto', objectFit: 'contain' }}
+                                />
+                              </div>
+                            </div>
+                            <div
+                              className="badge-qr-container"
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              <svg
+                                width={`${QR_SIZE_MM}mm`}
+                                height={`${QR_SIZE_MM}mm`}
+                                viewBox={`0 0 ${badge.moduleCount} ${badge.moduleCount}`}
+                                style={{ color: 'black', display: 'block' }}
+                                shapeRendering="crispEdges"
+                              >
+                                <rect
+                                  x="0"
+                                  y="0"
+                                  width={badge.moduleCount}
+                                  height={badge.moduleCount}
+                                  fill="white"
+                                />
+                                <path d={badge.path} fill="currentColor" />
+                              </svg>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1096,7 +1351,8 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
