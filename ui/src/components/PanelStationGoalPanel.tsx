@@ -3,10 +3,13 @@ import { Target } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PANEL_GOAL_STORAGE_KEY = 'panel_daily_goal';
+const SHIFT_START = { hours: 8, minutes: 20 };
+const SHIFT_END = { hours: 17, minutes: 0 };
 
 type PanelsPassedSummary = {
   plan_id?: number | null;
   panel_definition_id?: number | null;
+  satisfied_at?: string | null;
 };
 
 type StationPanelsPassedResponse = {
@@ -25,6 +28,19 @@ const pad = (value: number) => String(value).padStart(2, '0');
 const todayStr = () => {
   const now = new Date();
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+};
+
+const timeLabel = (hours: number, minutes: number) => `${pad(hours)}:${pad(minutes)}`;
+
+const buildShiftBoundary = (dateToken: string, hours: number, minutes: number) =>
+  new Date(`${dateToken}T${pad(hours)}:${pad(minutes)}:00`);
+
+const parseSatisfiedAt = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed;
 };
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -55,6 +71,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   stationId,
   stationLabel,
 }) => {
+  const [todayToken] = useState(() => todayStr());
   const [goalDraft, setGoalDraft] = useState(() => {
     if (typeof window === 'undefined') {
       return '';
@@ -62,6 +79,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
     return localStorage.getItem(PANEL_GOAL_STORAGE_KEY) ?? '';
   });
   const [passedCount, setPassedCount] = useState(0);
+  const [passedPanels, setPassedPanels] = useState<PanelsPassedSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,22 +102,25 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
       try {
         const params = new URLSearchParams();
         params.set('station_id', String(stationId));
-        params.set('date', todayStr());
+        params.set('date', todayToken);
         const data = await apiRequest<StationPanelsPassedResponse>(
           `/api/station-panels-finished?${params.toString()}`
         );
         if (!active) return;
+        const list = Array.isArray(data?.panels_passed_today_list)
+          ? data.panels_passed_today_list
+          : [];
         const countRaw =
           data?.panels_passed_today_count ??
-          (Array.isArray(data?.panels_passed_today_list)
-            ? data.panels_passed_today_list.length
-            : data?.total_panels_finished) ??
+          (list.length > 0 ? list.length : data?.total_panels_finished) ??
           0;
+        setPassedPanels(list);
         setPassedCount(Number.isFinite(countRaw) ? Number(countRaw) : 0);
       } catch (err) {
         if (!active) return;
         const message = err instanceof Error ? err.message : 'Error cargando paneles';
         setError(message);
+        setPassedPanels([]);
         setPassedCount(0);
       } finally {
         if (active) {
@@ -111,7 +132,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
     return () => {
       active = false;
     };
-  }, [stationId]);
+  }, [stationId, todayToken]);
 
   const goalValue = useMemo(() => {
     const parsed = Number.parseInt(goalDraft, 10);
@@ -120,6 +141,102 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   const progress = goalValue > 0 ? Math.min(passedCount / goalValue, 1) : 0;
   const remaining = goalValue > 0 ? Math.max(goalValue - passedCount, 0) : 0;
   const overage = goalValue > 0 && passedCount > goalValue ? passedCount - goalValue : 0;
+
+  const chart = useMemo(() => {
+    const width = 360;
+    const height = 140;
+    const padding = 12;
+    const start = buildShiftBoundary(todayToken, SHIFT_START.hours, SHIFT_START.minutes);
+    const end = buildShiftBoundary(todayToken, SHIFT_END.hours, SHIFT_END.minutes);
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    const baselineY = height - padding;
+
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      return {
+        width,
+        height,
+        padding,
+        baselineY,
+        actualPath: '',
+        goalPath: '',
+      };
+    }
+
+    const timeline = passedPanels
+      .map((panel) => parseSatisfiedAt(panel.satisfied_at))
+      .filter((value): value is Date => value !== null)
+      .sort((a, b) => a.getTime() - b.getTime());
+
+    const fallbackTotal =
+      timeline.length === 0 ? passedCount : Math.max(timeline.length, passedCount);
+    let points: Array<{ time: number; count: number }>;
+
+    if (timeline.length === 0) {
+      points = [
+        { time: startMs, count: 0 },
+        { time: endMs, count: Math.max(fallbackTotal, 0) },
+      ];
+    } else {
+      points = [];
+      let count = 0;
+      let index = 0;
+      while (index < timeline.length && timeline[index].getTime() < startMs) {
+        count += 1;
+        index += 1;
+      }
+      points.push({ time: startMs, count });
+      while (index < timeline.length && timeline[index].getTime() <= endMs) {
+        count += 1;
+        points.push({ time: timeline[index].getTime(), count });
+        index += 1;
+      }
+      if (
+        points[points.length - 1]?.time !== endMs ||
+        points[points.length - 1]?.count !== fallbackTotal
+      ) {
+        points.push({ time: endMs, count: fallbackTotal });
+      }
+    }
+
+    const maxY = Math.max(goalValue, fallbackTotal, 1);
+    const usableWidth = width - padding * 2;
+    const usableHeight = height - padding * 2;
+    const scaleX = (time: number) =>
+      padding + ((time - startMs) / (endMs - startMs)) * usableWidth;
+    const scaleY = (count: number) =>
+      height - padding - (count / maxY) * usableHeight;
+
+    let actualPath = '';
+    if (points.length > 0) {
+      const first = points[0];
+      actualPath = `M ${scaleX(first.time)} ${scaleY(first.count)}`;
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = points[i - 1];
+        const next = points[i];
+        const nextX = scaleX(next.time);
+        actualPath += ` L ${nextX} ${scaleY(prev.count)}`;
+        actualPath += ` L ${nextX} ${scaleY(next.count)}`;
+      }
+    }
+    const goalPath =
+      goalValue > 0
+        ? `M ${scaleX(startMs)} ${scaleY(0)} L ${scaleX(endMs)} ${scaleY(goalValue)}`
+        : '';
+    const lastPoint = points[points.length - 1];
+
+    return {
+      width,
+      height,
+      padding,
+      baselineY,
+      actualPath,
+      goalPath,
+      lastPoint: lastPoint
+        ? { x: scaleX(lastPoint.time), y: scaleY(lastPoint.count) }
+        : undefined,
+    };
+  }, [passedPanels, passedCount, goalValue, todayToken]);
 
   const handleGoalChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const next = event.target.value;
@@ -136,7 +253,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
           Meta diaria de paneles
         </h3>
         <p className="text-slate-400">
-          {stationLabel} · Hoy {todayStr()}
+          {stationLabel} · Hoy {todayToken}
         </p>
       </div>
 
@@ -196,6 +313,59 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
             )}
             <span>{goalValue > 0 && !loading ? `${Math.round(progress * 100)}%` : '--'}</span>
           </div>
+        </div>
+
+        <div className="mt-6">
+          <div className="flex items-center text-xs uppercase tracking-wide text-slate-400">
+            <span>Evolución del día</span>
+          </div>
+          {loading ? (
+            <div className="mt-3 h-32 w-full rounded-xl bg-slate-600/70 animate-pulse" />
+          ) : (
+            <div className="mt-3">
+              <svg
+                viewBox={`0 0 ${chart.width} ${chart.height}`}
+                className="h-32 w-full"
+                role="img"
+                aria-label="Evolución de paneles completados"
+              >
+                <line
+                  x1={chart.padding}
+                  y1={chart.baselineY}
+                  x2={chart.width - chart.padding}
+                  y2={chart.baselineY}
+                  stroke="rgba(148, 163, 184, 0.35)"
+                  strokeWidth="1"
+                />
+                {chart.goalPath && (
+                  <path
+                    d={chart.goalPath}
+                    stroke="rgba(226, 232, 240, 0.6)"
+                    strokeWidth="1.5"
+                    strokeDasharray="5 6"
+                    fill="none"
+                  />
+                )}
+                {chart.actualPath && (
+                  <path
+                    d={chart.actualPath}
+                    stroke="#60a5fa"
+                    strokeWidth="2.5"
+                    fill="none"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                )}
+                {chart.lastPoint && (
+                  <circle cx={chart.lastPoint.x} cy={chart.lastPoint.y} r="3" fill="#60a5fa" />
+                )}
+              </svg>
+              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                <span>{timeLabel(SHIFT_START.hours, SHIFT_START.minutes)}</span>
+                <span>{timeLabel(SHIFT_END.hours, SHIFT_END.minutes)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (

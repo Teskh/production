@@ -4,10 +4,12 @@ import {
   ChevronRight,
   Filter,
   Plus,
+  Printer,
   Search,
   X,
 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import WorkerBadgePrinter from '../../../components/WorkerBadgePrinter';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -230,6 +232,7 @@ const Workers: React.FC<WorkersProps> = ({
   const [filterStation, setFilterStation] = useState<number | null>(null);
   const [filterSkill, setFilterSkill] = useState<number | null>(null);
   const [workerSkillsMap, setWorkerSkillsMap] = useState<Map<number, number[]>>(new Map());
+  const [badgePrinterOpen, setBadgePrinterOpen] = useState(false);
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
   const filterPanelRef = useRef<HTMLDivElement | null>(null);
 
@@ -239,6 +242,12 @@ const Workers: React.FC<WorkersProps> = ({
   useEffect(() => {
     setRosterMode(initialRosterMode);
   }, [initialRosterMode]);
+
+  useEffect(() => {
+    if (!isWorkerMode) {
+      setBadgePrinterOpen(false);
+    }
+  }, [isWorkerMode]);
 
   useEffect(() => {
     setHeader({
@@ -1048,6 +1057,16 @@ const Workers: React.FC<WorkersProps> = ({
                 />
               </label>
               {isWorkerMode && (
+                <button
+                  type="button"
+                  onClick={() => setBadgePrinterOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-sm"
+                >
+                  <Printer className="h-4 w-4" />
+                  Credenciales QR
+                </button>
+              )}
+              {isWorkerMode && (
                 <div className="relative" ref={filterPanelRef}>
                   <button
                     type="button"
@@ -1549,6 +1568,14 @@ const Workers: React.FC<WorkersProps> = ({
           )}
         </aside>
       </div>
+      {isWorkerMode && (
+        <WorkerBadgePrinter
+          open={badgePrinterOpen}
+          onClose={() => setBadgePrinterOpen(false)}
+          workers={workers}
+          defaultWorkerId={selectedWorkerId}
+        />
+      )}
     </div>
   );
 };

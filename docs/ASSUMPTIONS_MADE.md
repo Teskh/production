@@ -56,6 +56,8 @@
 
 ## 2026-01-08
 - Login panel goal summary assumes `GET /api/station-panels-finished` only counts a panel once all applicable tasks for the station are satisfied (including skips), and uses the latest completion/skip at prior panel stations to count pass-through panels with no tasks.
+- Worker badge printing uses a locally uploaded logo stored in browser storage because no official logo asset or URL is defined in the repo yet.
+- Worker badge printing defaults to the ID-1 size (86 x 54 mm) as the standardized badge format.
 
 ## 2026-01-10
 - Task analysis dashboard assumes a `GET /api/task-analysis` endpoint that accepts `house_type_id`, `panel_definition_id`, `task_definition_id`, `station_id`, `worker_id`, `from_date`, and `to_date` query params and returns `data_points`, `stats.average_duration`, and `expected_reference_minutes` in the legacy shape until the backend analytics routes are rebuilt.
