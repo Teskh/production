@@ -143,20 +143,22 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   const overage = goalValue > 0 && passedCount > goalValue ? passedCount - goalValue : 0;
 
   const chart = useMemo(() => {
-    const width = 360;
-    const height = 140;
-    const padding = 12;
+    const width = 600;
+    const height = 240;
+    const paddingX = 24;
+    const paddingY = 40;
     const start = buildShiftBoundary(todayToken, SHIFT_START.hours, SHIFT_START.minutes);
     const end = buildShiftBoundary(todayToken, SHIFT_END.hours, SHIFT_END.minutes);
     const startMs = start.getTime();
     const endMs = end.getTime();
-    const baselineY = height - padding;
+    const baselineY = height - paddingY;
 
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
       return {
         width,
         height,
-        padding,
+        paddingX,
+        paddingY,
         baselineY,
         actualPath: '',
         goalPath: '',
@@ -200,12 +202,12 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
     }
 
     const maxY = Math.max(goalValue, fallbackTotal, 1);
-    const usableWidth = width - padding * 2;
-    const usableHeight = height - padding * 2;
+    const usableWidth = width - paddingX * 2;
+    const usableHeight = height - paddingY * 2;
     const scaleX = (time: number) =>
-      padding + ((time - startMs) / (endMs - startMs)) * usableWidth;
+      paddingX + ((time - startMs) / (endMs - startMs)) * usableWidth;
     const scaleY = (count: number) =>
-      height - padding - (count / maxY) * usableHeight;
+      height - paddingY - (count / maxY) * usableHeight;
 
     let actualPath = '';
     if (points.length > 0) {
@@ -219,19 +221,24 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
         actualPath += ` L ${nextX} ${scaleY(next.count)}`;
       }
     }
+    
+    // Goal path is a diagonal line representing constant pace towards the target
     const goalPath =
       goalValue > 0
         ? `M ${scaleX(startMs)} ${scaleY(0)} L ${scaleX(endMs)} ${scaleY(goalValue)}`
         : '';
+        
     const lastPoint = points[points.length - 1];
 
     return {
       width,
       height,
-      padding,
+      paddingX,
+      paddingY,
       baselineY,
       actualPath,
       goalPath,
+      goalY: goalValue > 0 ? scaleY(goalValue) : undefined,
       lastPoint: lastPoint
         ? { x: scaleX(lastPoint.time), y: scaleY(lastPoint.count) }
         : undefined,
@@ -315,55 +322,87 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
           </div>
         </div>
 
-        <div className="mt-6">
-          <div className="flex items-center text-xs uppercase tracking-wide text-slate-400">
+        <div className="mt-8">
+          <div className="flex items-center text-xs uppercase tracking-wide text-slate-400 mb-2">
             <span>Evolución del día</span>
           </div>
           {loading ? (
-            <div className="mt-3 h-32 w-full rounded-xl bg-slate-600/70 animate-pulse" />
+            <div className="h-64 w-full rounded-xl bg-slate-600/70 animate-pulse" />
           ) : (
-            <div className="mt-3">
+            <div className="relative">
               <svg
                 viewBox={`0 0 ${chart.width} ${chart.height}`}
-                className="h-32 w-full"
+                className="h-64 w-full overflow-visible"
                 role="img"
                 aria-label="Evolución de paneles completados"
               >
+                {/* Baseline */}
                 <line
-                  x1={chart.padding}
+                  x1={chart.paddingX}
                   y1={chart.baselineY}
-                  x2={chart.width - chart.padding}
+                  x2={chart.width - chart.paddingX}
                   y2={chart.baselineY}
-                  stroke="rgba(148, 163, 184, 0.35)"
+                  stroke="rgba(148, 163, 184, 0.2)"
                   strokeWidth="1"
                 />
+                
                 {chart.goalPath && (
-                  <path
-                    d={chart.goalPath}
-                    stroke="rgba(226, 232, 240, 0.6)"
-                    strokeWidth="1.5"
-                    strokeDasharray="5 6"
-                    fill="none"
-                  />
+                  <>
+                    <path
+                      d={chart.goalPath}
+                      stroke="rgba(255, 255, 255, 0.25)"
+                      strokeWidth="1.5"
+                      strokeDasharray="6 6"
+                      fill="none"
+                    />
+                    <text
+                      x={chart.width - chart.paddingX}
+                      y={(chart.goalY ?? 0) - 10}
+                      fontSize="11"
+                      fill="rgba(255, 255, 255, 0.4)"
+                      textAnchor="end"
+                      className="font-medium"
+                    >
+                      Meta: {goalValue}
+                    </text>
+                  </>
                 )}
+
                 {chart.actualPath && (
                   <path
                     d={chart.actualPath}
                     stroke="#60a5fa"
-                    strokeWidth="2.5"
+                    strokeWidth="3"
                     fill="none"
                     strokeLinejoin="round"
                     strokeLinecap="round"
                   />
                 )}
+                
                 {chart.lastPoint && (
-                  <circle cx={chart.lastPoint.x} cy={chart.lastPoint.y} r="3" fill="#60a5fa" />
+                  <circle cx={chart.lastPoint.x} cy={chart.lastPoint.y} r="4" fill="#60a5fa" />
                 )}
+
+                {/* Timestamps */}
+                <text
+                  x={chart.paddingX}
+                  y={chart.height - 10}
+                  fontSize="12"
+                  fill="#94a3b8"
+                  textAnchor="start"
+                >
+                  {timeLabel(SHIFT_START.hours, SHIFT_START.minutes)}
+                </text>
+                <text
+                  x={chart.width - chart.paddingX}
+                  y={chart.height - 10}
+                  fontSize="12"
+                  fill="#94a3b8"
+                  textAnchor="end"
+                >
+                  {timeLabel(SHIFT_END.hours, SHIFT_END.minutes)}
+                </text>
               </svg>
-              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                <span>{timeLabel(SHIFT_START.hours, SHIFT_START.minutes)}</span>
-                <span>{timeLabel(SHIFT_END.hours, SHIFT_END.minutes)}</span>
-              </div>
             </div>
           )}
         </div>
