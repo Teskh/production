@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Lock, MapPin, QrCode, Settings, User } from 'lucide-react';
+import { Lock, MapPin, QrCode, Settings, User } from 'lucide-react';
 import LoginSettings from './LoginSettings';
 import QRCodeScannerModal from '../components/QRCodeScannerModal';
+import PanelStationGoalPanel from '../components/PanelStationGoalPanel';
 import type { StationContext } from '../utils/stationContext';
 import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
@@ -87,16 +88,6 @@ const findWorkerByQrValue = (value: string, list: Worker[]): Worker | null => {
       (worker) => normalizeQrValue(formatWorkerDisplayName(worker)) === normalized
     ) ?? null
   );
-};
-
-type ProductionQueueItem = {
-  id: number;
-  project_name: string;
-  house_identifier: string;
-  module_number: number;
-  house_type_name: string;
-  planned_start_datetime: string | null;
-  status: string;
 };
 
 type WorkerSessionResponse = {
@@ -208,7 +199,6 @@ const Login: React.FC = () => {
   const [taskDefinitions, setTaskDefinitions] = useState<TaskDefinition[]>([]);
   const [taskDefinitionsReady, setTaskDefinitionsReady] = useState(false);
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [queuePreview, setQueuePreview] = useState<ProductionQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -251,15 +241,13 @@ const Login: React.FC = () => {
           (data) => ({ ok: true, data }),
           () => ({ ok: false, data: [] as TaskDefinition[] })
         );
-        const [stationData, workerData, queueData, taskResult] = await Promise.all([
+        const [stationData, workerData, taskResult] = await Promise.all([
           apiRequest<Station[]>('/api/stations'),
           apiRequest<Worker[]>('/api/workers'),
-          apiRequest<ProductionQueueItem[]>('/api/production-queue?include_completed=false'),
           taskPromise,
         ]);
         setStations(stationData);
         setWorkers(workerData.filter((worker) => worker.active));
-        setQueuePreview(queueData.slice(0, 8));
         setTaskDefinitions(taskResult.data);
         setTaskDefinitionsReady(taskResult.ok);
         const storedContext = parseStationContext(
@@ -709,25 +697,6 @@ const Login: React.FC = () => {
     await handleWorkerLogin(worker, pinModalValue.trim());
   };
 
-  const formattedPreview = useMemo(() => {
-    return queuePreview.map((item) => {
-      const timeLabel = item.planned_start_datetime
-        ? new Date(item.planned_start_datetime).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : '--:--';
-      const moduleLabel = `${item.house_identifier} - M${item.module_number}`;
-      return {
-        id: item.id,
-        time: timeLabel,
-        module: moduleLabel,
-        task: item.house_type_name,
-        status: item.status,
-      };
-    });
-  }, [queuePreview]);
-
   return (
     <div
       className="min-h-screen bg-gray-100 flex flex-col lg:flex-row"
@@ -869,56 +838,9 @@ const Login: React.FC = () => {
         </div>
       </div>
 
-      <div className="hidden lg:flex flex-1 bg-slate-800 text-white p-12 flex-col">
-        <div className="mb-8">
-          <h3 className="text-xl font-bold flex items-center mb-2">
-            <Calendar className="w-6 h-6 mr-2 text-blue-400" />
-            Vista previa de la cola de produccion
-          </h3>
-          <p className="text-slate-400">
-            {selectedStation
-              ? `Proximos modulos para ${stationLabel}`
-              : 'Proximos modulos del plan'}
-          </p>
-        </div>
-
-        <div className="bg-slate-700 rounded-lg overflow-hidden shadow-lg flex-1">
-          <table className="min-w-full divide-y divide-slate-600">
-            <thead className="bg-slate-800">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  Hora
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  Modulo
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">
-                  Tipo de casa
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-600">
-              {formattedPreview.length === 0 ? (
-                <tr>
-                  <td colSpan={3} className="px-6 py-4 text-sm text-slate-300">
-                    Aun no hay modulos proximos.
-                  </td>
-                </tr>
-              ) : (
-                formattedPreview.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-600 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{row.time}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
-                      {row.module}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{row.task}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {selectedStation?.role === 'Panels' && (
+        <PanelStationGoalPanel stationId={selectedStation.id} stationLabel={stationLabel} />
+      )}
 
       <LoginSettings
         open={showSettings}

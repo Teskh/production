@@ -962,7 +962,7 @@ const StationWorkspace: React.FC = () => {
         {hasPanel ? (
           <>
             <div className="mt-2 text-base font-semibold text-gray-900">
-              Panel {item.panel_code}
+              {item.panel_code}
             </div>
             <div className="text-xs text-gray-600">{item.project_name}</div>
           </>
@@ -1932,7 +1932,7 @@ const StationWorkspace: React.FC = () => {
                   <h2 className="text-xl font-semibold text-gray-900">Tareas de la estacion</h2>
                   {selectedWorkItem.panel_code && (
                     <div className="mt-1 text-lg font-semibold text-gray-900">
-                      Panel {selectedWorkItem.panel_code}
+                      {selectedWorkItem.panel_code}
                     </div>
                   )}
                   <p className="text-sm text-gray-500">
@@ -2439,7 +2439,7 @@ const StationWorkspace: React.FC = () => {
             <h3 className="text-lg font-semibold text-gray-900">Detalle de rework QC</h3>
             <p className="mt-1 text-sm text-gray-500">
               Modulo {selectedRework.module_number}
-              {selectedRework.panel_code ? ` • Panel ${selectedRework.panel_code}` : ''}
+              {selectedRework.panel_code ? ` • ${selectedRework.panel_code}` : ''}
             </p>
             <div className="mt-4 space-y-3">
               <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-4">

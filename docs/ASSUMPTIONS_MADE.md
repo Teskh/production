@@ -54,6 +54,9 @@
 - QC auto-skip executions are attributed to a system QC admin user created on demand (`System QC`, PIN `0000`) so `QCExecution.performed_by_user_id` stays required.
 - Adaptive sampling updates apply to any `QCTrigger` for the same check definition that includes the triggering `task_definition_id`.
 
+## 2026-01-08
+- Login panel goal summary assumes `GET /api/station-panels-finished` counts panels that passed through a station today even when no tasks were performed at that station (pass-through + skips).
+
 ## 2026-01-10
 - Task analysis dashboard assumes a `GET /api/task-analysis` endpoint that accepts `house_type_id`, `panel_definition_id`, `task_definition_id`, `station_id`, `worker_id`, `from_date`, and `to_date` query params and returns `data_points`, `stats.average_duration`, and `expected_reference_minutes` in the legacy shape until the backend analytics routes are rebuilt.
 - When `panel_definitions.applicable_task_ids` is null, `panel_definitions.task_durations_json` is assumed to align with panel-scope tasks ordered by `default_station_sequence` then name (matching the House Configurator UI ordering) for task analysis expected-minute lookup.
