@@ -194,9 +194,9 @@ const QCLayout: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    Quality Control
+                    Control de Calidad
                   </p>
-                  <h1 className="font-display text-lg text-[var(--ink)]">Centro QC</h1>
+                  <h1 className="font-display text-lg text-[var(--ink)]">Menú</h1>
                 </div>
               </div>
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Filter, Image, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
 import { useOptionalAdminHeader } from '../../../layouts/AdminLayoutContext';
 
@@ -271,6 +272,7 @@ const sortByOrderThenName = <T extends { name: string; sort_order: number | null
 
 const QCChecks: React.FC = () => {
   const adminHeader = useOptionalAdminHeader();
+  const navigate = useNavigate();
   const [checks, setChecks] = useState<QCCheckDefinition[]>([]);
   const [categories, setCategories] = useState<QCCheckCategory[]>([]);
   const [failureModes, setFailureModes] = useState<QCFailureMode[]>([]);
@@ -327,6 +329,19 @@ const QCChecks: React.FC = () => {
       kicker: 'Calidad / Revisiones QC',
     });
   }, [adminHeader]);
+
+  const handleExit = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/admin/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {
+      // Ignore logout errors and still send the user to login.
+    } finally {
+      navigate('/login');
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -1322,12 +1337,21 @@ const QCChecks: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          onClick={handleAddCheck}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
-        >
-          <Plus className="h-4 w-4" /> Agregar check
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleAddCheck}
+            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
+          >
+            <Plus className="h-4 w-4" /> Agregar check
+          </button>
+          <button
+            type="button"
+            onClick={handleExit}
+            className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm text-[var(--ink)] hover:bg-black/5"
+          >
+            Salir
+          </button>
+        </div>
         <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
           <Filter className="h-3.5 w-3.5" /> {summaryLabel}
         </div>
