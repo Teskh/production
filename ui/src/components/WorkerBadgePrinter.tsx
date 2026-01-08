@@ -29,7 +29,7 @@ const BADGE_WIDTH_MM = 86;
 const BADGE_HEIGHT_MM = 54;
 const BADGE_GAP_MM = 6;
 const PAGE_MARGIN_MM = 10;
-const QR_SIZE_MM = 32;
+const QR_SIZE_MM = 36;
 const MM_TO_PX = 3.7795;
 // Minimal QR generator (version 4, ECC M) to keep printing offline and dependency-free.
 const QR_TYPE_NUMBER = 4;
@@ -836,7 +836,7 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         print-color-adjust: exact !important;
       }
       body > *:not(.badge-modal-root) { display: none !important; }
-      .badge-no-print, .badge-screen-only { display: none !important; }
+      .badge-no-print, .badge-screen-only { display: none !important; height: 0 !important; overflow: hidden !important; }
       .badge-modal-root { 
         position: absolute !important;
         top: 0 !important;
@@ -860,19 +860,27 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         display: block !important;
         padding: 0 !important;
       }
-      .badge-modal-content > .grid { display: block !important; }
+      .badge-modal-content .grid { display: contents !important; }
+      .badge-modal-content .flex { display: contents !important; }
       .badge-print-only { 
         display: block !important; 
-        position: static !important;
-        overflow: hidden !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: auto !important;
+        height: auto !important;
+        overflow: visible !important;
+        z-index: 999999 !important;
+        background: #fff !important;
       }
-      .badge-page-outer:last-child { page-break-after: avoid !important; }
       .badge-page-outer { 
         width: ${paper.width}mm !important; 
         height: ${paper.height}mm !important;
         border-radius: 0 !important;
-        overflow: visible !important;
+        overflow: hidden !important;
+        box-sizing: border-box !important;
       }
+      .badge-page-break { page-break-after: always !important; }
       .badge-page { 
         box-shadow: none !important; 
         border: none !important; 
@@ -892,8 +900,8 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         width: 100% !important;
         align-items: center !important;
         justify-content: space-between !important;
-        gap: 0.75rem !important;
-        padding: 0.75rem 1rem !important;
+        gap: 1.5rem !important;
+        padding: 1.25rem 1.25rem !important;
       }
       .badge-name-section {
         display: flex !important;
@@ -901,21 +909,12 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         min-width: 0 !important;
         flex: 1 !important;
         flex-direction: column !important;
-        justify-content: center !important;
-        gap: 0.5rem !important;
-      }
-      .badge-name-text {
-        text-align: left !important;
-        font-size: 15px !important;
-        font-weight: 600 !important;
-        text-transform: uppercase !important;
-        line-height: 1.25 !important;
-        color: #0f172a !important;
+        justify-content: space-between !important;
       }
       .badge-logo-container {
         display: flex !important;
         width: 100% !important;
-        align-items: flex-end !important;
+        align-items: flex-start !important;
         height: 10mm !important;
       }
       .badge-logo-container img {
@@ -923,10 +922,35 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
         width: auto !important;
         object-fit: contain !important;
       }
+      .badge-name-text {
+        text-align: left !important;
+        color: #0f172a !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.125rem !important;
+        margin-bottom: 0.25rem !important;
+      }
+      .badge-first-name {
+        font-size: 22px !important;
+        font-weight: 800 !important;
+        text-transform: uppercase !important;
+        line-height: 1 !important;
+      }
+      .badge-last-name {
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        text-transform: uppercase !important;
+        color: #64748b !important;
+        letter-spacing: 0.025em !important;
+      }
       .badge-qr-container {
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
+        background: #fff !important;
+        padding: 0.25rem !important;
+        border: 1px solid #f1f5f9 !important;
+        border-radius: 0.25rem !important;
       }
       .badge-qr-container svg {
         display: block !important;
@@ -1116,21 +1140,25 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                           }`}
                           style={{ width: `${BADGE_WIDTH_MM}mm`, height: `${BADGE_HEIGHT_MM}mm` }}
                         >
-                          <div className="badge-card-inner flex h-full w-full items-center justify-between gap-4 px-5 py-3">
-                            <div className="badge-name-section flex h-full min-w-0 flex-1 flex-col justify-center gap-3">
-                              <div className="badge-name-text text-left text-[15px] font-semibold uppercase leading-tight text-slate-900">
-                                <div>{badge.firstName}</div>
-                                {badge.lastName && <div>{badge.lastName}</div>}
-                              </div>
-                              <div className="badge-logo-container flex w-full items-end mt-1" style={{ height: '10mm' }}>
+                          <div className="badge-card-inner flex h-full w-full items-center justify-between gap-6 p-5">
+                            <div className="badge-name-section flex h-full min-w-0 flex-1 flex-col justify-between">
+                              <div className="badge-logo-container flex h-[10mm] w-full items-start">
                                 <img
                                   src={logoSrc}
                                   alt="Logo"
                                   className="h-full w-auto object-contain"
                                 />
                               </div>
+                              <div className="badge-name-text mb-1 flex flex-col gap-0.5 text-left text-slate-900">
+                                <div className="badge-first-name text-[22px] font-extrabold uppercase leading-none truncate">
+                                  {badge.firstName}
+                                </div>
+                                <div className="badge-last-name text-[13px] font-medium uppercase tracking-wide text-slate-500 truncate">
+                                  {badge.lastName}
+                                </div>
+                              </div>
                             </div>
-                            <div className="badge-qr-container flex items-center justify-center pr-1">
+                            <div className="badge-qr-container flex items-center justify-center rounded border border-slate-100 bg-white p-1">
                               <svg
                                 width={`${QR_SIZE_MM}mm`}
                                 height={`${QR_SIZE_MM}mm`}
@@ -1166,11 +1194,10 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
               {pages.map((page, pageIndex) => (
                 <div
                   key={`print-page-${pageIndex}`}
-                  className="badge-page-outer"
+                  className={`badge-page-outer ${pageIndex < pages.length - 1 ? 'badge-page-break' : ''}`}
                   style={{
                     width: `${paper.width}mm`,
                     height: `${paper.height}mm`,
-                    pageBreakAfter: pageIndex === pages.length - 1 ? 'auto' : 'always',
                   }}
                 >
                   <div
@@ -1214,8 +1241,8 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                               width: '100%',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              gap: '1rem',
-                              padding: '0.75rem 1.25rem',
+                              gap: '1.5rem',
+                              padding: '1.25rem 1.25rem',
                             }}
                           >
                             <div
@@ -1226,32 +1253,16 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 minWidth: 0,
                                 flex: 1,
                                 flexDirection: 'column',
-                                justifyContent: 'center',
-                                gap: '0.75rem',
+                                justifyContent: 'space-between',
                               }}
                             >
-                              <div
-                                className="badge-name-text"
-                                style={{
-                                  textAlign: 'left',
-                                  fontSize: '15px',
-                                  fontWeight: 600,
-                                  textTransform: 'uppercase',
-                                  lineHeight: 1.25,
-                                  color: '#0f172a',
-                                }}
-                              >
-                                <div>{badge.firstName}</div>
-                                {badge.lastName && <div>{badge.lastName}</div>}
-                              </div>
                               <div
                                 className="badge-logo-container"
                                 style={{
                                   display: 'flex',
                                   width: '100%',
-                                  alignItems: 'flex-end',
+                                  alignItems: 'flex-start',
                                   height: '10mm',
-                                  marginTop: '0.25rem',
                                 }}
                               >
                                 <img
@@ -1260,6 +1271,41 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                   style={{ height: '100%', width: 'auto', objectFit: 'contain' }}
                                 />
                               </div>
+                              <div
+                                className="badge-name-text"
+                                style={{
+                                  textAlign: 'left',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '0.125rem',
+                                  marginBottom: '0.25rem',
+                                  color: '#0f172a',
+                                }}
+                              >
+                                <div
+                                  className="badge-first-name"
+                                  style={{
+                                    fontSize: '22px',
+                                    fontWeight: 800,
+                                    textTransform: 'uppercase',
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  {badge.firstName}
+                                </div>
+                                <div
+                                  className="badge-last-name"
+                                  style={{
+                                    fontSize: '13px',
+                                    fontWeight: 500,
+                                    textTransform: 'uppercase',
+                                    color: '#64748b',
+                                    letterSpacing: '0.025em',
+                                  }}
+                                >
+                                  {badge.lastName}
+                                </div>
+                              </div>
                             </div>
                             <div
                               className="badge-qr-container"
@@ -1267,7 +1313,10 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                paddingRight: '0.25rem',
+                                background: '#fff',
+                                padding: '0.25rem',
+                                border: '1px solid #f1f5f9',
+                                borderRadius: '0.25rem',
                               }}
                             >
                               <svg
