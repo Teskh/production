@@ -96,6 +96,14 @@ const QCLayout: React.FC = () => {
     }
   };
 
+  const handleExitToLogin = async () => {
+    try {
+      await handleLogout();
+    } finally {
+      navigate('/login');
+    }
+  };
+
   const openLogin = () => {
     setLoginOpen(true);
     setLoginError(null);
@@ -232,20 +240,29 @@ const QCLayout: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={handleLogout}
+                    onClick={handleExitToLogin}
                     className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
                   >
                     <LogOut className="h-4 w-4" /> Salir
                   </button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  onClick={openLogin}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-                >
-                  <LogOut className="h-4 w-4" /> Iniciar sesion
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openLogin}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                  >
+                    <LogOut className="h-4 w-4" /> Iniciar sesion
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExitToLogin}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                  >
+                    <LogOut className="h-4 w-4" /> Salir
+                  </button>
+                </div>
               )}
             </header>
             {(status.refreshIntervalMs || status.lastUpdated) && (

@@ -101,22 +101,80 @@ def upgrade() -> None:
             sa.ForeignKeyConstraint(["created_by_user_id"], ["admin_users.id"]),
             sa.PrimaryKeyConstraint("id"),
         )
+    else:
+        failure_mode_cols = {
+            col["name"] for col in inspector.get_columns("qc_failure_mode_definitions")
+        }
+        if "check_definition_id" not in failure_mode_cols:
+            op.add_column(
+                "qc_failure_mode_definitions",
+                sa.Column("check_definition_id", sa.Integer(), nullable=True),
+            )
+        if "default_severity_level_id" not in failure_mode_cols:
+            op.add_column(
+                "qc_failure_mode_definitions",
+                sa.Column("default_severity_level_id", sa.Integer(), nullable=True),
+            )
+        if "created_by_user_id" not in failure_mode_cols:
+            op.add_column(
+                "qc_failure_mode_definitions",
+                sa.Column("created_by_user_id", sa.Integer(), nullable=True),
+            )
+        existing_fks = inspector.get_foreign_keys("qc_failure_mode_definitions")
+        fk_columns = {tuple(fk.get("constrained_columns") or []) for fk in existing_fks}
+        if ("check_definition_id",) not in fk_columns:
+            op.create_foreign_key(
+                "fk_qc_failure_mode_definitions_check_definition_id",
+                "qc_failure_mode_definitions",
+                "qc_check_definitions",
+                ["check_definition_id"],
+                ["id"],
+            )
+        if ("default_severity_level_id",) not in fk_columns:
+            op.create_foreign_key(
+                "fk_qc_failure_mode_definitions_default_severity_level_id",
+                "qc_failure_mode_definitions",
+                "qc_severity_levels",
+                ["default_severity_level_id"],
+                ["id"],
+            )
+        if ("created_by_user_id",) not in fk_columns:
+            op.create_foreign_key(
+                "fk_qc_failure_mode_definitions_created_by_user_id",
+                "qc_failure_mode_definitions",
+                "admin_users",
+                ["created_by_user_id"],
+                ["id"],
+            )
     index_names = {
         idx["name"] for idx in inspector.get_indexes("qc_failure_mode_definitions")
     }
-    if "ix_qc_failure_mode_definitions_check_definition_id" not in index_names:
+    failure_mode_cols = {
+        col["name"] for col in inspector.get_columns("qc_failure_mode_definitions")
+    }
+    if (
+        "check_definition_id" in failure_mode_cols
+        and "ix_qc_failure_mode_definitions_check_definition_id" not in index_names
+    ):
         op.create_index(
             "ix_qc_failure_mode_definitions_check_definition_id",
             "qc_failure_mode_definitions",
             ["check_definition_id"],
         )
-    if "ix_qc_failure_mode_definitions_default_severity_level_id" not in index_names:
+    if (
+        "default_severity_level_id" in failure_mode_cols
+        and "ix_qc_failure_mode_definitions_default_severity_level_id"
+        not in index_names
+    ):
         op.create_index(
             "ix_qc_failure_mode_definitions_default_severity_level_id",
             "qc_failure_mode_definitions",
             ["default_severity_level_id"],
         )
-    if "ix_qc_failure_mode_definitions_created_by_user_id" not in index_names:
+    if (
+        "created_by_user_id" in failure_mode_cols
+        and "ix_qc_failure_mode_definitions_created_by_user_id" not in index_names
+    ):
         op.create_index(
             "ix_qc_failure_mode_definitions_created_by_user_id",
             "qc_failure_mode_definitions",

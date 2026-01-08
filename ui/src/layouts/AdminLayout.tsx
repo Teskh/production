@@ -53,7 +53,7 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Planeacion y Produccion',
       items: [
-        { name: 'Estado de Linea', path: '/admin/line-status', icon: Home },
+        { name: 'Estado (pendiente)', path: '/admin/line-status', icon: Home },
         { name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers },
       ],
     },

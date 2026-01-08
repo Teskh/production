@@ -13,7 +13,7 @@ class AdminUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
-    pin: Mapped[str] = mapped_column(String(10))
+    pin: Mapped[str] = mapped_column(String(32))
     role: Mapped[str] = mapped_column(String(50))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 

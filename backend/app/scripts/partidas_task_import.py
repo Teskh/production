@@ -82,7 +82,7 @@ def _read_xlsx_rows(path: Path) -> list[list[str]]:
 
 
 def _read_csv_rows(path: Path) -> list[list[str]]:
-    for encoding in ("utf-8-sig", "latin-1"):
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
         try:
             with path.open("r", encoding=encoding, newline="") as handle:
                 return list(csv.reader(handle))
@@ -121,6 +121,26 @@ def _normalize_name(value: str) -> str:
 
 def _normalize_specialty(value: str) -> str:
     return _normalize_name(value)
+
+
+def _normalize_header(value: str) -> str:
+    text = value or ""
+    try:
+        fixed = text.encode("latin-1").decode("utf-8")
+    except UnicodeError:
+        fixed = text
+    return _normalize_name(fixed)
+
+
+def _header_index(header: list[str], *names: str) -> int | None:
+    if not header:
+        return None
+    normalized = {_normalize_header(value): idx for idx, value in enumerate(header)}
+    for name in names:
+        idx = normalized.get(_normalize_header(name))
+        if idx is not None:
+            return idx
+    return None
 
 
 def _split_names(cell: str) -> list[str]:
@@ -180,33 +200,42 @@ def _partidas_entries(
     if not rows:
         raise RuntimeError("Partidas file has no rows.")
     header = rows[0]
-    try:
-        name_idx = header.index("Nombre de tarea")
-    except ValueError as exc:
-        raise RuntimeError("Missing 'Nombre de tarea' column in partidas sheet.") from exc
-    try:
-        duration_idx = header.index("Duración (minutos)")
-    except ValueError as exc:
-        raise RuntimeError("Missing 'Duración (minutos)' column in partidas sheet.") from exc
-    try:
-        module_idx = header.index("MODULO")
-    except ValueError as exc:
-        raise RuntimeError("Missing 'MODULO' column in partidas sheet.") from exc
-    try:
-        station_idx = header.index("ESTACION")
-    except ValueError as exc:
-        raise RuntimeError("Missing 'ESTACION' column in partidas sheet.") from exc
-    try:
-        specialty_idx = header.index("Especialidad")
-    except ValueError as exc:
-        raise RuntimeError("Missing 'Especialidad' column in partidas sheet.") from exc
+    name_idx = _header_index(header, "Nombre de tarea", "Nombre tarea")
+    if name_idx is None:
+        raise RuntimeError("Missing 'Nombre de tarea' column in partidas sheet.")
 
-    workers_idx = None
-    geovictoria_idx = None
-    if "Nombres de los trabajadores" in header:
-        workers_idx = header.index("Nombres de los trabajadores")
-    if "Nombres de trabajadores (GeoVictoria)" in header:
-        geovictoria_idx = header.index("Nombres de trabajadores (GeoVictoria)")
+    duration_idx = _header_index(
+        header, "Duración (minutos)", "Duracion (minutos)", "Duracion"
+    )
+    if duration_idx is None:
+        warnings.append(
+            "Missing 'Duración (minutos)' column in partidas sheet; durations will be skipped."
+        )
+
+    module_idx = _header_index(header, "MODULO", "Módulo", "Modulo")
+    if module_idx is None:
+        raise RuntimeError("Missing 'MODULO' column in partidas sheet.")
+
+    station_idx = _header_index(header, "ESTACION", "Estación", "Estacion")
+    if station_idx is None:
+        raise RuntimeError("Missing 'ESTACION' column in partidas sheet.")
+
+    specialty_idx = _header_index(header, "Especialidad", "Especialidad ")
+    if specialty_idx is None:
+        raise RuntimeError("Missing 'Especialidad' column in partidas sheet.")
+
+    workers_idx = _header_index(
+        header,
+        "Nombres de los trabajadores",
+        "Nombres trabajadores",
+        "Nombres de trabajadores",
+    )
+    geovictoria_idx = _header_index(
+        header,
+        "Nombres de trabajadores (GeoVictoria)",
+        "Nombres trabajadores (GeoVictoria)",
+        "Nombres de los trabajadores (GeoVictoria)",
+    )
 
     entries: list[PartidaEntry] = []
     for row in rows[1:]:
@@ -229,7 +258,7 @@ def _partidas_entries(
         ) or None
 
         duration = None
-        if duration_idx < len(row):
+        if duration_idx is not None and duration_idx < len(row):
             duration = _parse_duration(row[duration_idx])
 
         worker_cell = ""
@@ -336,7 +365,7 @@ def run_partidas_import(
     reset_regular_crew: bool = True,
     reset_expected_durations: bool = True,
     match_geovictoria: bool = True,
-    geovictoria_min_score: float = 0.6,
+    geovictoria_min_score: float = 0.55,
 ) -> str:
     warnings: list[str] = []
     output: list[str] = []
@@ -620,6 +649,8 @@ def run_partidas_import(
 
         crew_added = 0
         for task_id, worker_ids in task_workers.items():
+            if len(worker_ids) <= 1:
+                continue
             for worker_id in sorted(worker_ids):
                 session.add(
                     TaskWorkerRestriction(
@@ -791,8 +822,8 @@ def main() -> None:
     parser.add_argument(
         "--geovictoria-min-score",
         type=float,
-        default=0.6,
-        help="Minimum GeoVictoria name match score (default: 0.6).",
+        default=0.55,
+        help="Minimum GeoVictoria name match score (default: 0.55).",
     )
     args = parser.parse_args()
 
