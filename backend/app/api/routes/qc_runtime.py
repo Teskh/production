@@ -110,6 +110,9 @@ def _build_check_summary(
     current_station_name: str | None,
     module_number: int,
     panel_code: str | None,
+    project_name: str | None = None,
+    house_type_name: str | None = None,
+    house_identifier: str | None = None,
 ) -> QCCheckInstanceSummary:
     return QCCheckInstanceSummary(
         id=instance.id,
@@ -125,6 +128,9 @@ def _build_check_summary(
         current_station_id=current_station_id,
         current_station_name=current_station_name,
         module_number=module_number,
+        project_name=project_name,
+        house_type_name=house_type_name,
+        house_identifier=house_identifier,
         panel_code=panel_code,
         status=instance.status,
         severity_level=instance.severity_level,
@@ -146,6 +152,9 @@ def _build_rework_summary(
     current_station_name: str | None,
     check_status: QCCheckStatus | None = None,
     task_status: TaskStatus | None = None,
+    project_name: str | None = None,
+    house_type_name: str | None = None,
+    house_identifier: str | None = None,
 ) -> QCReworkTaskSummary:
     return QCReworkTaskSummary(
         id=rework.id,
@@ -161,6 +170,9 @@ def _build_rework_summary(
         current_station_id=current_station_id,
         current_station_name=current_station_name,
         module_number=module_number,
+        project_name=project_name,
+        house_type_name=house_type_name,
+        house_identifier=house_identifier,
         panel_code=panel_code,
         created_at=rework.created_at,
     )
@@ -177,11 +189,16 @@ def qc_dashboard(
                 QCCheckDefinition.name,
                 Station.name,
                 WorkUnit.module_number,
+                WorkOrder.project_name,
+                WorkOrder.house_identifier,
+                HouseType.name,
                 PanelUnit.panel_definition_id,
             )
             .join(QCCheckDefinition, QCCheckInstance.check_definition_id == QCCheckDefinition.id, isouter=True)
             .join(Station, QCCheckInstance.station_id == Station.id, isouter=True)
             .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .join(HouseType, WorkOrder.house_type_id == HouseType.id)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
             .where(QCCheckInstance.status == QCCheckStatus.OPEN)
             .where(
@@ -192,7 +209,16 @@ def qc_dashboard(
     )
 
     pending_checks: list[QCCheckInstanceSummary] = []
-    for instance, check_name, station_name, module_number, panel_def_id in pending:
+    for (
+        instance,
+        check_name,
+        station_name,
+        module_number,
+        project_name,
+        house_identifier,
+        house_type_name,
+        panel_def_id,
+    ) in pending:
         panel_code = None
         if panel_def_id is not None:
             panel = db.get(PanelUnit, instance.panel_unit_id) if instance.panel_unit_id else None
@@ -212,6 +238,9 @@ def qc_dashboard(
                 current_station_name,
                 module_number,
                 panel_code,
+                project_name,
+                house_type_name,
+                house_identifier,
             )
         )
 
@@ -221,12 +250,17 @@ def qc_dashboard(
                 QCReworkTask,
                 QCCheckInstance,
                 WorkUnit.module_number,
+                WorkOrder.project_name,
+                WorkOrder.house_identifier,
+                HouseType.name,
                 Station.id,
                 Station.name,
                 PanelUnit.id,
             )
             .join(QCCheckInstance, QCReworkTask.check_instance_id == QCCheckInstance.id)
             .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .join(HouseType, WorkOrder.house_type_id == HouseType.id)
             .join(Station, QCCheckInstance.station_id == Station.id, isouter=True)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
             .where(
@@ -240,7 +274,17 @@ def qc_dashboard(
         )
     )
     rework_tasks: list[QCReworkTaskSummary] = []
-    for rework, check_instance, module_number, station_id, station_name, panel_unit_ref in rework_rows:
+    for (
+        rework,
+        check_instance,
+        module_number,
+        project_name,
+        house_identifier,
+        house_type_name,
+        station_id,
+        station_name,
+        panel_unit_ref,
+    ) in rework_rows:
         panel_code = None
         if panel_unit_ref:
             panel = db.get(PanelUnit, panel_unit_ref)
@@ -272,6 +316,9 @@ def qc_dashboard(
                 current_station_name,
                 check_instance.status,
                 task_status,
+                project_name,
+                house_type_name,
+                house_identifier,
             )
         )
 
@@ -1277,6 +1324,7 @@ def list_library_work_units(
             QCLibraryWorkUnitSummary(
                 work_unit_id=work_unit.id,
                 module_number=work_unit.module_number,
+                house_identifier=work_order.house_identifier if work_order else None,
                 project_name=work_order.project_name,
                 house_type_name=house_type.name,
                 status=work_unit.status.value,
@@ -1421,6 +1469,7 @@ def library_work_unit_detail(
     return QCLibraryWorkUnitDetail(
         work_unit_id=work_unit.id,
         module_number=work_unit.module_number,
+        house_identifier=work_order.house_identifier if work_order else None,
         project_name=work_order.project_name if work_order else "",
         house_type_name=house_type.name if house_type else "",
         status=work_unit.status.value,

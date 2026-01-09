@@ -32,8 +32,10 @@ const todayStr = () => {
 
 const timeLabel = (hours: number, minutes: number) => `${pad(hours)}:${pad(minutes)}`;
 
-const buildShiftBoundary = (dateToken: string, hours: number, minutes: number) =>
-  new Date(`${dateToken}T${pad(hours)}:${pad(minutes)}:00`);
+const buildShiftBoundary = (dateToken: string, hours: number, minutes: number) => {
+  const [year, month, day] = dateToken.split('-').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+};
 
 const parseSatisfiedAt = (value?: string | null) => {
   if (!value) {
@@ -143,8 +145,8 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   const overage = goalValue > 0 && passedCount > goalValue ? passedCount - goalValue : 0;
 
   const chart = useMemo(() => {
-    const width = 600;
-    const height = 240;
+    const width = 800;
+    const height = 300;
     const paddingX = 24;
     const paddingY = 40;
     const start = buildShiftBoundary(todayToken, SHIFT_START.hours, SHIFT_START.minutes);
@@ -165,6 +167,9 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
       };
     }
 
+    const nowMs = Date.now();
+    const effectiveNowMs = Math.min(Math.max(nowMs, startMs), endMs);
+
     const timeline = passedPanels
       .map((panel) => parseSatisfiedAt(panel.satisfied_at))
       .filter((value): value is Date => value !== null)
@@ -177,7 +182,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
     if (timeline.length === 0) {
       points = [
         { time: startMs, count: 0 },
-        { time: endMs, count: Math.max(fallbackTotal, 0) },
+        { time: effectiveNowMs, count: Math.max(fallbackTotal, 0) },
       ];
     } else {
       points = [];
@@ -193,11 +198,11 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
         points.push({ time: timeline[index].getTime(), count });
         index += 1;
       }
-      if (
-        points[points.length - 1]?.time !== endMs ||
-        points[points.length - 1]?.count !== fallbackTotal
-      ) {
-        points.push({ time: endMs, count: fallbackTotal });
+      
+      // Extend to the current time to show a flat line from the last panel to 'now'
+      const last = points[points.length - 1];
+      if (last && last.time < effectiveNowMs) {
+        points.push({ time: effectiveNowMs, count: fallbackTotal });
       }
     }
 
@@ -222,7 +227,6 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
       }
     }
     
-    // Goal path is a diagonal line representing constant pace towards the target
     const goalPath =
       goalValue > 0
         ? `M ${scaleX(startMs)} ${scaleY(0)} L ${scaleX(endMs)} ${scaleY(goalValue)}`
@@ -237,8 +241,8 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
       paddingY,
       baselineY,
       actualPath,
-      goalPath,
       goalY: goalValue > 0 ? scaleY(goalValue) : undefined,
+      goalPath,
       lastPoint: lastPoint
         ? { x: scaleX(lastPoint.time), y: scaleY(lastPoint.count) }
         : undefined,
@@ -327,12 +331,12 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
             <span>Evolución del día</span>
           </div>
           {loading ? (
-            <div className="h-64 w-full rounded-xl bg-slate-600/70 animate-pulse" />
+            <div className="h-80 w-full rounded-xl bg-slate-600/70 animate-pulse" />
           ) : (
             <div className="relative">
               <svg
                 viewBox={`0 0 ${chart.width} ${chart.height}`}
-                className="h-64 w-full overflow-visible"
+                className="h-80 w-full overflow-visible"
                 role="img"
                 aria-label="Evolución de paneles completados"
               >
@@ -358,7 +362,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
                     <text
                       x={chart.width - chart.paddingX}
                       y={(chart.goalY ?? 0) - 10}
-                      fontSize="11"
+                      fontSize="12"
                       fill="rgba(255, 255, 255, 0.4)"
                       textAnchor="end"
                       className="font-medium"
@@ -372,7 +376,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
                   <path
                     d={chart.actualPath}
                     stroke="#60a5fa"
-                    strokeWidth="3"
+                    strokeWidth="3.5"
                     fill="none"
                     strokeLinejoin="round"
                     strokeLinecap="round"
@@ -380,14 +384,14 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
                 )}
                 
                 {chart.lastPoint && (
-                  <circle cx={chart.lastPoint.x} cy={chart.lastPoint.y} r="4" fill="#60a5fa" />
+                  <circle cx={chart.lastPoint.x} cy={chart.lastPoint.y} r="5" fill="#60a5fa" />
                 )}
 
                 {/* Timestamps */}
                 <text
                   x={chart.paddingX}
                   y={chart.height - 10}
-                  fontSize="12"
+                  fontSize="13"
                   fill="#94a3b8"
                   textAnchor="start"
                 >
@@ -396,7 +400,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
                 <text
                   x={chart.width - chart.paddingX}
                   y={chart.height - 10}
-                  fontSize="12"
+                  fontSize="13"
                   fill="#94a3b8"
                   textAnchor="end"
                 >

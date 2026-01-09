@@ -26,6 +26,9 @@ type QCCheckInstanceSummary = {
   current_station_id: number | null;
   current_station_name: string | null;
   module_number: number;
+  project_name: string | null;
+  house_type_name: string | null;
+  house_identifier: string | null;
   panel_code: string | null;
   status: QCCheckStatus;
   opened_at: string;
@@ -45,6 +48,9 @@ type QCReworkTaskSummary = {
   current_station_id: number | null;
   current_station_name: string | null;
   module_number: number;
+  project_name: string | null;
+  house_type_name: string | null;
+  house_identifier: string | null;
   panel_code: string | null;
   created_at: string;
 };
@@ -85,6 +91,18 @@ const reworkTaskStatusLabels: Record<string, string> = {
   InProgress: 'En trabajo',
   Paused: 'En pausa',
   Completed: 'Completado',
+};
+
+const buildWorkUnitLabel = (
+  projectName: string | null,
+  houseTypeName: string | null,
+  houseIdentifier: string | null
+): string => {
+  const parts: string[] = [];
+  if (projectName) parts.push(projectName);
+  if (houseTypeName) parts.push(houseTypeName);
+  if (houseIdentifier) parts.push(`Casa ${houseIdentifier}`);
+  return parts.length ? parts.join(' · ') : '-';
 };
 
 const QCDashboard: React.FC = () => {
@@ -222,6 +240,11 @@ const QCDashboard: React.FC = () => {
               </div>
             ) : null}
             {pendingChecks.map((check) => {
+              const workUnitLabel = buildWorkUnitLabel(
+                check.project_name,
+                check.house_type_name,
+                check.house_identifier
+              );
               const cardContent = (
                 <>
                   <div className="flex items-start justify-between gap-3">
@@ -229,6 +252,7 @@ const QCDashboard: React.FC = () => {
                       <p className="text-sm font-semibold text-[var(--ink)]">
                         {check.check_name ?? 'Inspeccion sin titulo'}
                       </p>
+                      <p className="text-xs text-[var(--ink-muted)]">{workUnitLabel}</p>
                       <p className="text-xs text-[var(--ink-muted)]">
                         {check.module_number}
                         {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
@@ -289,6 +313,11 @@ const QCDashboard: React.FC = () => {
               </div>
             ) : null}
             {reworkTasks.map((task) => {
+              const workUnitLabel = buildWorkUnitLabel(
+                task.project_name,
+                task.house_type_name,
+                task.house_identifier
+              );
               const taskStatusLabel = task.task_status
                 ? reworkTaskStatusLabels[task.task_status] ?? task.task_status
                 : 'Sin iniciar';
@@ -301,6 +330,7 @@ const QCDashboard: React.FC = () => {
                 <>
                   <div className="flex items-start justify-between gap-3">
                     <div>
+                      <p className="text-xs text-[var(--ink-muted)]">{workUnitLabel}</p>
                       <p className="text-sm font-semibold text-[var(--ink)]">
                         {task.module_number}
                         {task.panel_code ? ` · Panel ${task.panel_code}` : ''} ·{' '}

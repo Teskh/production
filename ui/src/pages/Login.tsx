@@ -54,9 +54,21 @@ const firstNamePart = (value: string): string => {
   return trimmed.split(/\s+/)[0] ?? '';
 };
 
+const surnamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) {
+    return parts[0] ?? '';
+  }
+  return parts[parts.length - 2] ?? '';
+};
+
 const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string => {
   const first = firstNamePart(worker.first_name);
-  const last = firstNamePart(worker.last_name);
+  const last = surnamePart(worker.last_name);
   return [first, last].filter(Boolean).join(' ');
 };
 

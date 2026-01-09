@@ -38,6 +38,7 @@ type AdminUserRead = {
 type QCLibraryWorkUnitSummary = {
   work_unit_id: number;
   module_number: number;
+  house_identifier: string | null;
   project_name: string;
   house_type_name: string;
   status: string;
@@ -116,6 +117,7 @@ type QCEvidenceSummary = {
 type QCLibraryWorkUnitDetail = {
   work_unit_id: number;
   module_number: number;
+  house_identifier: string | null;
   project_name: string;
   house_type_name: string;
   status: string;
@@ -789,7 +791,9 @@ const QCLibrary: React.FC = () => {
               className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-white"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--ink)] text-white">
-                <span className="text-sm font-semibold">{unit.module_number}</span>
+                <span className="text-sm font-semibold">
+                  {unit.house_identifier ?? '-'}
+                </span>
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -797,7 +801,9 @@ const QCLibrary: React.FC = () => {
                     {unit.project_name}
                   </span>
                   <span className="text-xs text-[var(--ink-muted)]">·</span>
-                  <span className="text-sm text-[var(--ink-muted)]">{unit.house_type_name}</span>
+                  <span className="text-sm text-[var(--ink-muted)]">
+                    {unit.house_type_name} MD {unit.module_number}
+                  </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
                   Estado: <span className="font-medium text-[var(--ink)]">{unit.status}</span>
@@ -853,13 +859,17 @@ const QCLibrary: React.FC = () => {
                   Detalle del modulo
                 </p>
                 <h3 className="mt-2 text-xl font-display text-[var(--ink)]">
-                  Modulo {selectedWorkUnitSummary?.module_number ?? selectedWorkUnitId}{' '}
+                  Modulo {selectedWorkUnitSummary?.house_identifier ?? workUnitDetail?.house_identifier ?? '-'}{' '}
                   <span className="text-[var(--ink-muted)]">
                     · {selectedWorkUnitSummary?.project_name ?? 'Proyecto'}
                   </span>
                 </h3>
                 <div className="mt-1 text-sm text-[var(--ink-muted)]">
-                  {selectedWorkUnitSummary?.house_type_name ?? workUnitDetail?.house_type_name ?? '-'} ·{' '}
+                  {selectedWorkUnitSummary?.house_type_name ?? workUnitDetail?.house_type_name ?? '-'} MD{' '}
+                  {selectedWorkUnitSummary?.module_number ??
+                    workUnitDetail?.module_number ??
+                    selectedWorkUnitId}{' '}
+                  ·{' '}
                   {selectedWorkUnitSummary?.status ?? workUnitDetail?.status ?? '-'}
                 </div>
               </div>

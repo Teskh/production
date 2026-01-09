@@ -27,6 +27,9 @@ class QCCheckInstanceSummary(BaseModel):
     current_station_id: int | None = None
     current_station_name: str | None = None
     module_number: int
+    project_name: str | None = None
+    house_type_name: str | None = None
+    house_identifier: str | None = None
     panel_code: str | None = None
     status: QCCheckStatus
     severity_level: QCSeverityLevel | None = None
@@ -49,6 +52,9 @@ class QCReworkTaskSummary(BaseModel):
     current_station_id: int | None = None
     current_station_name: str | None = None
     module_number: int
+    project_name: str | None = None
+    house_type_name: str | None = None
+    house_identifier: str | None = None
     panel_code: str | None = None
     created_at: datetime
 
@@ -196,6 +202,7 @@ class QCNotificationSummary(BaseModel):
 class QCLibraryWorkUnitSummary(BaseModel):
     work_unit_id: int
     module_number: int
+    house_identifier: str | None = None
     project_name: str
     house_type_name: str
     status: str
@@ -208,6 +215,7 @@ class QCLibraryWorkUnitSummary(BaseModel):
 class QCLibraryWorkUnitDetail(BaseModel):
     work_unit_id: int
     module_number: int
+    house_identifier: str | None = None
     project_name: str
     house_type_name: str
     status: str

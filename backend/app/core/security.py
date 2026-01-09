@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def new_session_token() -> str:
@@ -14,7 +14,7 @@ def hash_token(token: str) -> str:
 
 
 def utc_now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def session_expiry(hours: int = 12) -> datetime:
