@@ -613,14 +613,6 @@ const buildQrPath = (modules: boolean[][]): string => {
   return path.join('');
 };
 
-const getPrimaryNamePart = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
-  return trimmed.split(/\s+/)[0];
-};
-
 const getNameParts = (
   worker: WorkerBadgePerson
 ): { first: string; last: string; full: string } => {

@@ -297,9 +297,9 @@ const DashboardPanelAnalysis: React.FC = () => {
       type PauseSegment = {
         start: number;
         end: number;
-        reason?: string | null;
-        rawStart?: string | null;
-        rawEnd?: string | null;
+        reason: string | null;
+        rawStart: string | null;
+        rawEnd: string | null;
       };
 
       const pauseSegments: PauseSegment[] = [];
@@ -324,7 +324,7 @@ const DashboardPanelAnalysis: React.FC = () => {
               rawEnd: rawEnd ?? null,
             };
           })
-          .filter((pause): pause is PauseSegment => Boolean(pause))
+          .filter((pause): pause is PauseSegment => pause != null)
           .sort((a, b) => a.start - b.start);
 
         let cursor = startedTs;
@@ -593,7 +593,8 @@ const DashboardPanelAnalysis: React.FC = () => {
 
     const areaTotal = list.reduce((acc, item) => {
       const area = toFiniteNumber(item?.panel_area);
-      return Number.isFinite(area) ? acc + area : acc;
+      if (area == null) return acc;
+      return acc + area;
     }, 0);
 
     return {
@@ -636,7 +637,7 @@ const DashboardPanelAnalysis: React.FC = () => {
       const houseLabel = panel?.house_identifier ? `Casa ${panel.house_identifier}` : '';
       const details = [houseLabel, moduleLabel].filter(Boolean).join(' / ');
       const areaVal = toFiniteNumber(panel?.panel_area);
-      const areaText = Number.isFinite(areaVal) && areaVal > 0 ? `${areaVal.toFixed(1)} m2` : '';
+      const areaText = areaVal != null && areaVal > 0 ? `${areaVal.toFixed(1)} m2` : '';
       const base = panel?.panel_code ? String(panel.panel_code) : `Panel ${panel?.panel_definition_id ?? ''}`;
       const suffixParts = [];
       if (details) suffixParts.push(details);
@@ -705,7 +706,7 @@ const DashboardPanelAnalysis: React.FC = () => {
 
       const availableTs = panel.daily_available_ts != null ? panel.daily_available_ts : startTs;
 
-      const paused = Number.isFinite(panel.daily_paused_minutes) ? panel.daily_paused_minutes : 0;
+      const paused = toFiniteNumber(panel.daily_paused_minutes) ?? 0;
       if (paused > 0) {
         pausedMinutesTotal += paused;
         hasTimingData = true;
@@ -716,11 +717,14 @@ const DashboardPanelAnalysis: React.FC = () => {
         : Number.isFinite(panel.expected_minutes)
           ? panel.expected_minutes
           : null;
-      const actualWorkMinutes = Number.isFinite(panel.daily_actual_work_minutes)
-        ? panel.daily_actual_work_minutes
-        : panel.daily_work_total_ms > 0
-          ? panel.daily_work_total_ms / 60000
-          : null;
+      const actualWorkMinutes = (() => {
+        const dailyActual = toFiniteNumber(panel.daily_actual_work_minutes);
+        if (dailyActual != null) return dailyActual;
+        if (panel.daily_work_total_ms != null && panel.daily_work_total_ms > 0) {
+          return panel.daily_work_total_ms / 60000;
+        }
+        return null;
+      })();
 
       if (expectedMinutes != null && actualWorkMinutes != null) {
         hasTimingData = true;
@@ -1181,7 +1185,7 @@ const DashboardPanelAnalysis: React.FC = () => {
 
                 const overtimeElements = (() => {
                   if (!(panel.overtimeMs > 0 && panel.overtimeStartTs != null)) return null;
-                  const elems: JSX.Element[] = [];
+                  const elems: React.ReactElement[] = [];
                   panel.workSegments.forEach((seg, segIdx) => {
                     const segmentStart = Math.max(seg.start, panel.overtimeStartTs ?? 0);
                     const segmentEnd = seg.end;
@@ -1248,18 +1252,20 @@ const DashboardPanelAnalysis: React.FC = () => {
                 const durationDetailedLabel = durationMs != null ? formatGapDuration(durationMs) : '-';
                 const expectedMinutes = (() => {
                   const byMinutes = toFiniteNumber(panel.expected_minutes);
-                  if (byMinutes !== null) return byMinutes;
-                  return Number.isFinite(panel.expectedMs) ? panel.expectedMs / 60000 : null;
+                  if (byMinutes != null) return byMinutes;
+                  const expectedMs = toFiniteNumber(panel.expectedMs);
+                  return expectedMs != null ? expectedMs / 60000 : null;
                 })();
-                const hasExpected = Number.isFinite(expectedMinutes);
+                const hasExpected = expectedMinutes != null;
                 const workedMinutes = (() => {
-                  if (Number.isFinite(panel.daily_actual_work_minutes)) return panel.daily_actual_work_minutes;
+                  const dailyActual = toFiniteNumber(panel.daily_actual_work_minutes);
+                  if (dailyActual != null) return dailyActual;
                   const totalWork = toFiniteNumber(panel.total_work_minutes);
-                  if (totalWork !== null) return totalWork;
+                  if (totalWork != null) return totalWork;
                   return toFiniteNumber(panel.actual_minutes);
                 })();
                 const diffMinutes =
-                  Number.isFinite(workedMinutes) && hasExpected ? workedMinutes - expectedMinutes : null;
+                  workedMinutes != null && expectedMinutes != null ? workedMinutes - expectedMinutes : null;
                 const diffLabel = diffMinutes != null ? formatMinutesShort(diffMinutes, true) : '-';
                 const diffColor =
                   diffMinutes != null
@@ -1276,10 +1282,10 @@ const DashboardPanelAnalysis: React.FC = () => {
                   if (total !== null) return total;
                   return toFiniteNumber(panel.paused_minutes);
                 })();
-                const pausedLabel = Number.isFinite(pausedMinutes) ? formatMinutesShort(pausedMinutes) : '-';
+                const pausedLabel = pausedMinutes != null ? formatMinutesShort(pausedMinutes) : '-';
                 const pausedDetailedLabel =
-                  Number.isFinite(pausedMinutes) ? formatMinutesDetailed(pausedMinutes) : '-';
-                const hasPaused = Number.isFinite(pausedMinutes) && pausedMinutes > 0;
+                  pausedMinutes != null ? formatMinutesDetailed(pausedMinutes) : '-';
+                const hasPaused = pausedMinutes != null && pausedMinutes > 0;
                 const expectedLabel = hasExpected ? formatMinutesShort(expectedMinutes) : '-';
                 const durationTitleLines = [
                   `Disponible: ${panel.available_at ? formatDateTime(panel.available_at) : '-'}`,
@@ -1483,7 +1489,7 @@ const DashboardPanelAnalysis: React.FC = () => {
                           if (!latestEnd) {
                             const fallbackRaw = task && task.satisfied_at ? String(task.satisfied_at) : null;
                             const fallbackTs = fallbackRaw ? toTs(fallbackRaw) : null;
-                            if (fallbackTs != null) {
+                            if (fallbackRaw && fallbackTs != null) {
                               latestEnd = { ts: fallbackTs, raw: fallbackRaw };
                             }
                           }
@@ -1520,9 +1526,9 @@ const DashboardPanelAnalysis: React.FC = () => {
                               break;
                             }
                           }
-                          const taskHasExpected = Number.isFinite(taskExpectedMinutes);
+                          const taskHasExpected = taskExpectedMinutes != null;
                           const taskDiffMinutes =
-                            Number.isFinite(taskDurationMinutes) && taskHasExpected
+                            taskDurationMinutes != null && taskExpectedMinutes != null
                               ? taskDurationMinutes - taskExpectedMinutes
                               : null;
                           const taskDiffLabel = taskDiffMinutes != null ? formatMinutesShort(taskDiffMinutes, true) : '-';
@@ -1598,9 +1604,8 @@ const DashboardPanelAnalysis: React.FC = () => {
                                   const resumedAtLabel = pause.resumed_at
                                     ? formatDateTimeShort(pause.resumed_at)
                                     : '-';
-                                  const durationMs = Number.isFinite(pause.duration_seconds)
-                                    ? pause.duration_seconds * 1000
-                                    : null;
+                                  const durationSeconds = toFiniteNumber(pause.duration_seconds);
+                                  const durationMs = durationSeconds != null ? durationSeconds * 1000 : null;
                                   const durationLabel = durationMs != null ? formatGapDuration(durationMs) : '-';
                                   return (
                                     <div

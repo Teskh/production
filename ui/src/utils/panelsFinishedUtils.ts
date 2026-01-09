@@ -157,6 +157,14 @@ export const summarizePauses = (
     };
   }
 
+  type PauseSummaryEntry = {
+    startRaw: string | null;
+    endRaw: string | null;
+    startTs: number;
+    endTs: number | null;
+    reason: string;
+  };
+
   const normalized = entries
     .map((pause) => {
       if (!pause) return null;
@@ -178,11 +186,8 @@ export const summarizePauses = (
         reason: normalizeString(pause.reason),
       };
     })
-    .filter(Boolean)
+    .filter((entry): entry is PauseSummaryEntry => entry != null)
     .sort((a, b) => {
-      if (a?.startTs == null && b?.startTs == null) return 0;
-      if (a?.startTs == null) return 1;
-      if (b?.startTs == null) return -1;
       return a.startTs - b.startTs;
     });
 

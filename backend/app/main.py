@@ -19,8 +19,10 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://10.0.10.236:5173",
+        "http://10.0.10.236:4173",
     ],
-    allow_origin_regex=r"^http://192\.168\.\d{1,3}\.\d{1,3}:5173$",
+    allow_origin_regex=r"^http://(192\.168|10)\.\d{1,3}\.\d{1,3}\.\d{1,3}:(5173|4173)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

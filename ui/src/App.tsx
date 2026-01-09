@@ -22,7 +22,7 @@ import DashboardPanels from './pages/admin/dashboards/dashboard_panels';
 import DashboardStations from './pages/admin/dashboards/dashboard_stations';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
-import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance';
+import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import Personnel from './pages/admin/personnel/Personnel';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';

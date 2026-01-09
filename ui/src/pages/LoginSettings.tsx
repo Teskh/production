@@ -11,6 +11,16 @@ type Station = {
   sequence_order: number | null;
 };
 
+type ContextMode = 'group' | 'specific' | null;
+type SpecificType = 'panel' | 'assembly' | null;
+type GroupMode = 'panel_line' | 'assembly_sequence' | 'aux' | null;
+
+type InitialContextState = {
+  contextMode: ContextMode;
+  specificType: SpecificType;
+  groupMode: GroupMode;
+};
+
 type LoginSettingsProps = {
   open: boolean;
   stationContext: StationContext | null;
@@ -50,7 +60,7 @@ const normalizeStationName = (station: Station) => {
 const buildInitialContextState = (
   stationContext: StationContext | null,
   selectedStation: Station | null
-) => {
+): InitialContextState => {
   if (!stationContext) {
     return {
       contextMode: null,
@@ -110,13 +120,13 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   onClose,
 }) => {
   const initialState = buildInitialContextState(stationContext, selectedStation);
-  const [contextMode, setContextMode] = useState<'group' | 'specific' | null>(
+  const [contextMode, setContextMode] = useState<ContextMode>(
     initialState.contextMode
   );
-  const [specificType, setSpecificType] = useState<'panel' | 'assembly' | null>(
+  const [specificType, setSpecificType] = useState<SpecificType>(
     initialState.specificType
   );
-  const [groupMode, setGroupMode] = useState<'panel_line' | 'assembly_sequence' | 'aux' | null>(
+  const [groupMode, setGroupMode] = useState<GroupMode>(
     initialState.groupMode
   );
   const [adminOpen, setAdminOpen] = useState(false);

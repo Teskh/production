@@ -352,11 +352,13 @@ const SubTypeSelector: React.FC<{
 
 const ProductionQueue: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const pageSize = 20;
   const [items, setItems] = useState<QueueItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [query, setQuery] = useState('');
+  const [visibleCount, setVisibleCount] = useState(pageSize);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
@@ -426,6 +428,18 @@ const ProductionQueue: React.FC = () => {
       return haystack.includes(needle);
     });
   }, [items, showCompleted, query]);
+
+  useEffect(() => {
+    setVisibleCount(pageSize);
+    setLastSelectedIndex(null);
+  }, [pageSize, query, showCompleted]);
+
+  useEffect(() => {
+    setVisibleCount((prev) => Math.min(prev, filteredItems.length));
+    setLastSelectedIndex((prev) =>
+      prev !== null && prev >= filteredItems.length ? null : prev
+    );
+  }, [filteredItems.length]);
 
   const projectOptions = useMemo(() => {
     const unique = new Set(items.map((item) => item.project_name).filter(Boolean));
@@ -591,7 +605,8 @@ const ProductionQueue: React.FC = () => {
     load();
   }, [editHouseTypeId, houseSubTypes, isEditModalOpen]);
 
-  const visibleItems = filteredItems;
+  const visibleItems = filteredItems.slice(0, visibleCount);
+  const hasMoreItems = visibleItems.length < filteredItems.length;
 
   const applySelection = (
     id: number,
@@ -1311,6 +1326,29 @@ const ProductionQueue: React.FC = () => {
             );
           })}
         </div>
+
+        {filteredItems.length > pageSize && (
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((prev) => Math.min(prev + pageSize, filteredItems.length))
+              }
+              disabled={!hasMoreItems}
+              className="rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Cargar 20 más
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisibleCount(filteredItems.length)}
+              disabled={!hasMoreItems}
+              className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Mostrar todos
+            </button>
+          </div>
+        )}
       </section>
 
       {isDetailModalOpen && (
