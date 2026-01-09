@@ -435,11 +435,17 @@ const ProductionQueue: React.FC = () => {
   }, [pageSize, query, showCompleted]);
 
   useEffect(() => {
-    setVisibleCount((prev) => Math.min(prev, filteredItems.length));
+    setVisibleCount((prev) => {
+      if (filteredItems.length === 0) {
+        return 0;
+      }
+      const baseline = prev === 0 ? pageSize : prev;
+      return Math.min(baseline, filteredItems.length);
+    });
     setLastSelectedIndex((prev) =>
       prev !== null && prev >= filteredItems.length ? null : prev
     );
-  }, [filteredItems.length]);
+  }, [filteredItems.length, pageSize]);
 
   const projectOptions = useMemo(() => {
     const unique = new Set(items.map((item) => item.project_name).filter(Boolean));

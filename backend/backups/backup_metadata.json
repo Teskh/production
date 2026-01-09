@@ -35,6 +35,9 @@
     },
     "scp_backup_20260109_022126_prod_ongoing_2.dump": {
       "label": "prod_ongoing_2"
+    },
+    "scp_backup_20260109_031205_prod_final.dump": {
+      "label": "prod_final"
     }
   }
 }
