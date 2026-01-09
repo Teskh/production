@@ -389,12 +389,21 @@ const QCExecution: React.FC = () => {
     checkDetail?.check_definition?.name ??
     checkDetail?.check_instance?.check_name ??
     'Revision QC';
+  const headerProject = workUnitMeta?.project_name ?? 'Proyecto sin nombre';
+  const headerHouse = workUnitMeta?.house_identifier ?? 'Sin identificar';
+  const headerHouseLabel = `Casa ${headerHouse}`;
 
   const formatStampDate = (date: Date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}/${month}/${day}`;
+  };
+
+  const formatStampTime = (date: Date) => {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
   };
 
   const buildWatermarkLines = (date: Date) => {
@@ -418,7 +427,7 @@ const QCExecution: React.FC = () => {
     if (headerTitle) {
       lines.push(headerTitle);
     }
-    lines.push(formatStampDate(date));
+    lines.push(`${formatStampDate(date)} ${formatStampTime(date)}`);
     return lines.filter(Boolean);
   };
 
@@ -761,20 +770,27 @@ const QCExecution: React.FC = () => {
           <ChevronLeft className="w-6 h-6" />
         </button>
         <div className="ml-2 text-sm text-slate-400">
-          <span className="font-medium text-white">{headerModule}</span>
-          <span className="mx-2">•</span>
-          <span>
-            {headerStation}
-            {headerPanel ? ` · Panel ${headerPanel}` : ''}
-          </span>
-          {steps.length > 0 && (
-            <>
-              <span className="mx-2">•</span>
-              <span>
-                Paso {currentStep + 1}/{steps.length}
-              </span>
-            </>
-          )}
+          <div className="text-xs text-slate-400">
+            {headerProject}
+            <span className="mx-2">•</span>
+            {headerHouseLabel}
+          </div>
+          <div>
+            <span className="font-medium text-white">{headerModule}</span>
+            <span className="mx-2">•</span>
+            <span>
+              {headerStation}
+              {headerPanel ? ` · Panel ${headerPanel}` : ''}
+            </span>
+            {steps.length > 0 && (
+              <>
+                <span className="mx-2">•</span>
+                <span>
+                  Paso {currentStep + 1}/{steps.length}
+                </span>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -907,6 +923,19 @@ const QCExecution: React.FC = () => {
           <p className="text-sm text-slate-300 mt-1">
             {currentStepData?.desc || 'Sin guia adicional.'}
           </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
+            <span className="rounded-full bg-slate-900/60 px-3 py-1">Proyecto: {headerProject}</span>
+            <span className="rounded-full bg-slate-900/60 px-3 py-1">Casa: {headerHouse}</span>
+            <span className="rounded-full bg-slate-900/60 px-3 py-1">
+              Modulo: {headerModule}
+            </span>
+            {headerPanel && (
+              <span className="rounded-full bg-slate-900/60 px-3 py-1">Panel: {headerPanel}</span>
+            )}
+            <span className="rounded-full bg-slate-900/60 px-3 py-1">
+              Estacion: {headerStation}
+            </span>
+          </div>
           {reworkState && (
             <p className="text-xs text-slate-400 mt-2">Estado: {reworkState.description}</p>
           )}

@@ -109,7 +109,7 @@ type WorkerSessionResponse = {
   idle_timeout_seconds: number | null;
 };
 
-const WORKER_THRESHOLD = 12;
+const WORKER_THRESHOLD = 16;
 
 type TaskCoverage = {
   panelSequences: Set<number>;

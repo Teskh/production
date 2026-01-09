@@ -79,3 +79,6 @@
 - Regular crew assignments are rebuilt for tasks listed in partidas using exact normalized name matches (prefering the GeoVictoria column when present), with GeoVictoria IDs pulled from the API when available; missing workers are created and assigned stations by matching `Station.sequence_order` to the derived `ESTACION` sequence.
 - Worker badge printing assumes the official logo lives at `ui/public/logo.png` and is referenced via `/logo.png`.
 - Worker badge name parsing uses the first token as the first name and the second-to-last token as the first surname (assuming the last two tokens are surnames).
+
+## 2026-01-15
+- QC dashboard station grid uses `/api/stations` for layout and derives module/panel labels from the most recent pending check or rework task at each station, since no dedicated station-occupancy endpoint exists yet.
