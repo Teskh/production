@@ -2201,7 +2201,7 @@ const StationWorkspace: React.FC = () => {
                 {reasonError}
               </div>
             )}
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 max-h-[40vh] space-y-2 overflow-y-auto pr-1">
               {pauseReasons.map((reason) => (
                 <button
                   key={reason.id}

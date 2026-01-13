@@ -92,6 +92,82 @@ def _required_panel_task_ids(
     return required_ids
 
 
+def _advance_panel_if_satisfied(
+    db: Session,
+    panel_unit: PanelUnit,
+    station: Station,
+) -> None:
+    if station.role != StationRole.PANELS:
+        return
+    work_unit = db.get(WorkUnit, panel_unit.work_unit_id)
+    if not work_unit:
+        return
+    work_order = db.get(WorkOrder, work_unit.work_order_id)
+    if not work_order:
+        return
+    panel_def = db.get(PanelDefinition, panel_unit.panel_definition_id)
+    if not panel_def:
+        return
+
+    required_ids = _required_panel_task_ids(db, station, work_unit, work_order, panel_def)
+    if required_ids:
+        completed_ids = set(
+            db.execute(
+                select(TaskInstance.task_definition_id)
+                .where(TaskInstance.work_unit_id == work_unit.id)
+                .where(TaskInstance.panel_unit_id == panel_unit.id)
+                .where(TaskInstance.station_id == station.id)
+                .where(TaskInstance.status.in_([TaskStatus.COMPLETED, TaskStatus.SKIPPED]))
+                .where(TaskInstance.task_definition_id.in_(required_ids))
+            ).scalars()
+        )
+        skipped_ids = set(
+            db.execute(
+                select(TaskException.task_definition_id)
+                .where(TaskException.work_unit_id == work_unit.id)
+                .where(TaskException.panel_unit_id == panel_unit.id)
+                .where(TaskException.station_id == station.id)
+                .where(TaskException.exception_type == TaskExceptionType.SKIP)
+                .where(TaskException.task_definition_id.in_(required_ids))
+            ).scalars()
+        )
+        satisfied_ids = completed_ids | skipped_ids
+        should_advance = required_ids.issubset(satisfied_ids)
+    else:
+        should_advance = True
+
+    if not should_advance:
+        return
+
+    next_station = None
+    candidates = list(
+        db.execute(
+            select(Station)
+            .where(Station.role == StationRole.PANELS)
+            .where(Station.sequence_order > station.sequence_order)
+            .order_by(Station.sequence_order)
+        ).scalars()
+    )
+    for candidate in candidates:
+        candidate_required = _required_panel_task_ids(
+            db, candidate, work_unit, work_order, panel_def
+        )
+        if candidate_required:
+            next_station = candidate
+            break
+
+    if next_station:
+        panel_unit.current_station_id = next_station.id
+        panel_unit.status = PanelUnitStatus.IN_PROGRESS
+        if work_unit.status == WorkUnitStatus.PLANNED:
+            work_unit.status = WorkUnitStatus.PANELS
+    else:
+        panel_unit.current_station_id = None
+        panel_unit.status = PanelUnitStatus.COMPLETED
+        if work_unit.status in (WorkUnitStatus.PLANNED, WorkUnitStatus.PANELS):
+            work_unit.status = WorkUnitStatus.MAGAZINE
+
+
 def _station_has_module_tasks(
     station: Station,
     task_definitions: list[TaskDefinition],
@@ -643,78 +719,8 @@ def complete_task(
     if instance.scope == TaskScope.PANEL and instance.panel_unit_id is not None:
         panel_unit = db.get(PanelUnit, instance.panel_unit_id)
         station = db.get(Station, instance.station_id)
-        if panel_unit and station and station.role == StationRole.PANELS:
-            work_unit = db.get(WorkUnit, panel_unit.work_unit_id)
-            work_order = (
-                db.execute(
-                    select(WorkOrder).where(WorkOrder.id == work_unit.work_order_id)
-                ).scalar_one_or_none()
-                if work_unit
-                else None
-            )
-            panel_def = db.get(PanelDefinition, panel_unit.panel_definition_id)
-            if work_unit and work_order and panel_def:
-                required_ids = _required_panel_task_ids(
-                    db, station, work_unit, work_order, panel_def
-                )
-                if required_ids:
-                    completed_ids = set(
-                        db.execute(
-                            select(TaskInstance.task_definition_id)
-                            .where(TaskInstance.work_unit_id == work_unit.id)
-                            .where(TaskInstance.panel_unit_id == panel_unit.id)
-                            .where(TaskInstance.station_id == station.id)
-                            .where(
-                                TaskInstance.status.in_(
-                                    [TaskStatus.COMPLETED, TaskStatus.SKIPPED]
-                                )
-                            )
-                            .where(TaskInstance.task_definition_id.in_(required_ids))
-                        ).scalars()
-                    )
-                    skipped_ids = set(
-                        db.execute(
-                            select(TaskException.task_definition_id)
-                            .where(TaskException.work_unit_id == work_unit.id)
-                            .where(TaskException.panel_unit_id == panel_unit.id)
-                            .where(TaskException.station_id == station.id)
-                            .where(TaskException.exception_type == TaskExceptionType.SKIP)
-                            .where(TaskException.task_definition_id.in_(required_ids))
-                        ).scalars()
-                    )
-                    satisfied_ids = completed_ids | skipped_ids
-                    should_advance = required_ids.issubset(satisfied_ids)
-                else:
-                    should_advance = True
-
-                if should_advance:
-                    next_station = None
-                    candidates = list(
-                        db.execute(
-                            select(Station)
-                            .where(Station.role == StationRole.PANELS)
-                            .where(Station.sequence_order > station.sequence_order)
-                            .order_by(Station.sequence_order)
-                        ).scalars()
-                    )
-                    for candidate in candidates:
-                        candidate_required = _required_panel_task_ids(
-                            db, candidate, work_unit, work_order, panel_def
-                        )
-                        if candidate_required:
-                            next_station = candidate
-                            break
-
-                    if next_station:
-                        panel_unit.current_station_id = next_station.id
-                        panel_unit.status = PanelUnitStatus.IN_PROGRESS
-                        if work_unit.status == WorkUnitStatus.PLANNED:
-                            work_unit.status = WorkUnitStatus.PANELS
-                    else:
-                        panel_unit.current_station_id = None
-                        panel_unit.status = PanelUnitStatus.COMPLETED
-                        if work_unit.status in (WorkUnitStatus.PLANNED, WorkUnitStatus.PANELS):
-                            work_unit.status = WorkUnitStatus.MAGAZINE
+        if panel_unit and station:
+            _advance_panel_if_satisfied(db, panel_unit, station)
     if instance.scope == TaskScope.MODULE and instance.panel_unit_id is None:
         task_def = db.get(TaskDefinition, instance.task_definition_id)
         station = db.get(Station, instance.station_id)
@@ -818,6 +824,10 @@ def skip_task(
                 paused_at=utc_now(),
             )
         )
+    db.flush()
+    station = db.get(Station, payload.station_id)
+    if station:
+        _advance_panel_if_satisfied(db, panel_unit, station)
     db.commit()
 
 
