@@ -11,3 +11,6 @@ PYTHONPATH=. alembic upgrade head
 # fix timestamps
 
 PYTHONPATH=. python -m app.scripts.fix_today_timestamps --dry-run
+
+# starting frontend
+npm run preview -- --host 0.0.0.0 --port 5173

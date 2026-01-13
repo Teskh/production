@@ -13,18 +13,20 @@ Goal: preserve current behavior while reducing special cases and unifying parall
 - project_name
 - house_type_id
 - sub_type_id (nullable)
-- planned_sequence (global ordering)
-- planned_assembly_line (A | B | C, nullable)
 
 Notes:
 - WorkOrder is a grouping container for modules; it does not carry production state.
 - Status and current position are tracked at the WorkUnit level.
 - If you need "WorkOrder status" for display, derive it from its WorkUnits.
+- Scheduling metadata lives on WorkUnit to allow per-module ordering and line selection.
 
 `WorkUnit` (module)
 - id
 - work_order_id
 - module_number (1-based within the work order)
+- planned_sequence (global ordering)
+- planned_start_datetime (nullable)
+- planned_assembly_line (1 | 2 | 3, nullable; A/B/C accepted on input)
 - status (Planned | Panels | Magazine | Assembly | Completed)
 - current_station_id (nullable)
 
@@ -700,7 +702,7 @@ These are behavior and UX requirements from the legacy spec that are not capture
 - Anomalies/backlog tasks: unfinished tasks (expected by station) and misplaced tasks (logged at wrong station) can be surfaced in station overviews when enabled.
 
 ### 5.10 Planning, reorder, timebase, and login behavior
-- Plan generation: planned_sequence appends from max; modules per house inserted in descending module_number; planned_start_datetime increments +1h; planned line cycles A/B/C; house_identifier_base accepted with optional collision checks.
+- Plan generation: planned_sequence appends from max; modules per house inserted in descending module_number; planned_start_datetime increments +1h; planned line cycles 1/2/3 (A/B/C aliases accepted); house_identifier_base accepted with optional collision checks.
 - Reorder rewrites planned_sequence to 1..N in the provided order (no concurrency guard).
 - "Today" uses server local midnight for daily schedule and reports; station panels finished uses 08:20 as day start for idle/overtime summaries; QC timestamps use server time.
 - Workers without login_permanance are auto-logged out after 45s inactivity.

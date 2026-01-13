@@ -73,6 +73,7 @@
 ## 2026-01-13
 - Station panels finished dashboard assumes `GET /api/station-panels-finished` counts panels only after all applicable tasks at the station are satisfied (including skips), and pass-through panels without task logs use the latest completion/skip at any prior panel station as their pass timestamp.
 - GeoVictoria name proposal script writes a minimal XLSX (sheet1 + shared strings only) for the updated partidas file, and keeps unmatched names unchanged in the new GeoVictoria column.
+- Synthetic shift CSV generator builds in-memory work orders/units/panels from existing house types/panel definitions, schedules tasks sequentially per station using task applicability + expected durations (panel `task_durations_json` or `task_expected_durations`), assigns workers by station assignment (fallback to all workers), and writes a single denormalized timeline CSV without seeding the database.
 
 ## 2026-01-14
 - Partidas task import treats the sheet as module-scope tasks, maps `ESTACION` to `TaskDefinition.default_station_sequence` using ARMADO=11/ESTACION 1=12, and overwrites applicability for the selected house type by deleting + recreating module-scope rows.
@@ -82,3 +83,6 @@
 
 ## 2026-01-15
 - QC dashboard station grid uses `/api/stations` for layout and derives module/panel labels from the most recent pending check or rework task at each station, since no dedicated station-occupancy endpoint exists yet.
+
+## 2026-01-16
+- Planned sequencing and assembly line metadata live only on `work_units`; `work_orders` no longer store planned_* fields, and legacy import does not set them.

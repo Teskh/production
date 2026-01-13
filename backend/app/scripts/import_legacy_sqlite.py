@@ -1376,8 +1376,6 @@ def _get_or_create_work_order(
     session: Session,
     cache: dict[tuple[str, str, int, int | None], WorkOrder],
     key: tuple[str, str, int, int | None],
-    planned_sequence: int | None,
-    planned_assembly_line: str | None,
     allow_existing: bool,
 ) -> WorkOrder:
     cached = cache.get(key)
@@ -1397,8 +1395,6 @@ def _get_or_create_work_order(
         ).scalar_one_or_none()
 
     if existing:
-        existing.planned_sequence = planned_sequence
-        existing.planned_assembly_line = planned_assembly_line
         cache[key] = existing
         return existing
 
@@ -1407,8 +1403,6 @@ def _get_or_create_work_order(
         house_identifier=house_identifier,
         house_type_id=house_type_id,
         sub_type_id=sub_type_id,
-        planned_sequence=planned_sequence,
-        planned_assembly_line=planned_assembly_line,
     )
     session.add(work_order)
     session.flush()
@@ -1472,16 +1466,10 @@ def _import_module_production_plan(
 
     work_orders: dict[tuple[str, str, int, int | None], WorkOrder] = {}
     for key, group_rows in grouped.items():
-        planned_sequence = min(
-            row["planned_sequence"] for row in group_rows if row["planned_sequence"]
-        )
-        planned_assembly_line = group_rows[0]["planned_assembly_line"]
         work_orders[key] = _get_or_create_work_order(
             session,
             work_orders,
             key,
-            planned_sequence,
-            planned_assembly_line,
             allow_existing,
         )
 

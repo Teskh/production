@@ -456,7 +456,6 @@ def create_batch(
 
     created_work_unit_ids: list[int] = []
     for index, house_identifier in enumerate(house_identifiers):
-        house_sequence_start = planned_sequence
         house_line = normalized_line or _LINE_SEQUENCE[
             (next_line_index + index) % len(_LINE_SEQUENCE)
         ]
@@ -465,8 +464,6 @@ def create_batch(
             house_identifier=house_identifier,
             house_type_id=house_type.id,
             sub_type_id=subtype.id if subtype else None,
-            planned_sequence=house_sequence_start,
-            planned_assembly_line=house_line,
         )
         db.add(work_order)
         db.flush()
@@ -535,17 +532,6 @@ def reorder_queue(
 
     for index, unit in enumerate(ordered_units, start=1):
         unit.planned_sequence = index
-
-    order_min_sequences = list(
-        db.execute(
-            select(WorkUnit.work_order_id, func.min(WorkUnit.planned_sequence))
-            .group_by(WorkUnit.work_order_id)
-        ).all()
-    )
-    for work_order_id, min_sequence in order_min_sequences:
-        work_order = db.get(WorkOrder, work_order_id)
-        if work_order:
-            work_order.planned_sequence = min_sequence
 
     db.commit()
     return _fetch_queue_items(db, include_completed=True)

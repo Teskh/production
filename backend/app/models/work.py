@@ -21,10 +21,6 @@ class WorkOrder(Base):
     sub_type_id: Mapped[int | None] = mapped_column(
         ForeignKey("house_sub_types.id"), nullable=True
     )
-    planned_sequence: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, index=True
-    )
-    planned_assembly_line: Mapped[str | None] = mapped_column(String(1), nullable=True)
 
     work_units: Mapped[list["WorkUnit"]] = relationship(
         back_populates="work_order", cascade="all, delete-orphan"
