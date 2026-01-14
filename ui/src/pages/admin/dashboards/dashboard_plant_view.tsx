@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
   Clock,
   MapPin,
   Pause,
@@ -8,6 +7,7 @@ import {
   RefreshCcw,
   UploadCloud,
   Users,
+  X,
 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
@@ -212,6 +212,15 @@ const formatTime = (value: Date) =>
 const formatDate = (value: Date) =>
   value.toLocaleDateString([], { year: 'numeric', month: 'short', day: '2-digit' });
 
+const formatWorkerName = (name: string, compact: boolean) => {
+  if (!compact) return name;
+  const tokens = name.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return name;
+  if (tokens.length === 1) return tokens[0];
+  if (tokens.length === 2) return `${tokens[0]} ${tokens[1]}`;
+  return `${tokens[0]} ${tokens[tokens.length - 2]}`;
+};
+
 const getActiveTasks = (tasks: TimelineRow[], currentTime: Date | null) => {
   if (!currentTime) return [];
   return tasks.filter((task) => task.startedAt <= currentTime && task.completedAt > currentTime);
@@ -252,6 +261,7 @@ const DashboardPlantView: React.FC = () => {
   const [timeOffsetMinutes, setTimeOffsetMinutes] = useState(0);
   const [loadingSample, setLoadingSample] = useState(false);
   const [activeTab, setActiveTab] = useState<'paneles' | 'terminaciones'>('paneles');
+  const [plantViewOpen, setPlantViewOpen] = useState(false);
 
   useEffect(() => {
     setHeader({
@@ -476,6 +486,16 @@ const DashboardPlantView: React.FC = () => {
     }
   };
 
+  const openPlantView = () => {
+    setPlantViewOpen(true);
+    setPlaying(true);
+  };
+
+  const closePlantView = () => {
+    setPlantViewOpen(false);
+    setPlaying(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="relative overflow-hidden rounded-3xl border border-black/5 bg-white/80 p-6 shadow-sm">
@@ -528,458 +548,430 @@ const DashboardPlantView: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1fr)]">
-        <div className="space-y-5">
-          <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Tiempo
-                </p>
-                <h2 className="font-display text-xl text-[var(--ink)]">
-                  Linea temporal del turno
-                </h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPlaying((prev) => !prev)}
-                  disabled={!currentTime}
-                  className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  {playing ? 'Pausa' : 'Play'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTimeOffsetMinutes(0)}
-                  disabled={!currentTime}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)] transition hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Reiniciar
-                </button>
-              </div>
-            </div>
-            <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,220px)]">
-              <div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-[var(--ink-muted)]">
-                  <span>
-                    {currentTime && minTime
-                      ? `${formatDate(minTime)} - ${formatDate(currentTime)}`
-                      : 'Sin datos'}
-                  </span>
-                  <span>
-                    {currentTime ? `${formatTime(currentTime)}` : '--:--'}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={totalMinutes}
-                  step={stepMinutes}
-                  value={timeOffsetMinutes}
-                  onChange={(event) => setTimeOffsetMinutes(Number(event.target.value))}
-                  className="mt-3 w-full accent-[var(--accent)]"
-                  disabled={!currentTime}
-                />
-                <div className="mt-2 flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  <span>{minTime ? formatTime(minTime) : '--:--'}</span>
-                  <span>{maxTime ? formatTime(maxTime) : '--:--'}</span>
-                </div>
-              </div>
-              <div className="rounded-2xl border border-black/5 bg-white/70 p-4">
-                <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Velocidad
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {PLAYBACK_SPEEDS.map((speed) => (
-                    <button
-                      key={speed.value}
-                      type="button"
-                      onClick={() => setPlaybackRate(speed.value)}
-                      className={
-                        speed.value === playbackRate
-                          ? 'rounded-lg bg-[var(--ink)] px-2 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
-                          : 'rounded-lg border border-black/10 bg-white px-2 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
-                      }
-                    >
-                      {speed.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {stats ? (
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                {[
-                  { label: 'Estaciones activas', value: stats.activeStations, icon: MapPin },
-                  { label: 'Operarios activos', value: stats.activeWorkers, icon: Users },
-                  { label: 'Horas simuladas', value: stats.rangeHours, icon: Clock },
-                ].map((card) => (
-                  <div
-                    key={card.label}
-                    className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white/70 px-4 py-3"
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
-                      <card.icon className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                        {card.label}
-                      </p>
-                      <p className="text-lg font-semibold text-[var(--ink)]">{card.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+      <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+              Reproduccion
+            </p>
+            <h2 className="font-display text-xl text-[var(--ink)]">Vista de planta</h2>
+            <p className="mt-2 text-sm text-[var(--ink-muted)]">
+              Abre la vista completa para recorrer el turno y ver el flujo en tiempo real.
+            </p>
           </div>
-
-          <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Planta
-                </p>
-                <h2 className="font-display text-xl text-[var(--ink)]">
-                  Mapa de estaciones
-                </h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-full border border-black/10 bg-white px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  {visibleStationCount} estaciones
-                </span>
-                <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  {activeTab === 'paneles' ? 'Paneles' : 'Terminaciones'}
-                </span>
-              </div>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              {[
-                { key: 'paneles', label: 'Paneles' },
-                { key: 'terminaciones', label: 'Terminaciones' },
-              ].map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() =>
-                    setActiveTab(tab.key === 'paneles' ? 'paneles' : 'terminaciones')
-                  }
-                  className={
-                    activeTab === tab.key
-                      ? 'rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
-                      : 'rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
-                  }
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="mt-5 space-y-5">
-              {visibleGroups.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-                  No hay estaciones disponibles para este tab.
-                </div>
-              ) : (
-                visibleGroups.map((group) => {
-                  const groupWorkerIds = new Set<number>();
-                  group.stations.forEach((station) => {
-                    station.tasks.forEach((task) => groupWorkerIds.add(task.workerId));
-                  });
-                  const groupWorkers = workers.filter((worker) => groupWorkerIds.has(worker.id));
-                  const activeWorkerIds = new Set<number>();
-                  if (currentTime) {
-                    group.stations.forEach((station) => {
-                      getActiveTasks(station.tasks, currentTime).forEach((task) =>
-                        activeWorkerIds.add(task.workerId)
-                      );
-                    });
-                  }
-                  const idleWorkers = groupWorkers.filter(
-                    (worker) => !activeWorkerIds.has(worker.id)
-                  );
-                  return (
-                    <div
-                      key={group.key}
-                      className="rounded-3xl border border-black/10 bg-white/75 p-5 shadow-sm"
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-4">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.25em] text-[var(--ink-muted)]">
-                            {activeTab === 'paneles' ? 'Estacion' : 'Grupo'}
-                          </p>
-                          <h3 className="text-lg font-semibold text-[var(--ink)]">{group.label}</h3>
-                          {activeTab === 'terminaciones' ? (
-                            <p className="text-xs text-[var(--ink-muted)]">
-                              Lineas 1-3 · {group.stations.length} estaciones
-                            </p>
-                          ) : (
-                            <p className="text-xs text-[var(--ink-muted)]">Secuencia {group.order}</p>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                            Equipo asignado
-                          </span>
-                          {idleWorkers.length === 0 ? (
-                            <span className="rounded-full border border-dashed border-black/10 bg-white px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                              Sin operarios libres
-                            </span>
-                          ) : (
-                            idleWorkers.map((worker) => (
-                              <span
-                                key={worker.id}
-                                className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink)]"
-                              >
-                                {worker.name}
-                              </span>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                      <div
-                        className={`mt-4 grid gap-4 ${
-                          activeTab === 'paneles'
-                            ? 'sm:grid-cols-2 xl:grid-cols-3'
-                            : 'lg:grid-cols-3'
-                        }`}
-                      >
-                        {group.stations.map((station) => {
-                          const activeTasks = getActiveTasks(station.tasks, currentTime);
-                          const activeTask = activeTasks[0];
-                          const extraActive = Math.max(activeTasks.length - 1, 0);
-                          const hasActive = Boolean(activeTask);
-                          const lastTask = currentTime
-                            ? [...station.tasks]
-                                .reverse()
-                                .find((task) => task.completedAt <= currentTime)
-                            : null;
-                          const nextTask = currentTime
-                            ? station.tasks.find((task) => task.startedAt > currentTime)
-                            : null;
-                          const activeWorkers = Array.from(
-                            new Set(activeTasks.map((task) => task.workerName))
-                          );
-                          const progressDetails =
-                            activeTask && currentTime
-                              ? getProgressDetails(activeTask, currentTime)
-                              : { progress: 0, color: 'var(--leaf)', label: '--' };
-                          const expectedMinutes = activeTask?.expectedMinutes ?? activeTask?.durationMinutes;
-                          const elapsedMinutes =
-                            activeTask && currentTime
-                              ? Math.max(
-                                  (currentTime.getTime() - activeTask.startedAt.getTime()) / 60000,
-                                  0
-                                )
-                              : 0;
-                          const ringDegrees = Math.round(progressDetails.progress * 360);
-                          return (
-                            <div
-                              key={station.id}
-                              className={`rounded-2xl border ${
-                                hasActive ? 'border-[var(--leaf)]/40' : 'border-black/10'
-                              } bg-white/90 p-5 shadow-sm`}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  {station.lineLabel ? (
-                                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                      {station.lineLabel}
-                                    </p>
-                                  ) : null}
-                                  <h4 className="text-base font-semibold text-[var(--ink)]">
-                                    {station.name}
-                                  </h4>
-                                </div>
-                                <span
-                                  className={`rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${
-                                    hasActive
-                                      ? 'bg-[var(--leaf)]/15 text-[var(--leaf)]'
-                                      : 'bg-black/5 text-[var(--ink-muted)]'
-                                  }`}
-                                >
-                                  {hasActive ? 'Trabajando' : 'Idle'}
-                                </span>
-                              </div>
-
-                              {hasActive && activeTask ? (
-                                <div className="mt-4 space-y-3 text-sm">
-                                  <div className="flex items-start gap-3">
-                                    <div className="relative h-12 w-12">
-                                      <div
-                                        className="absolute inset-0 rounded-full"
-                                        style={{
-                                          background: `conic-gradient(${progressDetails.color} 0deg ${ringDegrees}deg, rgba(15,27,45,0.12) ${ringDegrees}deg 360deg)`,
-                                        }}
-                                      />
-                                      <div className="absolute inset-1 rounded-full bg-white" />
-                                      <div className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-[var(--ink)]">
-                                        {progressDetails.label}
-                                      </div>
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          {activeWorkers.map((name) => (
-                                            <span
-                                              key={name}
-                                              className="rounded-full border border-black/10 bg-white px-2 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink)]"
-                                            >
-                                              {name}
-                                            </span>
-                                          ))}
-                                          {extraActive ? (
-                                            <span className="rounded-full border border-black/10 bg-white px-2 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                              +{extraActive} tareas
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                        <span className="text-xs text-[var(--ink-muted)]">
-                                          {formatTime(activeTask.startedAt)} -{' '}
-                                          {formatTime(activeTask.completedAt)}
-                                        </span>
-                                      </div>
-                                      <p className="mt-2 text-sm text-[var(--ink-muted)]">
-                                        {activeTask.taskName} · Modulo{' '}
-                                        {activeTask.moduleNumber ?? '-'}
-                                        {activeTask.panelCode ? ` · Panel ${activeTask.panelCode}` : ''}
-                                      </p>
-                                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                        <span>
-                                          Esperado {expectedMinutes ? `${expectedMinutes.toFixed(1)}m` : '--'}
-                                        </span>
-                                        <span>Transcurrido {elapsedMinutes.toFixed(1)}m</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="mt-4 space-y-2 text-xs text-[var(--ink-muted)]">
-                                  <div className="flex items-center justify-between">
-                                    <span>Ultima tarea</span>
-                                    <span>{lastTask ? formatTime(lastTask.completedAt) : '--:--'}</span>
-                                  </div>
-                                  <div className="flex items-center justify-between">
-                                    <span>Proxima tarea</span>
-                                    <span>{nextTask ? formatTime(nextTask.startedAt) : '--:--'}</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={openPlantView}
+            disabled={!currentTime}
+            className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Play className="h-4 w-4" />
+            Play
+          </button>
         </div>
-
-        <div className="space-y-5">
-          <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Turno
-                </p>
-                <h2 className="font-display text-lg text-[var(--ink)]">Resumen del CSV</h2>
-              </div>
-              <Activity className="h-5 w-5 text-[var(--accent)]" />
-            </div>
-            <div className="mt-4 space-y-3 text-sm text-[var(--ink-muted)]">
-              <div className="flex items-center justify-between">
-                <span>Registros</span>
-                <span className="font-semibold text-[var(--ink)]">{rows.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Estaciones</span>
-                <span className="font-semibold text-[var(--ink)]">{stations.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Operarios</span>
-                <span className="font-semibold text-[var(--ink)]">{workers.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Inicio</span>
-                <span className="font-semibold text-[var(--ink)]">
-                  {minTime ? `${formatDate(minTime)} ${formatTime(minTime)}` : '--'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>Fin</span>
-                <span className="font-semibold text-[var(--ink)]">
-                  {maxTime ? `${formatDate(maxTime)} ${formatTime(maxTime)}` : '--'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Operarios
-                </p>
-                <h2 className="font-display text-lg text-[var(--ink)]">Actividad actual</h2>
-              </div>
-              <Users className="h-5 w-5 text-[var(--accent)]" />
-            </div>
-            <div className="mt-4 grid gap-3">
-              {workers.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-                  Carga un CSV para ver la actividad por operario.
-                </div>
-              ) : (
-                workers.map((worker) => {
-                  const activeTask =
-                    currentTime &&
-                    worker.tasks.find(
-                      (task) => task.startedAt <= currentTime && task.completedAt > currentTime
-                    );
-                  return (
-                    <div
-                      key={worker.id}
-                      className={`rounded-2xl border ${
-                        activeTask ? 'border-[var(--leaf)]/40' : 'border-black/10'
-                      } bg-white/90 px-4 py-3`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-semibold text-[var(--ink)]">{worker.name}</p>
-                          {activeTask ? (
-                            <p className="text-xs text-[var(--ink-muted)]">
-                              {activeTask.stationName} · Modulo {activeTask.moduleNumber ?? '-'}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-[var(--ink-muted)]">Sin tarea activa</p>
-                          )}
-                        </div>
-                        <span
-                          className={`rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${
-                            activeTask
-                              ? 'bg-[var(--leaf)]/15 text-[var(--leaf)]'
-                              : 'bg-black/5 text-[var(--ink-muted)]'
-                          }`}
-                        >
-                          {activeTask ? 'Trabajando' : 'Idle'}
-                        </span>
-                      </div>
-                      {activeTask ? (
-                        <div className="mt-2 text-xs text-[var(--ink-muted)]">
-                          {activeTask.taskName}
-                          {activeTask.panelCode ? ` · Panel ${activeTask.panelCode}` : ''}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1">
+            Registros {rows.length}
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1">
+            Estaciones {stations.length}
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1">
+            Operarios {workers.length}
+          </span>
         </div>
       </div>
+
+      {plantViewOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          onClick={closePlantView}
+        >
+          <div
+            className="relative flex h-[92vh] w-[96vw] flex-col overflow-hidden rounded-3xl border border-black/10 bg-white/95 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-black/10 bg-white/80 px-6 py-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Vista de planta
+                </p>
+                <h2 className="font-display text-lg text-[var(--ink)]">
+                  Mapa vivo del turno
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={closePlantView}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)] transition hover:border-black/20"
+              >
+                <X className="h-4 w-4" />
+                Cerrar
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-5">
+                <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Tiempo
+                      </p>
+                      <h2 className="font-display text-xl text-[var(--ink)]">
+                        Linea temporal del turno
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPlaying((prev) => !prev)}
+                        disabled={!currentTime}
+                        className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                        {playing ? 'Pausa' : 'Play'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimeOffsetMinutes(0)}
+                        disabled={!currentTime}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)] transition hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Reiniciar
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,220px)]">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-[var(--ink-muted)]">
+                        <span>
+                          {currentTime && minTime
+                            ? `${formatDate(minTime)} - ${formatDate(currentTime)}`
+                            : 'Sin datos'}
+                        </span>
+                        <span>
+                          {currentTime ? `${formatTime(currentTime)}` : '--:--'}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={totalMinutes}
+                        step={stepMinutes}
+                        value={timeOffsetMinutes}
+                        onChange={(event) => setTimeOffsetMinutes(Number(event.target.value))}
+                        className="mt-3 w-full accent-[var(--accent)]"
+                        disabled={!currentTime}
+                      />
+                      <div className="mt-2 flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        <span>{minTime ? formatTime(minTime) : '--:--'}</span>
+                        <span>{maxTime ? formatTime(maxTime) : '--:--'}</span>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-black/5 bg-white/70 p-4">
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        Velocidad
+                      </p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {PLAYBACK_SPEEDS.map((speed) => (
+                          <button
+                            key={speed.value}
+                            type="button"
+                            onClick={() => setPlaybackRate(speed.value)}
+                            className={
+                              speed.value === playbackRate
+                                ? 'rounded-lg bg-[var(--ink)] px-2 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
+                                : 'rounded-lg border border-black/10 bg-white px-2 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+                            }
+                          >
+                            {speed.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {stats ? (
+                    <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                      {[
+                        { label: 'Estaciones activas', value: stats.activeStations, icon: MapPin },
+                        { label: 'Operarios activos', value: stats.activeWorkers, icon: Users },
+                        { label: 'Horas simuladas', value: stats.rangeHours, icon: Clock },
+                      ].map((card) => (
+                        <div
+                          key={card.label}
+                          className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white/70 px-4 py-3"
+                        >
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+                            <card.icon className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                              {card.label}
+                            </p>
+                            <p className="text-lg font-semibold text-[var(--ink)]">{card.value}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-3xl border border-black/5 bg-white/85 p-6 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Planta
+                      </p>
+                      <h2 className="font-display text-xl text-[var(--ink)]">
+                        Mapa de estaciones
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full border border-black/10 bg-white px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        {visibleStationCount} estaciones
+                      </span>
+                      <span className="rounded-full border border-black/10 bg-white px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        {activeTab === 'paneles' ? 'Paneles' : 'Terminaciones'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {[
+                      { key: 'paneles', label: 'Paneles' },
+                      { key: 'terminaciones', label: 'Terminaciones' },
+                    ].map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() =>
+                          setActiveTab(tab.key === 'paneles' ? 'paneles' : 'terminaciones')
+                        }
+                        className={
+                          activeTab === tab.key
+                            ? 'rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
+                            : 'rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+                        }
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-5 space-y-5">
+                    {visibleGroups.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+                        No hay estaciones disponibles para este tab.
+                      </div>
+                    ) : (
+                      visibleGroups.map((group) => {
+                        const groupWorkerIds = new Set<number>();
+                        group.stations.forEach((station) => {
+                          station.tasks.forEach((task) => groupWorkerIds.add(task.workerId));
+                        });
+                        const groupWorkers = workers.filter((worker) => groupWorkerIds.has(worker.id));
+                        const activeWorkerIds = new Set<number>();
+                        if (currentTime) {
+                          group.stations.forEach((station) => {
+                            getActiveTasks(station.tasks, currentTime).forEach((task) =>
+                              activeWorkerIds.add(task.workerId)
+                            );
+                          });
+                        }
+                        const idleWorkers = groupWorkers.filter(
+                          (worker) => !activeWorkerIds.has(worker.id)
+                        );
+                        const compactNames = activeTab === 'terminaciones';
+                        const workerChipClass = compactNames
+                          ? 'rounded-full border border-black/10 bg-white px-2 py-1 text-[10px] font-semibold text-[var(--ink)]'
+                          : 'rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink)]';
+                        const workerChipGap = compactNames ? 'gap-1' : 'gap-2';
+                        return (
+                          <div
+                            key={group.key}
+                            className="rounded-3xl border border-black/10 bg-white/75 p-5 shadow-sm"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-4">
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.25em] text-[var(--ink-muted)]">
+                                  {activeTab === 'paneles' ? 'Estacion' : 'Grupo'}
+                                </p>
+                                <h3 className="text-lg font-semibold text-[var(--ink)]">{group.label}</h3>
+                                {activeTab === 'terminaciones' ? (
+                                  <p className="text-xs text-[var(--ink-muted)]">
+                                    Lineas 1-3 · {group.stations.length} estaciones
+                                  </p>
+                                ) : (
+                                  <p className="text-xs text-[var(--ink-muted)]">Secuencia {group.order}</p>
+                                )}
+                              </div>
+                              <div className={`flex flex-wrap items-center ${workerChipGap}`}>
+                                <span className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                  Equipo asignado
+                                </span>
+                                {idleWorkers.length === 0 ? (
+                                  <span className="rounded-full border border-dashed border-black/10 bg-white px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                    Sin operarios libres
+                                  </span>
+                                ) : (
+                                  idleWorkers.map((worker) => (
+                                    <span
+                                      key={worker.id}
+                                      className={workerChipClass}
+                                    >
+                                      {formatWorkerName(worker.name, compactNames)}
+                                    </span>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                            <div
+                              className={`mt-4 grid gap-4 ${
+                                activeTab === 'paneles'
+                                  ? 'sm:grid-cols-2 xl:grid-cols-3'
+                                  : 'lg:grid-cols-3'
+                              }`}
+                            >
+                              {group.stations.map((station) => {
+                                const activeTasks = getActiveTasks(station.tasks, currentTime);
+                                const activeTask = activeTasks[0];
+                                const extraActive = Math.max(activeTasks.length - 1, 0);
+                                const hasActive = Boolean(activeTask);
+                                const lastTask = currentTime
+                                  ? [...station.tasks]
+                                      .reverse()
+                                      .find((task) => task.completedAt <= currentTime)
+                                  : null;
+                                const nextTask = currentTime
+                                  ? station.tasks.find((task) => task.startedAt > currentTime)
+                                  : null;
+                                const activeWorkerLabels = Array.from(
+                                  new Set(
+                                    activeTasks.map((task) =>
+                                      formatWorkerName(task.workerName, compactNames)
+                                    )
+                                  )
+                                );
+                                const progressDetails =
+                                  activeTask && currentTime
+                                    ? getProgressDetails(activeTask, currentTime)
+                                    : { progress: 0, color: 'var(--leaf)', label: '--' };
+                                const expectedMinutes = activeTask?.expectedMinutes ?? activeTask?.durationMinutes;
+                                const elapsedMinutes =
+                                  activeTask && currentTime
+                                    ? Math.max(
+                                        (currentTime.getTime() - activeTask.startedAt.getTime()) / 60000,
+                                        0
+                                      )
+                                    : 0;
+                                const ringDegrees = Math.round(progressDetails.progress * 360);
+                                return (
+                                  <div
+                                    key={station.id}
+                                    className={`rounded-2xl border ${
+                                      hasActive ? 'border-[var(--leaf)]/40' : 'border-black/10'
+                                    } bg-white/90 p-5 shadow-sm`}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div>
+                                        {station.lineLabel ? (
+                                          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                            {station.lineLabel}
+                                          </p>
+                                        ) : null}
+                                        <h4 className="text-base font-semibold text-[var(--ink)]">
+                                          {station.name}
+                                        </h4>
+                                      </div>
+                                      <span
+                                        className={`rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${
+                                          hasActive
+                                            ? 'bg-[var(--leaf)]/15 text-[var(--leaf)]'
+                                            : 'bg-black/5 text-[var(--ink-muted)]'
+                                        }`}
+                                      >
+                                        {hasActive ? 'Trabajando' : 'Idle'}
+                                      </span>
+                                    </div>
+
+                                    {hasActive && activeTask ? (
+                                      <div className="mt-4 space-y-3 text-sm">
+                                        <div className="flex items-start gap-3">
+                                          <div className="relative h-12 w-12">
+                                            <div
+                                              className="absolute inset-0 rounded-full"
+                                              style={{
+                                                background: `conic-gradient(${progressDetails.color} 0deg ${ringDegrees}deg, rgba(15,27,45,0.12) ${ringDegrees}deg 360deg)`,
+                                              }}
+                                            />
+                                            <div className="absolute inset-1 rounded-full bg-white" />
+                                            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-[var(--ink)]">
+                                              {progressDetails.label}
+                                            </div>
+                                          </div>
+                                          <div className="flex-1">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <div
+                                                className={`flex flex-wrap items-center ${workerChipGap}`}
+                                              >
+                                                {activeWorkerLabels.map((name) => (
+                                                  <span
+                                                    key={name}
+                                                    className={workerChipClass}
+                                                  >
+                                                    {name}
+                                                  </span>
+                                                ))}
+                                                {extraActive ? (
+                                                  <span className="rounded-full border border-black/10 bg-white px-2 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                                    +{extraActive} tareas
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                              <span className="text-xs text-[var(--ink-muted)]">
+                                                {formatTime(activeTask.startedAt)} -{' '}
+                                                {formatTime(activeTask.completedAt)}
+                                              </span>
+                                            </div>
+                                            <p className="mt-2 text-sm text-[var(--ink-muted)]">
+                                              {activeTask.taskName} · Modulo{' '}
+                                              {activeTask.moduleNumber ?? '-'}
+                                              {activeTask.panelCode ? ` · Panel ${activeTask.panelCode}` : ''}
+                                            </p>
+                                            <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                              <span>
+                                                Esperado {expectedMinutes ? `${expectedMinutes.toFixed(1)}m` : '--'}
+                                              </span>
+                                              <span>Transcurrido {elapsedMinutes.toFixed(1)}m</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="mt-4 space-y-2 text-xs text-[var(--ink-muted)]">
+                                        <div className="flex items-center justify-between">
+                                          <span>Ultima tarea</span>
+                                          <span>{lastTask ? formatTime(lastTask.completedAt) : '--:--'}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                          <span>Proxima tarea</span>
+                                          <span>{nextTask ? formatTime(nextTask.startedAt) : '--:--'}</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
