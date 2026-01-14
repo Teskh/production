@@ -74,6 +74,9 @@
 - Station panels finished dashboard assumes `GET /api/station-panels-finished` counts panels only after all applicable tasks at the station are satisfied (including skips), and pass-through panels without task logs use the latest completion/skip at any prior panel station as their pass timestamp.
 - GeoVictoria name proposal script writes a minimal XLSX (sheet1 + shared strings only) for the updated partidas file, and keeps unmatched names unchanged in the new GeoVictoria column.
 - Synthetic shift CSV generator builds in-memory work orders/units/panels from existing house types/panel definitions, schedules tasks sequentially per station using task applicability + expected durations (panel `task_durations_json` or `task_expected_durations`), assigns workers by station assignment (fallback to all workers), and writes a single denormalized timeline CSV without seeding the database.
+- Plant view dashboard groups stations into lanes by matching station names against simple regexes (W/panel, A/armado, magazine, aux) and expects CSV data to be loaded via upload or served from `/synthetic_task_timeline.csv`.
+- Plant view dashboard infers assembly line labels by ordering station IDs within each station name (Armado/Estacion N) and treats workers as “assigned” to a station group if they appear in the CSV for that group.
+- Plant view dashboard always renders Armado + Estacion 1-6 with three line slots, creating placeholder stations when the CSV has no rows for a specific termination station.
 
 ## 2026-01-14
 - Partidas task import treats the sheet as module-scope tasks, maps `ESTACION` to `TaskDefinition.default_station_sequence` using ARMADO=11/ESTACION 1=12, and overwrites applicability for the selected house type by deleting + recreating module-scope rows.

@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, BarChart3, ClipboardList, Clock, History, Ruler, Star, Timer } from 'lucide-react';
+import {
+  ArrowUpRight,
+  BarChart3,
+  ClipboardList,
+  Clock,
+  History,
+  MapPin,
+  Ruler,
+  Star,
+  Timer,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
@@ -14,6 +24,16 @@ type DashboardCard = {
 };
 
 const dashboards: DashboardCard[] = [
+  {
+    id: 'plant-view',
+    name: 'Vista de planta',
+    description:
+      'Mapa vivo del turno con estaciones, operarios y timeline interactivo.',
+    path: '/admin/dashboards/plant-view',
+    status: 'ready',
+    tags: ['Planta', 'Tiempo', 'Operarios'],
+    icon: MapPin,
+  },
   {
     id: 'panel-linear-meters',
     name: 'Metros lineales por panel',

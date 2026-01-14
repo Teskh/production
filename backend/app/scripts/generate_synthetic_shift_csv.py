@@ -517,6 +517,7 @@ def main() -> None:
                     "panel_code": panel_def.panel_code,
                     "started_at": start_time.isoformat(sep=" "),
                     "completed_at": completed_at.isoformat(sep=" "),
+                    "expected_minutes": expected_minutes,
                     "duration_minutes": duration_minutes,
                     "pause_minutes": pause_minutes,
                 }
@@ -583,6 +584,7 @@ def main() -> None:
                     "panel_code": None,
                     "started_at": start_time.isoformat(sep=" "),
                     "completed_at": completed_at.isoformat(sep=" "),
+                    "expected_minutes": expected_minutes,
                     "duration_minutes": duration_minutes,
                     "pause_minutes": pause_minutes,
                 }
@@ -617,6 +619,7 @@ def main() -> None:
         "panel_code",
         "started_at",
         "completed_at",
+        "expected_minutes",
         "duration_minutes",
         "pause_minutes",
     ]

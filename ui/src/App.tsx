@@ -23,6 +23,7 @@ import DashboardStations from './pages/admin/dashboards/dashboard_stations';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
+import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
 import Personnel from './pages/admin/personnel/Personnel';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -100,6 +101,7 @@ function App() {
           <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
           <Route path="dashboards/assistance" element={<DashboardAssistance />} />
+          <Route path="dashboards/plant-view" element={<DashboardPlantView />} />
         </Route>
 
         {/* Utility Pages (Standalone?) - Spec says "accessed outside the primary navigation" */}
