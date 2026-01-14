@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Eye, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
+import { Activity, Eye, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { StationContext } from '../utils/stationContext';
 import { formatStationContext, formatStationLabel } from '../utils/stationContext';
 
@@ -230,6 +231,14 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <Link
+                to="/utility/floor-status"
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Abrir estado de planta"
+                title="Abrir estado de planta"
+              >
+                <Activity className="h-5 w-5" />
+              </Link>
               <button
                 type="button"
                 onClick={handleToggleFullscreen}

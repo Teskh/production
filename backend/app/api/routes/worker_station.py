@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_worker, get_db
+from app.api.deps import get_db, get_optional_worker
 from app.models.admin import CommentTemplate, PauseReason
 from app.models.enums import (
     PanelUnitStatus,
@@ -114,7 +114,7 @@ def _build_task_lists(
     allowed_worker_map: dict[int, set[int]],
     allowed_worker_name_map: dict[int, list[str]],
     dependency_name_map: dict[int, str],
-    worker_id: int,
+    worker_id: int | None,
     current_station_sequence_order: int | None,
 ) -> tuple[list[StationTask], list[StationTask], list[StationTask]]:
     instance_map: dict[int, TaskInstance] = {}
@@ -212,7 +212,7 @@ def _build_task_lists(
         allowed_worker_ids = allowed_worker_map.get(task.id)
         worker_allowed = (
             True
-            if allowed_worker_ids is None
+            if worker_id is None or allowed_worker_ids is None
             else worker_id in allowed_worker_ids
         )
         allowed_worker_names = allowed_worker_name_map.get(task.id, [])
@@ -289,7 +289,7 @@ def station_snapshot(
     station_id: int,
     planned_limit: int | None = Query(default=None, ge=1, le=100),
     db: Session = Depends(get_db),
-    _worker: Worker = Depends(get_current_worker),
+    _worker: Worker | None = Depends(get_optional_worker),
 ) -> StationSnapshot:
     station = db.get(Station, station_id)
     if not station:
@@ -329,12 +329,14 @@ def station_snapshot(
             ).scalars()
         )
 
-    worker_skill_ids = set(
-        db.execute(
-            select(WorkerSkill.skill_id).where(WorkerSkill.worker_id == _worker.id)
-        ).scalars()
-    )
-    if task_definitions:
+    worker_skill_ids: set[int] = set()
+    if _worker is not None:
+        worker_skill_ids = set(
+            db.execute(
+                select(WorkerSkill.skill_id).where(WorkerSkill.worker_id == _worker.id)
+            ).scalars()
+        )
+    if task_definitions and _worker is not None:
         requirement_rows = list(
             db.execute(
                 select(
@@ -480,7 +482,7 @@ def station_snapshot(
                 allowed_worker_map,
                 allowed_worker_name_map,
                 dependency_name_map,
-                _worker.id,
+                _worker.id if _worker else None,
                 station.sequence_order,
             )
             work_items.append(
@@ -635,7 +637,7 @@ def station_snapshot(
                             allowed_worker_map,
                             allowed_worker_name_map,
                             dependency_name_map,
-                            _worker.id,
+                            _worker.id if _worker else None,
                             station.sequence_order,
                         )
                         planned_items.append(
@@ -771,7 +773,7 @@ def station_snapshot(
                 allowed_worker_map,
                 allowed_worker_name_map,
                 dependency_name_map,
-                _worker.id,
+                _worker.id if _worker else None,
                 station.sequence_order,
             )
             work_items.append(
@@ -830,31 +832,34 @@ def station_snapshot(
             key=lambda item: (item.project_name, item.house_identifier, item.module_number)
         )
 
-    active_participation_ids = set(
-        db.execute(
-            select(TaskParticipation.task_instance_id)
-            .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
-            .where(TaskParticipation.worker_id == _worker.id)
-            .where(TaskParticipation.left_at.is_(None))
-            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
-        ).scalars()
-    )
-    active_nonconcurrent_ids = set(
-        db.execute(
-            select(TaskParticipation.task_instance_id)
-            .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
-            .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
-            .where(TaskParticipation.worker_id == _worker.id)
-            .where(TaskParticipation.left_at.is_(None))
-            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
-            .where(TaskDefinition.concurrent_allowed == False)
-        ).scalars()
-    )
-    if active_participation_ids:
-        for item in work_items:
-            for task in item.tasks + item.other_tasks + item.backlog_tasks:
-                if task.task_instance_id in active_participation_ids:
-                    task.current_worker_participating = True
+    active_participation_ids: set[int] = set()
+    active_nonconcurrent_ids: set[int] = set()
+    if _worker is not None:
+        active_participation_ids = set(
+            db.execute(
+                select(TaskParticipation.task_instance_id)
+                .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+                .where(TaskParticipation.worker_id == _worker.id)
+                .where(TaskParticipation.left_at.is_(None))
+                .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+            ).scalars()
+        )
+        active_nonconcurrent_ids = set(
+            db.execute(
+                select(TaskParticipation.task_instance_id)
+                .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+                .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+                .where(TaskParticipation.worker_id == _worker.id)
+                .where(TaskParticipation.left_at.is_(None))
+                .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+                .where(TaskDefinition.concurrent_allowed == False)
+            ).scalars()
+        )
+        if active_participation_ids:
+            for item in work_items:
+                for task in item.tasks + item.other_tasks + item.backlog_tasks:
+                    if task.task_instance_id in active_participation_ids:
+                        task.current_worker_participating = True
 
     work_unit_ids = {item.work_unit_id for item in work_items}
     panel_unit_ids = {item.panel_unit_id for item in work_items if item.panel_unit_id is not None}
@@ -953,15 +958,17 @@ def station_snapshot(
             )
         )
 
-    qc_notification_count = (
-        db.execute(
-            select(QCNotification.id)
-            .where(QCNotification.worker_id == _worker.id)
-            .where(QCNotification.status == QCNotificationStatus.ACTIVE)
+    qc_notification_count = []
+    if _worker is not None:
+        qc_notification_count = (
+            db.execute(
+                select(QCNotification.id)
+                .where(QCNotification.worker_id == _worker.id)
+                .where(QCNotification.status == QCNotificationStatus.ACTIVE)
+            )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
 
     return StationSnapshot(
         station=station,

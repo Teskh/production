@@ -59,6 +59,36 @@
     },
     "scp_backup_20260113_230849.dump": {
       "label": null
+    },
+    "scp_backup_20260113_235432_Manual-restore-checkpoint-for-scp_backup_20260114_022810_manual-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_022810_manual.dump"
+    },
+    "scp_backup_20260114_001416_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_001436_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_001502_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_001529_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_001650_test-backup.dump": {
+      "label": "test backup"
+    },
+    "scp_backup_20260114_001653_Manual-restore-checkpoint-for-scp_backup_20260114_001650_test-backup-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001650_test-backup.dump"
+    },
+    "scp_backup_20260114_002653_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_003708_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_005438_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
     }
   }
 }

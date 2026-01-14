@@ -38,6 +38,7 @@ import QCChecks from './pages/admin/quality/QCChecks';
 // Utility Pages
 import DaySummary from './pages/utility/DaySummary';
 import GeneralOverview from './pages/utility/GeneralOverview';
+import FloorStatus from './pages/utility/floorStatus';
 
 function App() {
   return (
@@ -107,6 +108,7 @@ function App() {
         {/* Utility Pages (Standalone?) - Spec says "accessed outside the primary navigation" */}
         <Route path="/utility/day-summary" element={<DaySummary />} />
         <Route path="/utility/overview" element={<GeneralOverview />} />
+        <Route path="/utility/floor-status" element={<FloorStatus />} />
 
         {/* Default Redirect */}
         <Route path="/" element={<Navigate to="/login" replace />} />

@@ -79,3 +79,19 @@ def get_current_worker(
     if not worker.active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Worker inactive")
     return worker
+
+
+def get_optional_worker(
+    request: Request, db: Session = Depends(get_db)
+) -> Worker | None:
+    token = request.cookies.get(WORKER_SESSION_COOKIE)
+    if not token:
+        return None
+    try:
+        session = _get_worker_session(token, db)
+    except HTTPException:
+        return None
+    worker = db.get(Worker, session.worker_id)
+    if not worker or not worker.active:
+        return None
+    return worker

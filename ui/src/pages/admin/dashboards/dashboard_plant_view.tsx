@@ -384,25 +384,28 @@ const DashboardPlantView: React.FC = () => {
       const orderedStations = [...(groupedStations.get(normalized) ?? [])].sort(
         (a, b) => a.id - b.id
       );
-      const stationsWithLine = Array.from({ length: TERMINATION_LINE_COUNT }, (_, idx) => {
-        const lineIndex = idx + 1;
-        const existing = orderedStations[idx];
-        if (existing) {
+      const stationsWithLine: StationView[] = Array.from(
+        { length: TERMINATION_LINE_COUNT },
+        (_, idx) => {
+          const lineIndex = idx + 1;
+          const existing = orderedStations[idx];
+          if (existing) {
+            return {
+              ...existing,
+              lineIndex,
+              lineLabel: formatLineLabel(lineIndex),
+            };
+          }
           return {
-            ...existing,
+            id: -(groupIndex * 10 + lineIndex),
+            name: label,
+            tasks: [] as TimelineRow[],
+            kind: 'termination',
             lineIndex,
             lineLabel: formatLineLabel(lineIndex),
           };
         }
-        return {
-          id: -(groupIndex * 10 + lineIndex),
-          name: label,
-          tasks: [],
-          kind: 'termination',
-          lineIndex,
-          lineLabel: formatLineLabel(lineIndex),
-        };
-      });
+      );
       return {
         key: normalized,
         label,

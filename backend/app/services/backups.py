@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +150,14 @@ def _restore_db_name(base: str, timestamp: datetime) -> str:
     return f"{base}_restore_{suffix}"
 
 
+def _local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _local_from_timestamp(timestamp: float) -> datetime:
+    return datetime.fromtimestamp(timestamp).astimezone()
+
+
 def load_backup_settings() -> dict[str, Any]:
     paths = get_backup_paths()
     data = _load_json(paths.settings_path, DEFAULT_SETTINGS)
@@ -209,7 +217,7 @@ def list_backups() -> list[dict[str, Any]]:
         if path.suffix not in LISTABLE_BACKUP_SUFFIXES:
             continue
         stats = path.stat()
-        created_at = datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc)
+        created_at = _local_from_timestamp(stats.st_mtime)
         info = items.get(path.name, {})
         backups.append(
             {
@@ -246,7 +254,7 @@ def prune_backups(retention_count: int) -> list[str]:
 
 def create_backup(label: str | None = None) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     db_name, username, host, port, password = _resolve_db_connection()
-    timestamp = datetime.now(timezone.utc)
+    timestamp = _local_now()
     safe_label = _sanitize_label(label) if label else ""
     label_part = f"_{safe_label}" if safe_label else ""
     filename = f"{db_name}_backup_{timestamp.strftime('%Y%m%d_%H%M%S')}{label_part}.dump"
@@ -298,7 +306,7 @@ def create_backup(label: str | None = None) -> tuple[dict[str, Any], dict[str, A
     backup_record = {
         "filename": filename,
         "size_bytes": stats.st_size,
-        "created_at": datetime.fromtimestamp(stats.st_mtime, tz=timezone.utc),
+        "created_at": _local_from_timestamp(stats.st_mtime),
         "label": label.strip() if label else None,
     }
     return backup_record, settings_data, pruned
@@ -312,7 +320,7 @@ def parse_last_backup_at(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
+        return parsed.replace(tzinfo=_local_now().tzinfo)
     return parsed
 
 
@@ -325,7 +333,7 @@ def is_backup_due(settings_data: dict[str, Any]) -> bool:
     last_backup_at = parse_last_backup_at(settings_data.get("last_backup_at"))
     if last_backup_at is None:
         return True
-    elapsed = datetime.now(timezone.utc) - last_backup_at
+    elapsed = _local_now() - last_backup_at
     return elapsed.total_seconds() >= interval_minutes * 60
 
 
@@ -336,7 +344,7 @@ def swap_databases(primary_db: str, secondary_db: str, force_disconnect: bool = 
         raise ValueError("Primary and secondary database names must be different.")
 
     engine = _admin_engine()
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    timestamp = _local_now().strftime("%Y%m%d%H%M%S")
     temp_db = f"{primary_db}_swap_{timestamp}"
 
     try:
@@ -380,7 +388,7 @@ def restore_backup(
 
     primary_db, username, host, port, password = _resolve_db_connection()
     _validate_db_name(primary_db)
-    timestamp = datetime.now(timezone.utc)
+    timestamp = _local_now()
     restore_db = _restore_db_name(primary_db, timestamp)
     _validate_db_name(restore_db)
 

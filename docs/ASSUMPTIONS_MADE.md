@@ -89,3 +89,6 @@
 
 ## 2026-01-16
 - Planned sequencing and assembly line metadata live only on `work_units`; `work_orders` no longer store planned_* fields, and legacy import does not set them.
+
+## 2026-01-17
+- Floor status dashboard pulls live station data from `/api/worker-stations/{station_id}/snapshot`, and the endpoint tolerates anonymous access by omitting worker-specific filters (skills, participation, QC notifications).
