@@ -310,7 +310,6 @@ Advancement logic:
 - Modules: advance when any applicable module task with `advance_trigger=true` is Completed.
 - Stations must provide at least one applicable trigger task for modules to advance.
 - On advancement:
-  - Auto-pause any InProgress tasks at the current station (reason: "Auto-pausa por avance").
   - Find next station via `next_station()` logic, skipping stations with no applicable tasks.
   - Update `current_station_id` on the WorkUnit or PanelUnit.
   - If no next station exists: mark Completed (or Consumed for panels).
@@ -490,7 +489,6 @@ Notes:
 ### 2.4 Advancement
 - Panels advance when all applicable tasks at the station are Completed or Skipped.
 - Modules advance when any applicable module task with `advance_trigger=true` is Completed.
-- Auto-pause active tasks at current station.
 - Find next station, skipping those with no tasks.
 - If no next station: mark work unit/panel as Completed/Consumed.
 

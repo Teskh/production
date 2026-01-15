@@ -232,29 +232,6 @@ def _next_applicable_module_station(
     return None
 
 
-def _auto_pause_station_tasks(db: Session, work_unit_id: int, station_id: int) -> None:
-    paused_at = utc_now()
-    instances = list(
-        db.execute(
-            select(TaskInstance)
-            .where(TaskInstance.work_unit_id == work_unit_id)
-            .where(TaskInstance.station_id == station_id)
-            .where(TaskInstance.scope == TaskScope.MODULE)
-            .where(TaskInstance.status == TaskStatus.IN_PROGRESS)
-        ).scalars()
-    )
-    for instance in instances:
-        instance.status = TaskStatus.PAUSED
-        db.add(
-            TaskPause(
-                task_instance_id=instance.id,
-                reason_text="Auto-pausa por avance",
-                paused_at=paused_at,
-            )
-        )
-
-
-
 def _get_task_instance(instance_id: int, db: Session) -> TaskInstance:
     instance = db.get(TaskInstance, instance_id)
     if not instance:
@@ -735,7 +712,6 @@ def complete_task(
                 db.get(WorkOrder, work_unit.work_order_id) if work_unit else None
             )
             if work_unit and work_order:
-                _auto_pause_station_tasks(db, work_unit.id, station.id)
                 next_station = _next_applicable_module_station(
                     db, station, work_unit, work_order
                 )

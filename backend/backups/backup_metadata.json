@@ -9,21 +9,6 @@
     "scp_backup_20260101_211023.dump": {
       "label": null
     },
-    "scp_backup_20260101_232117.dump": {
-      "label": null
-    },
-    "scp_backup_20260102_023252_kinda-migrated.dump": {
-      "label": "kinda-migrated"
-    },
-    "scp_backup_20260102_183715_pre-new-migration.dump": {
-      "label": "pre-new-migration"
-    },
-    "scp_backup_20260103_152607_properly_migrated.dump": {
-      "label": "properly_migrated"
-    },
-    "scp_backup_20260103_192237_trying-to-include-taskDefinition-specialty_id.dump": {
-      "label": "trying-to-include-taskDefinition-specialty_id"
-    },
     "scp_backup_20260108_031032_fully-loaded.dump": {
       "label": "fully loaded"
     },
@@ -89,6 +74,21 @@
     },
     "scp_backup_20260114_005438_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
+    },
+    "scp_backup_20260114_092437.dump": {
+      "label": null
+    },
+    "scp_backup_20260114_132444.dump": {
+      "label": null
+    },
+    "scp_backup_20260114_172452.dump": {
+      "label": null
+    },
+    "scp_backup_20260115_084635.dump": {
+      "label": null
+    },
+    "scp_backup_20260115_091030_Manual-restore-checkpoint-for-scp_backup_20260115_090912_morning-dump.dump": {
+      "label": "Manual restore checkpoint for scp_backup_20260115_090912_morning.dump"
     }
   }
 }

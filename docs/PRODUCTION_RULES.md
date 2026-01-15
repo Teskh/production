@@ -134,7 +134,6 @@ Modules advance only via trigger tasks:
 - Stations must provide at least one applicable trigger task to allow advancement.
 
 Advancing:
-- Auto-pause any in-progress tasks at the current station (reason: "Auto-pausa por avance").
 - Move to the next station in the same line with applicable tasks.
 - If none exists, the module becomes Completed and all panels become Consumed.
 

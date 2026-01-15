@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
 from app.models.admin import AdminUser
-from app.models.enums import PanelUnitStatus, TaskExceptionType, TaskScope, TaskStatus, WorkUnitStatus
+from app.models.enums import (
+    PanelUnitStatus,
+    StationRole,
+    TaskExceptionType,
+    TaskScope,
+    TaskStatus,
+    WorkUnitStatus,
+)
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.stations import Station
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
@@ -555,6 +562,50 @@ def _apply_queue_updates(
             )
         for unit in work_units:
             unit.planned_assembly_line = line_value
+        if line_value is not None:
+            station_ids = {
+                unit.current_station_id
+                for unit in work_units
+                if unit.current_station_id is not None
+            }
+            if station_ids:
+                stations = list(
+                    db.execute(select(Station).where(Station.id.in_(station_ids))).scalars()
+                )
+                station_map = {station.id: station for station in stations}
+                sequence_orders = {
+                    station.sequence_order
+                    for station in stations
+                    if station.role == StationRole.ASSEMBLY
+                    and station.sequence_order is not None
+                }
+                if sequence_orders:
+                    parallel_stations = list(
+                        db.execute(
+                            select(Station)
+                            .where(Station.role == StationRole.ASSEMBLY)
+                            .where(Station.line_type == line_value)
+                            .where(Station.sequence_order.in_(sequence_orders))
+                        ).scalars()
+                    )
+                    parallel_by_sequence = {
+                        station.sequence_order: station.id
+                        for station in parallel_stations
+                        if station.sequence_order is not None
+                    }
+                    for unit in work_units:
+                        if unit.current_station_id is None:
+                            continue
+                        current_station = station_map.get(unit.current_station_id)
+                        if not current_station or current_station.role != StationRole.ASSEMBLY:
+                            continue
+                        if current_station.sequence_order is None:
+                            continue
+                        target_station_id = parallel_by_sequence.get(
+                            current_station.sequence_order
+                        )
+                        if target_station_id:
+                            unit.current_station_id = target_station_id
 
     if "planned_start_datetime" in updates:
         for unit in work_units:
