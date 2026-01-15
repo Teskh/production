@@ -109,6 +109,11 @@ const formatModuleStatus = (value) => {
   return moduleStatusLabels[String(value)] || String(value);
 };
 
+const isMagazineStatus = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase() === 'magazine';
+
 const sortStations = (a, b) => {
   const lineA = a.line_type ?? '';
   const lineB = b.line_type ?? '';
@@ -162,7 +167,8 @@ const FloorStatus = () => {
     assemblyStations.forEach((station) => {
       const snapshot = snapshots[station.id];
       const workItems = Array.isArray(snapshot?.work_items) ? snapshot.work_items : [];
-      workItems.forEach((item, index) => {
+      const visibleItems = workItems.filter((item) => !isMagazineStatus(item?.status));
+      visibleItems.forEach((item, index) => {
         keys.add(getModuleKey(item, station.id, index));
       });
     });
@@ -399,6 +405,9 @@ const FloorStatus = () => {
                   const workItems = Array.isArray(snapshot?.work_items)
                     ? snapshot.work_items
                     : [];
+                  const visibleItems = workItems.filter(
+                    (item) => !isMagazineStatus(item?.status)
+                  );
                   return (
                     <div
                       key={station.id}
@@ -424,14 +433,14 @@ const FloorStatus = () => {
                         </div>
                       )}
 
-                      {!stationError && workItems.length === 0 && (
+                      {!stationError && visibleItems.length === 0 && (
                         <div className="mt-3 rounded-md border border-dashed border-slate-200 px-3 py-3 text-xs text-slate-500">
                           Sin modulos activos en esta estacion.
                         </div>
                       )}
 
                       <div className="mt-4 space-y-4">
-                        {workItems.map((item, index) => {
+                        {visibleItems.map((item, index) => {
                           const moduleKey = getModuleKey(item, station.id, index);
                           const isCollapsed = Boolean(collapsedModules[moduleKey]);
                           const summary = getTaskSummary(item);

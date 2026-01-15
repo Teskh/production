@@ -9,12 +9,6 @@
     "scp_backup_20260101_211023.dump": {
       "label": null
     },
-    "scp_backup_20260108_031032_fully-loaded.dump": {
-      "label": "fully loaded"
-    },
-    "scp_backup_20260108_221101_before_prod.dump": {
-      "label": "before_prod"
-    },
     "scp_backup_20260108_230536_prod_ongoing_1.dump": {
       "label": "prod_ongoing_1"
     },
@@ -89,6 +83,12 @@
     },
     "scp_backup_20260115_091030_Manual-restore-checkpoint-for-scp_backup_20260115_090912_morning-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20260115_090912_morning.dump"
+    },
+    "scp_backup_20260115_131046.dump": {
+      "label": null
+    },
+    "scp_backup_20260115_171057.dump": {
+      "label": null
     }
   }
 }

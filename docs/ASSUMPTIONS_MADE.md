@@ -86,6 +86,7 @@
 
 ## 2026-01-15
 - QC dashboard station grid uses `/api/stations` for layout and derives module/panel labels from the most recent pending check or rework task at each station, since no dedicated station-occupancy endpoint exists yet.
+- House type copy tooling treats module-related config as subtypes, panel definitions, house parameter values, and task applicability/expected-duration rows scoped to the source house type (including subtype/panel-specific rows).
 
 ## 2026-01-16
 - Planned sequencing and assembly line metadata live only on `work_units`; `work_orders` no longer store planned_* fields, and legacy import does not set them.
