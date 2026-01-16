@@ -61,11 +61,7 @@ type QCApplicability = {
   check_definition_id: number;
   house_type_id: number | null;
   sub_type_id: number | null;
-  module_number: number | null;
-  panel_definition_id: number | null;
-  force_required: boolean;
-  effective_from: string | null;
-  effective_to: string | null;
+  panel_group: string | null;
 };
 
 type HouseType = {
@@ -145,11 +141,7 @@ type ApplicabilityDraft = {
   id?: number;
   house_type_id: number | null;
   sub_type_id: number | null;
-  module_number: string;
-  panel_definition_id: number | null;
-  force_required: boolean;
-  effective_from: string;
-  effective_to: string;
+  panel_group: string | null;
 };
 
 const emptyCheckDraft = (): CheckDraft => ({
@@ -193,11 +185,7 @@ const emptyTriggerDraft = (): TriggerDraft => ({
 const emptyApplicabilityDraft = (): ApplicabilityDraft => ({
   house_type_id: null,
   sub_type_id: null,
-  module_number: '',
-  panel_definition_id: null,
-  force_required: false,
-  effective_from: '',
-  effective_to: '',
+  panel_group: null,
 });
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -983,26 +971,13 @@ const QCChecks: React.FC = () => {
       setApplicabilityStatus('Seleccione una revision antes de crear una regla.');
       return;
     }
-    const rawModuleNumber = applicabilityDraft.module_number.trim();
-    const moduleNumber = rawModuleNumber ? Number(rawModuleNumber) : null;
-    if (
-      rawModuleNumber &&
-      (!Number.isInteger(Number(rawModuleNumber)) || Number(rawModuleNumber) <= 0)
-    ) {
-      setApplicabilityStatus('El numero de modulo debe ser un entero positivo.');
-      return;
-    }
     setApplicabilityStatus(null);
     try {
       const payload = {
         check_definition_id: selectedCheckId,
         house_type_id: applicabilityDraft.house_type_id,
         sub_type_id: applicabilityDraft.sub_type_id,
-        module_number: moduleNumber,
-        panel_definition_id: applicabilityDraft.panel_definition_id,
-        force_required: applicabilityDraft.force_required,
-        effective_from: applicabilityDraft.effective_from || null,
-        effective_to: applicabilityDraft.effective_to || null,
+        panel_group: applicabilityDraft.panel_group,
       };
       let saved: QCApplicability;
       if (applicabilityDraft.id) {
@@ -1026,11 +1001,7 @@ const QCChecks: React.FC = () => {
         id: saved.id,
         house_type_id: saved.house_type_id,
         sub_type_id: saved.sub_type_id,
-        module_number: saved.module_number ? String(saved.module_number) : '',
-        panel_definition_id: saved.panel_definition_id,
-        force_required: saved.force_required,
-        effective_from: saved.effective_from ?? '',
-        effective_to: saved.effective_to ?? '',
+        panel_group: saved.panel_group,
       });
       setApplicabilityStatus('Regla guardada.');
     } catch (error) {
@@ -1079,11 +1050,7 @@ const QCChecks: React.FC = () => {
       id: rule.id,
       house_type_id: rule.house_type_id,
       sub_type_id: rule.sub_type_id,
-      module_number: rule.module_number ? String(rule.module_number) : '',
-      panel_definition_id: rule.panel_definition_id,
-      force_required: rule.force_required,
-      effective_from: rule.effective_from ?? '',
-      effective_to: rule.effective_to ?? '',
+      panel_group: rule.panel_group,
     });
     setApplicabilityStatus(null);
   };
@@ -1215,23 +1182,21 @@ const QCChecks: React.FC = () => {
     return houseSubTypes.filter((sub) => sub.house_type_id === applicabilityDraft.house_type_id);
   }, [houseSubTypes, applicabilityDraft.house_type_id]);
 
-  const filteredPanels = useMemo(() => {
-    return panelDefinitions.filter((panel) => {
+  const panelGroupOptions = useMemo(() => {
+    const groups = new Set<string>();
+    panelDefinitions.forEach((panel) => {
       if (applicabilityDraft.house_type_id && panel.house_type_id !== applicabilityDraft.house_type_id) {
-        return false;
+        return;
       }
       if (applicabilityDraft.sub_type_id && panel.sub_type_id !== applicabilityDraft.sub_type_id) {
-        return false;
+        return;
       }
-      const moduleNumber = applicabilityDraft.module_number.trim()
-        ? Number(applicabilityDraft.module_number)
-        : null;
-      if (moduleNumber && panel.module_sequence_number !== moduleNumber) {
-        return false;
+      if (panel.group) {
+        groups.add(panel.group);
       }
-      return true;
     });
-  }, [panelDefinitions, applicabilityDraft]);
+    return Array.from(groups).sort((a, b) => a.localeCompare(b));
+  }, [panelDefinitions, applicabilityDraft.house_type_id, applicabilityDraft.sub_type_id]);
 
   const renderCheckRow = (check: QCCheckDefinition) => {
     const isSelected = selectedCheckId === check.id;
@@ -2173,6 +2138,7 @@ const QCChecks: React.FC = () => {
                           const subLabel = rule.sub_type_id
                             ? houseSubTypeNameById.get(rule.sub_type_id) ?? `Subtipo ${rule.sub_type_id}`
                             : 'Cualquier subtipo';
+                          const panelLabel = rule.panel_group ?? 'Todos los paneles';
                           return (
                             <button
                               key={rule.id}
@@ -2182,13 +2148,8 @@ const QCChecks: React.FC = () => {
                               }`}
                             >
                               <span className="truncate text-[var(--ink)]">
-                                {houseLabel} · {subLabel}
+                                {houseLabel} · {subLabel} · {panelLabel}
                               </span>
-                              {rule.force_required && (
-                                <span className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] text-[var(--ink-muted)]">
-                                  Forzado
-                                </span>
-                              )}
                             </button>
                           );
                         })
@@ -2242,84 +2203,25 @@ const QCChecks: React.FC = () => {
                       </select>
                     </label>
                     <label className="text-sm text-[var(--ink-muted)]">
-                      Numero de modulo
-                      <input
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={applicabilityDraft.module_number}
-                        onChange={(event) =>
-                          setApplicabilityDraft((prev) => ({
-                            ...prev,
-                            module_number: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Panel
+                      Tipo de panel
                       <select
                         className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={applicabilityDraft.panel_definition_id ?? ''}
+                        value={applicabilityDraft.panel_group ?? ''}
                         onChange={(event) =>
                           setApplicabilityDraft((prev) => ({
                             ...prev,
-                            panel_definition_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
+                            panel_group: event.target.value || null,
                           }))
                         }
                       >
                         <option value="">Todos</option>
-                        {filteredPanels.map((panel) => (
-                          <option key={panel.id} value={panel.id}>
-                            {panel.panel_code} · M{panel.module_sequence_number}
+                        {panelGroupOptions.map((group) => (
+                          <option key={group} value={group}>
+                            {group}
                           </option>
                         ))}
                       </select>
                     </label>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="text-sm text-[var(--ink-muted)]">
-                        Vigencia inicio
-                        <input
-                          type="date"
-                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                          value={applicabilityDraft.effective_from}
-                          onChange={(event) =>
-                            setApplicabilityDraft((prev) => ({
-                              ...prev,
-                              effective_from: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="text-sm text-[var(--ink-muted)]">
-                        Vigencia fin
-                        <input
-                          type="date"
-                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                          value={applicabilityDraft.effective_to}
-                          onChange={(event) =>
-                            setApplicabilityDraft((prev) => ({
-                              ...prev,
-                              effective_to: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-                      <input
-                        type="checkbox"
-                        checked={applicabilityDraft.force_required}
-                        onChange={(event) =>
-                          setApplicabilityDraft((prev) => ({
-                            ...prev,
-                            force_required: event.target.checked,
-                          }))
-                        }
-                      />
-                      Forzar apertura (ignora muestreo)
-                    </label>
-
                     {applicabilityStatus && (
                       <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                         {applicabilityStatus}

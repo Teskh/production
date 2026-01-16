@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
@@ -97,11 +97,7 @@ class QCApplicabilityBase(BaseModel):
     check_definition_id: int
     house_type_id: int | None = None
     sub_type_id: int | None = None
-    module_number: int | None = None
-    panel_definition_id: int | None = None
-    force_required: bool = False
-    effective_from: date | None = None
-    effective_to: date | None = None
+    panel_group: str | None = None
 
 
 class QCApplicabilityCreate(QCApplicabilityBase):
@@ -112,11 +108,7 @@ class QCApplicabilityUpdate(BaseModel):
     check_definition_id: int | None = None
     house_type_id: int | None = None
     sub_type_id: int | None = None
-    module_number: int | None = None
-    panel_definition_id: int | None = None
-    force_required: bool | None = None
-    effective_from: date | None = None
-    effective_to: date | None = None
+    panel_group: str | None = None
 
 
 class QCApplicabilityRead(QCApplicabilityBase):

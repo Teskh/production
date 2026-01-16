@@ -116,7 +116,6 @@ def _house_type_cascade_counts(db: Session, house_type_id: int, queries) -> dict
     qc_applicability_filter = or_(
         QCApplicability.house_type_id == house_type_id,
         QCApplicability.sub_type_id.in_(sub_type_ids),
-        QCApplicability.panel_definition_id.in_(panel_definition_ids),
     )
 
     return {
@@ -334,7 +333,6 @@ def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None
             or_(
                 QCApplicability.house_type_id == house_type_id,
                 QCApplicability.sub_type_id.in_(sub_type_ids),
-                QCApplicability.panel_definition_id.in_(panel_definition_ids),
             )
         )
     )

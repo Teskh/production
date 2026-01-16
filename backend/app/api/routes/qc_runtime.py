@@ -741,10 +741,10 @@ def create_manual_check(
     if not work_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work order not found")
 
-    panel_def_id = None
+    panel_group = None
     if payload.panel_unit_id:
         panel = db.get(PanelUnit, payload.panel_unit_id)
-        panel_def_id = panel.panel_definition_id if panel else None
+        panel_group = panel.panel_definition.group if panel else None
 
     if check_def:
         applicability = list(
@@ -752,13 +752,11 @@ def create_manual_check(
                 select(QCApplicability).where(QCApplicability.check_definition_id == check_def.id)
             ).scalars()
         )
-        applies, _force_required = resolve_qc_applicability(
+        applies = resolve_qc_applicability(
             applicability,
             work_order.house_type_id,
             work_order.sub_type_id,
-            work_unit.module_number,
-            panel_def_id,
-            on_date=utc_now().date(),
+            panel_group,
         )
         if not applies:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Check does not apply")

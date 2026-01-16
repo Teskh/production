@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, date
+from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
-    Date,
     DateTime,
     Enum,
     Float,
@@ -89,13 +88,7 @@ class QCApplicability(Base):
     sub_type_id: Mapped[int | None] = mapped_column(
         ForeignKey("house_sub_types.id"), nullable=True
     )
-    module_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    panel_definition_id: Mapped[int | None] = mapped_column(
-        ForeignKey("panel_definitions.id"), nullable=True
-    )
-    force_required: Mapped[bool] = mapped_column(Boolean, default=False)
-    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
-    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    panel_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class QCCheckInstance(Base):

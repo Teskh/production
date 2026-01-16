@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -71,42 +69,21 @@ def resolve_qc_applicability(
     rows: list[QCApplicability],
     house_type_id: int,
     sub_type_id: int | None,
-    module_number: int,
-    panel_definition_id: int | None,
-    on_date: date | None = None,
-) -> tuple[bool, bool]:
+    panel_group: str | None,
+) -> bool:
     if not rows:
-        return True, False
+        return True
 
-    candidates: list[QCApplicability] = []
     for row in rows:
-        if row.effective_from and on_date and on_date < row.effective_from:
-            continue
-        if row.effective_to and on_date and on_date > row.effective_to:
-            continue
         if row.house_type_id is not None and row.house_type_id != house_type_id:
             continue
         if row.sub_type_id is not None and row.sub_type_id != sub_type_id:
             continue
-        if row.module_number is not None and row.module_number != module_number:
+        if row.panel_group is not None and row.panel_group != panel_group:
             continue
-        if row.panel_definition_id is not None and row.panel_definition_id != panel_definition_id:
-            continue
-        candidates.append(row)
+        return True
 
-    if not candidates:
-        return False, False
-
-    def score(row: QCApplicability) -> tuple[int, int, int, int]:
-        return (
-            1 if row.panel_definition_id is not None else 0,
-            1 if row.module_number is not None else 0,
-            1 if row.sub_type_id is not None else 0,
-            1 if row.house_type_id is not None else 0,
-        )
-
-    selected = sorted(candidates, key=score, reverse=True)[0]
-    return True, selected.force_required
+    return False
 
 
 def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> None:
@@ -120,7 +97,7 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
     if not work_order:
         return
     panel_unit = db.get(PanelUnit, instance.panel_unit_id) if instance.panel_unit_id else None
-    panel_definition_id = panel_unit.panel_definition_id if panel_unit else None
+    panel_group = panel_unit.panel_definition.group if panel_unit else None
 
     trigger_rows = list(
         db.execute(
@@ -136,7 +113,6 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
         return
 
     now = utc_now()
-    today = now.date()
     for trigger in trigger_rows:
         params = trigger.params_json or {}
         task_ids = params.get("task_definition_ids", []) if isinstance(params, dict) else []
@@ -153,20 +129,18 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
                 )
             ).scalars()
         )
-        applies, force_required = resolve_qc_applicability(
+        applies = resolve_qc_applicability(
             applicability_rows,
             work_order.house_type_id,
             work_order.sub_type_id,
-            work_unit.module_number,
-            panel_definition_id,
-            on_date=today,
+            panel_group,
         )
         if not applies:
             continue
 
         base_rate = trigger.sampling_rate
         rate = trigger.current_sampling_rate if trigger.current_sampling_rate is not None else base_rate
-        sampling_selected = True if force_required else _hash_to_rate(
+        sampling_selected = _hash_to_rate(
             f"{work_unit.id}:{trigger.check_definition_id}:{instance.id}"
         ) < rate
 

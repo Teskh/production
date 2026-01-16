@@ -9,7 +9,7 @@
 - Check definitions: named checks with descriptions, active state, and sampling settings.
 - Check categories: hierarchical grouping for QC check definitions (category + optional subcategory).
 - Triggers: events that can open a check (task completion).
-- Applicability rules: scope checks by house type, module number, and optional subtype.
+- Applicability rules: scope checks by house type, subtype, and optional panel type.
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
 - Failure modes: predefined reasons for a failed check, each with a default severity and optional defaults for rework/evidence.
@@ -21,7 +21,6 @@
 ## Triggering and sampling
 - A trigger fires on task completion.
 - Applicability uses most-specific-wins; if no rules exist, the check applies to all.
-- A force-required rule overrides sampling and always opens the check.
 - Sampling is deterministic per plan, check, and trigger event so results are repeatable.
 - If a check is not selected by sampling, it is still recorded as skipped for audit.
 - Adaptive sampling (when enabled): a fail spikes the rate to 100%; passes step it down toward the base rate.

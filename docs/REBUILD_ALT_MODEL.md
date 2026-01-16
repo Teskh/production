@@ -370,11 +370,7 @@ Advancement logic:
 - check_definition_id
 - house_type_id (nullable)
 - sub_type_id (nullable)
-- module_number (nullable)
-- panel_definition_id (nullable)
-- force_required (boolean)
-- effective_from (date, nullable)
-- effective_to (date, nullable)
+- panel_group (nullable)
 
 `QCCheckInstance`
 - id

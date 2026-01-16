@@ -118,8 +118,7 @@ def _validate_applicability_refs(
     db: Session,
     house_type_id: int | None,
     sub_type_id: int | None,
-    panel_definition_id: int | None,
-    module_number: int | None,
+    panel_group: str | None,
 ) -> None:
     if house_type_id is not None and not db.get(HouseType, house_type_id):
         raise HTTPException(
@@ -129,17 +128,17 @@ def _validate_applicability_refs(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="House subtype not found"
         )
-    if panel_definition_id is not None and not db.get(
-        PanelDefinition, panel_definition_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Panel definition not found"
-        )
-    if module_number is not None and module_number <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Module number must be positive",
-        )
+    if panel_group is not None:
+        exists = db.execute(
+            select(PanelDefinition.id)
+            .where(PanelDefinition.group == panel_group)
+            .limit(1)
+        ).scalar_one_or_none()
+        if not exists:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Panel group not found",
+            )
 
 
 @router.get("/categories", response_model=list[QCCheckCategoryRead])
@@ -332,14 +331,18 @@ def create_applicability(
     payload: QCApplicabilityCreate, db: Session = Depends(get_db)
 ) -> QCApplicability:
     _require_check_definition(db, payload.check_definition_id)
+    payload_data = payload.model_dump()
+    panel_group = payload_data.get("panel_group")
+    if panel_group is not None:
+        panel_group = panel_group.strip() or None
+        payload_data["panel_group"] = panel_group
     _validate_applicability_refs(
         db,
-        payload.house_type_id,
-        payload.sub_type_id,
-        payload.panel_definition_id,
-        payload.module_number,
+        payload_data.get("house_type_id"),
+        payload_data.get("sub_type_id"),
+        panel_group,
     )
-    rule = QCApplicability(**payload.model_dump())
+    rule = QCApplicability(**payload_data)
     db.add(rule)
     db.commit()
     db.refresh(rule)
@@ -370,12 +373,13 @@ def update_applicability(
     updates = payload.model_dump(exclude_unset=True)
     if "check_definition_id" in updates:
         _require_check_definition(db, updates["check_definition_id"])
+    if "panel_group" in updates and updates["panel_group"] is not None:
+        updates["panel_group"] = updates["panel_group"].strip() or None
     _validate_applicability_refs(
         db,
         updates.get("house_type_id", rule.house_type_id),
         updates.get("sub_type_id", rule.sub_type_id),
-        updates.get("panel_definition_id", rule.panel_definition_id),
-        updates.get("module_number", rule.module_number),
+        updates.get("panel_group", rule.panel_group),
     )
     for key, value in updates.items():
         setattr(rule, key, value)
