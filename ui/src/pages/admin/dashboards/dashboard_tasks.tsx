@@ -238,13 +238,6 @@ const formatRatio = (ratio: number | null | undefined): string => {
   return `${ratio.toFixed(2)}x`;
 };
 
-const parseMultiplierInput = (rawValue: string, fallbackValue: number) => {
-  if (!rawValue) return fallbackValue;
-  const parsed = Number(rawValue);
-  if (!Number.isFinite(parsed)) return fallbackValue;
-  return Math.max(0, parsed);
-};
-
 const parseOptionalNumberInput = (rawValue: string): number | null => {
   if (!rawValue) return null;
   const parsed = Number(rawValue);
