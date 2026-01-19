@@ -184,6 +184,25 @@ const normalizeSearchValue = (value: string): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
 
+const splitSearchTokens = (value: string): string[] =>
+  normalizeSearchValue(value).split(/\s+/).filter(Boolean);
+
+const isTokenSubsequenceMatch = (tokens: string[], queryTokens: string[]): boolean => {
+  if (queryTokens.length === 0) {
+    return false;
+  }
+  let matchIndex = 0;
+  for (const token of tokens) {
+    if (token.includes(queryTokens[matchIndex])) {
+      matchIndex += 1;
+      if (matchIndex >= queryTokens.length) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -370,6 +389,7 @@ const Workers: React.FC<WorkersProps> = ({
     if (geoDirectoryLoaded && geoDirectory.length > 0) {
       const results: GeoVictoriaWorker[] = [];
       const lowered = normalizeSearchValue(query);
+      const queryTokens = splitSearchTokens(query);
       for (const item of geoDirectory) {
         if (!item.geovictoria_id || !item.identifier) {
           continue;
@@ -377,7 +397,10 @@ const Workers: React.FC<WorkersProps> = ({
         const haystack = normalizeSearchValue(
           [item.first_name, item.last_name, item.identifier].filter(Boolean).join(' ')
         );
-        if (haystack.includes(lowered)) {
+        const nameTokens = splitSearchTokens(
+          [item.first_name, item.last_name].filter(Boolean).join(' ')
+        );
+        if (haystack.includes(lowered) || isTokenSubsequenceMatch(nameTokens, queryTokens)) {
           results.push(item);
           if (results.length >= 8) {
             break;

@@ -46,11 +46,34 @@ const firstNamePart = (value: string): string => {
   return trimmed.split(/\s+/)[0] ?? '';
 };
 
+const surnamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) {
+    return parts[0] ?? '';
+  }
+  return parts[parts.length - 2] ?? '';
+};
+
 const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string => {
   const first = firstNamePart(worker.first_name);
-  const last = firstNamePart(worker.last_name);
+  const last = surnamePart(worker.last_name);
   return [first, last].filter(Boolean).join(' ');
 };
+
+const formatWorkerFullName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string =>
+  `${worker.first_name} ${worker.last_name}`.trim();
+
+const normalizeQrValue = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
 
 type Station = {
   id: number;
@@ -1689,13 +1712,16 @@ const StationWorkspace: React.FC = () => {
       });
     }
 
-    const normalizedQuery = crewQuery.trim().toLowerCase();
+    const normalizedQuery = normalizeQrValue(crewQuery);
     const matchesQuery = (item: Worker) => {
       if (!normalizedQuery) {
         return true;
       }
-      const name = `${item.first_name} ${item.last_name}`.toLowerCase();
-      return name.includes(normalizedQuery);
+      const terms = normalizedQuery.split(' ').filter(Boolean);
+      const haystack = normalizeQrValue(
+        `${formatWorkerFullName(item)} ${formatWorkerDisplayName(item)}`
+      );
+      return terms.every((term) => haystack.includes(term));
     };
 
     const compare = (a: Worker, b: Worker) =>
