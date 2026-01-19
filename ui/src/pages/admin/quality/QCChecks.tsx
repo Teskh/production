@@ -301,12 +301,26 @@ const QCChecks: React.FC = () => {
 
   const [mediaStatus, setMediaStatus] = useState<string | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<QCCheckMediaAsset | null>(null);
 
   const [selectedApplicabilityId, setSelectedApplicabilityId] = useState<number | null>(null);
   const [applicabilityDraft, setApplicabilityDraft] = useState<ApplicabilityDraft>(
     emptyApplicabilityDraft()
   );
   const [applicabilityStatus, setApplicabilityStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!previewMedia) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPreviewMedia(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewMedia]);
 
   useEffect(() => {
     if (!adminHeader) {
@@ -492,6 +506,22 @@ const QCChecks: React.FC = () => {
       ),
     [triggers, selectedCheckId]
   );
+
+  const taskNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    tasks.forEach((task) => map.set(task.id, task.name));
+    return map;
+  }, [tasks]);
+
+  const triggerTaskLabel = (trigger: QCTrigger) => {
+    const taskIds = trigger.params_json?.task_definition_ids ?? [];
+    if (!taskIds.length) {
+      return 'Sin tareas';
+    }
+    return taskIds
+      .map((taskId) => taskNameById.get(taskId) ?? `Tarea ${taskId}`)
+      .join(', ');
+  };
 
   const filteredApplicability = useMemo(
     () =>
@@ -1717,11 +1747,18 @@ const QCChecks: React.FC = () => {
                           key={media.id}
                           className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
                         >
-                          <img
-                            src={resolveMediaUrl(media.uri)}
-                            alt="Guia"
-                            className="h-40 w-full object-cover sm:h-48"
-                          />
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMedia(media)}
+                            className="block w-full"
+                            aria-label="Vista previa de guia"
+                          >
+                            <img
+                              src={resolveMediaUrl(media.uri)}
+                              alt="Guia"
+                              className="h-40 w-full cursor-zoom-in object-cover sm:h-48"
+                            />
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteCheckMedia(media.id)}
@@ -1825,11 +1862,18 @@ const QCChecks: React.FC = () => {
                           key={media.id}
                           className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
                         >
-                          <img
-                            src={resolveMediaUrl(media.uri)}
-                            alt="Referencia"
-                            className="h-40 w-full object-cover sm:h-48"
-                          />
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMedia(media)}
+                            className="block w-full"
+                            aria-label="Vista previa de referencia"
+                          >
+                            <img
+                              src={resolveMediaUrl(media.uri)}
+                              alt="Referencia"
+                              className="h-40 w-full cursor-zoom-in object-cover sm:h-48"
+                            />
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDeleteCheckMedia(media.id)}
@@ -1926,7 +1970,7 @@ const QCChecks: React.FC = () => {
                             }`}
                           >
                             <span className="truncate text-[var(--ink)]">
-                              Tarea completada
+                              {triggerTaskLabel(trigger)}
                             </span>
                             <span className="text-[10px] text-[var(--ink-muted)]">
                               {Math.round(trigger.sampling_rate * 100)}%
@@ -1938,20 +1982,6 @@ const QCChecks: React.FC = () => {
                   </div>
 
                   <div className="space-y-3">
-                    <div className="text-sm text-[var(--ink-muted)]">
-                      <span className="inline-flex items-center gap-2">
-                        Evento
-                        <span
-                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
-                          title="Define cuando se dispara el gatillante (al completar una tarea)."
-                        >
-                          i
-                        </span>
-                      </span>
-                      <div className="mt-2 rounded-xl border border-black/10 bg-gray-50 px-3 py-2 text-sm text-[var(--ink)]">
-                        Tarea completada
-                      </div>
-                    </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <label className="text-sm text-[var(--ink-muted)]">
                         <span className="inline-flex items-center gap-2">
@@ -2250,6 +2280,36 @@ const QCChecks: React.FC = () => {
           </section>
         </aside>
       </div>
+
+      {previewMedia && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewMedia(null)}
+        >
+          <div
+            className="relative w-full max-w-5xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="rounded-3xl bg-black/90 p-3 shadow-2xl">
+              <img
+                src={resolveMediaUrl(previewMedia.uri)}
+                alt={previewMedia.media_type === 'guidance' ? 'Guia' : 'Referencia'}
+                className="max-h-[75vh] w-full rounded-2xl object-contain"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setPreviewMedia(null)}
+              className="absolute -right-2 -top-2 rounded-full border border-white/20 bg-black/80 p-1.5 text-white"
+              aria-label="Cerrar vista previa"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {isCategoryModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">

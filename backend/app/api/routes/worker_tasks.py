@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_worker, get_db
 from app.core.security import utc_now
@@ -312,17 +312,55 @@ def list_active_tasks(
             .order_by(TaskInstance.started_at.desc(), TaskInstance.id.desc())
         ).scalars()
     )
-    return [
-        WorkerActiveTaskRead(
-            task_instance_id=instance.id,
-            station_id=instance.station_id,
-            work_unit_id=instance.work_unit_id,
-            panel_unit_id=instance.panel_unit_id,
-            status=instance.status,
-            started_at=instance.started_at,
+    if not instances:
+        return []
+    work_unit_ids = {instance.work_unit_id for instance in instances}
+    panel_unit_ids = {
+        instance.panel_unit_id for instance in instances if instance.panel_unit_id is not None
+    }
+    work_units = {
+        unit.id: unit
+        for unit in db.execute(
+            select(WorkUnit).where(WorkUnit.id.in_(work_unit_ids))
+        ).scalars()
+    }
+    panel_units = {
+        unit.id: unit
+        for unit in db.execute(
+            select(PanelUnit)
+            .options(selectinload(PanelUnit.panel_definition))
+            .where(PanelUnit.id.in_(panel_unit_ids))
+        ).scalars()
+    }
+    payloads: list[WorkerActiveTaskRead] = []
+    for instance in instances:
+        panel_unit = (
+            panel_units.get(instance.panel_unit_id)
+            if instance.panel_unit_id is not None
+            else None
         )
-        for instance in instances
-    ]
+        work_unit = work_units.get(instance.work_unit_id)
+        current_station_id = panel_unit.current_station_id if panel_unit else None
+        if current_station_id is None and work_unit:
+            current_station_id = work_unit.current_station_id
+        payloads.append(
+            WorkerActiveTaskRead(
+                task_instance_id=instance.id,
+                station_id=instance.station_id,
+                current_station_id=current_station_id,
+                work_unit_id=instance.work_unit_id,
+                panel_unit_id=instance.panel_unit_id,
+                module_number=work_unit.module_number if work_unit else None,
+                panel_code=(
+                    panel_unit.panel_definition.panel_code
+                    if panel_unit and panel_unit.panel_definition
+                    else None
+                ),
+                status=instance.status,
+                started_at=instance.started_at,
+            )
+        )
+    return payloads
 
 
 @router.post("/start", response_model=TaskInstanceRead, status_code=status.HTTP_201_CREATED)

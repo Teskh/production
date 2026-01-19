@@ -128,7 +128,10 @@ class TaskInstanceRead(BaseModel):
 class WorkerActiveTaskRead(BaseModel):
     task_instance_id: int
     station_id: int
+    current_station_id: int | None = None
     work_unit_id: int
     panel_unit_id: int | None = None
+    module_number: int | None = None
+    panel_code: str | None = None
     status: TaskStatus
     started_at: datetime | None = None

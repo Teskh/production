@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ChevronDown,
   Filter,
   FlaskConical,
   RefreshCcw,
@@ -25,6 +26,8 @@ type PanelDefinition = {
   panel_sequence_number: number | null;
   group: string;
   panel_code: string;
+  panel_area?: number | null;
+  panel_length_m?: number | null;
   applicable_task_ids: number[] | null;
 };
 
@@ -83,6 +86,55 @@ type TaskAnalysisResponse = {
   stats?: AnalysisStats | null;
 };
 
+type StationPanelsFinishedPanel = {
+  plan_id?: number | null;
+  panel_definition_id?: number | null;
+  panel_code?: string | null;
+  panel_area?: number | null;
+  station_finished_at?: string | null;
+  finished_at?: string | null;
+  actual_minutes?: number | null;
+};
+
+type StationPanelsFinishedModule = {
+  module_number?: number | null;
+  panels?: StationPanelsFinishedPanel[] | null;
+};
+
+type StationPanelsFinishedHouse = {
+  house_identifier?: string | null;
+  house_type_id?: number | null;
+  house_type_name?: string | null;
+  modules?: StationPanelsFinishedModule[] | null;
+};
+
+type StationPanelsFinishedResponse = {
+  total_panels_finished?: number | null;
+  houses?: StationPanelsFinishedHouse[] | null;
+};
+
+type NormalizedMetric = 'linear' | 'area';
+
+type NormalizedCompletionRow = {
+  id: string;
+  panel_definition_id: number;
+  house_type_id: number | null;
+  house_type_name: string;
+  panel_label: string;
+  panel_group: string;
+  panel_area: number;
+  panel_length_m: number;
+  actual_minutes: number;
+  normalized_minutes: number;
+  finished_at: string | null;
+};
+
+type PanelGroupOption = {
+  id: string;
+  label: string;
+  count: number;
+};
+
 type HypothesisField = 'worker' | 'date';
 
 type HypothesisOperator = '==' | '!=' | '>' | '>=' | '<' | '<=';
@@ -116,9 +168,25 @@ type HistogramSummary = {
   totalMatches: number;
 };
 
+type NormalizedHistogramBin = {
+  index: number;
+  from: number;
+  to: number;
+  count: number;
+  items: NormalizedCompletionRow[];
+};
+
+type NormalizedHistogramSummary = {
+  bins: NormalizedHistogramBin[];
+  maxCount: number;
+  binSize: number;
+  maxValue: number;
+};
+
 const DEFAULT_BIN_SIZE = 2;
 const DEFAULT_MIN_MULTIPLIER = 0.5;
 const DEFAULT_MAX_MULTIPLIER = 2;
+const DEFAULT_NORMALIZED_BIN_SIZE = 0.5;
 const DEFAULT_HYPOTHESIS_FORM: HypothesisConfig = { field: 'worker', operator: '==', value: '' };
 
 const HYPOTHESIS_FIELD_OPTIONS: HypothesisFieldOption[] = [
@@ -168,6 +236,43 @@ const parseTaskIds = (raw: unknown): number[] | null => {
 const formatRatio = (ratio: number | null | undefined): string => {
   if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return '-';
   return `${ratio.toFixed(2)}x`;
+};
+
+const parseMultiplierInput = (rawValue: string, fallbackValue: number) => {
+  if (!rawValue) return fallbackValue;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return fallbackValue;
+  return Math.max(0, parsed);
+};
+
+const parseOptionalNumberInput = (rawValue: string): number | null => {
+  if (!rawValue) return null;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, parsed);
+};
+
+const formatMinutesPerUnit = (value: number | null | undefined, unit: string) => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(3)} ${unit}`;
+};
+
+const formatMeasure = (value: number | null | undefined, unit: string, digits = 2) => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(digits)} ${unit}`;
+};
+
+const buildPanelLabel = (panel: PanelDefinition | null): string => {
+  if (!panel) return '-';
+  const module = panel.module_sequence_number ? `Modulo ${panel.module_sequence_number}` : 'Modulo';
+  const group = panel.group || 'Grupo';
+  return `${module} - ${group} - ${panel.panel_code || panel.id}`;
+};
+
+const normalizePanelGroup = (value: string | null | undefined): string => {
+  if (typeof value !== 'string') return 'Sin grupo';
+  const trimmed = value.trim();
+  return trimmed || 'Sin grupo';
 };
 
 const normalizeText = (value: string) => value.trim().toLowerCase();
@@ -314,6 +419,43 @@ const buildHistogramData = (
   return { bins, maxCount, binSize: step, maxDuration: binCount * step, totalMatches };
 };
 
+const buildNormalizedHistogramData = (
+  rows: NormalizedCompletionRow[],
+  rawBinSize: number,
+): NormalizedHistogramSummary => {
+  const step = Number(rawBinSize) > 0 ? Number(rawBinSize) : DEFAULT_NORMALIZED_BIN_SIZE;
+  if (!rows.length) {
+    return { bins: [], maxCount: 0, binSize: step, maxValue: 0 };
+  }
+  const values = rows
+    .map((row) => row.normalized_minutes)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (!values.length) {
+    return { bins: [], maxCount: 0, binSize: step, maxValue: 0 };
+  }
+  const maxValue = Math.max(...values);
+  if (!(maxValue > 0)) {
+    return { bins: [], maxCount: 0, binSize: step, maxValue: 0 };
+  }
+  const binCount = Math.max(1, Math.ceil(maxValue / step));
+  const bins: NormalizedHistogramBin[] = Array.from({ length: binCount }, (_, index) => ({
+    index,
+    from: index * step,
+    to: (index + 1) * step,
+    count: 0,
+    items: [],
+  }));
+  rows.forEach((row) => {
+    const value = row.normalized_minutes;
+    if (!Number.isFinite(value) || value < 0) return;
+    const idx = Math.min(Math.floor(value / step), binCount - 1);
+    bins[idx].count += 1;
+    bins[idx].items.push(row);
+  });
+  const maxCount = Math.max(...bins.map((bin) => bin.count));
+  return { bins, maxCount, binSize: step, maxValue: binCount * step };
+};
+
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
@@ -361,6 +503,25 @@ const DashboardTasks: React.FC = () => {
   const [binSize, setBinSize] = useState(String(DEFAULT_BIN_SIZE));
   const [minMultiplier, setMinMultiplier] = useState(String(DEFAULT_MIN_MULTIPLIER));
   const [maxMultiplier, setMaxMultiplier] = useState(String(DEFAULT_MAX_MULTIPLIER));
+
+  const [activeTab, setActiveTab] = useState<'panel' | 'normalized'>('panel');
+  const [normalizedStationId, setNormalizedStationId] = useState('');
+  const [normalizedMetric, setNormalizedMetric] = useState<NormalizedMetric>('linear');
+  const [normalizedHouseTypeIds, setNormalizedHouseTypeIds] = useState<number[]>([]);
+  const [normalizedPanelGroups, setNormalizedPanelGroups] = useState<string[]>([]);
+  const [normalizedFromDate, setNormalizedFromDate] = useState('');
+  const [normalizedToDate, setNormalizedToDate] = useState('');
+  const [normalizedMinMinutes, setNormalizedMinMinutes] = useState('');
+  const [normalizedMaxMinutes, setNormalizedMaxMinutes] = useState('');
+  const [normalizedBinSize, setNormalizedBinSize] = useState(String(DEFAULT_NORMALIZED_BIN_SIZE));
+  const [normalizedView, setNormalizedView] = useState<'histogram' | 'scatter'>('histogram');
+  const [normalizedData, setNormalizedData] = useState<StationPanelsFinishedResponse | null>(null);
+  const [normalizedLoading, setNormalizedLoading] = useState(false);
+  const [normalizedError, setNormalizedError] = useState('');
+  const [houseTypeDropdownOpen, setHouseTypeDropdownOpen] = useState(false);
+  const [panelTypeDropdownOpen, setPanelTypeDropdownOpen] = useState(false);
+  const houseTypeDropdownRef = useRef<HTMLDivElement | null>(null);
+  const panelTypeDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [analysisData, setAnalysisData] = useState<TaskAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -470,6 +631,58 @@ const DashboardTasks: React.FC = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!houseTypeDropdownOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!houseTypeDropdownRef.current) return;
+      if (!houseTypeDropdownRef.current.contains(event.target as Node)) {
+        setHouseTypeDropdownOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHouseTypeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [houseTypeDropdownOpen]);
+
+  useEffect(() => {
+    if (!panelTypeDropdownOpen) {
+      return undefined;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (!panelTypeDropdownRef.current) return;
+      if (!panelTypeDropdownRef.current.contains(event.target as Node)) {
+        setPanelTypeDropdownOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPanelTypeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [panelTypeDropdownOpen]);
+
+  useEffect(() => {
+    if (activeTab === 'normalized') return;
+    setHouseTypeDropdownOpen(false);
+    setPanelTypeDropdownOpen(false);
+  }, [activeTab]);
+
   const selectedHouseType = useMemo(
     () => houseTypes.find((item) => String(item.id) === String(selectedHouseTypeId)) || null,
     [houseTypes, selectedHouseTypeId],
@@ -504,6 +717,22 @@ const DashboardTasks: React.FC = () => {
     [panelsForHouse, effectiveSelectedPanelId],
   );
 
+  const houseTypeNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    houseTypes.forEach((houseType) => {
+      map.set(houseType.id, houseType.name || `Tipo ${houseType.id}`);
+    });
+    return map;
+  }, [houseTypes]);
+
+  const panelDefinitionById = useMemo(() => {
+    const map = new Map<number, PanelDefinition>();
+    panelDefinitions.forEach((panel) => {
+      map.set(panel.id, panel);
+    });
+    return map;
+  }, [panelDefinitions]);
+
   const sequenceByStationId = useMemo(() => {
     const map = new Map<string, number>();
     stations.forEach((station) => {
@@ -513,6 +742,62 @@ const DashboardTasks: React.FC = () => {
     });
     return map;
   }, [stations]);
+
+  const selectedNormalizedStation = useMemo(
+    () => stations.find((station) => String(station.id) === String(normalizedStationId)) || null,
+    [stations, normalizedStationId],
+  );
+
+  const normalizedDateRange = useMemo(() => {
+    if (normalizedFromDate && normalizedToDate && normalizedFromDate > normalizedToDate) {
+      return { from: normalizedToDate, to: normalizedFromDate };
+    }
+    return { from: normalizedFromDate, to: normalizedToDate };
+  }, [normalizedFromDate, normalizedToDate]);
+
+  const panelGroupOptions = useMemo(() => {
+    const houseTypeSet = new Set(normalizedHouseTypeIds);
+    const groupMap = new Map<string, PanelGroupOption>();
+    panelDefinitions.forEach((panel) => {
+      if (houseTypeSet.size && !houseTypeSet.has(panel.house_type_id)) return;
+      const groupLabel = normalizePanelGroup(panel.group);
+      const current = groupMap.get(groupLabel);
+      if (current) {
+        current.count += 1;
+      } else {
+        groupMap.set(groupLabel, { id: groupLabel, label: groupLabel, count: 1 });
+      }
+    });
+    return Array.from(groupMap.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }),
+    );
+  }, [panelDefinitions, normalizedHouseTypeIds]);
+
+  const normalizedHouseTypeLabel = useMemo(() => {
+    if (!normalizedHouseTypeIds.length) return 'Todos los tipos de casa';
+    if (normalizedHouseTypeIds.length === 1) {
+      const id = normalizedHouseTypeIds[0];
+      return houseTypeNameById.get(id) ?? `Tipo ${id}`;
+    }
+    return `${normalizedHouseTypeIds.length} tipos seleccionados`;
+  }, [normalizedHouseTypeIds, houseTypeNameById]);
+
+  const normalizedPanelTypeLabel = useMemo(() => {
+    if (!normalizedPanelGroups.length) return 'Todos los grupos';
+    if (normalizedPanelGroups.length === 1) {
+      return normalizedPanelGroups[0];
+    }
+    return `${normalizedPanelGroups.length} grupos seleccionados`;
+  }, [normalizedPanelGroups]);
+
+  useEffect(() => {
+    const availableGroups = new Set(panelGroupOptions.map((option) => option.id));
+    setNormalizedPanelGroups((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((group) => availableGroups.has(group));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [panelGroupOptions]);
 
   const candidatePanelTasks = useMemo(() => {
     if (!selectedHouseType) return [] as TaskDefinition[];
@@ -558,17 +843,14 @@ const DashboardTasks: React.FC = () => {
     return '';
   }, [selectedHouseTypeId, effectiveSelectedPanelId, selectedStationId]);
 
-  const selectionReady = Boolean(selectedHouseTypeId && effectiveSelectedPanelId && selectedStationId);
-  const displayAnalysisData = selectionReady ? analysisData : null;
-  const displayError = selectionErrorMessage || (selectionReady ? error : '');
-  const displayLoading = selectionReady && loading;
+  const panelSelectionReady = Boolean(selectedHouseTypeId && effectiveSelectedPanelId && selectedStationId);
+  const displayAnalysisData = activeTab === 'panel' && panelSelectionReady ? analysisData : null;
+  const displayError = activeTab === 'panel'
+    ? selectionErrorMessage || (panelSelectionReady ? error : '')
+    : '';
+  const displayLoading = activeTab === 'panel' && panelSelectionReady && loading;
 
-  const panelLabel = (panel: PanelDefinition | null): string => {
-    if (!panel) return '-';
-    const module = panel.module_sequence_number ? `Modulo ${panel.module_sequence_number}` : 'Modulo';
-    const group = panel.group || 'Grupo';
-    return `${module} - ${group} - ${panel.panel_code || panel.id}`;
-  };
+  const panelLabel = (panel: PanelDefinition | null): string => buildPanelLabel(panel);
 
   const workerLabel = (worker: Worker): string =>
     `${worker.first_name || ''} ${worker.last_name || ''}`.trim() || `Trabajador ${worker.id}`;
@@ -580,9 +862,45 @@ const DashboardTasks: React.FC = () => {
     return name ? `${code} - ${name}` : code;
   };
 
+  const normalizedMetricLabel = normalizedMetric === 'area' ? 'Minutos / m2' : 'Minutos / m';
+  const normalizedMetricUnit = normalizedMetric === 'area' ? 'min/m2' : 'min/m';
+
+  const toggleNormalizedHouseType = (houseTypeId: number) => {
+    setNormalizedHouseTypeIds((prev) => {
+      if (!prev.length) return [houseTypeId];
+      if (prev.includes(houseTypeId)) {
+        return prev.filter((id) => id !== houseTypeId);
+      }
+      return [...prev, houseTypeId];
+    });
+  };
+
+  const toggleNormalizedPanelGroup = (groupLabel: string) => {
+    setNormalizedPanelGroups((prev) => {
+      if (!prev.length) return [groupLabel];
+      if (prev.includes(groupLabel)) {
+        return prev.filter((id) => id !== groupLabel);
+      }
+      return [...prev, groupLabel];
+    });
+  };
+
   const effectiveBinSize = Number(binSize) > 0 ? Number(binSize) : DEFAULT_BIN_SIZE;
   const effectiveMinMultiplier = Number(minMultiplier) || 0;
   const effectiveMaxMultiplier = Number(maxMultiplier) || Number.POSITIVE_INFINITY;
+  const normalizedMinValue = parseOptionalNumberInput(normalizedMinMinutes);
+  const normalizedMaxValue = parseOptionalNumberInput(normalizedMaxMinutes);
+  const normalizedBinValue = parseOptionalNumberInput(normalizedBinSize);
+  const effectiveNormalizedMin =
+    normalizedMinValue != null && normalizedMaxValue != null
+      ? Math.min(normalizedMinValue, normalizedMaxValue)
+      : normalizedMinValue;
+  const effectiveNormalizedMax =
+    normalizedMinValue != null && normalizedMaxValue != null
+      ? Math.max(normalizedMinValue, normalizedMaxValue)
+      : normalizedMaxValue;
+  const effectiveNormalizedBinSize =
+    normalizedBinValue != null && normalizedBinValue > 0 ? normalizedBinValue : DEFAULT_NORMALIZED_BIN_SIZE;
 
   const hypothesis = useMemo(
     () => buildHypothesisFromConfig(activeHypothesisConfig),
@@ -653,6 +971,137 @@ const DashboardTasks: React.FC = () => {
     effectiveMinMultiplier,
     hypothesis.predicate,
   ]);
+
+  const normalizedReport = useMemo(() => {
+    const emptySummary = {
+      totalMatching: 0,
+      included: 0,
+      missingMetric: 0,
+      missingTime: 0,
+      averageMinutes: null as number | null,
+      sampleCount: 0,
+      bestRow: null as NormalizedCompletionRow | null,
+      worstRow: null as NormalizedCompletionRow | null,
+    };
+    if (!normalizedData?.houses || !normalizedStationId) {
+      return { rows: [] as NormalizedCompletionRow[], summary: emptySummary };
+    }
+    const houseTypeSet = new Set(normalizedHouseTypeIds);
+    const groupSet = new Set(normalizedPanelGroups);
+    const rows: NormalizedCompletionRow[] = [];
+    let totalMatching = 0;
+    let missingMetric = 0;
+    let missingTime = 0;
+    let bestRow: NormalizedCompletionRow | null = null;
+    let worstRow: NormalizedCompletionRow | null = null;
+
+    normalizedData.houses.forEach((house, houseIndex) => {
+      const houseTypeId = house.house_type_id != null ? Number(house.house_type_id) : null;
+      if (houseTypeSet.size) {
+        if (!houseTypeId || !houseTypeSet.has(houseTypeId)) return;
+      }
+      const houseName = house.house_type_name || (houseTypeId != null ? `Tipo ${houseTypeId}` : 'Tipo');
+      const modules = Array.isArray(house.modules) ? house.modules : [];
+      modules.forEach((moduleItem, moduleIndex) => {
+        const panels = Array.isArray(moduleItem?.panels) ? moduleItem.panels : [];
+        panels.forEach((panel, panelIndex) => {
+          const panelDefinitionId =
+            panel.panel_definition_id != null ? Number(panel.panel_definition_id) : NaN;
+          if (!Number.isFinite(panelDefinitionId)) return;
+          const panelMeta = panelDefinitionById.get(panelDefinitionId);
+          const groupLabel = normalizePanelGroup(panelMeta?.group);
+          if (groupSet.size && !groupSet.has(groupLabel)) return;
+          totalMatching += 1;
+
+          const actualMinutes = Number(panel.actual_minutes);
+          if (!Number.isFinite(actualMinutes) || actualMinutes <= 0) {
+            missingTime += 1;
+            return;
+          }
+
+          const panelArea = panel.panel_area ?? panelMeta?.panel_area ?? null;
+          const panelLength = panelMeta?.panel_length_m ?? null;
+          const hasArea = panelArea != null && Number(panelArea) > 0;
+          const hasLength = panelLength != null && Number(panelLength) > 0;
+          if (!hasArea || !hasLength) {
+            missingMetric += 1;
+            return;
+          }
+          const measure = normalizedMetric === 'area' ? Number(panelArea) : Number(panelLength);
+          if (!(measure > 0)) {
+            missingMetric += 1;
+            return;
+          }
+          const normalizedMinutes = actualMinutes / measure;
+          if (effectiveNormalizedMin != null && normalizedMinutes < effectiveNormalizedMin) {
+            return;
+          }
+          if (effectiveNormalizedMax != null && normalizedMinutes > effectiveNormalizedMax) {
+            return;
+          }
+          const panelLabelText = panelMeta
+            ? buildPanelLabel(panelMeta)
+            : panel.panel_code
+              ? `Panel ${panel.panel_code}`
+              : `Panel ${panelDefinitionId}`;
+          const entry: NormalizedCompletionRow = {
+            id: `${panelDefinitionId}-${panel.plan_id ?? houseIndex}-${panel.finished_at ?? panel.station_finished_at ?? `${moduleIndex}-${panelIndex}`}`,
+            panel_definition_id: panelDefinitionId,
+            house_type_id: houseTypeId ?? panelMeta?.house_type_id ?? null,
+            house_type_name: houseName,
+            panel_label: panelLabelText,
+            panel_group: groupLabel,
+            panel_area: Number(panelArea),
+            panel_length_m: Number(panelLength),
+            actual_minutes: actualMinutes,
+            normalized_minutes: normalizedMinutes,
+            finished_at: panel.finished_at ?? panel.station_finished_at ?? null,
+          };
+          rows.push(entry);
+          if (!bestRow || entry.normalized_minutes < bestRow.normalized_minutes) {
+            bestRow = entry;
+          }
+          if (!worstRow || entry.normalized_minutes > worstRow.normalized_minutes) {
+            worstRow = entry;
+          }
+        });
+      });
+    });
+
+    rows.sort((a, b) => b.normalized_minutes - a.normalized_minutes);
+
+    const averageMinutes = rows.length
+      ? Number((rows.reduce((sum, item) => sum + item.normalized_minutes, 0) / rows.length).toFixed(3))
+      : null;
+    const sampleCount = rows.length;
+    return {
+      rows,
+      summary: {
+        totalMatching,
+        included: rows.length,
+        missingMetric,
+        missingTime,
+        averageMinutes,
+        sampleCount,
+        bestRow,
+        worstRow,
+      },
+    };
+  }, [
+    normalizedData,
+    normalizedStationId,
+    normalizedHouseTypeIds,
+    normalizedPanelGroups,
+    normalizedMetric,
+    effectiveNormalizedMin,
+    effectiveNormalizedMax,
+    panelDefinitionById,
+  ]);
+
+  const normalizedHistogram = useMemo(
+    () => buildNormalizedHistogramData(normalizedReport.rows, effectiveNormalizedBinSize),
+    [normalizedReport.rows, effectiveNormalizedBinSize],
+  );
 
   const workerNamesFromAnalysis = useMemo(() => {
     if (!displayAnalysisData || !Array.isArray(displayAnalysisData.data_points)) return [] as string[];
@@ -751,6 +1200,9 @@ const DashboardTasks: React.FC = () => {
   };
 
   useEffect(() => {
+    if (activeTab !== 'panel') {
+      return undefined;
+    }
     if (!selectedHouseTypeId || !effectiveSelectedPanelId || !selectedStationId) {
       return undefined;
     }
@@ -793,6 +1245,7 @@ const DashboardTasks: React.FC = () => {
       cancelled = true;
     };
   }, [
+    activeTab,
     selectedHouseTypeId,
     effectiveSelectedPanelId,
     effectiveSelectedTaskId,
@@ -800,6 +1253,56 @@ const DashboardTasks: React.FC = () => {
     selectedWorkerId,
     fromDate,
     toDate,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'normalized') {
+      return undefined;
+    }
+    if (!normalizedStationId) {
+      setNormalizedData(null);
+      setNormalizedError('');
+      setNormalizedLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const loadNormalized = async () => {
+      setNormalizedLoading(true);
+      setNormalizedError('');
+      const params = new URLSearchParams();
+      params.append('station_id', String(normalizedStationId));
+      if (normalizedDateRange.from) params.append('from_date', `${normalizedDateRange.from} 00:00:00`);
+      if (normalizedDateRange.to) params.append('to_date', `${normalizedDateRange.to} 23:59:59`);
+      try {
+        const result = await apiRequest<StationPanelsFinishedResponse>(
+          `/api/station-panels-finished?${params.toString()}`,
+        );
+        if (!cancelled) {
+          setNormalizedData(result);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = err instanceof Error ? err.message : 'Error obteniendo analisis';
+          setNormalizedData(null);
+          setNormalizedError(message);
+        }
+      } finally {
+        if (!cancelled) {
+          setNormalizedLoading(false);
+        }
+      }
+    };
+
+    void loadNormalized();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTab,
+    normalizedStationId,
+    normalizedDateRange.from,
+    normalizedDateRange.to,
   ]);
 
   const resetFilters = () => {
@@ -817,6 +1320,23 @@ const DashboardTasks: React.FC = () => {
     setMaxMultiplier(String(DEFAULT_MAX_MULTIPLIER));
     setAnalysisData(null);
     setError('');
+  };
+
+  const resetNormalizedFilters = () => {
+    setNormalizedStationId('');
+    setNormalizedMetric('linear');
+    setNormalizedHouseTypeIds([]);
+    setNormalizedPanelGroups([]);
+    setHouseTypeDropdownOpen(false);
+    setPanelTypeDropdownOpen(false);
+    setNormalizedFromDate('');
+    setNormalizedToDate('');
+    setNormalizedMinMinutes('');
+    setNormalizedMaxMinutes('');
+    setNormalizedBinSize(String(DEFAULT_NORMALIZED_BIN_SIZE));
+    setNormalizedView('histogram');
+    setNormalizedData(null);
+    setNormalizedError('');
   };
 
   const buildDataPointSummary = (row: AnalysisPoint): string => {
@@ -1107,6 +1627,184 @@ const DashboardTasks: React.FC = () => {
     );
   };
 
+  const renderNormalizedHistogram = () => {
+    const { bins, maxCount, binSize: size, maxValue } = normalizedHistogram;
+    if (!bins.length || !maxCount) {
+      return (
+        <div className="text-sm text-[var(--ink-muted)]">
+          No hay datos suficientes para la distribucion.
+        </div>
+      );
+    }
+    const chartHeight = 240;
+    const margin = { top: 16, right: 16, bottom: 56, left: 56 };
+    const chartWidth = Math.max(bins.length, 1) * 56;
+    const svgWidth = chartWidth + margin.left + margin.right;
+    const svgHeight = chartHeight + margin.top + margin.bottom;
+    const valuePerPixel = maxValue > 0 ? maxValue / chartWidth : 1;
+    const barFullWidth = size / valuePerPixel;
+    const barWidth = barFullWidth * 0.72;
+    const gap = (barFullWidth - barWidth) / 2;
+    const axisBaseY = margin.top + chartHeight;
+    const labelDigits = size < 1 ? 2 : size < 10 ? 1 : 0;
+
+    return (
+      <div className="space-y-3">
+        <div className="overflow-x-auto">
+          <svg width={svgWidth} height={svgHeight} role="img" aria-label="Distribucion de tiempos normalizados">
+            <line
+              x1={margin.left}
+              y1={axisBaseY}
+              x2={margin.left + chartWidth}
+              y2={axisBaseY}
+              stroke="#374151"
+              strokeWidth={1}
+            />
+            <line x1={margin.left} y1={margin.top} x2={margin.left} y2={axisBaseY} stroke="#374151" />
+            {bins.map((bin) => {
+              const barHeight = (bin.count / maxCount) * chartHeight;
+              const x = margin.left + bin.index * barFullWidth + gap;
+              const barTopY = axisBaseY - barHeight;
+              const previewItems = bin.items.slice(0, 6);
+              const tooltipLines = [
+                `Rango: ${bin.from.toFixed(labelDigits)}-${bin.to.toFixed(labelDigits)} ${normalizedMetricUnit}`,
+                `Muestras: ${bin.count}`,
+                ...previewItems.map(
+                  (item) => {
+                    const measureValue = normalizedMetric === 'area' ? item.panel_area : item.panel_length_m;
+                    const measureUnit = normalizedMetric === 'area' ? 'm2' : 'm';
+                    return `${item.panel_label} / ${item.house_type_name} - ${formatMinutesWithUnit(
+                      item.actual_minutes,
+                    )} - ${formatMeasure(measureValue, measureUnit)} - ${formatMinutesPerUnit(
+                      item.normalized_minutes,
+                      normalizedMetricUnit,
+                    )}`;
+                  },
+                ),
+              ];
+              if (bin.items.length > previewItems.length) {
+                tooltipLines.push(`+${bin.items.length - previewItems.length} mas`);
+              }
+              const tooltip = tooltipLines.join('\n');
+              return (
+                <g key={bin.index}>
+                  <title>{tooltip}</title>
+                  <rect
+                    x={x}
+                    y={barTopY}
+                    width={barWidth}
+                    height={barHeight}
+                    fill="#3b82f6"
+                    aria-label={tooltip}
+                  />
+                  <text x={x + barWidth / 2} y={axisBaseY + 16} textAnchor="middle" fontSize="10" fill="#4b5563">
+                    {`${bin.from.toFixed(labelDigits)}-${bin.to.toFixed(labelDigits)}`}
+                  </text>
+                  <text x={x + barWidth / 2} y={barTopY - 6} textAnchor="middle" fontSize="11" fill="#111827">
+                    {bin.count}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+        <p className="text-xs text-[var(--ink-muted)]">
+          Distribucion de {normalizedMetricLabel.toLowerCase()} por panel completado.
+        </p>
+      </div>
+    );
+  };
+
+  const renderNormalizedScatter = () => {
+    if (!normalizedReport.rows.length) {
+      return <div className="text-sm text-[var(--ink-muted)]">No hay paneles para comparar con los filtros actuales.</div>;
+    }
+    const points = normalizedReport.rows
+      .map((row) => {
+        const measure = normalizedMetric === 'area' ? row.panel_area : row.panel_length_m;
+        return { row, measure };
+      })
+      .filter((item) => Number.isFinite(item.measure) && item.measure > 0 && item.row.actual_minutes > 0);
+    if (!points.length) {
+      return (
+        <div className="text-sm text-[var(--ink-muted)]">
+          No hay datos suficientes para la dispersion.
+        </div>
+      );
+    }
+    const maxX = Math.max(...points.map((item) => item.measure));
+    const maxY = Math.max(...points.map((item) => item.row.actual_minutes));
+    if (!(maxX > 0) || !(maxY > 0)) {
+      return (
+        <div className="text-sm text-[var(--ink-muted)]">
+          No hay datos suficientes para la dispersion.
+        </div>
+      );
+    }
+    const chartHeight = 280;
+    const chartWidth = 720;
+    const margin = { top: 16, right: 24, bottom: 64, left: 64 };
+    const svgWidth = chartWidth + margin.left + margin.right;
+    const svgHeight = chartHeight + margin.top + margin.bottom;
+    const axisBaseY = margin.top + chartHeight;
+    const measureUnit = normalizedMetric === 'area' ? 'm2' : 'm';
+
+    return (
+      <div className="space-y-3">
+        <div className="overflow-x-auto">
+          <svg width={svgWidth} height={svgHeight} role="img" aria-label="Dispersion tiempo vs medida">
+            <line
+              x1={margin.left}
+              y1={axisBaseY}
+              x2={margin.left + chartWidth}
+              y2={axisBaseY}
+              stroke="#374151"
+              strokeWidth={1}
+            />
+            <line x1={margin.left} y1={margin.top} x2={margin.left} y2={axisBaseY} stroke="#374151" />
+            {points.map((item, index) => {
+              const x = margin.left + (item.measure / maxX) * chartWidth;
+              const y = margin.top + chartHeight - (item.row.actual_minutes / maxY) * chartHeight;
+              const tooltip = [
+                `${item.row.panel_label} / ${item.row.house_type_name}`,
+                `Grupo: ${item.row.panel_group}`,
+                `Medida: ${formatMeasure(item.measure, measureUnit)}`,
+                `Tiempo: ${formatMinutesWithUnit(item.row.actual_minutes)}`,
+                `Normalizado: ${formatMinutesPerUnit(item.row.normalized_minutes, normalizedMetricUnit)}`,
+              ].join('\n');
+              return (
+                <circle
+                  key={`${item.row.id}-${index}`}
+                  cx={x}
+                  cy={y}
+                  r={3}
+                  fill="rgba(59,130,246,0.45)"
+                >
+                  <title>{tooltip}</title>
+                </circle>
+              );
+            })}
+            <text x={margin.left} y={svgHeight - 18} fontSize="11" fill="#4b5563">
+              {`Medida (${measureUnit})`}
+            </text>
+            <text
+              x={16}
+              y={margin.top}
+              fontSize="11"
+              fill="#4b5563"
+              transform={`rotate(-90 16 ${margin.top})`}
+            >
+              Tiempo (min)
+            </text>
+          </svg>
+        </div>
+        <p className="text-xs text-[var(--ink-muted)]">
+          Eje X: {measureUnit}. Eje Y: tiempo de estacion (min).
+        </p>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-black/5 bg-white/90 p-6 shadow-sm">
@@ -1115,14 +1813,16 @@ const DashboardTasks: React.FC = () => {
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Filtro principal</p>
             <h1 className="font-display text-xl text-[var(--ink)]">Analisis de tiempos de tareas</h1>
             <p className="mt-2 text-sm text-[var(--ink-muted)]">
-              Combina tipo de casa, panel y estacion para comparar duraciones reales contra lo esperado.
+              {activeTab === 'panel'
+                ? 'Combina tipo de casa, panel y estacion para comparar duraciones reales contra lo esperado.'
+                : 'Compara tiempos normalizados por area o largo entre paneles dentro de una misma estacion.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
-              onClick={resetFilters}
+              onClick={activeTab === 'panel' ? resetFilters : resetNormalizedFilters}
             >
               <RefreshCcw className="h-4 w-4" />
               Restablecer filtros
@@ -1130,7 +1830,29 @@ const DashboardTasks: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {[
+            { key: 'panel', label: 'Panel especifico' },
+            { key: 'normalized', label: 'Tiempo normalizado' },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key === 'panel' ? 'panel' : 'normalized')}
+              className={
+                activeTab === tab.key
+                  ? 'rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
+                  : 'rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+              }
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'panel' && (
+          <>
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
             Tipo de casa
             <select
@@ -1448,113 +2170,481 @@ const DashboardTasks: React.FC = () => {
             {panelsError}
           </div>
         )}
-        {!panelsError && stationsError && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
-            <AlertTriangle className="h-4 w-4" />
-            {stationsError}
-          </div>
+            {!panelsError && stationsError && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                <AlertTriangle className="h-4 w-4" />
+                {stationsError}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'normalized' && (
+          <>
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Tipo de casa
+                <div className="relative mt-2" ref={houseTypeDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setHouseTypeDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-left text-sm text-[var(--ink)] shadow-sm"
+                  >
+                    <span className="truncate">{normalizedHouseTypeLabel}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                        houseTypeDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {houseTypeDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      <div className="border-b border-black/5 px-4 py-2 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!normalizedHouseTypeIds.length}
+                            onChange={() => setNormalizedHouseTypeIds([])}
+                          />
+                          <span className="text-[var(--ink)]">Todos los tipos de casa</span>
+                        </label>
+                      </div>
+                      {houseTypes.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
+                          No hay tipos de casa disponibles.
+                        </div>
+                      ) : (
+                        <div className="max-h-56 overflow-auto p-3 text-sm">
+                          <div className="flex flex-col gap-2">
+                            {houseTypes.map((houseType) => (
+                              <label key={houseType.id} className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={normalizedHouseTypeIds.includes(houseType.id)}
+                                  onChange={() => toggleNormalizedHouseType(houseType.id)}
+                                />
+                                <span className="text-[var(--ink)]">
+                                  {houseType.name || `Tipo ${houseType.id}`}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Grupo de panel
+                <div className="relative mt-2" ref={panelTypeDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setPanelTypeDropdownOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-left text-sm text-[var(--ink)] shadow-sm"
+                  >
+                    <span className="truncate">{normalizedPanelTypeLabel}</span>
+                    <ChevronDown
+                      className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                        panelTypeDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+                  {panelTypeDropdownOpen && (
+                    <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                      <div className="border-b border-black/5 px-4 py-2 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!normalizedPanelGroups.length}
+                            onChange={() => setNormalizedPanelGroups([])}
+                          />
+                          <span className="text-[var(--ink)]">Todos los grupos</span>
+                        </label>
+                      </div>
+                      {panelGroupOptions.length === 0 ? (
+                        <div className="px-4 py-3 text-sm text-[var(--ink-muted)]">
+                          No hay grupos disponibles.
+                        </div>
+                      ) : (
+                        <div className="max-h-56 overflow-auto p-3 text-sm">
+                          <div className="flex flex-col gap-2">
+                            {panelGroupOptions.map((panel) => (
+                              <label key={panel.id} className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={normalizedPanelGroups.includes(panel.id)}
+                                  onChange={() => toggleNormalizedPanelGroup(panel.id)}
+                                />
+                                <span className="text-[var(--ink)]">
+                                  {panel.label}
+                                  <span className="text-[var(--ink-muted)]"> ({panel.count})</span>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Estacion
+                <select
+                  className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                  value={normalizedStationId}
+                  onChange={(event) => setNormalizedStationId(event.target.value)}
+                >
+                  <option value="">{stationsLoading ? 'Cargando...' : 'Seleccione...'}</option>
+                  {stations.map((station) => (
+                    <option key={station.id} value={station.id}>
+                      {stationLabel(station)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Metrica
+                <select
+                  className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                  value={normalizedMetric}
+                  onChange={(event) => setNormalizedMetric(event.target.value as NormalizedMetric)}
+                >
+                  <option value="linear">Tiempo por metro lineal</option>
+                  <option value="area">Tiempo por area</option>
+                </select>
+              </label>
+
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Desde (opcional)
+                <input
+                  className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                  type="date"
+                  value={normalizedFromDate}
+                  onChange={(event) => setNormalizedFromDate(event.target.value)}
+                />
+              </label>
+
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Hasta (opcional)
+                <input
+                  className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                  type="date"
+                  value={normalizedToDate}
+                  onChange={(event) => setNormalizedToDate(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                <Sliders className="h-4 w-4" />
+                Rango de tiempo normalizado
+              </div>
+              <div className="grid flex-1 gap-4 md:grid-cols-3">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Min. tiempo ({normalizedMetricUnit})
+                  <input
+                    className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder="5"
+                    value={normalizedMinMinutes}
+                    onChange={(event) => setNormalizedMinMinutes(event.target.value)}
+                  />
+                </label>
+
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Max. tiempo ({normalizedMetricUnit})
+                  <input
+                    className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder="20"
+                    value={normalizedMaxMinutes}
+                    onChange={(event) => setNormalizedMaxMinutes(event.target.value)}
+                  />
+                </label>
+
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Tamano de bin ({normalizedMetricUnit})
+                  <input
+                    className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder={String(DEFAULT_NORMALIZED_BIN_SIZE)}
+                    value={normalizedBinSize}
+                    onChange={(event) => setNormalizedBinSize(event.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <p className="mt-3 text-xs text-[var(--ink-muted)]">
+              Solo se consideran paneles con area y largo definidos (mayores a 0). El rango filtra por{' '}
+              {normalizedMetricUnit}. El bin aplica solo al histograma.
+            </p>
+
+            {panelsLoading && <p className="mt-4 text-sm text-[var(--ink-muted)]">Cargando paneles...</p>}
+            {stationsLoading && <p className="mt-2 text-sm text-[var(--ink-muted)]">Cargando estaciones...</p>}
+            {panelsError && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                <AlertTriangle className="h-4 w-4" />
+                {panelsError}
+              </div>
+            )}
+            {!panelsError && stationsError && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                <AlertTriangle className="h-4 w-4" />
+                {stationsError}
+              </div>
+            )}
+          </>
         )}
       </section>
 
-      {displayError && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {displayError}
-        </div>
-      )}
-
-      {displayLoading && !displayError && (
-        <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)]">
-          Actualizando analisis...
-        </div>
-      )}
-
-      {displayAnalysisData && (
-        <section className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                {displayAnalysisData.data_points?.length || 0}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Incluidas</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.included.length}</p>
-            </div>
-            <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.excluded.length}</p>
-            </div>
-            <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
-              <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                {formatMinutesWithUnit(displayAnalysisData.stats?.average_duration)}
-              </p>
-            </div>
-          </div>
-
-          {hypothesis.description && (
-            <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink)]">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  <Users className="h-3 w-3" />
-                  Hipotesis
-                </span>
-                <span className="font-semibold">{hypothesis.description}</span>
-                {analysisSummary.hypothesisMatches !== null && (
-                  <span className="text-sm text-[var(--ink-muted)]">
-                    Coinciden: {analysisSummary.hypothesisMatches}
-                  </span>
-                )}
-                {analysisSummary.hypothesisMatches !== null && (
-                  <span className="text-sm text-[var(--ink-muted)]">
-                    No coinciden: {Math.max(analysisSummary.included.length - analysisSummary.hypothesisMatches, 0)}
-                  </span>
-                )}
-                {analysisSummary.hypothesisMatchAverage !== null && (
-                  <span className="text-sm text-[var(--ink-muted)]">
-                    Promedio hipotesis: {formatMinutesWithUnit(analysisSummary.hypothesisMatchAverage)}
-                  </span>
-                )}
-              </div>
+      {activeTab === 'panel' && (
+        <>
+          {displayError && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {displayError}
             </div>
           )}
 
-          <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              <Filter className="h-4 w-4" />
-              Histograma
+          {displayLoading && !displayError && (
+            <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)]">
+              Actualizando analisis...
             </div>
-            <div className="mt-4">{renderHistogram()}</div>
-          </div>
+          )}
 
-          <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Muestras incluidas
-            </h2>
-            <div className="mt-4">
-              {renderDataTable(analysisSummary.included, 'No se encontraron muestras dentro del rango seleccionado.')}
-            </div>
-          </div>
+          {displayAnalysisData && (
+            <section className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                    {displayAnalysisData.data_points?.length || 0}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Incluidas</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.included.length}</p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.excluded.length}</p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                    {formatMinutesWithUnit(displayAnalysisData.stats?.average_duration)}
+                  </p>
+                </div>
+              </div>
 
-          <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Muestras excluidas
-            </h2>
-            <div className="mt-4">
-              {renderDataTable(
-                analysisSummary.excluded,
-                'No se excluyeron muestras con los multiplicadores actuales.',
+              {hypothesis.description && (
+                <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink)]">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      <Users className="h-3 w-3" />
+                      Hipotesis
+                    </span>
+                    <span className="font-semibold">{hypothesis.description}</span>
+                    {analysisSummary.hypothesisMatches !== null && (
+                      <span className="text-sm text-[var(--ink-muted)]">
+                        Coinciden: {analysisSummary.hypothesisMatches}
+                      </span>
+                    )}
+                    {analysisSummary.hypothesisMatches !== null && (
+                      <span className="text-sm text-[var(--ink-muted)]">
+                        No coinciden: {Math.max(analysisSummary.included.length - analysisSummary.hypothesisMatches, 0)}
+                      </span>
+                    )}
+                    {analysisSummary.hypothesisMatchAverage !== null && (
+                      <span className="text-sm text-[var(--ink-muted)]">
+                        Promedio hipotesis: {formatMinutesWithUnit(analysisSummary.hypothesisMatchAverage)}
+                      </span>
+                    )}
+                  </div>
+                </div>
               )}
+
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  <Filter className="h-4 w-4" />
+                  Histograma
+                </div>
+                <div className="mt-4">{renderHistogram()}</div>
+              </div>
+
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Muestras incluidas
+                </h2>
+                <div className="mt-4">
+                  {renderDataTable(analysisSummary.included, 'No se encontraron muestras dentro del rango seleccionado.')}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Muestras excluidas
+                </h2>
+                <div className="mt-4">
+                  {renderDataTable(
+                    analysisSummary.excluded,
+                    'No se excluyeron muestras con los multiplicadores actuales.',
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {!displayAnalysisData && !displayLoading && !displayError && (
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              Seleccione tipo de casa, panel y estacion para ver el analisis.
             </div>
-          </div>
-        </section>
+          )}
+        </>
       )}
 
-      {!displayAnalysisData && !displayLoading && !displayError && (
-        <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
-          Seleccione tipo de casa, panel y estacion para ver el analisis.
-        </div>
+      {activeTab === 'normalized' && (
+        <>
+          {normalizedError && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {normalizedError}
+            </div>
+          )}
+
+          {normalizedLoading && !normalizedError && (
+            <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)]">
+              Actualizando analisis...
+            </div>
+          )}
+
+          {!normalizedStationId && !normalizedLoading && !normalizedError && (
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-6 text-sm text-[var(--ink-muted)]">
+              Seleccione una estacion para comparar paneles por {normalizedMetricLabel.toLowerCase()}.
+            </div>
+          )}
+
+          {normalizedStationId && !normalizedLoading && !normalizedError && (
+            <section className="space-y-6">
+              <div className="rounded-2xl border border-black/5 bg-white/90 px-4 py-3 text-sm text-[var(--ink)]">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Estacion
+                  </span>
+                  <span className="font-semibold">
+                    {selectedNormalizedStation ? stationLabel(selectedNormalizedStation) : normalizedStationId}
+                  </span>
+                  <span className="text-xs text-[var(--ink-muted)]">Metrica: {normalizedMetricLabel}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Vista
+                  </span>
+                  {[
+                    { key: 'histogram', label: 'Histograma' },
+                    { key: 'scatter', label: 'Dispersion' },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setNormalizedView(option.key as 'histogram' | 'scatter')}
+                      className={
+                        normalizedView === option.key
+                          ? 'rounded-full bg-[var(--ink)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-white'
+                          : 'rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+                      }
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Completados filtrados</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                    {normalizedReport.summary.totalMatching}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Incluidos</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{normalizedReport.summary.included}</p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                    {formatMinutesPerUnit(normalizedReport.summary.averageMinutes, normalizedMetricUnit)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Muestras</p>
+                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                    {normalizedReport.summary.sampleCount}
+                  </p>
+                </div>
+              </div>
+
+              {(normalizedReport.summary.missingMetric > 0 || normalizedReport.summary.missingTime > 0) && (
+                <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)]">
+                  {normalizedReport.summary.missingMetric > 0 && (
+                    <span>Sin area/largo valido: {normalizedReport.summary.missingMetric}. </span>
+                  )}
+                  {normalizedReport.summary.missingTime > 0 && (
+                    <span>Sin tiempo registrado: {normalizedReport.summary.missingTime}.</span>
+                  )}
+                </div>
+              )}
+
+              {(normalizedReport.summary.bestRow || normalizedReport.summary.worstRow) && (
+                <div className="rounded-2xl border border-black/5 bg-white/90 px-4 py-3 text-sm text-[var(--ink)]">
+                  <div className="flex flex-wrap items-center gap-3">
+                    {normalizedReport.summary.bestRow && (
+                      <span>
+                        <strong>Mas rapido:</strong> {normalizedReport.summary.bestRow.panel_label} (
+                        {formatMinutesPerUnit(
+                          normalizedReport.summary.bestRow.normalized_minutes,
+                          normalizedMetricUnit,
+                        )}
+                        )
+                      </span>
+                    )}
+                    {normalizedReport.summary.worstRow && (
+                      <span>
+                        <strong>Mas lento:</strong> {normalizedReport.summary.worstRow.panel_label} (
+                        {formatMinutesPerUnit(
+                          normalizedReport.summary.worstRow.normalized_minutes,
+                          normalizedMetricUnit,
+                        )}
+                        )
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  {normalizedView === 'histogram' ? 'Distribucion' : 'Dispersion'} por panel
+                </h2>
+                <div className="mt-4">
+                  {normalizedView === 'histogram' ? renderNormalizedHistogram() : renderNormalizedScatter()}
+                </div>
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

@@ -93,3 +93,4 @@
 
 ## 2026-01-17
 - Floor status dashboard pulls live station data from `/api/worker-stations/{station_id}/snapshot`, and the endpoint tolerates anonymous access by omitting worker-specific filters (skills, participation, QC notifications).
+- Task time dashboard normalized tab uses per-panel completions from `/api/station-panels-finished` (with `from_date`/`to_date` range support), filters by `panel_definitions.group`, and computes minutes per m/m2 from each completion using `panel_definitions.panel_area`/`panel_length_m`, excluding panels missing either metric.

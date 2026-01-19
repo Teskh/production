@@ -224,6 +224,8 @@ const Login: React.FC = () => {
   const [pinModalValue, setPinModalValue] = useState('');
   const [pinModalError, setPinModalError] = useState<string | null>(null);
   const [showAllWorkers, setShowAllWorkers] = useState(false);
+  const [workerInputValue, setWorkerInputValue] = useState('');
+  const [workerOptionsOpen, setWorkerOptionsOpen] = useState(false);
   const [adminFirstName, setAdminFirstName] = useState('');
   const [adminLastName, setAdminLastName] = useState('');
   const [adminPin, setAdminPin] = useState('');
@@ -324,6 +326,13 @@ const Login: React.FC = () => {
     localStorage.setItem(QR_SCANNING_STORAGE_KEY, String(qrScanningEnabled));
   }, [qrScanningEnabled]);
 
+  useEffect(() => {
+    if (!showAllWorkers) {
+      setWorkerInputValue('');
+      setWorkerOptionsOpen(false);
+    }
+  }, [showAllWorkers]);
+
   const selectedStation = useMemo(
     () => stations.find((station) => station.id === selectedStationId) ?? null,
     [stations, selectedStationId]
@@ -342,6 +351,24 @@ const Login: React.FC = () => {
       (worker.assigned_station_ids ?? []).includes(selectedStationId)
     );
   }, [workers, selectedStationId, showAllWorkers]);
+
+  const normalizedWorkerSearch = useMemo(
+    () => normalizeQrValue(workerInputValue),
+    [workerInputValue]
+  );
+
+  const filteredWorkers = useMemo(() => {
+    if (!normalizedWorkerSearch) {
+      return availableWorkers;
+    }
+    const terms = normalizedWorkerSearch.split(' ').filter(Boolean);
+    return availableWorkers.filter((worker) => {
+      const haystack = normalizeQrValue(
+        `${formatWorkerFullName(worker)} ${formatWorkerDisplayName(worker)}`
+      );
+      return terms.every((term) => haystack.includes(term));
+    });
+  }, [availableWorkers, normalizedWorkerSearch]);
 
   const shouldUseDropdown = showAllWorkers || availableWorkers.length > WORKER_THRESHOLD;
 
@@ -421,6 +448,8 @@ const Login: React.FC = () => {
   const resetWorkerSelection = () => {
     setSelectedWorkerId(null);
     setShowAllWorkers(false);
+    setWorkerInputValue('');
+    setWorkerOptionsOpen(false);
   };
 
   const applyStationContext = (context: StationContext | null) => {
@@ -785,26 +814,50 @@ const Login: React.FC = () => {
                 </label>
                 {shouldUseDropdown ? (
                   <div className="relative">
-                    <select
+                    <input
                       id="worker"
+                      type="text"
                       className="block w-full rounded-md border border-gray-300 bg-white py-4 pl-4 pr-10 text-base focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
-                      value={selectedWorkerId ?? ''}
+                      placeholder="Escribe o selecciona tu nombre"
+                      value={workerInputValue}
                       onChange={(event) => {
-                        const workerId = Number(event.target.value);
-                        if (!Number.isNaN(workerId)) {
-                          handleWorkerSelection(workerId);
-                        }
+                        const nextValue = event.target.value;
+                        setWorkerInputValue(nextValue);
+                        setSelectedWorkerId(null);
+                        setWorkerOptionsOpen(true);
                       }}
-                    >
-                      <option value="" disabled>
-                        Selecciona tu nombre
-                      </option>
-                      {availableWorkers.map((worker) => (
-                        <option key={worker.id} value={worker.id}>
-                          {formatWorkerDisplayName(worker)}
-                        </option>
-                      ))}
-                    </select>
+                      onFocus={() => setWorkerOptionsOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setWorkerOptionsOpen(false), 120);
+                      }}
+                      autoComplete="off"
+                    />
+                    {workerOptionsOpen && (
+                      <div className="absolute z-10 mt-2 w-full rounded-md border border-gray-200 bg-white shadow-lg">
+                        <div className="max-h-56 overflow-auto py-1">
+                          {filteredWorkers.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-gray-500">
+                              No hay coincidencias
+                            </div>
+                          ) : (
+                            filteredWorkers.map((worker) => (
+                              <button
+                                key={worker.id}
+                                type="button"
+                                className="w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-blue-50"
+                                onMouseDown={() => {
+                                  setWorkerInputValue(formatWorkerDisplayName(worker));
+                                  handleWorkerSelection(worker.id);
+                                  setWorkerOptionsOpen(false);
+                                }}
+                              >
+                                {formatWorkerDisplayName(worker)}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
                       <User className="h-5 w-5 text-gray-400" />
                     </div>

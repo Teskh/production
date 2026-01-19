@@ -64,6 +64,25 @@ def _parse_date_range(value: str | None) -> tuple[datetime | None, datetime | No
     return dt, dt
 
 
+def _parse_datetime(value: str | None, field: str, end_of_day: bool = False) -> datetime | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    normalized = raw.replace(" ", "T")
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field} value",
+        ) from exc
+    if end_of_day and len(raw) == 10:
+        return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
+
+
 def _format_worker_name(worker: Worker) -> str:
     name = f"{worker.first_name} {worker.last_name}".strip()
     return name or f"Worker {worker.id}"
@@ -214,6 +233,8 @@ def _duration_minutes(
 def get_station_panels_finished(
     station_id: int,
     date: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     house_type_id: int | None = None,
     sub_type_id: int | None = None,
     db: Session = Depends(get_db),
@@ -222,7 +243,15 @@ def get_station_panels_finished(
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
 
-    start_dt, end_dt = _parse_date_range(date)
+    from_dt = _parse_datetime(from_date, "from_date")
+    to_dt = _parse_datetime(to_date, "to_date", end_of_day=True)
+    if from_dt is None and to_dt is None:
+        start_dt, end_dt = _parse_date_range(date)
+    else:
+        start_dt = from_dt
+        end_dt = to_dt
+        if start_dt is not None and end_dt is not None and start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
 
     stmt = (
         select(

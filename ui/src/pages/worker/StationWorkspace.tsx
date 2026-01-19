@@ -159,8 +159,11 @@ type TaskRegularCrewResponse = {
 type WorkerActiveTask = {
   task_instance_id: number;
   station_id: number;
+  current_station_id: number | null;
   work_unit_id: number;
   panel_unit_id: number | null;
+  module_number: number | null;
+  panel_code: string | null;
   status: string;
   started_at: string | null;
 };
@@ -265,6 +268,16 @@ const pickAutoFocusTarget = (tasks: WorkerActiveTask[]): WorkerActiveTask | null
     }
     return b.task_instance_id - a.task_instance_id;
   })[0];
+};
+
+const resolveAutoFocusStationId = (task: WorkerActiveTask): number =>
+  task.current_station_id ?? task.station_id;
+
+const buildAutoFocusNotice = (station: Station | null, task: WorkerActiveTask): string => {
+  const stationLabel = station ? formatStationLabel(station) : 'la estacion de tu tarea';
+  const moduleLabel = task.module_number !== null ? ` Modulo ${task.module_number}` : '';
+  const panelLabel = task.panel_code ? ` Panel ${task.panel_code}` : '';
+  return `Redirigido automaticamente a ${stationLabel}${moduleLabel}${panelLabel} porque tiene una tarea a medio andar`;
 };
 
 const StationWorkspace: React.FC = () => {
@@ -817,40 +830,37 @@ const StationWorkspace: React.FC = () => {
     if (loading || !autoFocusTarget || autoFocusAppliedRef.current) {
       return;
     }
-    if (selectedWorkItemId) {
-      autoFocusAppliedRef.current = true;
-      return;
-    }
-    if (selectedStationId !== autoFocusTarget.station_id) {
+    const targetStationId = resolveAutoFocusStationId(autoFocusTarget);
+    if (selectedStationId !== targetStationId) {
       const prevContext = localStorage.getItem(STATION_CONTEXT_STORAGE_KEY);
       if (prevContext && !localStorage.getItem(AUTOFOCUS_PREV_CONTEXT_KEY)) {
         localStorage.setItem(AUTOFOCUS_PREV_CONTEXT_KEY, prevContext);
       }
       const context: StationContext = {
         kind: 'station',
-        stationId: autoFocusTarget.station_id,
+        stationId: targetStationId,
       };
       setStationContext(context);
       persistStationContext(context);
-      persistSpecificStationId(autoFocusTarget.station_id);
-      setSelectedStationId(autoFocusTarget.station_id);
+      persistSpecificStationId(targetStationId);
+      setSelectedStationId(targetStationId);
       setSelectedWorkItemId(null);
       setShowStationPicker(false);
-      const station = stations.find((item) => item.id === autoFocusTarget.station_id);
-      setAutoFocusNotice(
-        station
-          ? `Tienes una tarea activa en ${formatStationLabel(station)}. Concluye o pausa para poder iniciar otra`
-          : 'Tienes una tarea activa. Concluye o pausa para poder iniciar otra'
-      );
+      const station = stations.find((item) => item.id === targetStationId) ?? null;
+      setAutoFocusNotice(buildAutoFocusNotice(station, autoFocusTarget));
     }
     autoFocusAppliedRef.current = true;
-  }, [autoFocusTarget, loading, selectedStationId, selectedWorkItemId, stations]);
+  }, [autoFocusTarget, loading, selectedStationId, stations]);
 
   useEffect(() => {
     if (!autoFocusTarget || !snapshot) {
       return;
     }
-    if (selectedWorkItemId || selectedStationId !== autoFocusTarget.station_id) {
+    const targetStationId = resolveAutoFocusStationId(autoFocusTarget);
+    if (!targetStationId) {
+      return;
+    }
+    if (selectedWorkItemId || selectedStationId !== targetStationId) {
       return;
     }
     const targetItem = snapshot.work_items.find((item) => {
