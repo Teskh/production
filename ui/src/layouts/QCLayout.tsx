@@ -29,8 +29,7 @@ const QCLayout: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [status, setStatus] = useState<QCLayoutStatus>({});
   const [loginOpen, setLoginOpen] = useState(false);
-  const [loginFirstName, setLoginFirstName] = useState('');
-  const [loginLastName, setLoginLastName] = useState('');
+  const [loginName, setLoginName] = useState('');
   const [loginPin, setLoginPin] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginSubmitting, setLoginSubmitting] = useState(false);
@@ -113,12 +112,20 @@ const QCLayout: React.FC = () => {
     setLoginOpen(false);
     setLoginError(null);
     setLoginSubmitting(false);
-    setLoginFirstName('');
-    setLoginLastName('');
+    setLoginName('');
     setLoginPin('');
   };
 
   const handleLogin = async () => {
+    const trimmedName = loginName.trim();
+    const nameParts = trimmedName.split(/\s+/).filter(Boolean);
+    if (nameParts.length < 2) {
+      setLoginError('Ingresa nombre y apellido.');
+      return;
+    }
+    const firstName = nameParts[0];
+    const lastName = nameParts.slice(1).join(' ');
+
     setLoginSubmitting(true);
     setLoginError(null);
     try {
@@ -127,8 +134,8 @@ const QCLayout: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          first_name: loginFirstName.trim(),
-          last_name: loginLastName.trim(),
+          first_name: firstName,
+          last_name: lastName,
           pin: loginPin,
         }),
       });
@@ -306,22 +313,19 @@ const QCLayout: React.FC = () => {
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="mt-5 space-y-4">
+              <form
+                className="mt-5 space-y-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleLogin();
+                }}
+              >
                 <label className="block text-sm text-[var(--ink-muted)]">
-                  Nombre
+                  Nombre y apellido
                   <input
                     type="text"
-                    value={loginFirstName}
-                    onChange={(event) => setLoginFirstName(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
-                  />
-                </label>
-                <label className="block text-sm text-[var(--ink-muted)]">
-                  Apellido
-                  <input
-                    type="text"
-                    value={loginLastName}
-                    onChange={(event) => setLoginLastName(event.target.value)}
+                    value={loginName}
+                    onChange={(event) => setLoginName(event.target.value)}
                     className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
                   />
                 </label>
@@ -340,8 +344,7 @@ const QCLayout: React.FC = () => {
                   </div>
                 ) : null}
                 <button
-                  type="button"
-                  onClick={handleLogin}
+                  type="submit"
                   disabled={loginSubmitting}
                   className={clsx(
                     'w-full rounded-2xl px-4 py-2 text-sm font-semibold text-white transition',
@@ -350,7 +353,7 @@ const QCLayout: React.FC = () => {
                 >
                   {loginSubmitting ? 'Ingresando...' : 'Ingresar'}
                 </button>
-              </div>
+              </form>
             </div>
           </div>
         )}

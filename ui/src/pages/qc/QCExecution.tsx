@@ -797,7 +797,17 @@ const QCExecution: React.FC = () => {
       {/* Main Content: Two Carousels Side by Side */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Reference Images Carousel */}
-        <div className="flex-1 relative bg-slate-800 flex items-center justify-center min-h-[30vh] lg:min-h-0">
+        <div
+          className="flex-1 relative bg-slate-800 flex items-center justify-center min-h-[30vh] lg:min-h-0"
+          onTouchStart={
+            referenceImages.length > 1 ? handleTouchStart(refTouchState) : undefined
+          }
+          onTouchEnd={
+            referenceImages.length > 1
+              ? handleTouchEnd(refTouchState, prevRefImage, nextRefImage)
+              : undefined
+          }
+        >
           <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
             Referencia
           </div>
@@ -844,13 +854,6 @@ const QCExecution: React.FC = () => {
               <span className="text-sm">Sin imagen de referencia</span>
             </div>
           )}
-          {referenceImages.length > 1 && (
-            <div
-              className="absolute inset-0"
-              onTouchStart={handleTouchStart(refTouchState)}
-              onTouchEnd={handleTouchEnd(refTouchState, prevRefImage, nextRefImage)}
-            />
-          )}
         </div>
 
         {/* Divider */}
@@ -858,7 +861,15 @@ const QCExecution: React.FC = () => {
         <div className="lg:hidden h-px bg-slate-700" />
 
         {/* Guidance Images Carousel */}
-        <div className="flex-1 relative bg-slate-800/50 flex items-center justify-center min-h-[30vh] lg:min-h-0">
+        <div
+          className="flex-1 relative bg-slate-800/50 flex items-center justify-center min-h-[30vh] lg:min-h-0"
+          onTouchStart={guidanceImages.length > 1 ? handleTouchStart(guideTouchState) : undefined}
+          onTouchEnd={
+            guidanceImages.length > 1
+              ? handleTouchEnd(guideTouchState, prevGuideImage, nextGuideImage)
+              : undefined
+          }
+        >
           <div className="absolute top-3 left-3 bg-blue-600/80 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
             Guia Visual
           </div>
@@ -904,13 +915,6 @@ const QCExecution: React.FC = () => {
               <Image className="w-12 h-12 mb-2 opacity-50" />
               <span className="text-sm">Sin guia visual</span>
             </div>
-          )}
-          {guidanceImages.length > 1 && (
-            <div
-              className="absolute inset-0"
-              onTouchStart={handleTouchStart(guideTouchState)}
-              onTouchEnd={handleTouchEnd(guideTouchState, prevGuideImage, nextGuideImage)}
-            />
           )}
         </div>
       </div>

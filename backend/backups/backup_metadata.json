@@ -18,18 +18,6 @@
     "scp_backup_20260114_001502_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
     },
-    "scp_backup_20260114_001653_Manual-restore-checkpoint-for-scp_backup_20260114_001650_test-backup-dump.dump": {
-      "label": "Manual restore checkpoint for scp_backup_20260114_001650_test-backup.dump"
-    },
-    "scp_backup_20260114_002653_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
-      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
-    },
-    "scp_backup_20260114_003708_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
-      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
-    },
-    "scp_backup_20260114_005438_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
-      "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
-    },
     "scp_backup_20260114_092437.dump": {
       "label": null
     },
@@ -94,6 +82,18 @@
       "label": null
     },
     "scp_backup_20260119_071117.dump": {
+      "label": null
+    },
+    "scp_backup_20260119_111205.dump": {
+      "label": null
+    },
+    "scp_backup_20260119_151253.dump": {
+      "label": null
+    },
+    "scp_backup_20260120_063608.dump": {
+      "label": null
+    },
+    "scp_backup_20260120_103620.dump": {
       "label": null
     }
   }
