@@ -4,13 +4,16 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin, get_db
 from app.core.config import BASE_DIR
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
     QCApplicability,
+    QCApplicabilityHouseType,
+    QCApplicabilityPanelGroup,
+    QCApplicabilitySubType,
     QCCheckCategory,
     QCCheckDefinition,
     QCCheckMediaAsset,
@@ -116,29 +119,76 @@ def _validate_trigger_params(
 
 def _validate_applicability_refs(
     db: Session,
-    house_type_id: int | None,
-    sub_type_id: int | None,
-    panel_group: str | None,
+    house_type_ids: list[int],
+    sub_type_ids: list[int],
+    panel_groups: list[str],
 ) -> None:
-    if house_type_id is not None and not db.get(HouseType, house_type_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="House type not found"
+    if house_type_ids:
+        unique_ids = sorted(set(house_type_ids))
+        rows = list(
+            db.execute(
+                select(HouseType.id).where(HouseType.id.in_(unique_ids))
+            ).scalars()
         )
-    if sub_type_id is not None and not db.get(HouseSubType, sub_type_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="House subtype not found"
+        if len(rows) != len(unique_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="House type not found"
+            )
+    if sub_type_ids:
+        unique_ids = sorted(set(sub_type_ids))
+        rows = list(
+            db.execute(
+                select(HouseSubType.id, HouseSubType.house_type_id).where(
+                    HouseSubType.id.in_(unique_ids)
+                )
+            ).all()
         )
-    if panel_group is not None:
-        exists = db.execute(
-            select(PanelDefinition.id)
-            .where(PanelDefinition.group == panel_group)
-            .limit(1)
-        ).scalar_one_or_none()
-        if not exists:
+        if len(rows) != len(unique_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="House subtype not found"
+            )
+        if house_type_ids:
+            allowed_house_type_ids = set(house_type_ids)
+            for _, house_type_id in rows:
+                if house_type_id not in allowed_house_type_ids:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="House subtype does not match selected house types",
+                    )
+    if panel_groups:
+        unique_groups = sorted(set(panel_groups))
+        rows = list(
+            db.execute(
+                select(PanelDefinition.group)
+                .where(PanelDefinition.group.in_(unique_groups))
+                .distinct()
+            ).scalars()
+        )
+        if len(rows) != len(unique_groups):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Panel group not found",
             )
+
+
+def _unique_list(values: list) -> list:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _normalize_panel_groups(groups: list[str]) -> list[str]:
+    normalized = []
+    for group in groups:
+        trimmed = group.strip()
+        if trimmed:
+            normalized.append(trimmed)
+    return _unique_list(normalized)
 
 
 @router.get("/categories", response_model=list[QCCheckCategoryRead])
@@ -323,7 +373,17 @@ def delete_trigger(trigger_id: int, db: Session = Depends(get_db)) -> None:
 
 @router.get("/applicability", response_model=list[QCApplicabilityRead])
 def list_applicability(db: Session = Depends(get_db)) -> list[QCApplicability]:
-    return list(db.execute(select(QCApplicability).order_by(QCApplicability.id)).scalars())
+    return list(
+        db.execute(
+            select(QCApplicability)
+            .options(
+                selectinload(QCApplicability.house_type_links),
+                selectinload(QCApplicability.sub_type_links),
+                selectinload(QCApplicability.panel_group_links),
+            )
+            .order_by(QCApplicability.id)
+        ).scalars()
+    )
 
 
 @router.post("/applicability", response_model=QCApplicabilityRead, status_code=status.HTTP_201_CREATED)
@@ -331,18 +391,23 @@ def create_applicability(
     payload: QCApplicabilityCreate, db: Session = Depends(get_db)
 ) -> QCApplicability:
     _require_check_definition(db, payload.check_definition_id)
-    payload_data = payload.model_dump()
-    panel_group = payload_data.get("panel_group")
-    if panel_group is not None:
-        panel_group = panel_group.strip() or None
-        payload_data["panel_group"] = panel_group
-    _validate_applicability_refs(
-        db,
-        payload_data.get("house_type_id"),
-        payload_data.get("sub_type_id"),
-        panel_group,
-    )
-    rule = QCApplicability(**payload_data)
+    house_type_ids = _unique_list(payload.house_type_ids)
+    sub_type_ids = _unique_list(payload.sub_type_ids)
+    panel_groups = _normalize_panel_groups(payload.panel_groups)
+    _validate_applicability_refs(db, house_type_ids, sub_type_ids, panel_groups)
+    rule = QCApplicability(check_definition_id=payload.check_definition_id)
+    rule.house_type_links = [
+        QCApplicabilityHouseType(house_type_id=house_type_id)
+        for house_type_id in house_type_ids
+    ]
+    rule.sub_type_links = [
+        QCApplicabilitySubType(sub_type_id=sub_type_id)
+        for sub_type_id in sub_type_ids
+    ]
+    rule.panel_group_links = [
+        QCApplicabilityPanelGroup(panel_group=panel_group)
+        for panel_group in panel_groups
+    ]
     db.add(rule)
     db.commit()
     db.refresh(rule)
@@ -353,7 +418,15 @@ def create_applicability(
 def get_applicability(
     applicability_id: int, db: Session = Depends(get_db)
 ) -> QCApplicability:
-    rule = db.get(QCApplicability, applicability_id)
+    rule = db.execute(
+        select(QCApplicability)
+        .options(
+            selectinload(QCApplicability.house_type_links),
+            selectinload(QCApplicability.sub_type_links),
+            selectinload(QCApplicability.panel_group_links),
+        )
+        .where(QCApplicability.id == applicability_id)
+    ).scalar_one_or_none()
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="QC applicability rule not found"
@@ -365,7 +438,15 @@ def get_applicability(
 def update_applicability(
     applicability_id: int, payload: QCApplicabilityUpdate, db: Session = Depends(get_db)
 ) -> QCApplicability:
-    rule = db.get(QCApplicability, applicability_id)
+    rule = db.execute(
+        select(QCApplicability)
+        .options(
+            selectinload(QCApplicability.house_type_links),
+            selectinload(QCApplicability.sub_type_links),
+            selectinload(QCApplicability.panel_group_links),
+        )
+        .where(QCApplicability.id == applicability_id)
+    ).scalar_one_or_none()
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="QC applicability rule not found"
@@ -373,16 +454,36 @@ def update_applicability(
     updates = payload.model_dump(exclude_unset=True)
     if "check_definition_id" in updates:
         _require_check_definition(db, updates["check_definition_id"])
-    if "panel_group" in updates and updates["panel_group"] is not None:
-        updates["panel_group"] = updates["panel_group"].strip() or None
-    _validate_applicability_refs(
-        db,
-        updates.get("house_type_id", rule.house_type_id),
-        updates.get("sub_type_id", rule.sub_type_id),
-        updates.get("panel_group", rule.panel_group),
-    )
+    if "house_type_ids" in updates:
+        updates["house_type_ids"] = _unique_list(updates["house_type_ids"] or [])
+    if "sub_type_ids" in updates:
+        updates["sub_type_ids"] = _unique_list(updates["sub_type_ids"] or [])
+    if "panel_groups" in updates:
+        updates["panel_groups"] = _normalize_panel_groups(updates["panel_groups"] or [])
+
+    house_type_ids = updates.get("house_type_ids", rule.house_type_ids)
+    sub_type_ids = updates.get("sub_type_ids", rule.sub_type_ids)
+    panel_groups = updates.get("panel_groups", rule.panel_groups)
+    _validate_applicability_refs(db, house_type_ids, sub_type_ids, panel_groups)
+
     for key, value in updates.items():
-        setattr(rule, key, value)
+        if key == "house_type_ids":
+            rule.house_type_links = [
+                QCApplicabilityHouseType(house_type_id=house_type_id)
+                for house_type_id in value
+            ]
+        elif key == "sub_type_ids":
+            rule.sub_type_links = [
+                QCApplicabilitySubType(sub_type_id=sub_type_id)
+                for sub_type_id in value
+            ]
+        elif key == "panel_groups":
+            rule.panel_group_links = [
+                QCApplicabilityPanelGroup(panel_group=panel_group)
+                for panel_group in value
+            ]
+        else:
+            setattr(rule, key, value)
     db.commit()
     db.refresh(rule)
     return rule

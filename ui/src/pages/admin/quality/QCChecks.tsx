@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Filter, Image, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Filter,
+  Image,
+  Pencil,
+  Plus,
+  Search,
+  Settings2,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useOptionalAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -59,9 +69,9 @@ type QCTrigger = {
 type QCApplicability = {
   id: number;
   check_definition_id: number;
-  house_type_id: number | null;
-  sub_type_id: number | null;
-  panel_group: string | null;
+  house_type_ids: number[];
+  sub_type_ids: number[];
+  panel_groups: string[];
 };
 
 type HouseType = {
@@ -139,9 +149,9 @@ type TriggerDraft = {
 
 type ApplicabilityDraft = {
   id?: number;
-  house_type_id: number | null;
-  sub_type_id: number | null;
-  panel_group: string | null;
+  house_type_ids: number[];
+  sub_type_ids: number[];
+  panel_groups: string[];
 };
 
 const emptyCheckDraft = (): CheckDraft => ({
@@ -183,9 +193,9 @@ const emptyTriggerDraft = (): TriggerDraft => ({
 });
 
 const emptyApplicabilityDraft = (): ApplicabilityDraft => ({
-  house_type_id: null,
-  sub_type_id: null,
-  panel_group: null,
+  house_type_ids: [],
+  sub_type_ids: [],
+  panel_groups: [],
 });
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -258,6 +268,23 @@ const sortByOrderThenName = <T extends { name: string; sort_order: number | null
     return a.name.localeCompare(b.name);
   });
 
+const toggleSelection = <T,>(values: T[], value: T) =>
+  values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+
+const summarizeSelection = <T,>(
+  selected: T[],
+  emptyLabel: string,
+  singleLabel: (value: T) => string
+) => {
+  if (selected.length === 0) {
+    return emptyLabel;
+  }
+  if (selected.length === 1) {
+    return singleLabel(selected[0]);
+  }
+  return `${selected.length} seleccionados`;
+};
+
 const QCChecks: React.FC = () => {
   const adminHeader = useOptionalAdminHeader();
   const navigate = useNavigate();
@@ -308,6 +335,9 @@ const QCChecks: React.FC = () => {
     emptyApplicabilityDraft()
   );
   const [applicabilityStatus, setApplicabilityStatus] = useState<string | null>(null);
+  const [openApplicabilityDropdown, setOpenApplicabilityDropdown] = useState<
+    'house' | 'sub' | 'panel' | null
+  >(null);
 
   useEffect(() => {
     if (!previewMedia) {
@@ -321,6 +351,21 @@ const QCChecks: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [previewMedia]);
+
+  useEffect(() => {
+    if (!openApplicabilityDropdown) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-applicability-dropdown]')) {
+        return;
+      }
+      setOpenApplicabilityDropdown(null);
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [openApplicabilityDropdown]);
 
   useEffect(() => {
     if (!adminHeader) {
@@ -1005,9 +1050,9 @@ const QCChecks: React.FC = () => {
     try {
       const payload = {
         check_definition_id: selectedCheckId,
-        house_type_id: applicabilityDraft.house_type_id,
-        sub_type_id: applicabilityDraft.sub_type_id,
-        panel_group: applicabilityDraft.panel_group,
+        house_type_ids: applicabilityDraft.house_type_ids,
+        sub_type_ids: applicabilityDraft.sub_type_ids,
+        panel_groups: applicabilityDraft.panel_groups,
       };
       let saved: QCApplicability;
       if (applicabilityDraft.id) {
@@ -1029,9 +1074,9 @@ const QCChecks: React.FC = () => {
       setSelectedApplicabilityId(saved.id);
       setApplicabilityDraft({
         id: saved.id,
-        house_type_id: saved.house_type_id,
-        sub_type_id: saved.sub_type_id,
-        panel_group: saved.panel_group,
+        house_type_ids: saved.house_type_ids,
+        sub_type_ids: saved.sub_type_ids,
+        panel_groups: saved.panel_groups,
       });
       setApplicabilityStatus('Regla guardada.');
     } catch (error) {
@@ -1078,9 +1123,9 @@ const QCChecks: React.FC = () => {
     setSelectedApplicabilityId(rule.id);
     setApplicabilityDraft({
       id: rule.id,
-      house_type_id: rule.house_type_id,
-      sub_type_id: rule.sub_type_id,
-      panel_group: rule.panel_group,
+      house_type_ids: rule.house_type_ids,
+      sub_type_ids: rule.sub_type_ids,
+      panel_groups: rule.panel_groups,
     });
     setApplicabilityStatus(null);
   };
@@ -1206,19 +1251,42 @@ const QCChecks: React.FC = () => {
   }, [catalogSequenceLabelByOrder, filteredTasks]);
 
   const subTypesForHouse = useMemo(() => {
-    if (!applicabilityDraft.house_type_id) {
+    if (!applicabilityDraft.house_type_ids.length) {
       return houseSubTypes;
     }
-    return houseSubTypes.filter((sub) => sub.house_type_id === applicabilityDraft.house_type_id);
-  }, [houseSubTypes, applicabilityDraft.house_type_id]);
+    return houseSubTypes.filter((sub) =>
+      applicabilityDraft.house_type_ids.includes(sub.house_type_id)
+    );
+  }, [houseSubTypes, applicabilityDraft.house_type_ids]);
+
+  useEffect(() => {
+    if (!applicabilityDraft.house_type_ids.length) {
+      return;
+    }
+    const allowed = new Set(subTypesForHouse.map((sub) => sub.id));
+    setApplicabilityDraft((prev) => {
+      const filtered = prev.sub_type_ids.filter((id) => allowed.has(id));
+      if (filtered.length === prev.sub_type_ids.length) {
+        return prev;
+      }
+      return { ...prev, sub_type_ids: filtered };
+    });
+  }, [subTypesForHouse, applicabilityDraft.house_type_ids]);
 
   const panelGroupOptions = useMemo(() => {
-    const groups = new Set<string>();
+    const groups = new Set(applicabilityDraft.panel_groups);
     panelDefinitions.forEach((panel) => {
-      if (applicabilityDraft.house_type_id && panel.house_type_id !== applicabilityDraft.house_type_id) {
+      if (
+        applicabilityDraft.house_type_ids.length &&
+        !applicabilityDraft.house_type_ids.includes(panel.house_type_id)
+      ) {
         return;
       }
-      if (applicabilityDraft.sub_type_id && panel.sub_type_id !== applicabilityDraft.sub_type_id) {
+      if (
+        applicabilityDraft.sub_type_ids.length &&
+        (panel.sub_type_id === null ||
+          !applicabilityDraft.sub_type_ids.includes(panel.sub_type_id))
+      ) {
         return;
       }
       if (panel.group) {
@@ -1226,7 +1294,42 @@ const QCChecks: React.FC = () => {
       }
     });
     return Array.from(groups).sort((a, b) => a.localeCompare(b));
-  }, [panelDefinitions, applicabilityDraft.house_type_id, applicabilityDraft.sub_type_id]);
+  }, [
+    panelDefinitions,
+    applicabilityDraft.house_type_ids,
+    applicabilityDraft.sub_type_ids,
+    applicabilityDraft.panel_groups,
+  ]);
+
+  const houseTypeSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.house_type_ids,
+        'Todos',
+        (id) => houseTypeNameById.get(id) ?? `Tipo ${id}`
+      ),
+    [applicabilityDraft.house_type_ids, houseTypeNameById]
+  );
+
+  const subTypeSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.sub_type_ids,
+        'Cualquier subtipo',
+        (id) => houseSubTypeNameById.get(id) ?? `Subtipo ${id}`
+      ),
+    [applicabilityDraft.sub_type_ids, houseSubTypeNameById]
+  );
+
+  const panelGroupSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.panel_groups,
+        'Todos los paneles',
+        (group) => group
+      ),
+    [applicabilityDraft.panel_groups]
+  );
 
   const renderCheckRow = (check: QCCheckDefinition) => {
     const isSelected = selectedCheckId === check.id;
@@ -2162,13 +2265,25 @@ const QCChecks: React.FC = () => {
                         </p>
                       ) : (
                         filteredApplicability.map((rule) => {
-                          const houseLabel = rule.house_type_id
-                            ? houseTypeNameById.get(rule.house_type_id) ?? `Tipo ${rule.house_type_id}`
+                          const houseLabel = rule.house_type_ids.length
+                            ? rule.house_type_ids
+                                .map(
+                                  (houseId) =>
+                                    houseTypeNameById.get(houseId) ?? `Tipo ${houseId}`
+                                )
+                                .join(', ')
                             : 'Todos';
-                          const subLabel = rule.sub_type_id
-                            ? houseSubTypeNameById.get(rule.sub_type_id) ?? `Subtipo ${rule.sub_type_id}`
+                          const subLabel = rule.sub_type_ids.length
+                            ? rule.sub_type_ids
+                                .map(
+                                  (subId) =>
+                                    houseSubTypeNameById.get(subId) ?? `Subtipo ${subId}`
+                                )
+                                .join(', ')
                             : 'Cualquier subtipo';
-                          const panelLabel = rule.panel_group ?? 'Todos los paneles';
+                          const panelLabel = rule.panel_groups.length
+                            ? rule.panel_groups.join(', ')
+                            : 'Todos los paneles';
                           return (
                             <button
                               key={rule.id}
@@ -2187,71 +2302,225 @@ const QCChecks: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Tipo de casa
-                      <select
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={applicabilityDraft.house_type_id ?? ''}
-                        onChange={(event) =>
-                          setApplicabilityDraft((prev) => ({
-                            ...prev,
-                            house_type_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          }))
-                        }
-                      >
-                        <option value="">Todos</option>
-                        {houseTypes.map((house) => (
-                          <option key={house.id} value={house.id}>
-                            {house.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Subtipo
-                      <select
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={applicabilityDraft.sub_type_id ?? ''}
-                        onChange={(event) =>
-                          setApplicabilityDraft((prev) => ({
-                            ...prev,
-                            sub_type_id: event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          }))
-                        }
-                      >
-                        <option value="">Todos</option>
-                        {subTypesForHouse.map((sub) => (
-                          <option key={sub.id} value={sub.id}>
-                            {sub.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-sm text-[var(--ink-muted)]">
-                      Tipo de panel
-                      <select
-                        className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
-                        value={applicabilityDraft.panel_group ?? ''}
-                        onChange={(event) =>
-                          setApplicabilityDraft((prev) => ({
-                            ...prev,
-                            panel_group: event.target.value || null,
-                          }))
-                        }
-                      >
-                        <option value="">Todos</option>
-                        {panelGroupOptions.map((group) => (
-                          <option key={group} value={group}>
-                            {group}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Tipo de casa
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              house_type_ids: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'house'}
+                          aria-controls="applicability-house-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'house' ? null : 'house'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{houseTypeSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'house' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'house' && (
+                          <div
+                            id="applicability-house-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {houseTypes.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay tipos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {houseTypes.map((house) => (
+                                  <label key={house.id} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.house_type_ids.includes(house.id)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          house_type_ids: toggleSelection(
+                                            prev.house_type_ids,
+                                            house.id
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{house.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Subtipo
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              sub_type_ids: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'sub'}
+                          aria-controls="applicability-subtype-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'sub' ? null : 'sub'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{subTypeSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'sub' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'sub' && (
+                          <div
+                            id="applicability-subtype-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {subTypesForHouse.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay subtipos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {subTypesForHouse.map((sub) => (
+                                  <label key={sub.id} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.sub_type_ids.includes(sub.id)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          sub_type_ids: toggleSelection(
+                                            prev.sub_type_ids,
+                                            sub.id
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{sub.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Tipo de panel
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              panel_groups: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'panel'}
+                          aria-controls="applicability-panel-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'panel' ? null : 'panel'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{panelGroupSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'panel' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'panel' && (
+                          <div
+                            id="applicability-panel-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {panelGroupOptions.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay grupos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {panelGroupOptions.map((group) => (
+                                  <label key={group} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.panel_groups.includes(group)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          panel_groups: toggleSelection(
+                                            prev.panel_groups,
+                                            group
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{group}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     {applicabilityStatus && (
                       <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
                         {applicabilityStatus}

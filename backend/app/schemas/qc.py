@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import (
     QCCheckKind,
@@ -95,9 +95,9 @@ class QCTriggerRead(QCTriggerBase):
 
 class QCApplicabilityBase(BaseModel):
     check_definition_id: int
-    house_type_id: int | None = None
-    sub_type_id: int | None = None
-    panel_group: str | None = None
+    house_type_ids: list[int] = Field(default_factory=list)
+    sub_type_ids: list[int] = Field(default_factory=list)
+    panel_groups: list[str] = Field(default_factory=list)
 
 
 class QCApplicabilityCreate(QCApplicabilityBase):
@@ -106,9 +106,9 @@ class QCApplicabilityCreate(QCApplicabilityBase):
 
 class QCApplicabilityUpdate(BaseModel):
     check_definition_id: int | None = None
-    house_type_id: int | None = None
-    sub_type_id: int | None = None
-    panel_group: str | None = None
+    house_type_ids: list[int] | None = None
+    sub_type_ids: list[int] | None = None
+    panel_groups: list[str] | None = None
 
 
 class QCApplicabilityRead(QCApplicabilityBase):

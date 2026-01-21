@@ -83,7 +83,6 @@ class QCExecutionOutcome(str, Enum):
     PASS = "Pass"
     FAIL = "Fail"
     WAIVE = "Waive"
-    SKIP = "Skip"
 
 
 class QCReworkStatus(str, Enum):

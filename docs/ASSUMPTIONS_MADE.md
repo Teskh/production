@@ -94,3 +94,8 @@
 ## 2026-01-17
 - Floor status dashboard pulls live station data from `/api/worker-stations/{station_id}/snapshot`, and the endpoint tolerates anonymous access by omitting worker-specific filters (skills, participation, QC notifications).
 - Task time dashboard normalized tab uses per-panel completions from `/api/station-panels-finished` (with `from_date`/`to_date` range support), filters by `panel_definitions.group`, and computes minutes per m/m2 from each completion using `panel_definitions.panel_area`/`panel_length_m`, excluding panels missing either metric.
+
+## 2026-01-19
+- QC applicability rules now store multiple house types/subtypes/panel groups via join tables; an empty list for a dimension is treated as “all” for that dimension.
+- QC applicability validation requires subtype IDs to belong to one of the selected house types when both are provided.
+- Deleting a house type cascades by deleting any QC applicability rule that referenced that house type or its subtypes, even if the rule also referenced other house types.

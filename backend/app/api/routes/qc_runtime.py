@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import case, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin, get_current_worker, get_db
 from app.core.config import BASE_DIR
@@ -749,7 +749,13 @@ def create_manual_check(
     if check_def:
         applicability = list(
             db.execute(
-                select(QCApplicability).where(QCApplicability.check_definition_id == check_def.id)
+                select(QCApplicability)
+                .options(
+                    selectinload(QCApplicability.house_type_links),
+                    selectinload(QCApplicability.sub_type_links),
+                    selectinload(QCApplicability.panel_group_links),
+                )
+                .where(QCApplicability.check_definition_id == check_def.id)
             ).scalars()
         )
         applies = resolve_qc_applicability(

@@ -127,6 +127,12 @@ const severityLevelById: Record<string, 'baja' | 'media' | 'critica'> = {
   sev_critica: 'critica',
 };
 
+const severityRankById: Record<string, number> = {
+  sev_baja: 0,
+  sev_media: 1,
+  sev_critica: 2,
+};
+
 const SEVERITY_LEVELS = [
   { id: 'sev_baja', name: 'Baja', color: 'bg-emerald-600 text-white' },
   { id: 'sev_media', name: 'Media', color: 'bg-amber-500 text-slate-900' },
@@ -363,21 +369,61 @@ const QCExecution: React.FC = () => {
     return [];
   }, [checkDetail?.failure_modes]);
 
+  const selectedFailureModes = useMemo(
+    () =>
+      selectedFailureModeIds
+        .map((id) => failureModes.find((mode) => mode.id === id))
+        .filter((mode): mode is (typeof failureModes)[number] => !!mode),
+    [failureModes, selectedFailureModeIds]
+  );
+
+  const highestSeverityId = useMemo(() => {
+    if (selectedFailureModes.length === 0) {
+      return null;
+    }
+    return selectedFailureModes.reduce((highest, mode) => {
+      if (!highest) {
+        return mode.defaultSeverityId;
+      }
+      return severityRankById[mode.defaultSeverityId] > severityRankById[highest]
+        ? mode.defaultSeverityId
+        : highest;
+    }, selectedFailureModes[0]?.defaultSeverityId ?? null);
+  }, [selectedFailureModes]);
+
+  const combinedDefaultReworkText = useMemo(() => {
+    if (selectedFailureModes.length === 0) {
+      return '';
+    }
+    const uniqueDefaults = Array.from(
+      new Set(
+        selectedFailureModes
+          .map((mode) => mode.defaultReworkText.trim())
+          .filter((text) => text.length > 0)
+      )
+    );
+    return uniqueDefaults.join('\n\n');
+  }, [selectedFailureModes]);
+
   useEffect(() => {
     if (selectedFailureModeIds.length === 0) {
       setReworkText('');
-      setSelectedSeverityId(null);
       return;
     }
-    if (!selectedSeverityId) {
-      const firstMode = failureModes.find((item) => item.id === selectedFailureModeIds[0]);
-      setSelectedSeverityId(firstMode?.defaultSeverityId ?? null);
+    setReworkText(combinedDefaultReworkText);
+  }, [combinedDefaultReworkText, selectedFailureModeIds.length]);
+
+  useEffect(() => {
+    if (selectedFailureModeIds.length === 0) {
+      if (selectedSeverityId !== null) {
+        setSelectedSeverityId(null);
+      }
+      return;
     }
-    if (!reworkText.trim()) {
-      const firstMode = failureModes.find((item) => item.id === selectedFailureModeIds[0]);
-      setReworkText(firstMode?.defaultReworkText ?? '');
+    if (highestSeverityId && selectedSeverityId !== highestSeverityId) {
+      setSelectedSeverityId(highestSeverityId);
     }
-  }, [failureModes, reworkText, selectedFailureModeIds, selectedSeverityId]);
+  }, [highestSeverityId, selectedFailureModeIds.length, selectedSeverityId]);
 
   const headerModule =
     checkDetail?.check_instance.module_number ?? reworkState?.module_number ?? 'Manual';

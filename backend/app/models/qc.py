@@ -13,7 +13,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import (
@@ -82,13 +82,79 @@ class QCApplicability(Base):
     check_definition_id: Mapped[int] = mapped_column(
         ForeignKey("qc_check_definitions.id"), index=True
     )
-    house_type_id: Mapped[int | None] = mapped_column(
-        ForeignKey("house_types.id"), nullable=True
+    house_type_links: Mapped[list["QCApplicabilityHouseType"]] = relationship(
+        "QCApplicabilityHouseType",
+        back_populates="applicability",
+        cascade="all, delete-orphan",
     )
-    sub_type_id: Mapped[int | None] = mapped_column(
-        ForeignKey("house_sub_types.id"), nullable=True
+    sub_type_links: Mapped[list["QCApplicabilitySubType"]] = relationship(
+        "QCApplicabilitySubType",
+        back_populates="applicability",
+        cascade="all, delete-orphan",
     )
-    panel_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    panel_group_links: Mapped[list["QCApplicabilityPanelGroup"]] = relationship(
+        "QCApplicabilityPanelGroup",
+        back_populates="applicability",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def house_type_ids(self) -> list[int]:
+        return [link.house_type_id for link in self.house_type_links]
+
+    @property
+    def sub_type_ids(self) -> list[int]:
+        return [link.sub_type_id for link in self.sub_type_links]
+
+    @property
+    def panel_groups(self) -> list[str]:
+        return [link.panel_group for link in self.panel_group_links]
+
+
+class QCApplicabilityHouseType(Base):
+    __tablename__ = "qc_applicability_house_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    applicability_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_applicability.id", ondelete="CASCADE"), index=True
+    )
+    house_type_id: Mapped[int] = mapped_column(
+        ForeignKey("house_types.id", ondelete="CASCADE"), index=True
+    )
+
+    applicability: Mapped[QCApplicability] = relationship(
+        "QCApplicability", back_populates="house_type_links"
+    )
+
+
+class QCApplicabilitySubType(Base):
+    __tablename__ = "qc_applicability_sub_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    applicability_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_applicability.id", ondelete="CASCADE"), index=True
+    )
+    sub_type_id: Mapped[int] = mapped_column(
+        ForeignKey("house_sub_types.id", ondelete="CASCADE"), index=True
+    )
+
+    applicability: Mapped[QCApplicability] = relationship(
+        "QCApplicability", back_populates="sub_type_links"
+    )
+
+
+class QCApplicabilityPanelGroup(Base):
+    __tablename__ = "qc_applicability_panel_groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    applicability_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_applicability.id", ondelete="CASCADE"), index=True
+    )
+    panel_group: Mapped[str] = mapped_column(String(100))
+
+    applicability: Mapped[QCApplicability] = relationship(
+        "QCApplicability", back_populates="panel_group_links"
+    )
 
 
 class QCCheckInstance(Base):

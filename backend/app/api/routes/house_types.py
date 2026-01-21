@@ -9,6 +9,8 @@ from app.models.admin import AdminUser
 from app.models.house import HouseParameterValue, HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
     QCApplicability,
+    QCApplicabilityHouseType,
+    QCApplicabilitySubType,
     QCCheckInstance,
     QCExecution,
     QCEvidence,
@@ -113,9 +115,15 @@ def _house_type_cascade_counts(db: Session, house_type_id: int, queries) -> dict
         TaskExpectedDuration.sub_type_id.in_(sub_type_ids),
         TaskExpectedDuration.panel_definition_id.in_(panel_definition_ids),
     )
+    qc_applicability_house_type_ids = select(
+        QCApplicabilityHouseType.applicability_id
+    ).where(QCApplicabilityHouseType.house_type_id == house_type_id)
+    qc_applicability_sub_type_ids = select(
+        QCApplicabilitySubType.applicability_id
+    ).where(QCApplicabilitySubType.sub_type_id.in_(sub_type_ids))
     qc_applicability_filter = or_(
-        QCApplicability.house_type_id == house_type_id,
-        QCApplicability.sub_type_id.in_(sub_type_ids),
+        QCApplicability.id.in_(qc_applicability_house_type_ids),
+        QCApplicability.id.in_(qc_applicability_sub_type_ids),
     )
 
     return {
@@ -232,6 +240,12 @@ def _house_type_cascade_counts(db: Session, house_type_id: int, queries) -> dict
 
 def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None:
     sub_type_ids = queries["sub_type_ids"]
+    qc_applicability_house_type_ids = select(
+        QCApplicabilityHouseType.applicability_id
+    ).where(QCApplicabilityHouseType.house_type_id == house_type_id)
+    qc_applicability_sub_type_ids = select(
+        QCApplicabilitySubType.applicability_id
+    ).where(QCApplicabilitySubType.sub_type_id.in_(sub_type_ids))
     panel_definition_ids = queries["panel_definition_ids"]
     work_order_ids = queries["work_order_ids"]
     work_unit_ids = queries["work_unit_ids"]
@@ -331,8 +345,8 @@ def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None
     db.execute(
         delete(QCApplicability).where(
             or_(
-                QCApplicability.house_type_id == house_type_id,
-                QCApplicability.sub_type_id.in_(sub_type_ids),
+                QCApplicability.id.in_(qc_applicability_house_type_ids),
+                QCApplicability.id.in_(qc_applicability_sub_type_ids),
             )
         )
     )

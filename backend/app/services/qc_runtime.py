@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utc_now
-from app.models.admin import AdminUser
 from app.models.enums import (
-    AdminRole,
     QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
@@ -30,36 +28,6 @@ from app.models.qc import (
 from app.models.tasks import TaskDefinition, TaskInstance, TaskParticipation
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 
-SYSTEM_QC_FIRST_NAME = "System"
-SYSTEM_QC_LAST_NAME = "QC"
-SYSTEM_QC_PIN = "0000"
-
-
-def ensure_system_qc_user(db: Session) -> AdminUser:
-    admin = (
-        db.execute(
-            select(AdminUser)
-            .where(AdminUser.first_name == SYSTEM_QC_FIRST_NAME)
-            .where(AdminUser.last_name == SYSTEM_QC_LAST_NAME)
-        )
-        .scalars()
-        .first()
-    )
-    if admin:
-        return admin
-    admin = AdminUser(
-        first_name=SYSTEM_QC_FIRST_NAME,
-        last_name=SYSTEM_QC_LAST_NAME,
-        pin=SYSTEM_QC_PIN,
-        role=AdminRole.QC.value,
-        active=True,
-    )
-    db.add(admin)
-    db.flush()
-    db.refresh(admin)
-    return admin
-
-
 def _hash_to_rate(seed: str) -> float:
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 0xFFFFFFFF
@@ -75,11 +43,11 @@ def resolve_qc_applicability(
         return True
 
     for row in rows:
-        if row.house_type_id is not None and row.house_type_id != house_type_id:
+        if row.house_type_ids and house_type_id not in row.house_type_ids:
             continue
-        if row.sub_type_id is not None and row.sub_type_id != sub_type_id:
+        if row.sub_type_ids and (sub_type_id is None or sub_type_id not in row.sub_type_ids):
             continue
-        if row.panel_group is not None and row.panel_group != panel_group:
+        if row.panel_groups and (panel_group is None or panel_group not in row.panel_groups):
             continue
         return True
 
@@ -124,9 +92,13 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
 
         applicability_rows = list(
             db.execute(
-                select(QCApplicability).where(
-                    QCApplicability.check_definition_id == trigger.check_definition_id
+                select(QCApplicability)
+                .options(
+                    selectinload(QCApplicability.house_type_links),
+                    selectinload(QCApplicability.sub_type_links),
+                    selectinload(QCApplicability.panel_group_links),
                 )
+                .where(QCApplicability.check_definition_id == trigger.check_definition_id)
             ).scalars()
         )
         applies = resolve_qc_applicability(
@@ -144,6 +116,9 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
             f"{work_unit.id}:{trigger.check_definition_id}:{instance.id}"
         ) < rate
 
+        if not sampling_selected:
+            continue
+
         check_instance = QCCheckInstance(
             check_definition_id=trigger.check_definition_id,
             origin=QCCheckOrigin.TRIGGERED,
@@ -159,21 +134,6 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
             opened_at=now,
         )
         db.add(check_instance)
-        db.flush()
-
-        if not sampling_selected:
-            system_user = ensure_system_qc_user(db)
-            execution = QCExecution(
-                check_instance_id=check_instance.id,
-                outcome=QCExecutionOutcome.SKIP,
-                notes="Auto-skip by sampling",
-                measurement_json=None,
-                performed_by_user_id=system_user.id,
-                performed_at=now,
-            )
-            db.add(execution)
-            check_instance.status = QCCheckStatus.CLOSED
-            check_instance.closed_at = now
 
 
 def update_sampling_from_execution(
