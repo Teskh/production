@@ -197,6 +197,26 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (!open || !fullscreenAvailable) {
+      return;
+    }
+    const attemptFullscreen = () => {
+      if (document.fullscreenElement || document.visibilityState !== 'visible') {
+        return;
+      }
+      const root = document.documentElement;
+      if (!root?.requestFullscreen) {
+        return;
+      }
+      root.requestFullscreen().catch(() => {
+        // Ignore failures; fullscreen may require a recent user gesture.
+      });
+    };
+    const intervalId = window.setInterval(attemptFullscreen, 10_000);
+    return () => window.clearInterval(intervalId);
+  }, [fullscreenAvailable, open]);
+
   const handleToggleFullscreen = async () => {
     if (!fullscreenAvailable) {
       return;

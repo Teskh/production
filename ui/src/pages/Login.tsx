@@ -320,6 +320,26 @@ const Login: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!fullscreenAvailable) {
+      return;
+    }
+    const attemptFullscreen = () => {
+      if (document.fullscreenElement || document.visibilityState !== 'visible') {
+        return;
+      }
+      const root = document.documentElement;
+      if (!root?.requestFullscreen) {
+        return;
+      }
+      root.requestFullscreen().catch(() => {
+        // Ignore failures; fullscreen may require a recent user gesture.
+      });
+    };
+    const intervalId = window.setInterval(attemptFullscreen, 10_000);
+    return () => window.clearInterval(intervalId);
+  }, [fullscreenAvailable]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }

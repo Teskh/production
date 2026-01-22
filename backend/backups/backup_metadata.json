@@ -18,9 +18,6 @@
     "scp_backup_20260114_001502_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
     },
-    "scp_backup_20260115_131046.dump": {
-      "label": null
-    },
     "scp_backup_20260115_171057.dump": {
       "label": null
     },
@@ -97,6 +94,9 @@
       "label": null
     },
     "scp_backup_20260122_060638.dump": {
+      "label": null
+    },
+    "scp_backup_20260122_100704.dump": {
       "label": null
     }
   }
