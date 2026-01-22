@@ -133,6 +133,15 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   const [adminOpen, setAdminOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return (
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      'ontouchstart' in window
+    );
+  }, []);
 
   const currentContextLabel = useMemo(() => {
     if (!stationContext) {
@@ -198,7 +207,7 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!open || !fullscreenAvailable) {
+    if (!open || !fullscreenAvailable || !isTouchDevice) {
       return;
     }
     const attemptFullscreen = () => {

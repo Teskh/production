@@ -246,6 +246,15 @@ const Login: React.FC = () => {
   });
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
   const lastTapRef = useRef(0);
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return (
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      'ontouchstart' in window
+    );
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -320,7 +329,7 @@ const Login: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!fullscreenAvailable) {
+    if (!fullscreenAvailable || !isTouchDevice) {
       return;
     }
     const attemptFullscreen = () => {
