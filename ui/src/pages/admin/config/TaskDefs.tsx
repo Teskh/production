@@ -820,7 +820,7 @@ const TaskDefs: React.FC = () => {
       default_station_sequence: stationSequence,
       active: draft.active,
       skippable: draft.scope === 'panel' ? draft.skippable : false,
-      concurrent_allowed: draft.scope === 'panel' ? draft.concurrent_allowed : false,
+      concurrent_allowed: draft.scope === 'aux' ? false : draft.concurrent_allowed,
       dependencies_json: draft.dependencies_json,
       advance_trigger: draft.scope === 'module' ? draft.advance_trigger : false,
     };
@@ -1091,11 +1091,14 @@ const TaskDefs: React.FC = () => {
                           const scope = event.target.value as TaskScope;
                           const isPanel = scope === 'panel';
                           const isModule = scope === 'module';
+                          const allowsConcurrency = scope !== 'aux';
                           updateDraft({
                             scope,
                             advance_trigger: isModule ? draft.advance_trigger : false,
                             skippable: isPanel ? draft.skippable : false,
-                            concurrent_allowed: isPanel ? draft.concurrent_allowed : false,
+                            concurrent_allowed: allowsConcurrency
+                              ? draft.concurrent_allowed
+                              : false,
                           });
                         }}
                       >
@@ -1193,16 +1196,28 @@ const TaskDefs: React.FC = () => {
                     </>
                   )}
                   {draft.scope === 'module' && (
-                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
-                      <input
-                        type="checkbox"
-                        checked={draft.advance_trigger}
-                        onChange={(event) =>
-                          updateDraft({ advance_trigger: event.target.checked })
-                        }
-                      />{' '}
-                      Gatilla avance
-                    </label>
+                    <>
+                      <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                        <input
+                          type="checkbox"
+                          checked={draft.concurrent_allowed}
+                          onChange={(event) =>
+                            updateDraft({ concurrent_allowed: event.target.checked })
+                          }
+                        />{' '}
+                        Concurrencia permitida
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                        <input
+                          type="checkbox"
+                          checked={draft.advance_trigger}
+                          onChange={(event) =>
+                            updateDraft({ advance_trigger: event.target.checked })
+                          }
+                        />{' '}
+                        Gatilla avance
+                      </label>
+                    </>
                   )}
                   {draft.scope === 'aux' && (
                     <p className="text-xs text-[var(--ink-muted)]">

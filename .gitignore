@@ -6,8 +6,8 @@ node_modules/
 .pnp.js
 
 # backups
-backend/backups/backup_metadata.json
-backend/backups/backup_settings.json
+/backup_metadata.json
+/backup_settings.json
 
 # testing
 /coverage

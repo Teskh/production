@@ -18,12 +18,6 @@
     "scp_backup_20260114_001502_Manual-restore-checkpoint-for-scp_backup_20260114_001345_manual2-dump.dump": {
       "label": "Manual restore checkpoint for scp_backup_20260114_001345_manual2.dump"
     },
-    "scp_backup_20260115_084635.dump": {
-      "label": null
-    },
-    "scp_backup_20260115_091030_Manual-restore-checkpoint-for-scp_backup_20260115_090912_morning-dump.dump": {
-      "label": "Manual restore checkpoint for scp_backup_20260115_090912_morning.dump"
-    },
     "scp_backup_20260115_131046.dump": {
       "label": null
     },
@@ -94,6 +88,15 @@
       "label": null
     },
     "scp_backup_20260120_231108.dump": {
+      "label": null
+    },
+    "scp_backup_20260121_082825.dump": {
+      "label": null
+    },
+    "scp_backup_20260121_211622.dump": {
+      "label": null
+    },
+    "scp_backup_20260122_060638.dump": {
       "label": null
     }
   }

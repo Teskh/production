@@ -970,6 +970,7 @@ const StationWorkspace: React.FC = () => {
       Completed: 'Completada',
       Skipped: 'Omitida',
       Planned: 'Sin comenzar',
+      Assembly: 'Armado',
     };
     return (
       <span
@@ -987,8 +988,10 @@ const StationWorkspace: React.FC = () => {
     return (
       <>
         <div className="flex items-center justify-between">
-          <div className="text-xs font-semibold uppercase text-gray-400">
-            {item.house_identifier} - M{item.module_number}
+          <div className="text-sm font-bold uppercase tracking-wide text-gray-700">
+            <span className="text-blue-600">{item.house_identifier}</span>
+            <span className="mx-1 text-gray-400">-</span>
+            <span className="text-emerald-600">M{item.module_number}</span>
           </div>
           {statusBadge(item.status)}
         </div>
