@@ -24,6 +24,7 @@ import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
+import DashboardShiftEstimation from './pages/admin/dashboards/dashboard_shift_estimation';
 import Personnel from './pages/admin/personnel/Personnel';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -101,6 +102,7 @@ function App() {
           <Route path="dashboards/stations" element={<DashboardStations />} />
           <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
+          <Route path="dashboards/shift-estimation" element={<DashboardShiftEstimation />} />
           <Route path="dashboards/assistance" element={<DashboardAssistance />} />
           <Route path="dashboards/plant-view" element={<DashboardPlantView />} />
         </Route>

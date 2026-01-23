@@ -176,6 +176,7 @@ const DashboardPanels: React.FC = () => {
   const [pauseData, setPauseData] = useState<PauseSummaryResponse | null>(null);
   const [pauseLoading, setPauseLoading] = useState(false);
   const [pauseError, setPauseError] = useState('');
+  const [pauseStationData, setPauseStationData] = useState<Record<string, PauseSummaryResponse>>({});
 
   const effectiveDateRange = useMemo(() => {
     if (fromDate && toDate && fromDate > toDate) {
@@ -265,6 +266,17 @@ const DashboardPanels: React.FC = () => {
     );
   };
 
+  const panelStations = useMemo(() => {
+    const filtered = stations.filter((station) => station.role === 'Panels');
+    const sorted = [...filtered].sort((a, b) => {
+      const orderA = stationOrderById.get(String(a.id)) ?? 1_000_000;
+      const orderB = stationOrderById.get(String(b.id)) ?? 1_000_000;
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.id ?? 0) - (b.id ?? 0);
+    });
+    return sorted;
+  }, [stations, stationOrderById]);
+
   const fetchTableData = async () => {
     setLoading(true);
     setError('');
@@ -312,10 +324,39 @@ const DashboardPanels: React.FC = () => {
         `/api/pause-summary?${params.toString()}`
       );
       setPauseData(result);
+
+      if (panelStations.length === 0) {
+        setPauseStationData({});
+        return;
+      }
+
+      const stationRequests = panelStations.map((station) => {
+        const stationParams = new URLSearchParams(params);
+        stationParams.set('station_id', String(station.id));
+        return apiRequest<PauseSummaryResponse>(`/api/pause-summary?${stationParams.toString()}`);
+      });
+
+      const stationResults = await Promise.allSettled(stationRequests);
+      const nextStationData: Record<string, PauseSummaryResponse> = {};
+      let failedStations = 0;
+      stationResults.forEach((stationResult, index) => {
+        const station = panelStations[index];
+        if (!station?.id) return;
+        if (stationResult.status === 'fulfilled') {
+          nextStationData[String(station.id)] = stationResult.value;
+        } else {
+          failedStations += 1;
+        }
+      });
+      setPauseStationData(nextStationData);
+      if (failedStations > 0) {
+        setPauseError('No se pudo cargar el detalle de pausas por estacion.');
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error cargando resumen de pausas';
       setPauseError(errorMessage);
       setPauseData(null);
+      setPauseStationData({});
     } finally {
       setPauseLoading(false);
     }
@@ -324,7 +365,7 @@ const DashboardPanels: React.FC = () => {
   useEffect(() => {
     fetchPauseData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDateRange.from, effectiveDateRange.to, selectedHouseTypeId]);
+  }, [effectiveDateRange.from, effectiveDateRange.to, selectedHouseTypeId, panelStations]);
 
   const processedRows = useMemo(() => {
     if (!tableData?.rows) return [];
@@ -373,6 +414,31 @@ const DashboardPanels: React.FC = () => {
 
     return averages;
   }, [processedRows, stationsWithData]);
+
+  const pauseStationsWithData = useMemo(() => {
+    if (!panelStations.length) return [];
+    return panelStations.filter((station) => {
+      const stationData = pauseStationData[String(station.id)];
+      if (!stationData) return false;
+      const totalMinutes = Number(stationData.total_pause_minutes);
+      if (Number.isFinite(totalMinutes) && totalMinutes > 0) return true;
+      return Array.isArray(stationData.pause_reasons) && stationData.pause_reasons.length > 0;
+    });
+  }, [panelStations, pauseStationData]);
+
+  const pauseReasonsByStation = useMemo(() => {
+    const mapped: Record<string, Record<string, PauseSummaryReason>> = {};
+    pauseStationsWithData.forEach((station) => {
+      const stationId = String(station.id);
+      const stationReasons = pauseStationData[stationId]?.pause_reasons ?? [];
+      const reasonMap: Record<string, PauseSummaryReason> = {};
+      stationReasons.forEach((reason) => {
+        reasonMap[reason.reason] = reason;
+      });
+      mapped[stationId] = reasonMap;
+    });
+    return mapped;
+  }, [pauseStationsWithData, pauseStationData]);
 
   const averagePanelLength = useMemo(() => {
     const values = processedRows
@@ -752,12 +818,33 @@ const DashboardPanels: React.FC = () => {
                     <th className="px-3 py-2">Motivo de pausa</th>
                     <th className="px-3 py-2">Tiempo total</th>
                     <th className="px-3 py-2 text-center">Ocurrencias</th>
+                    {pauseStationsWithData.map((station) => (
+                      <React.Fragment key={station.id}>
+                        <th
+                          className="px-3 py-2 text-center border-l border-black/5 whitespace-nowrap"
+                          title={String(station.id)}
+                        >
+                          {stationHeaderName(String(station.id))}<br />
+                          <span className="text-[9px] font-normal opacity-60">tiempo</span>
+                        </th>
+                        <th
+                          className="px-3 py-2 text-center border-l border-black/5 whitespace-nowrap"
+                          title={String(station.id)}
+                        >
+                          {stationHeaderName(String(station.id))}<br />
+                          <span className="text-[9px] font-normal opacity-60">pausas</span>
+                        </th>
+                      </React.Fragment>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {(!pauseData.pause_reasons || pauseData.pause_reasons.length === 0) && (
                     <tr>
-                      <td className="px-4 py-8 text-center text-[var(--ink-muted)]" colSpan={3}>
+                      <td
+                        className="px-4 py-8 text-center text-[var(--ink-muted)]"
+                        colSpan={3 + pauseStationsWithData.length * 2}
+                      >
                         No hay pausas registradas en este periodo.
                       </td>
                     </tr>
@@ -769,6 +856,20 @@ const DashboardPanels: React.FC = () => {
                         {formatDuration(pause.total_duration_minutes)}
                       </td>
                       <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums">{pause.occurrence_count}</td>
+                      {pauseStationsWithData.map((station) => {
+                        const stationId = String(station.id);
+                        const stationReason = pauseReasonsByStation[stationId]?.[pause.reason];
+                        return (
+                          <React.Fragment key={stationId}>
+                            <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
+                              {stationReason ? formatDuration(stationReason.total_duration_minutes) : '-'}
+                            </td>
+                            <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
+                              {stationReason ? stationReason.occurrence_count : '-'}
+                            </td>
+                          </React.Fragment>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
