@@ -17,6 +17,7 @@ from app.api.routes import (
     production_queue,
     qc_config,
     qc_runtime,
+    shift_estimates,
     stations,
     task_analysis,
     task_definitions,
@@ -57,6 +58,11 @@ api_router.include_router(
     station_panels_finished.router,
     prefix="/station-panels-finished",
     tags=["station-panels-finished"],
+)
+api_router.include_router(
+    shift_estimates.router,
+    prefix="/shift-estimates",
+    tags=["shift-estimates"],
 )
 api_router.include_router(
     house_params.router, prefix="/house-parameters", tags=["house-parameters"]

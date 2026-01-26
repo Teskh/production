@@ -26,6 +26,7 @@ from app.models.qc import (
     QCTrigger,
 )
 from app.models.stations import Station
+from app.models.shift_estimates import ShiftEstimate
 from app.models.tasks import (
     TaskApplicability,
     TaskDefinition,
@@ -75,6 +76,7 @@ __all__ = [
     "QCTrigger",
     "Skill",
     "Station",
+    "ShiftEstimate",
     "TaskApplicability",
     "TaskDefinition",
     "TaskException",
