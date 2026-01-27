@@ -729,6 +729,12 @@ def station_snapshot(
                 for row in magazine_rows:
                     if row[0].id not in existing_ids:
                         work_unit, work_order, *_ = row
+                        if (
+                            station.line_type
+                            and work_unit.planned_assembly_line is not None
+                            and work_unit.planned_assembly_line != station.line_type
+                        ):
+                            continue
                         target_station = _first_applicable_assembly_station(
                             line_stations,
                             all_module_tasks,
