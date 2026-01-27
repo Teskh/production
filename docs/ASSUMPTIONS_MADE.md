@@ -99,3 +99,6 @@
 - QC applicability rules now store multiple house types/subtypes/panel groups via join tables; an empty list for a dimension is treated as “all” for that dimension.
 - QC applicability validation requires subtype IDs to belong to one of the selected house types when both are provided.
 - Deleting a house type cascades by deleting any QC applicability rule that referenced that house type or its subtypes, even if the rule also referenced other house types.
+
+## 2026-01-26
+- Station workspace start confirmation treats "tasks that move the module" as module-scope tasks with `advance_trigger = true`.
