@@ -14,7 +14,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 const SHIFT_START_HOUR = 8;
 const SHIFT_START_MINUTE = 20;
-const SHIFT_END_OFFSET_MINUTES = 30;
 
 const DATE_STORAGE_KEY = 'dashboard.shiftEstimation.date';
 
