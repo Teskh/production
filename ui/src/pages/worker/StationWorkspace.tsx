@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  AlertTriangle,
   Bell,
   CheckSquare,
   FastForward,
@@ -66,6 +67,9 @@ const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'
 
 const formatWorkerFullName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string =>
   `${worker.first_name} ${worker.last_name}`.trim();
+
+const isModuleMoveTask = (task: StationTask): boolean =>
+  task.advance_trigger && task.scope.toLowerCase() === 'module';
 
 const normalizeQrValue = (value: string): string =>
   value
@@ -189,6 +193,13 @@ type WorkerActiveTask = {
   panel_code: string | null;
   status: string;
   started_at: string | null;
+};
+
+type StartConfirmContext = {
+  task: StationTask;
+  workItem: StationWorkItem;
+  workerIds?: number[];
+  returnModal: 'crew' | null;
 };
 
 type StationQCReworkTask = {
@@ -323,11 +334,22 @@ const StationWorkspace: React.FC = () => {
   const [autoFocusTarget, setAutoFocusTarget] = useState<WorkerActiveTask | null>(null);
   const [autoFocusNotice, setAutoFocusNotice] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<
-    'pause' | 'skip' | 'comments' | 'crew' | 'other_tasks' | 'rework_details' | null
+    | 'pause'
+    | 'skip'
+    | 'comments'
+    | 'crew'
+    | 'other_tasks'
+    | 'rework_details'
+    | 'start_confirm'
+    | null
   >(null);
   const [selectedTask, setSelectedTask] = useState<StationTask | null>(null);
   const [selectedTaskWorkItem, setSelectedTaskWorkItem] = useState<StationWorkItem | null>(null);
   const [selectedRework, setSelectedRework] = useState<StationQCReworkTask | null>(null);
+  const [startConfirmContext, setStartConfirmContext] = useState<StartConfirmContext | null>(
+    null
+  );
+  const [startConfirmSeconds, setStartConfirmSeconds] = useState(0);
   const [reasonText, setReasonText] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
@@ -367,6 +389,19 @@ const StationWorkspace: React.FC = () => {
       panel_definition_id: selectedWorkItem.panel_definition_id,
     };
   }, [selectedWorkItem]);
+
+  useEffect(() => {
+    if (activeModal !== 'start_confirm') {
+      return;
+    }
+    if (startConfirmSeconds <= 0) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setStartConfirmSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [activeModal, startConfirmSeconds]);
 
   const toggleTaskNameExpansion = useCallback((key: string) => {
     setExpandedTaskNames((prev) => {
@@ -1354,11 +1389,39 @@ const StationWorkspace: React.FC = () => {
     setSelectedTask(null);
     setSelectedTaskWorkItem(null);
     setSelectedRework(null);
+    setStartConfirmContext(null);
+    setStartConfirmSeconds(0);
     setReasonText('');
     setReasonError(null);
     setCommentDraft('');
     setCommentError(null);
     setCrewSelection([]);
+  };
+
+  const openStartConfirm = (
+    task: StationTask,
+    workItem: StationWorkItem,
+    workerIds: number[] | undefined,
+    returnModal: 'crew' | null
+  ) => {
+    setSelectedTask(task);
+    setSelectedTaskWorkItem(workItem);
+    setStartConfirmContext({ task, workItem, workerIds, returnModal });
+    setStartConfirmSeconds(5);
+    setActiveModal('start_confirm');
+  };
+
+  const closeStartConfirm = () => {
+    const returnModal = startConfirmContext?.returnModal ?? null;
+    setStartConfirmContext(null);
+    setStartConfirmSeconds(0);
+    if (returnModal === 'crew') {
+      setActiveModal('crew');
+      return;
+    }
+    setActiveModal(null);
+    setSelectedTask(null);
+    setSelectedTaskWorkItem(null);
   };
 
   const openReworkDetails = (rework: StationQCReworkTask) => {
@@ -1401,7 +1464,12 @@ const StationWorkspace: React.FC = () => {
     setShowStationPicker(false);
   };
 
-  const handleStart = async (task: StationTask, workItem: StationWorkItem, workerIds?: number[]) => {
+  const handleStart = async (
+    task: StationTask,
+    workItem: StationWorkItem,
+    workerIds?: number[],
+    options?: { skipConfirm?: boolean; returnModal?: 'crew' | null }
+  ) => {
     if (!selectedStationId) {
       return;
     }
@@ -1420,6 +1488,10 @@ const StationWorkspace: React.FC = () => {
           concurrencyAction: 'starting',
         })
       );
+      return;
+    }
+    if (!options?.skipConfirm && isModuleMoveTask(task)) {
+      openStartConfirm(task, workItem, workerIds, options?.returnModal ?? null);
       return;
     }
     setSubmitting(true);
@@ -2451,7 +2523,11 @@ const StationWorkspace: React.FC = () => {
                 Cancelar
               </button>
               <button
-                onClick={() => handleStart(selectedTask, selectedTaskWorkItem, crewSelection)}
+                onClick={() =>
+                  handleStart(selectedTask, selectedTaskWorkItem, crewSelection, {
+                    returnModal: 'crew',
+                  })
+                }
                 className={clsx(
                   'flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white',
                   crewStartBlocked
@@ -2462,6 +2538,72 @@ const StationWorkspace: React.FC = () => {
                 title={crewStartBlocked ? crewStartBlockTitle : undefined}
               >
                 Iniciar con equipo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeModal === 'start_confirm' && startConfirmContext && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/50" onClick={closeStartConfirm} />
+          <div className="relative w-full max-w-lg rounded-2xl border border-amber-200 bg-amber-50/60 p-6 shadow-xl">
+            <button
+              onClick={closeStartConfirm}
+              className="absolute right-4 top-4 text-gray-400 hover:text-gray-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-2 text-amber-900">
+              <AlertTriangle className="h-5 w-5" />
+              <h3 className="text-lg font-semibold">Confirmar inicio</h3>
+            </div>
+            <p className="mt-2 text-sm text-amber-900/80">
+              Esta tarea mueve el modulo al finalizar. Confirma antes de iniciar.
+            </p>
+            <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-950">
+                {startConfirmContext.task.name}
+              </p>
+              <p className="mt-1 text-xs text-amber-900/80">
+                Modulo {startConfirmContext.workItem.module_number}
+                {startConfirmContext.workItem.panel_code
+                  ? ` • Panel ${startConfirmContext.workItem.panel_code}`
+                  : ''}
+              </p>
+            </div>
+            {startConfirmSeconds > 0 && (
+              <div className="mt-3 text-xs font-semibold text-amber-900/70">
+                Espera {startConfirmSeconds}s para confirmar.
+              </div>
+            )}
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={closeStartConfirm}
+                className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-600"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() =>
+                  handleStart(
+                    startConfirmContext.task,
+                    startConfirmContext.workItem,
+                    startConfirmContext.workerIds,
+                    { skipConfirm: true }
+                  )
+                }
+                className={clsx(
+                  'flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white',
+                  startConfirmSeconds > 0 || submitting
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gray-900 hover:bg-gray-800'
+                )}
+                disabled={startConfirmSeconds > 0 || submitting}
+              >
+                {startConfirmSeconds > 0
+                  ? `Confirmar (${startConfirmSeconds}s)`
+                  : 'Confirmar e iniciar'}
               </button>
             </div>
           </div>

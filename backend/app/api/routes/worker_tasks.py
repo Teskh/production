@@ -267,6 +267,57 @@ def _allowed_worker_ids(db: Session, task_definition_id: int) -> set[int] | None
     return allowed_ids if allowed_ids else None
 
 
+def _auto_complete_open_module_tasks_for_work_unit(
+    db: Session,
+    work_unit_id: int,
+    note: str,
+) -> list[TaskInstance]:
+    instances = list(
+        db.execute(
+            select(TaskInstance)
+            .where(TaskInstance.work_unit_id == work_unit_id)
+            .where(TaskInstance.panel_unit_id.is_(None))
+            .where(TaskInstance.scope == TaskScope.MODULE)
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        ).scalars()
+    )
+    if not instances:
+        return []
+
+    completed_at = utc_now()
+    for instance in instances:
+        instance.status = TaskStatus.COMPLETED
+        instance.completed_at = completed_at
+        if note:
+            if instance.notes:
+                instance.notes = f"{instance.notes}\n{note}"
+            else:
+                instance.notes = note
+
+    instance_ids = [instance.id for instance in instances]
+    participations = list(
+        db.execute(
+            select(TaskParticipation)
+            .where(TaskParticipation.task_instance_id.in_(instance_ids))
+            .where(TaskParticipation.left_at.is_(None))
+        ).scalars()
+    )
+    for participation in participations:
+        participation.left_at = completed_at
+
+    open_pauses = list(
+        db.execute(
+            select(TaskPause)
+            .where(TaskPause.task_instance_id.in_(instance_ids))
+            .where(TaskPause.resumed_at.is_(None))
+        ).scalars()
+    )
+    for pause in open_pauses:
+        pause.resumed_at = completed_at
+
+    return instances
+
+
 def _dependencies_satisfied(
     db: Session,
     task_def: TaskDefinition,
@@ -768,6 +819,11 @@ def complete_task(
                     for panel in panels:
                         panel.status = PanelUnitStatus.CONSUMED
                         panel.current_station_id = None
+                    _auto_complete_open_module_tasks_for_work_unit(
+                        db,
+                        work_unit.id,
+                        "término automatico por salida de módulo",
+                    )
 
     if instance.status == TaskStatus.COMPLETED:
         open_qc_checks_for_task_completion(db, instance)
