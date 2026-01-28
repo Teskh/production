@@ -201,6 +201,13 @@ def qc_dashboard(
             .join(HouseType, WorkOrder.house_type_id == HouseType.id)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
             .where(QCCheckInstance.status == QCCheckStatus.OPEN)
+            .where(WorkUnit.status != WorkUnitStatus.COMPLETED)
+            .where(
+                or_(
+                    QCCheckInstance.scope != TaskScope.PANEL,
+                    WorkUnit.status != WorkUnitStatus.ASSEMBLY,
+                )
+            )
             .where(
                 ~exists().where(QCReworkTask.check_instance_id == QCCheckInstance.id)
             )
