@@ -1246,7 +1246,8 @@ const StationWorkspace: React.FC = () => {
                 </button>
               </>
             )}
-            {(regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
+            {!isCompleted &&
+              (regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
               <button
                 onClick={() => handleCrewOpen(task, workItem)}
                 className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
