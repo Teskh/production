@@ -980,56 +980,53 @@ const Login: React.FC = () => {
               &#8203;
             </span>
 
-            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-5xl sm:w-full">
-              <div className="bg-white px-5 pt-6 pb-4 sm:p-8">
-                <div className="flex flex-col gap-6">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
-                      <MapPin className="h-6 w-6 text-blue-600" />
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full">
+              <div className="bg-white px-8 pt-10 pb-8 sm:p-12">
+                <div className="flex flex-col gap-10">
+                  <div className="flex flex-col items-center gap-4 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+                      <MapPin className="h-8 w-8 text-blue-600" />
                     </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900">Seleccionar estacion</h3>
-                    </div>
+                    {sessionStationOptions.length > 0 && sessionStationOptions[0].role === 'Assembly' && (
+                      <h3 className="text-2xl font-semibold text-gray-900">
+                        {sessionStationOptions[0].name} - Seleccionar línea
+                      </h3>
+                    )}
+                    {!(sessionStationOptions.length > 0 && sessionStationOptions[0].role === 'Assembly') && (
+                      <h3 className="text-2xl font-semibold text-gray-900">
+                        Seleccionar estacion
+                      </h3>
+                    )}
                   </div>
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                    {sessionStationOptions.map((station) => {
+                  <div className="grid grid-cols-3 gap-6">
+                    {[...sessionStationOptions].sort((a, b) => {
+                      const aLine = a.line_type ? parseInt(a.line_type, 10) : 0;
+                      const bLine = b.line_type ? parseInt(b.line_type, 10) : 0;
+                      return bLine - aLine;
+                    }).map((station) => {
                       const isAssembly = station.role === 'Assembly';
-                      const showSmallName = isAssembly && station.line_type;
-                      const mainLabel =
-                        isAssembly && station.line_type
-                          ? `Linea ${station.line_type}`
-                          : station.name;
+                      const hasLineType = Boolean(station.line_type);
                       return (
                         <button
                           key={station.id}
                           onClick={() => handleSessionStationSelect(station.id)}
-                          className="w-full rounded-md border border-gray-300 px-4 py-4 text-left transition-colors hover:bg-blue-50 hover:border-blue-500"
+                          className="flex flex-col items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-8 py-14 transition-all hover:bg-blue-50 hover:border-blue-500"
                         >
-                          {isAssembly ? (
-                            <div>
-                              <span className="text-lg font-semibold text-gray-900">
-                                {mainLabel}
-                              </span>
-                              {showSmallName && (
-                                <span className="mt-1 block text-xs text-gray-500">
-                                  {station.name}
-                                </span>
-                              )}
-                            </div>
+                          {isAssembly && hasLineType ? (
+                            <>
+                              <span className="text-8xl font-bold text-gray-900">{station.line_type}</span>
+                              <span className="mt-3 text-xl text-gray-500">línea</span>
+                            </>
                           ) : (
-                            <div className="flex items-center gap-2">
-                              {station.line_type && (
-                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                            <>
+                              {hasLineType && (
+                                <span className="rounded-full bg-slate-100 px-4 py-1.5 text-base font-semibold text-slate-600">
                                   Linea {station.line_type}
                                 </span>
                               )}
-                              <span className="font-semibold text-gray-900">{station.name}</span>
-                            </div>
-                          )}
-                          {!isAssembly && (
-                            <span className="mt-1 block text-xs text-gray-500">
-                              {station.role}
-                            </span>
+                              <span className="mt-2 text-xl font-semibold text-gray-900">{station.name}</span>
+                              <span className="mt-1 text-base text-gray-500">{station.role}</span>
+                            </>
                           )}
                         </button>
                       );
@@ -1043,10 +1040,10 @@ const Login: React.FC = () => {
                 </div>
               </div>
               {!stationSelectionRequired && (
-                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                <div className="bg-gray-50 px-6 py-4 sm:flex sm:flex-row-reverse">
                   <button
                     type="button"
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto"
+                    className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:w-auto"
                     onClick={() => setShowStationPicker(false)}
                   >
                     Cancelar

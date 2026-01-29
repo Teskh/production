@@ -2546,35 +2546,50 @@ const StationWorkspace: React.FC = () => {
 
       {activeModal === 'start_confirm' && startConfirmContext && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-900/50" onClick={closeStartConfirm} />
-          <div className="relative w-full max-w-lg rounded-2xl border border-amber-200 bg-amber-50/60 p-6 shadow-xl">
+          <div className="absolute inset-0 bg-gray-900/70" onClick={closeStartConfirm} />
+          <div className="relative w-full max-w-md rounded-2xl border-2 border-amber-400 bg-amber-50 p-6 shadow-2xl">
             <button
               onClick={closeStartConfirm}
               className="absolute right-4 top-4 text-gray-400 hover:text-gray-600"
             >
               <X className="h-5 w-5" />
             </button>
-            <div className="flex items-center gap-2 text-amber-900">
-              <AlertTriangle className="h-5 w-5" />
-              <h3 className="text-lg font-semibold">Confirmar inicio</h3>
+            <div className="flex items-center justify-center gap-3 text-amber-700">
+              <AlertTriangle className="h-8 w-8" />
+              <h3 className="text-xl font-bold">ATENCION</h3>
+              <AlertTriangle className="h-8 w-8" />
             </div>
-            <p className="mt-2 text-sm text-amber-900/80">
-              Esta tarea mueve el modulo al finalizar. Confirma antes de iniciar.
+            <p className="mt-4 text-center text-lg font-semibold text-amber-900">
+              Esta tarea MUEVE el modulo
             </p>
-            <div className="mt-4 rounded-xl border border-amber-200 bg-white/70 px-4 py-3">
-              <p className="text-sm font-semibold text-amber-950">
-                {startConfirmContext.task.name}
-              </p>
-              <p className="mt-1 text-xs text-amber-900/80">
-                Modulo {startConfirmContext.workItem.module_number}
-                {startConfirmContext.workItem.panel_code
-                  ? ` • Panel ${startConfirmContext.workItem.panel_code}`
-                  : ''}
-              </p>
+            <div className="mt-4 rounded-xl border border-amber-300 bg-white px-4 py-4">
+              <div className="text-center">
+                <p className="text-xs uppercase tracking-wider text-gray-500">
+                  {startConfirmContext.workItem.project_name}
+                </p>
+                <p className="mt-1 text-xl font-bold text-gray-900">
+                  {startConfirmContext.workItem.house_identifier} - M{startConfirmContext.workItem.module_number}
+                </p>
+                {selectedStation?.line_type && (
+                  <p className="mt-1 text-sm font-medium text-amber-700">
+                    Línea {selectedStation.line_type}
+                  </p>
+                )}
+              </div>
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                <p className="text-sm font-semibold text-gray-700">
+                  {startConfirmContext.task.name}
+                </p>
+                {startConfirmContext.workItem.panel_code && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Panel {startConfirmContext.workItem.panel_code}
+                  </p>
+                )}
+              </div>
             </div>
             {startConfirmSeconds > 0 && (
-              <div className="mt-3 text-xs font-semibold text-amber-900/70">
-                Espera {startConfirmSeconds}s para confirmar.
+              <div className="mt-3 text-center text-sm font-semibold text-amber-800">
+                Espera {startConfirmSeconds}s para confirmar
               </div>
             )}
             <div className="mt-6 flex gap-3">
@@ -2597,7 +2612,7 @@ const StationWorkspace: React.FC = () => {
                   'flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white',
                   startConfirmSeconds > 0 || submitting
                     ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-gray-900 hover:bg-gray-800'
+                    : 'bg-amber-600 hover:bg-amber-700'
                 )}
                 disabled={startConfirmSeconds > 0 || submitting}
               >

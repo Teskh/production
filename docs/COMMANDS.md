@@ -12,7 +12,11 @@ PYTHONPATH=. alembic upgrade head
 
 # fix timestamps
 
-PYTHONPATH=. python -m app.scripts.fix_today_timestamps --dry-run
+PYTHONPATH=backend ./venv/bin/python -m app.scripts.fix_today_timestamps --dry-run
+
+# normalize assembly line types (A/B/C -> 1/2/3)
+
+PYTHONPATH=backend ./venv/bin/python -m app.scripts.normalize_line_types --dry-run
 
 # starting frontend
 npm run preview -- --host 0.0.0.0 --port 5173
