@@ -248,7 +248,7 @@ def _has_active_nonconcurrent_task(
         .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
         .where(TaskParticipation.worker_id == worker_id)
         .where(TaskParticipation.left_at.is_(None))
-        .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        .where(TaskInstance.status == TaskStatus.IN_PROGRESS)
         .where(TaskDefinition.concurrent_allowed == False)
     )
     if exclude_instance_id is not None:

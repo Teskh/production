@@ -289,12 +289,10 @@ const pickAutoFocusTarget = (tasks: WorkerActiveTask[]): WorkerActiveTask | null
     return null;
   }
   const inProgress = tasks.filter((task) => task.status === 'InProgress');
-  const paused = tasks.filter((task) => task.status === 'Paused');
-  const candidates = inProgress.length > 0 ? inProgress : paused;
-  if (candidates.length === 0) {
+  if (inProgress.length === 0) {
     return null;
   }
-  return candidates.sort((a, b) => {
+  return inProgress.sort((a, b) => {
     const aTime = a.started_at ? Date.parse(a.started_at) : 0;
     const bTime = b.started_at ? Date.parse(b.started_at) : 0;
     if (aTime !== bTime) {
@@ -1146,6 +1144,15 @@ const StationWorkspace: React.FC = () => {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {!isCompleted &&
+              (regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
+                <button
+                  onClick={() => handleCrewOpen(task, workItem)}
+                  className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
+                >
+                  <Users className="h-5 w-5" /> Equipo
+                </button>
+              )}
             {task.status === 'InProgress' &&
               (workerParticipating ? (
                 <>
@@ -1245,15 +1252,6 @@ const StationWorkspace: React.FC = () => {
                   <Play className="h-5 w-5" /> Iniciar
                 </button>
               </>
-            )}
-            {!isCompleted &&
-              (regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
-              <button
-                onClick={() => handleCrewOpen(task, workItem)}
-                className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
-              >
-                <Users className="h-5 w-5" /> Equipo
-              </button>
             )}
           </div>
         </div>

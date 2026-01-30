@@ -857,7 +857,7 @@ def station_snapshot(
                 .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
                 .where(TaskParticipation.worker_id == _worker.id)
                 .where(TaskParticipation.left_at.is_(None))
-                .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+                .where(TaskInstance.status == TaskStatus.IN_PROGRESS)
                 .where(TaskDefinition.concurrent_allowed == False)
             ).scalars()
         )
