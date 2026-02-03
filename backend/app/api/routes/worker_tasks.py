@@ -36,6 +36,8 @@ from app.schemas.worker_station import (
     TaskResumeRequest,
     TaskSkipRequest,
     TaskStartRequest,
+    WorkerBusyCheckRequest,
+    WorkerBusyCheckResponse,
 )
 from app.services.task_applicability import resolve_task_station_sequence
 from app.services.qc_runtime import open_qc_checks_for_task_completion
@@ -412,6 +414,30 @@ def list_active_tasks(
             )
         )
     return payloads
+
+
+@router.post("/busy-workers", response_model=WorkerBusyCheckResponse)
+def list_busy_workers(
+    payload: WorkerBusyCheckRequest,
+    db: Session = Depends(get_db),
+    _worker: Worker = Depends(get_current_worker),
+) -> WorkerBusyCheckResponse:
+    worker_ids = [worker_id for worker_id in payload.worker_ids if worker_id is not None]
+    if not worker_ids:
+        return WorkerBusyCheckResponse(worker_ids=[])
+    stmt = (
+        select(TaskParticipation.worker_id)
+        .join(TaskInstance, TaskParticipation.task_instance_id == TaskInstance.id)
+        .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+        .where(TaskParticipation.worker_id.in_(worker_ids))
+        .where(TaskParticipation.left_at.is_(None))
+        .where(TaskInstance.status == TaskStatus.IN_PROGRESS)
+        .where(TaskDefinition.concurrent_allowed == False)
+    )
+    if payload.exclude_task_instance_id is not None:
+        stmt = stmt.where(TaskInstance.id != payload.exclude_task_instance_id)
+    busy_ids = sorted(set(db.execute(stmt).scalars().all()))
+    return WorkerBusyCheckResponse(worker_ids=busy_ids)
 
 
 @router.post("/start", response_model=TaskInstanceRead, status_code=status.HTTP_201_CREATED)

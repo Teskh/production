@@ -76,6 +76,15 @@ class StationSnapshot(BaseModel):
     qc_notification_count: int = 0
 
 
+class WorkerBusyCheckRequest(BaseModel):
+    worker_ids: list[int] = Field(default_factory=list)
+    exclude_task_instance_id: int | None = None
+
+
+class WorkerBusyCheckResponse(BaseModel):
+    worker_ids: list[int] = Field(default_factory=list)
+
+
 class TaskStartRequest(BaseModel):
     task_definition_id: int
     scope: TaskScope

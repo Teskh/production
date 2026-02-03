@@ -354,6 +354,7 @@ const StationWorkspace: React.FC = () => {
   const [commentError, setCommentError] = useState<string | null>(null);
   const [crewWorkers, setCrewWorkers] = useState<Worker[]>([]);
   const [crewSelection, setCrewSelection] = useState<number[]>([]);
+  const [crewBusyWorkerIds, setCrewBusyWorkerIds] = useState<number[]>([]);
   const [expandedTaskNames, setExpandedTaskNames] = useState<Set<string>>(() => new Set());
   const [crewQuery, setCrewQuery] = useState('');
   const [regularCrewByTaskId, setRegularCrewByTaskId] = useState<Record<number, number[]>>({});
@@ -1771,6 +1772,16 @@ const StationWorkspace: React.FC = () => {
     setCrewSelection(Array.from(baseSelection) as number[]);
   };
 
+  const ensureSelfInCrewSelection = useCallback(
+    (ids: number[]) => {
+      if (!worker?.id) {
+        return ids;
+      }
+      return ids.includes(worker.id) ? ids : [worker.id, ...ids];
+    },
+    [worker?.id]
+  );
+
   const crewGroups = useMemo(() => {
     const taskCrewIds = selectedTask
       ? regularCrewByTaskId[selectedTask.task_definition_id] ?? []
@@ -1821,7 +1832,71 @@ const StationWorkspace: React.FC = () => {
     return { regularCrew, stationAssigned, others };
   }, [crewQuery, crewWorkers, regularCrewByTaskId, selectedStationId, selectedTask]);
 
+  const crewBusyWorkerIdSet = useMemo(
+    () => new Set(crewBusyWorkerIds),
+    [crewBusyWorkerIds]
+  );
+
+  useEffect(() => {
+    if (activeModal !== 'crew') {
+      setCrewBusyWorkerIds([]);
+      return;
+    }
+    if (!selectedTask || selectedTask.concurrent_allowed) {
+      setCrewBusyWorkerIds([]);
+      return;
+    }
+    if (crewWorkers.length === 0) {
+      setCrewBusyWorkerIds([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchBusyWorkers = async () => {
+      try {
+        const data = await apiRequest<{ worker_ids?: number[] }>(
+          '/api/worker-tasks/busy-workers',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              worker_ids: crewWorkers.map((item) => item.id),
+              exclude_task_instance_id: selectedTask.task_instance_id ?? null,
+            }),
+          }
+        );
+        if (cancelled) {
+          return;
+        }
+        const busyIds = data.worker_ids ?? [];
+        setCrewBusyWorkerIds(busyIds);
+        if (busyIds.length > 0) {
+          setCrewSelection((prev) => {
+            const selfId = worker?.id;
+            return prev.filter((id) => id === selfId || !busyIds.includes(id));
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setCrewBusyWorkerIds([]);
+        }
+      }
+    };
+    fetchBusyWorkers();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeModal, crewWorkers, selectedTask, worker?.id]);
+
   const toggleCrewWorker = (workerId: number) => {
+    if (worker?.id && workerId === worker.id) {
+      return;
+    }
+    if (
+      selectedTask &&
+      !selectedTask.concurrent_allowed &&
+      crewBusyWorkerIdSet.has(workerId)
+    ) {
+      return;
+    }
     setCrewSelection((prev) =>
       prev.includes(workerId) ? prev.filter((id) => id !== workerId) : [...prev, workerId]
     );
@@ -1851,6 +1926,8 @@ const StationWorkspace: React.FC = () => {
         concurrencyAction: 'starting',
       })
     : '';
+  const crewBusyCount =
+    selectedTask && !selectedTask.concurrent_allowed ? crewBusyWorkerIds.length : 0;
 
   if (loading) {
     return (
@@ -2429,6 +2506,11 @@ const StationWorkspace: React.FC = () => {
                 {crewStartBlockTitle}
               </div>
             )}
+            {crewBusyCount > 0 && (
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Hay trabajadores con otra tarea activa. No se pueden agregar al equipo.
+              </div>
+            )}
             <input
               className="mt-4 w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-sm focus:border-blue-500 focus:outline-none"
               placeholder="Buscar trabajadores"
@@ -2442,20 +2524,44 @@ const StationWorkspace: React.FC = () => {
                     Equipo regular
                   </p>
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {crewGroups.regularCrew.map((crewWorker) => (
-                      <label
-                        key={crewWorker.id}
-                        className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/40 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                          checked={crewSelection.includes(crewWorker.id)}
-                          onChange={() => toggleCrewWorker(crewWorker.id)}
-                        />
-                        {formatWorkerDisplayName(crewWorker)}
-                      </label>
-                    ))}
+                    {crewGroups.regularCrew.map((crewWorker) => {
+                      const crewWorkerBusy =
+                        !selectedTask.concurrent_allowed &&
+                        crewBusyWorkerIdSet.has(crewWorker.id);
+                      const crewWorkerIsSelf = crewWorker.id === worker?.id;
+                      return (
+                        <label
+                          key={crewWorker.id}
+                          className={clsx(
+                            'flex items-center gap-3 rounded-xl border px-3 py-2 text-sm font-semibold',
+                            crewWorkerBusy
+                              ? 'cursor-not-allowed border-rose-200 bg-rose-50/50 text-rose-700'
+                              : 'border-blue-100 bg-blue-50/40 text-gray-700 hover:border-blue-200'
+                          )}
+                          title={
+                            crewWorkerIsSelf
+                              ? 'Siempre incluido.'
+                              : crewWorkerBusy
+                              ? 'Trabajador ocupado en otra tarea activa.'
+                              : undefined
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                            checked={crewSelection.includes(crewWorker.id)}
+                            onChange={() => toggleCrewWorker(crewWorker.id)}
+                            disabled={crewWorkerBusy || crewWorkerIsSelf}
+                          />
+                          <span className="flex-1">{formatWorkerDisplayName(crewWorker)}</span>
+                          {crewWorkerBusy && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-600">
+                              Ocupado
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2466,20 +2572,44 @@ const StationWorkspace: React.FC = () => {
                     Asignados a la estacion
                   </p>
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {crewGroups.stationAssigned.map((crewWorker) => (
-                      <label
-                        key={crewWorker.id}
-                        className="flex items-center gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                          checked={crewSelection.includes(crewWorker.id)}
-                          onChange={() => toggleCrewWorker(crewWorker.id)}
-                        />
-                        {formatWorkerDisplayName(crewWorker)}
-                      </label>
-                    ))}
+                    {crewGroups.stationAssigned.map((crewWorker) => {
+                      const crewWorkerBusy =
+                        !selectedTask.concurrent_allowed &&
+                        crewBusyWorkerIdSet.has(crewWorker.id);
+                      const crewWorkerIsSelf = crewWorker.id === worker?.id;
+                      return (
+                        <label
+                          key={crewWorker.id}
+                          className={clsx(
+                            'flex items-center gap-3 rounded-xl border px-3 py-2 text-sm font-semibold',
+                            crewWorkerBusy
+                              ? 'cursor-not-allowed border-rose-200 bg-rose-50/50 text-rose-700'
+                              : 'border-gray-200 text-gray-700 hover:border-blue-200'
+                          )}
+                          title={
+                            crewWorkerIsSelf
+                              ? 'Siempre incluido.'
+                              : crewWorkerBusy
+                              ? 'Trabajador ocupado en otra tarea activa.'
+                              : undefined
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                            checked={crewSelection.includes(crewWorker.id)}
+                            onChange={() => toggleCrewWorker(crewWorker.id)}
+                            disabled={crewWorkerBusy || crewWorkerIsSelf}
+                          />
+                          <span className="flex-1">{formatWorkerDisplayName(crewWorker)}</span>
+                          {crewWorkerBusy && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-600">
+                              Ocupado
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2490,20 +2620,44 @@ const StationWorkspace: React.FC = () => {
                     Otros trabajadores
                   </p>
                   <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {crewGroups.others.map((crewWorker) => (
-                      <label
-                        key={crewWorker.id}
-                        className="flex items-center gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-blue-200"
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600"
-                          checked={crewSelection.includes(crewWorker.id)}
-                          onChange={() => toggleCrewWorker(crewWorker.id)}
-                        />
-                        {formatWorkerDisplayName(crewWorker)}
-                      </label>
-                    ))}
+                    {crewGroups.others.map((crewWorker) => {
+                      const crewWorkerBusy =
+                        !selectedTask.concurrent_allowed &&
+                        crewBusyWorkerIdSet.has(crewWorker.id);
+                      const crewWorkerIsSelf = crewWorker.id === worker?.id;
+                      return (
+                        <label
+                          key={crewWorker.id}
+                          className={clsx(
+                            'flex items-center gap-3 rounded-xl border px-3 py-2 text-sm font-semibold',
+                            crewWorkerBusy
+                              ? 'cursor-not-allowed border-rose-200 bg-rose-50/50 text-rose-700'
+                              : 'border-gray-200 text-gray-700 hover:border-blue-200'
+                          )}
+                          title={
+                            crewWorkerIsSelf
+                              ? 'Siempre incluido.'
+                              : crewWorkerBusy
+                              ? 'Trabajador ocupado en otra tarea activa.'
+                              : undefined
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                            checked={crewSelection.includes(crewWorker.id)}
+                            onChange={() => toggleCrewWorker(crewWorker.id)}
+                            disabled={crewWorkerBusy || crewWorkerIsSelf}
+                          />
+                          <span className="flex-1">{formatWorkerDisplayName(crewWorker)}</span>
+                          {crewWorkerBusy && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-600">
+                              Ocupado
+                            </span>
+                          )}
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2523,9 +2677,14 @@ const StationWorkspace: React.FC = () => {
               </button>
               <button
                 onClick={() =>
-                  handleStart(selectedTask, selectedTaskWorkItem, crewSelection, {
+                  handleStart(
+                    selectedTask,
+                    selectedTaskWorkItem,
+                    ensureSelfInCrewSelection(crewSelection),
+                    {
                     returnModal: 'crew',
-                  })
+                  }
+                  )
                 }
                 className={clsx(
                   'flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-white',
