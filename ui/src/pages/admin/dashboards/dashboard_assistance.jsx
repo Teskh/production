@@ -28,6 +28,7 @@ const MONTH_NAMES = [
 const DETAIL_TABS = [
   { id: 'timeline', label: 'Linea de tiempo' },
   { id: 'monthly', label: 'Asistencia mensual' },
+  { id: 'range', label: 'Indicadores rango' },
 ];
 
 const DATE_KEYS = ['Fecha', 'fecha', 'Date', 'date', 'Dia', 'dia', 'Day', 'day'];
@@ -212,40 +213,94 @@ const formatSeconds = (seconds) => {
   return formatMinutesDetailed(seconds / 60);
 };
 
+const formatPercent = (value, digits = 0) => {
+  if (!Number.isFinite(value)) return '-';
+  const factor = 10 ** digits;
+  return `${Math.round(value * 100 * factor) / factor}%`;
+};
+
+const firstNamePart = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return '';
+  return trimmed.split(/\s+/)[0] ?? '';
+};
+
+const surnamePart = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return '';
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) return parts[0] ?? '';
+  return parts[parts.length - 2] ?? '';
+};
+
+const formatWorkerDisplayName = (worker) => {
+  if (!worker) return '';
+  const first = firstNamePart(worker.first_name ?? '');
+  const last = surnamePart(worker.last_name ?? '');
+  return [first, last].filter(Boolean).join(' ');
+};
+
+const formatNameFromString = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return '';
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return parts[0] ?? '';
+  const first = parts[0] ?? '';
+  const last = surnamePart(parts.slice(1).join(' '));
+  return [first, last].filter(Boolean).join(' ');
+};
+
+const formatWorkerName = (worker) => {
+  if (!worker) return '';
+  if (typeof worker === 'string') return formatNameFromString(worker);
+  if (typeof worker === 'object') {
+    if (worker.first_name || worker.last_name) {
+      return formatWorkerDisplayName(worker);
+    }
+    if (typeof worker.name === 'string') {
+      return formatNameFromString(worker.name);
+    }
+  }
+  return '';
+};
+
 const useContainerWidth = () => {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
-  const [ready, setReady] = useState(false);
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => forceUpdate((n) => n + 1), 50);
+    return () => clearTimeout(t);
+  }, []);
 
   useLayoutEffect(() => {
     if (!ref.current) return undefined;
     const element = ref.current;
     const update = () => {
       const w = element.clientWidth || 0;
-      if (w > 0) {
-        setWidth(w);
-        setReady(true);
-      }
+      if (w > 0) setWidth(w);
     };
     update();
     const frame = window.requestAnimationFrame(update);
-    const timeout1 = window.setTimeout(update, 50);
-    const timeout2 = window.setTimeout(update, 150);
-    const timeout3 = window.setTimeout(update, 300);
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
+    const t1 = window.setTimeout(update, 20);
+    const t2 = window.setTimeout(update, 100);
+    let observer = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(update);
+      observer.observe(element);
+    }
     window.addEventListener('resize', update);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout1);
-      window.clearTimeout(timeout2);
-      window.clearTimeout(timeout3);
-      observer.disconnect();
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      if (observer) observer.disconnect();
       window.removeEventListener('resize', update);
     };
-  }, []);
+  });
 
-  return { ref, width, ready };
+  return { ref, width };
 };
 
 const parseDateOnly = (value) => {
@@ -334,12 +389,13 @@ const truncateLabel = (text, maxLength = 40) => {
   return `${text.slice(0, maxLength - 1)}…`;
 };
 
-const taskDisplayLabel = (task, maxLength = 40) => {
+const taskFullLabel = (task) => {
   const name = task?.task_definition_name || 'Tarea';
   const context = taskContextLabel(task);
-  const full = context && context !== '-' ? `${name} · ${context}` : name;
-  return truncateLabel(full, maxLength);
+  return context && context !== '-' ? `${name} · ${context}` : name;
 };
+
+const taskDisplayLabel = (task, maxLength = 28) => truncateLabel(taskFullLabel(task), maxLength);
 
 const normalizeIntervals = (intervals) => {
   const sorted = intervals
@@ -373,15 +429,18 @@ const buildDayBounds = (day) => {
   const baseDate = parseDateOnly(day?.date);
   if (!baseDate) return null;
   const baseKey = toDateOnly(baseDate);
-  const dayStart = new Date(baseDate);
-  dayStart.setHours(0, 0, 0, 0);
+  const firstTaskStart = parseDateTime(day?.activity?.firstTaskStart);
   const defaultStart = new Date(baseDate);
   defaultStart.setHours(8, 0, 0, 0);
+  const dayStart = new Date(defaultStart);
   const defaultEnd = new Date(baseDate);
   defaultEnd.setHours(Math.floor(REGULAR_END_MINUTES / 60), REGULAR_END_MINUTES % 60, 0, 0);
   const logoff = parseDateTime(day?.attendance?.exit);
   const logoffSameDay = logoff && baseKey && toDateOnly(logoff) === baseKey;
   let dayEnd = logoffSameDay ? logoff : defaultEnd;
+  if (firstTaskStart && dayEnd && dayEnd < firstTaskStart) {
+    dayEnd = defaultEnd;
+  }
   if (!dayEnd || dayEnd <= dayStart) {
     dayEnd = defaultEnd;
   }
@@ -401,7 +460,7 @@ const buildTaskIntervals = (task, windowStart, windowEnd) => {
   const start = clampToWindow(rawStart, windowStart, windowEnd);
   const boundedEnd = clampToWindow(end, windowStart, windowEnd);
   if (!start || !boundedEnd || boundedEnd <= start) return null;
-  const pauseIntervals = (task?.pauses || [])
+  const pauseSegments = (task?.pauses || [])
     .map((pause) => {
       const pauseStart = parseDateTime(pause?.paused_at);
       const pauseEnd = parseDateTime(pause?.resumed_at) || end;
@@ -409,10 +468,19 @@ const buildTaskIntervals = (task, windowStart, windowEnd) => {
       const boundedStart = pauseStart < start ? start : pauseStart;
       const boundedPauseEnd = pauseEnd > boundedEnd ? boundedEnd : pauseEnd;
       if (boundedPauseEnd <= boundedStart) return null;
-      return { start: boundedStart, end: boundedPauseEnd };
+      return {
+        start: boundedStart,
+        end: boundedPauseEnd,
+        reason: pause?.reason ?? pause?.motivo ?? null,
+        worker: formatWorkerName(pause?.worker ?? pause?.worker_name ?? null),
+        rawStart: pauseStart,
+        rawEnd: pauseEnd,
+      };
     })
     .filter(Boolean);
-  const mergedPauses = normalizeIntervals(pauseIntervals);
+  const mergedPauses = normalizeIntervals(
+    pauseSegments.map((interval) => ({ start: interval.start, end: interval.end }))
+  );
   const activeIntervals = [];
   let cursor = start;
   mergedPauses.forEach((pause) => {
@@ -427,7 +495,7 @@ const buildTaskIntervals = (task, windowStart, windowEnd) => {
   return {
     start,
     end: boundedEnd,
-    pauses: mergedPauses,
+    pauses: pauseSegments,
     active: activeIntervals,
   };
 };
@@ -446,6 +514,30 @@ const mergeIntervals = (intervals) => {
     }
   }
   return merged;
+};
+
+const sumIntervalsSeconds = (intervals) =>
+  intervals.reduce((acc, interval) => {
+    if (!interval?.start || !interval?.end) return acc;
+    const span = (interval.end - interval.start) / 1000;
+    if (!Number.isFinite(span) || span <= 0) return acc;
+    return acc + span;
+  }, 0);
+
+const subtractInterval = (intervals, cut) => {
+  if (!cut?.start || !cut?.end || cut.end <= cut.start) return intervals.slice();
+  return intervals.flatMap((interval) => {
+    if (!interval?.start || !interval?.end || interval.end <= interval.start) return [];
+    if (interval.end <= cut.start || interval.start >= cut.end) return [interval];
+    const output = [];
+    if (interval.start < cut.start) {
+      output.push({ start: interval.start, end: cut.start });
+    }
+    if (interval.end > cut.end) {
+      output.push({ start: cut.end, end: interval.end });
+    }
+    return output;
+  });
 };
 
 const buildIdleGaps = (intervals, windowStart, windowEnd) => {
@@ -478,6 +570,143 @@ const buildLunchBreak = (baseDate, windowStart, windowEnd) => {
   const boundedEnd = windowEnd && end > windowEnd ? windowEnd : end;
   if (boundedEnd <= boundedStart) return null;
   return { start: boundedStart, end: boundedEnd };
+};
+
+const buildDailyIndicators = (day) => {
+  if (!day) return null;
+  const dayBounds = buildDayBounds(day);
+  if (!dayBounds) return null;
+  const { baseDate, dayStart, dayEnd } = dayBounds;
+  const entry =
+    parseDateTime(day?.attendance?.entry) || parseDateTime(day?.activity?.firstTaskStart);
+  const exit =
+    parseDateTime(day?.attendance?.exit) || parseDateTime(day?.activity?.lastTaskEnd);
+  if (!entry || !exit || exit <= entry) return null;
+  const presenceStart = entry < dayStart ? dayStart : entry;
+  const presenceEnd = exit > dayEnd ? dayEnd : exit;
+  if (!presenceStart || !presenceEnd || presenceEnd <= presenceStart) return null;
+
+  const adjustedStart = new Date(presenceStart.getTime() + 30 * 60 * 1000);
+  const adjustedEnd = new Date(presenceEnd.getTime() - 30 * 60 * 1000);
+  if (adjustedEnd <= adjustedStart) return null;
+
+  const lunchBreak = buildLunchBreak(baseDate, adjustedStart, adjustedEnd);
+  const lunchSeconds = lunchBreak ? (lunchBreak.end - lunchBreak.start) / 1000 : 0;
+  const presenceSeconds = Math.max(0, (adjustedEnd - adjustedStart) / 1000);
+  const presenceNetSeconds = Math.max(0, presenceSeconds - lunchSeconds);
+
+  const tasks = Array.isArray(day.activity?.tasks) ? day.activity.tasks : [];
+  const activeIntervals = [];
+  let overtimeSeconds = 0;
+  let expectedSecondsTotal = 0;
+
+  tasks.forEach((task) => {
+    const intervals = buildTaskIntervals(task, adjustedStart, adjustedEnd);
+    if (!intervals) return;
+    const expectedMinutesValue = Number.isFinite(Number(task.expected_minutes))
+      ? Number(task.expected_minutes)
+      : null;
+    const activeWithoutLunch = lunchBreak
+      ? subtractInterval(intervals.active, lunchBreak)
+      : intervals.active.slice();
+    const activeSeconds = sumIntervalsSeconds(activeWithoutLunch);
+    if (activeWithoutLunch.length) {
+      activeIntervals.push(...activeWithoutLunch);
+      if (expectedMinutesValue != null) {
+        const expectedSeconds = expectedMinutesValue * 60;
+        expectedSecondsTotal += expectedSeconds;
+        overtimeSeconds += Math.max(0, activeSeconds - expectedSeconds);
+      }
+    }
+  });
+
+  const activeUnionSeconds = sumIntervalsSeconds(mergeIntervals(activeIntervals));
+  const idleSeconds = Math.max(0, presenceNetSeconds - activeUnionSeconds);
+  const idleOverrunSeconds = idleSeconds + overtimeSeconds;
+  const productiveSeconds = Math.max(0, presenceNetSeconds - idleOverrunSeconds);
+
+  return {
+    presenceSeconds,
+    presenceNetSeconds,
+    lunchSeconds,
+    idleSeconds,
+    overtimeSeconds,
+    expectedSecondsTotal,
+    idleOverrunSeconds,
+    productiveSeconds,
+    idleOverrunRatio: presenceNetSeconds > 0 ? idleOverrunSeconds / presenceNetSeconds : null,
+    productiveRatio: presenceNetSeconds > 0 ? productiveSeconds / presenceNetSeconds : null,
+    expectedRatio: presenceNetSeconds > 0 ? expectedSecondsTotal / presenceNetSeconds : null,
+  };
+};
+
+const buildRangeIndicators = (combinedDays) => {
+  const empty = {
+    rows: [],
+    totals: {
+      presenceNetSeconds: 0,
+      productiveSeconds: 0,
+      expectedSecondsTotal: 0,
+      idleOverrunSeconds: 0,
+      idleSeconds: 0,
+      overtimeSeconds: 0,
+    },
+    totalProductiveRatio: null,
+    totalExpectedRatio: null,
+    startDate: '',
+    endDate: '',
+    daysWithData: 0,
+    daysTotal: combinedDays.length,
+  };
+  if (!combinedDays.length) return empty;
+
+  const entries = combinedDays
+    .map((day) => ({ day, dateObj: parseDateOnly(day.date) }))
+    .filter((item) => item.dateObj)
+    .sort((a, b) => a.dateObj - b.dateObj);
+  if (!entries.length) return empty;
+
+  const totals = { ...empty.totals };
+  const rows = [];
+
+  entries.forEach(({ day, dateObj }) => {
+    const indicators = buildDailyIndicators(day);
+    if (!indicators || !Number.isFinite(indicators.productiveRatio)) return;
+    rows.push({
+      key: day.date,
+      label: dateObj.getDate(),
+      dateObj,
+      productiveRatio: indicators.productiveRatio,
+      expectedRatio: indicators.expectedRatio,
+      indicators,
+    });
+    totals.presenceNetSeconds += indicators.presenceNetSeconds || 0;
+    totals.productiveSeconds += indicators.productiveSeconds || 0;
+    totals.expectedSecondsTotal += indicators.expectedSecondsTotal || 0;
+    totals.idleOverrunSeconds += indicators.idleOverrunSeconds || 0;
+    totals.idleSeconds += indicators.idleSeconds || 0;
+    totals.overtimeSeconds += indicators.overtimeSeconds || 0;
+  });
+
+  if (!rows.length) return empty;
+
+  const totalProductiveRatio =
+    totals.presenceNetSeconds > 0 ? totals.productiveSeconds / totals.presenceNetSeconds : null;
+  const totalExpectedRatio =
+    totals.presenceNetSeconds > 0
+      ? totals.expectedSecondsTotal / totals.presenceNetSeconds
+      : null;
+
+  return {
+    rows,
+    totals,
+    totalProductiveRatio,
+    totalExpectedRatio,
+    startDate: rows[0].key,
+    endDate: rows[rows.length - 1].key,
+    daysWithData: rows.length,
+    daysTotal: combinedDays.length,
+  };
 };
 
 const buildMonthlyDataset = (combinedDays, anchorDate) => {
@@ -764,7 +993,7 @@ const normalizeAttendance = (attendanceRaw) => {
 };
 
 const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
-  const { ref, width, ready } = useContainerWidth();
+  const { ref, width } = useContainerWidth();
   const dataset = useMemo(
     () => buildMonthlyDataset(combinedDays, anchorDate),
     [combinedDays, anchorDate]
@@ -776,12 +1005,6 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
       <p className="mt-4 text-sm text-[var(--ink-muted)]">
         No hay marcajes con entrada y salida registrados para este mes.
       </p>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div ref={ref} className="mt-4 w-full min-h-[280px]" />
     );
   }
 
@@ -934,8 +1157,184 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
   );
 };
 
+const RangeIndicatorsChart = ({ combinedDays }) => {
+  const { ref, width } = useContainerWidth();
+  const dataset = useMemo(() => buildRangeIndicators(combinedDays), [combinedDays]);
+  const {
+    rows,
+    totals,
+    totalProductiveRatio,
+    totalExpectedRatio,
+    startDate,
+    endDate,
+    daysWithData,
+    daysTotal,
+  } = dataset;
+
+  if (!rows.length) {
+    return (
+      <p className="mt-4 text-sm text-[var(--ink-muted)]">
+        No hay suficientes dias con presencia para calcular indicadores en este rango.
+      </p>
+    );
+  }
+
+  const chartWidth = Math.max(360, width || 900);
+  const chartHeight = 160;
+  const topPad = 18;
+  const bottomPad = 40;
+  const leftPad = 48;
+  const rightPad = 16;
+  const innerWidth = Math.max(1, chartWidth - leftPad - rightPad);
+  const axisY = topPad + chartHeight;
+  const step = rows.length > 1 ? innerWidth / (rows.length - 1) : 0;
+  const clampRatio = (value) => Math.max(0, Math.min(1, value ?? 0));
+  const xAt = (idx) => (rows.length > 1 ? leftPad + step * idx : leftPad + innerWidth / 2);
+  const yAt = (ratio) => topPad + (1 - clampRatio(ratio)) * chartHeight;
+
+  const buildPath = (key) => {
+    let path = '';
+    rows.forEach((row, idx) => {
+      const ratio = row[key];
+      if (!Number.isFinite(ratio)) return;
+      const x = xAt(idx);
+      const y = yAt(ratio);
+      path += path ? ` L ${x} ${y}` : `M ${x} ${y}`;
+    });
+    return path;
+  };
+
+  const productivePath = buildPath('productiveRatio');
+  const expectedPath = buildPath('expectedRatio');
+  const labelStep = rows.length > 10 ? Math.ceil(rows.length / 8) : 1;
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--ink-muted)]">
+        <span>{startDate && endDate ? `Rango ${startDate} → ${endDate}` : 'Rango'}</span>
+        <span>
+          {daysWithData} de {daysTotal} dias con datos
+        </span>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div
+          className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+          title="(Presencia sin colacion - (ocioso + extra)) / presencia sin colacion"
+        >
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+            Tiempo productivo (rango)
+          </p>
+          <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+            {formatPercent(totalProductiveRatio)}
+          </p>
+          <p className="text-xs text-[var(--ink-muted)]">
+            Improductivo: {formatSeconds(totals.idleOverrunSeconds)} · Ocioso:{' '}
+            {formatSeconds(totals.idleSeconds)} · Extra: {formatSeconds(totals.overtimeSeconds)}
+          </p>
+          <p className="text-xs text-[var(--ink-muted)]">
+            Sobre {formatSeconds(totals.presenceNetSeconds)} sin colacion
+          </p>
+        </div>
+        <div
+          className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+          title="Suma de tiempos esperados / presencia sin colacion"
+        >
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+            Cobertura esperada (rango)
+          </p>
+          <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+            {formatPercent(totalExpectedRatio)}
+          </p>
+          <p className="text-xs text-[var(--ink-muted)]">
+            Esperado: {formatSeconds(totals.expectedSecondsTotal)}
+          </p>
+          <p className="text-xs text-[var(--ink-muted)]">
+            Sobre {formatSeconds(totals.presenceNetSeconds)} sin colacion
+          </p>
+        </div>
+      </div>
+      <div ref={ref} className="w-full">
+        <svg width={chartWidth} height={topPad + chartHeight + bottomPad} role="img">
+          <rect x={leftPad} y={topPad} width={innerWidth} height={chartHeight} fill="#f8fafc" />
+          {[0, 0.5, 1].map((tick) => {
+            const y = yAt(tick);
+            return (
+              <g key={`tick-${tick}`}>
+                <line
+                  x1={leftPad}
+                  y1={y}
+                  x2={chartWidth - rightPad}
+                  y2={y}
+                  stroke={tick === 0 || tick === 1 ? '#e5e7eb' : '#eef2f7'}
+                />
+                <text x={leftPad - 6} y={y + 4} textAnchor="end" fontSize={11} fill="#64748b">
+                  {Math.round(tick * 100)}%
+                </text>
+              </g>
+            );
+          })}
+          {productivePath && (
+            <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={2} />
+          )}
+          {expectedPath && (
+            <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={2} />
+          )}
+          {rows.map((row, idx) => {
+            const productY = yAt(row.productiveRatio);
+            const expectedY = yAt(row.expectedRatio);
+            const x = xAt(idx);
+            const tooltip = `${row.key}: ${formatPercent(row.productiveRatio)} productivo · ${formatPercent(
+              row.expectedRatio
+            )} cobertura`;
+            return (
+              <g key={row.key}>
+                <title>{tooltip}</title>
+                <circle cx={x} cy={productY} r={3} fill="#16a34a" />
+                <circle cx={x} cy={expectedY} r={3} fill="#2563eb" />
+                {idx % labelStep === 0 && (
+                  <text
+                    x={x}
+                    y={axisY + 16}
+                    textAnchor="middle"
+                    fontSize={11}
+                    fill="#334155"
+                  >
+                    {row.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          <line
+            x1={leftPad}
+            y1={axisY}
+            x2={chartWidth - rightPad}
+            y2={axisY}
+            stroke="#e5e7eb"
+          />
+        </svg>
+      </div>
+      <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block h-2 w-4 rounded-sm bg-[#16a34a]" />
+          Tiempo productivo
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block h-2 w-4 rounded-sm bg-[#2563eb]" />
+          Cobertura esperada
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const TaskTimeline = ({ day }) => {
-  const { ref, width, ready } = useContainerWidth();
+  const { ref, width } = useContainerWidth();
+  const [tooltip, setTooltip] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    setTooltip(null);
+  }, [day]);
   const timeline = useMemo(() => {
     if (!day) return null;
     const dayBounds = buildDayBounds(day);
@@ -956,10 +1355,12 @@ const TaskTimeline = ({ day }) => {
         return {
           id: task.task_instance_id || index,
           label: taskDisplayLabel(task),
+          context: taskContextLabel(task),
           active: intervals.active,
           pauses: intervals.pauses,
           overlays,
           expectedMinutes,
+          raw: task,
         };
       })
       .filter(Boolean)
@@ -1042,17 +1443,24 @@ const TaskTimeline = ({ day }) => {
     };
   }, [day]);
 
+  const showTooltip = (payload) => (event) => {
+    setTooltip(payload);
+    setTooltipPosition({ x: event.clientX, y: event.clientY });
+  };
+
+  const moveTooltip = (event) => {
+    setTooltipPosition({ x: event.clientX, y: event.clientY });
+  };
+
+  const hideTooltip = () => {
+    setTooltip(null);
+  };
+
   if (!timeline || !timeline.tasks.length) {
     return (
       <p className="mt-4 text-sm text-[var(--ink-muted)]">
         No se registraron tareas en este dia.
       </p>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div ref={ref} className="mt-4 w-full min-h-[200px]" />
     );
   }
 
@@ -1071,6 +1479,18 @@ const TaskTimeline = ({ day }) => {
     padTop + padBottom + timeline.tasks.length * (rowHeight + rowGap);
   const axisY = svgHeight - padBottom;
   const rowY = (index) => padTop + index * (rowHeight + rowGap);
+  const tooltipLabelMap = {
+    active: 'Trabajo activo',
+    pause: 'Pausa',
+    overrun: 'Minutos extra',
+    saved: 'Minutos ahorrados',
+    idle: 'Tiempo ocioso',
+    lunch: 'Colación',
+  };
+  const tooltipDurationSeconds =
+    tooltip?.start && tooltip?.end ? Math.max(0, Math.round((tooltip.end - tooltip.start) / 1000)) : null;
+  const tooltipTitle =
+    tooltip?.title || tooltip?.taskName || tooltipLabelMap[tooltip?.type] || 'Detalle';
 
   return (
     <div className="mt-4">
@@ -1090,6 +1510,14 @@ const TaskTimeline = ({ day }) => {
                 height={axisY - padTop}
                 fill="#fde68a"
                 opacity={0.3}
+                onMouseEnter={showTooltip({
+                  type: 'lunch',
+                  title: 'Colación',
+                  start: timeline.lunchBreak.start,
+                  end: timeline.lunchBreak.end,
+                })}
+                onMouseMove={moveTooltip}
+                onMouseLeave={hideTooltip}
               />
               <text
                 x={
@@ -1121,6 +1549,14 @@ const TaskTimeline = ({ day }) => {
                   height={axisY - padTop}
                   fill="#94a3b8"
                   opacity={0.15}
+                  onMouseEnter={showTooltip({
+                    type: 'idle',
+                    title: 'Tiempo ocioso',
+                    start: gap.start,
+                    end: gap.end,
+                  })}
+                  onMouseMove={moveTooltip}
+                  onMouseLeave={hideTooltip}
                 />
                 {widthGap > 30 && (
                   <text
@@ -1172,10 +1608,28 @@ const TaskTimeline = ({ day }) => {
 
           {timeline.tasks.map((task, idx) => {
             const y = rowY(idx);
+            const fullLabel = taskFullLabel(task.raw);
+            const basePayload = {
+              title: fullLabel,
+              context: task.context,
+              stationName: task.raw?.station_name,
+              taskName: task.raw?.task_definition_name,
+              expectedMinutes: task.expectedMinutes,
+            };
             return (
               <g key={task.id}>
-                <text x={12} y={y + rowHeight - 4} fontSize={12} fill="#0f172a">
+                <text
+                  x={12}
+                  y={y + rowHeight - 4}
+                  fontSize={12}
+                  fill="#0f172a"
+                  onMouseEnter={showTooltip({ ...basePayload, type: 'label' })}
+                  onMouseMove={moveTooltip}
+                  onMouseLeave={hideTooltip}
+                  style={{ cursor: 'help' }}
+                >
                   {task.label}
+                  <title>{fullLabel}</title>
                 </text>
                 {task.active.map((interval, j) => {
                   const x1 = xAt(interval.start);
@@ -1189,6 +1643,14 @@ const TaskTimeline = ({ day }) => {
                       height={rowHeight}
                       fill="#3b82f6"
                       opacity={0.85}
+                      onMouseEnter={showTooltip({
+                        ...basePayload,
+                        type: 'active',
+                        start: interval.start,
+                        end: interval.end,
+                      })}
+                      onMouseMove={moveTooltip}
+                      onMouseLeave={hideTooltip}
                     />
                   );
                 })}
@@ -1205,6 +1667,16 @@ const TaskTimeline = ({ day }) => {
                       height={rowHeight}
                       fill="#f59e0b"
                       opacity={0.7}
+                      onMouseEnter={showTooltip({
+                        ...basePayload,
+                        type: 'pause',
+                        start: interval.start,
+                        end: interval.end,
+                        pauseReason: interval.reason,
+                        pauseWorker: interval.worker,
+                      })}
+                      onMouseMove={moveTooltip}
+                      onMouseLeave={hideTooltip}
                     />
                   );
                 })}
@@ -1220,6 +1692,14 @@ const TaskTimeline = ({ day }) => {
                       height={rowHeight}
                       fill="#ef4444"
                       opacity={0.5}
+                      onMouseEnter={showTooltip({
+                        ...basePayload,
+                        type: 'overrun',
+                        start: interval.start,
+                        end: interval.end,
+                      })}
+                      onMouseMove={moveTooltip}
+                      onMouseLeave={hideTooltip}
                     />
                   );
                 })}
@@ -1235,6 +1715,14 @@ const TaskTimeline = ({ day }) => {
                       height={rowHeight}
                       fill="#22c55e"
                       opacity={0.35}
+                      onMouseEnter={showTooltip({
+                        ...basePayload,
+                        type: 'saved',
+                        start: interval.start,
+                        end: interval.end,
+                      })}
+                      onMouseMove={moveTooltip}
+                      onMouseLeave={hideTooltip}
                     />
                   );
                 })}
@@ -1243,6 +1731,56 @@ const TaskTimeline = ({ day }) => {
           })}
         </svg>
       </div>
+      {tooltip && (
+        <div
+          style={{
+            position: 'fixed',
+            top: Math.max(tooltipPosition.y - 12, 24),
+            left: tooltipPosition.x,
+            background: '#fff',
+            border: '1px solid #ddd',
+            borderRadius: 6,
+            boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+            padding: 12,
+            width: 260,
+            maxWidth: '90vw',
+            zIndex: 30,
+            pointerEvents: 'none',
+            transform: 'translate(-50%, -100%)',
+          }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+            {tooltipLabelMap[tooltip.type] || 'Detalle'}
+          </div>
+          <div className="mt-1 text-sm font-semibold text-[var(--ink)]">{tooltipTitle}</div>
+          {tooltip.context && (
+            <div className="mt-1 text-xs text-[var(--ink)]">Contexto: {tooltip.context}</div>
+          )}
+          {tooltip.stationName && (
+            <div className="text-xs text-[var(--ink)]">Estación: {tooltip.stationName}</div>
+          )}
+          {tooltip.start && tooltip.end && (
+            <div className="mt-1 text-xs text-[var(--ink)]">
+              {formatTime(tooltip.start)} → {formatTime(tooltip.end)}
+            </div>
+          )}
+          <div className="text-xs text-[var(--ink)]">
+            Duración: {formatSeconds(tooltipDurationSeconds)}
+          </div>
+          {tooltip.type === 'pause' && (tooltip.pauseReason || tooltip.pauseWorker) && (
+            <div className="text-xs text-[var(--ink)]">
+              {tooltip.pauseWorker ? `Responsable: ${tooltip.pauseWorker}` : ''}
+              {tooltip.pauseWorker && tooltip.pauseReason ? ' · ' : ''}
+              {tooltip.pauseReason ? `Motivo: ${tooltip.pauseReason}` : ''}
+            </div>
+          )}
+          {Number.isFinite(tooltip.expectedMinutes) && (
+            <div className="text-xs text-[var(--ink)]">
+              Esperado: {formatMinutesDetailed(tooltip.expectedMinutes)}
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
         <span className="inline-flex items-center gap-2">
           <span className="inline-block h-2 w-4 rounded-sm bg-[#3b82f6]" />
@@ -1541,6 +2079,16 @@ const DashboardAssistance = () => {
     return null;
   };
 
+  const dailyIndicators = useMemo(
+    () => buildDailyIndicators(selectedDay),
+    [selectedDay]
+  );
+
+  const rangeIndicators = useMemo(
+    () => buildRangeIndicators(combinedDays),
+    [combinedDays]
+  );
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-black/5 bg-white/80 shadow-sm px-6 py-5">
@@ -1606,7 +2154,7 @@ const DashboardAssistance = () => {
                 </option>
                 {filteredWorkers.map((worker) => (
                   <option key={worker.id} value={worker.id}>
-                    {worker.first_name} {worker.last_name}
+                    {formatWorkerDisplayName(worker) || `${worker.first_name} ${worker.last_name}`}
                   </option>
                 ))}
               </select>
@@ -1788,20 +2336,74 @@ const DashboardAssistance = () => {
               </div>
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2">
+              <div
+                className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+                title="(Presencia sin colacion - (ocioso + extra)) / presencia sin colacion"
+              >
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Tiempo productivo
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                  {formatPercent(dailyIndicators?.productiveRatio)}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Improductivo: {formatSeconds(dailyIndicators?.idleOverrunSeconds)} · Ocioso:{' '}
+                  {formatSeconds(dailyIndicators?.idleSeconds)} · Extra:{' '}
+                  {formatSeconds(dailyIndicators?.overtimeSeconds)}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
+                </p>
+              </div>
+              <div
+                className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+                title="Suma de tiempos esperados / presencia sin colacion"
+              >
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Cobertura esperada
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                  {formatPercent(dailyIndicators?.expectedRatio)}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Esperado: {formatSeconds(dailyIndicators?.expectedSecondsTotal)}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
+                </p>
+              </div>
+            </div>
+
             <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                    {detailTab === 'monthly' ? 'Asistencia mensual' : 'Actividad del dia'}
+                    {detailTab === 'monthly'
+                      ? 'Asistencia mensual'
+                      : detailTab === 'range'
+                        ? 'Indicadores del rango'
+                        : 'Actividad del dia'}
                   </p>
                   <p className="text-sm text-[var(--ink)]">
-                    {detailTab === 'monthly' ? monthLabel || selectedDay.date : selectedDay.date}
+                    {detailTab === 'monthly'
+                      ? monthLabel || selectedDay.date
+                      : detailTab === 'range'
+                        ? rangeIndicators.startDate && rangeIndicators.endDate
+                          ? `${rangeIndicators.startDate} → ${rangeIndicators.endDate}`
+                          : selectedDay.date
+                        : selectedDay.date}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   {detailTab === 'timeline' && (
                     <p className="text-xs text-[var(--ink-muted)]">
                       {selectedDay.activity?.tasks?.length || 0} tareas
+                    </p>
+                  )}
+                  {detailTab === 'range' && (
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      {rangeIndicators.daysWithData} dias con datos
                     </p>
                   )}
                   <div className="flex rounded-full border border-black/10 bg-white p-1">
@@ -1828,12 +2430,15 @@ const DashboardAssistance = () => {
 
               {detailTab === 'monthly' ? (
                 <MonthlyAssistanceChart
+                  key="monthly"
                   combinedDays={combinedDays}
                   anchorDate={selectedDay.date}
                 />
+              ) : detailTab === 'range' ? (
+                <RangeIndicatorsChart key="range" combinedDays={combinedDays} />
               ) : (
                 <>
-                  <TaskTimeline day={selectedDay} />
+                  <TaskTimeline key="timeline" day={selectedDay} />
                   {selectedDay.activity?.tasks?.length ? (
                     <div className="mt-6 overflow-x-auto">
                       <table className="min-w-full text-left text-xs">
