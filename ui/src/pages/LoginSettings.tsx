@@ -181,6 +181,15 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     return map;
   }, [assemblyStations]);
 
+  useEffect(() => {
+    if (contextMode !== 'specific' || !specificType) {
+      return;
+    }
+    if (specificStations.length === 0) {
+      setSpecificType(null);
+    }
+  }, [contextMode, specificStations.length, specificType]);
+
   const handleAdminSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (adminSubmitting) {
@@ -496,7 +505,7 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                             : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                         }`}
                       >
-                        Secuencia de ensamble
+                        Armado & Terminaciones
                       </button>
                       <button
                         type="button"
