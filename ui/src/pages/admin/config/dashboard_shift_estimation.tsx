@@ -7,7 +7,6 @@ import {
   Timer,
   Users,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesShort } from '../../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -199,7 +198,6 @@ const coverageStyles: Record<CoverageDay['status'], { label: string; className: 
 };
 
 const DashboardShiftEstimation: React.FC = () => {
-  const { setHeader } = useAdminHeader();
   const autoComputeRef = useRef<string | null>(null);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedDate, setSelectedDate] = useState(getStoredDate);
@@ -214,13 +212,6 @@ const DashboardShiftEstimation: React.FC = () => {
   const [error, setError] = useState('');
   const [coverageError, setCoverageError] = useState('');
   const [computeMessage, setComputeMessage] = useState('');
-
-  useEffect(() => {
-    setHeader({
-      title: 'Estimacion de turnos por estacion',
-      kicker: 'Dashboards',
-    });
-  }, [setHeader]);
 
   useEffect(() => {
     autoComputeRef.current = null;
@@ -423,7 +414,7 @@ const DashboardShiftEstimation: React.FC = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Dashboards
+              Estaciones
             </p>
             <h1 className="font-display text-2xl text-[var(--ink)]">
               Estimacion de turnos por estacion

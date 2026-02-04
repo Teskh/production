@@ -75,16 +75,6 @@ const dashboards: DashboardCard[] = [
     icon: Timer,
   },
   {
-    id: 'shift-estimation',
-    name: 'Estimacion de turnos por estacion',
-    description:
-      'Infiere horarios de turno segun marcajes de entrada y salida por estacion.',
-    path: '/admin/dashboards/shift-estimation',
-    status: 'ready',
-    tags: ['Turnos', 'Estaciones', 'Personal'],
-    icon: Clock,
-  },
-  {
     id: 'assistance-activity',
     name: 'Asistencias y actividad',
     description:
