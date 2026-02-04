@@ -102,12 +102,10 @@ const aggregateStationRows = (workerSummaries) => {
     }));
 };
 
-const MetricsSparkline = ({ rows }) => {
-  if (!rows || !rows.length) return null;
-  const width = 280;
-  const height = 88;
-  const padX = 10;
-  const padY = 10;
+const CompactSparkline = ({ rows, width = 140, height = 36 }) => {
+  if (!rows || !rows.length) return <div style={{ width, height }} className="bg-slate-50 rounded" />;
+  const padX = 4;
+  const padY = 4;
   const innerWidth = width - padX * 2;
   const innerHeight = height - padY * 2;
   const step = rows.length > 1 ? innerWidth / (rows.length - 1) : 0;
@@ -131,39 +129,17 @@ const MetricsSparkline = ({ rows }) => {
   const expectedPath = buildPath('expectedRatio');
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="w-full"
-      height={height}
-      role="img"
-    >
-      <rect x={padX} y={padY} width={innerWidth} height={innerHeight} fill="#f8fafc" />
-      {productivePath && (
-        <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={2} />
-      )}
-      {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={2} />}
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img">
+      <rect x={padX} y={padY} width={innerWidth} height={innerHeight} fill="#f8fafc" rx={2} />
+      {productivePath && <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={1.5} />}
+      {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={1.5} />}
       {rows.map((row, idx) => {
-        const productY = yAt(row.productiveRatio);
-        const expectedY = yAt(row.expectedRatio);
         const x = xAt(idx);
-        const productValue = Number.isFinite(row.productiveRatio)
-          ? Math.round(row.productiveRatio * 100)
-          : null;
-        const expectedValue = Number.isFinite(row.expectedRatio)
-          ? Math.round(row.expectedRatio * 100)
-          : null;
-        const tooltip = `${row.key}: ${productValue != null ? `${productValue}%` : '—'} productivo · ${
-          expectedValue != null ? `${expectedValue}%` : '—'
-        } cobertura`;
         return (
           <g key={row.key}>
-            <title>{tooltip}</title>
-            {Number.isFinite(row.productiveRatio) && (
-              <circle cx={x} cy={productY} r={2.8} fill="#16a34a" />
-            )}
-            {Number.isFinite(row.expectedRatio) && (
-              <circle cx={x} cy={expectedY} r={2.8} fill="#2563eb" />
-            )}
+            <title>{`${row.key}: ${Number.isFinite(row.productiveRatio) ? Math.round(row.productiveRatio * 100) + '%' : '—'} prod · ${Number.isFinite(row.expectedRatio) ? Math.round(row.expectedRatio * 100) + '%' : '—'} cob`}</title>
+            {Number.isFinite(row.productiveRatio) && <circle cx={x} cy={yAt(row.productiveRatio)} r={2} fill="#16a34a" />}
+            {Number.isFinite(row.expectedRatio) && <circle cx={x} cy={yAt(row.expectedRatio)} r={2} fill="#2563eb" />}
           </g>
         );
       })}
@@ -423,257 +399,139 @@ const StationWideAssistanceTab = ({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-black/5 bg-white/80 px-6 py-5 shadow-sm">
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-black/5 bg-white/80 px-5 py-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Estaciones</p>
-            <h2 className="font-display text-xl text-[var(--ink)]">Vista por estación</h2>
-            <p className="mt-2 text-sm text-[var(--ink-muted)]">
-              Evolución de tiempo productivo y cobertura esperada por estación y trabajador.
+            <h2 className="font-display text-lg text-[var(--ink)]">Vista por estación</h2>
+            <p className="text-xs text-[var(--ink-muted)]">
+              Tiempo productivo y cobertura esperada por estación y trabajador.
             </p>
           </div>
-          <div className="min-w-[180px]">
-            <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              Rango
-            </label>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
+              <span className="inline-block h-2 w-3 rounded-sm bg-[#16a34a]" /> Productivo
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
+              <span className="inline-block h-2 w-3 rounded-sm bg-[#2563eb]" /> Cobertura
+            </span>
             <select
-              className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+              className="ml-3 rounded-lg border border-black/10 bg-white px-2 py-1 text-xs text-[var(--ink)]"
               value={rangeDays}
               onChange={(event) => setRangeDays(Number(event.target.value))}
             >
               {RANGE_OPTIONS.map((days) => (
-                <option key={days} value={days}>
-                  Ultimos {days} dias
-                </option>
+                <option key={days} value={days}>{days} dias</option>
               ))}
             </select>
           </div>
         </div>
       </div>
 
-      <div className="space-y-4">
-        {groupedStations.map((group) => {
-          const groupKey = group.key;
-          const groupWorkers = workersByGroup.get(groupKey) || [];
-          const groupWorkerCount = groupWorkers.length;
-          const stationCount = (group.stationIds || []).length;
-          const cache = groupCache[groupKey];
-          const isOpen = !!expandedGroups[groupKey];
-          const hasGroupWarnings =
-            Array.isArray(cache?.workers) &&
-            cache.workers.some(
-              (summary) =>
-                Array.isArray(summary.geovictoriaWarnings) &&
-                summary.geovictoriaWarnings.length > 0
-            );
+      <div className="rounded-2xl border border-black/5 bg-white/90 shadow-sm overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-black/5 bg-slate-50/80">
+              <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Estación</th>
+              <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Grafico</th>
+              <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Productivo</th>
+              <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Cobertura</th>
+              <th className="px-4 py-2 w-8"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {groupedStations.map((group) => {
+              const groupKey = group.key;
+              const groupWorkers = workersByGroup.get(groupKey) || [];
+              const groupWorkerCount = groupWorkers.length;
+              const cache = groupCache[groupKey];
+              const isOpen = !!expandedGroups[groupKey];
+              const summary = cache?.stationSummary;
 
-          return (
-            <div
-              key={group.key}
-              className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm"
-            >
-              <button
-                type="button"
-                onClick={() => toggleGroup(groupKey)}
-                className="flex w-full items-center justify-between gap-3 text-left"
-                aria-expanded={isOpen}
-              >
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                    {group.sequence != null ? `Secuencia ${group.sequence}` : 'Sin secuencia'}
-                  </p>
-                  <h3 className="text-lg font-semibold text-[var(--ink)]">{group.label}</h3>
-                </div>
-                <div className="flex items-center gap-3 text-xs text-[var(--ink-muted)]">
-                  <span>{stationCount} estaciones · {groupWorkerCount} trabajadores</span>
-                  {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </div>
-              </button>
+              return (
+                <React.Fragment key={group.key}>
+                  <tr
+                    className="border-b border-black/5 hover:bg-slate-50/50 cursor-pointer transition-colors"
+                    onClick={() => toggleGroup(groupKey)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-[var(--ink)]">{group.label}</div>
+                      <div className="text-xs text-[var(--ink-muted)]">{groupWorkerCount} trabajadores</div>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {cache?.loading ? (
+                        <span className="text-xs text-[var(--ink-muted)]">...</span>
+                      ) : summary?.rows?.length ? (
+                        <CompactSparkline rows={summary.rows} />
+                      ) : (
+                        <div className="w-[140px] h-[36px] bg-slate-50 rounded inline-block" />
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <span className="font-semibold text-[var(--ink)]">
+                        {cache?.loading ? '...' : formatPercent(summary?.averageProductive)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <span className="font-semibold text-[var(--ink)]">
+                        {cache?.loading ? '...' : formatPercent(summary?.averageExpected)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      {isOpen ? <ChevronUp className="h-4 w-4 text-[var(--ink-muted)]" /> : <ChevronDown className="h-4 w-4 text-[var(--ink-muted)]" />}
+                    </td>
+                  </tr>
+                  {isOpen && cache?.workers && cache.workers.map((workerSummary) => {
+                    const workerLabel = formatWorkerLabel(workerSummary.worker, formatWorkerDisplayName);
+                    const rangeIndicators = workerSummary.rangeIndicators;
+                    const hasWarnings = Array.isArray(workerSummary.geovictoriaWarnings) && workerSummary.geovictoriaWarnings.length > 0;
+                    const hasErrors = workerSummary.attendanceError || workerSummary.activityError;
 
-              {isOpen && (
-                <div className="mt-4 rounded-xl border border-black/5 bg-[var(--accent-soft)]/40 px-4 py-4">
-                  {cache?.loading && (
-                    <p className="text-sm text-[var(--ink-muted)]">
-                      Cargando datos del grupo...
-                    </p>
-                  )}
-                  {!cache?.loading && cache?.stationSummary && (
-                    <div className="space-y-4">
-                      <div className="rounded-xl border border-black/5 bg-white/80 p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                              Promedio grupo
-                            </p>
-                            <p className="text-xs text-[var(--ink-muted)]">
-                              {cache.stationSummary.workersWithData} de{' '}
-                              {cache.stationSummary.workersTotal} trabajadores con datos
-                            </p>
-                          </div>
+                    return (
+                      <tr key={workerSummary.worker.id} className="border-b border-black/5 bg-slate-50/30">
+                        <td className="px-4 py-2 pl-8">
+                          <div className="text-[var(--ink)]">{workerLabel}</div>
                           <div className="text-xs text-[var(--ink-muted)]">
-                            Rango {rangeDays} dias
+                            {rangeIndicators.daysWithData}/{rangeIndicators.daysTotal} dias
+                            {(hasErrors || hasWarnings) && <span className="ml-1 text-amber-600">⚠</span>}
                           </div>
-                        </div>
-                        {cache.stationSummary.rows.length ? (
-                          <div className="mt-3">
-                            <MetricsSparkline rows={cache.stationSummary.rows} />
-                            <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
-                              <span className="inline-flex items-center gap-2">
-                                <span className="inline-block h-2 w-4 rounded-sm bg-[#16a34a]" />
-                                Tiempo productivo
-                              </span>
-                              <span className="inline-flex items-center gap-2">
-                                <span className="inline-block h-2 w-4 rounded-sm bg-[#2563eb]" />
-                                Cobertura esperada
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="mt-3 text-sm text-[var(--ink-muted)]">
-                            {hasGroupWarnings
-                              ? 'Error en entrega de datos de GeoVictoria.'
-                              : 'Sin datos para el rango de busqueda.'}
-                          </p>
-                        )}
-                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                          <div className="rounded-lg border border-black/5 bg-white/90 px-3 py-2">
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                              Promedio productivo
-                            </p>
-                            <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
-                              {formatPercent(cache.stationSummary.averageProductive)}
-                            </p>
-                          </div>
-                          <div className="rounded-lg border border-black/5 bg-white/90 px-3 py-2">
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                              Promedio cobertura
-                            </p>
-                            <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
-                              {formatPercent(cache.stationSummary.averageExpected)}
-                            </p>
-                          </div>
-                        </div>
-                        <p className="mt-3 text-xs text-[var(--ink-muted)]">
-                          {cache.stationSummary.lastFullDay
-                            ? `Ultimo dia completo ${
-                                cache.stationSummary.lastFullDay.key
-                              }: ${formatPercent(
-                                cache.stationSummary.lastFullDay.productiveRatio
-                              )} productivo · ${formatPercent(
-                                cache.stationSummary.lastFullDay.expectedRatio
-                              )} cobertura`
-                            : 'Sin ultimo dia completo para mostrar.'}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        {cache.workers.map((summary) => {
-                          const workerLabel = formatWorkerLabel(
-                            summary.worker,
-                            formatWorkerDisplayName
-                          );
-                          const rangeIndicators = summary.rangeIndicators;
-                          const lastFullDay = summary.lastFullDay;
-                          const hasRows = rangeIndicators.rows.length > 0;
-                          const hasErrors = summary.attendanceError || summary.activityError;
-                          const hasWarnings =
-                            Array.isArray(summary.geovictoriaWarnings) &&
-                            summary.geovictoriaWarnings.length > 0;
-
-                          return (
-                            <div
-                              key={summary.worker.id}
-                              className="rounded-xl border border-black/5 bg-white/90 p-4"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                    Trabajador
-                                  </p>
-                                  <p className="text-sm font-semibold text-[var(--ink)]">
-                                    {workerLabel}
-                                  </p>
-                                  <p className="text-xs text-[var(--ink-muted)]">
-                                    {rangeIndicators.daysWithData} de {rangeIndicators.daysTotal}{' '}
-                                    dias con datos
-                                  </p>
-                                </div>
-                                <div className="text-xs text-[var(--ink-muted)]">
-                                  {rangeIndicators.startDate && rangeIndicators.endDate
-                                    ? `Rango ${rangeIndicators.startDate} → ${
-                                        rangeIndicators.endDate
-                                      }`
-                                    : `Rango ${rangeDays} dias`}
-                                </div>
-                              </div>
-
-                              {hasRows ? (
-                                <div className="mt-3">
-                                  <MetricsSparkline rows={rangeIndicators.rows} />
-                                </div>
-                              ) : (
-                                <p className="mt-3 text-sm text-[var(--ink-muted)]">
-                                  {hasWarnings
-                                    ? 'Error en entrega de datos de GeoVictoria.'
-                                    : 'Sin datos para el rango de busqueda.'}
-                                </p>
-                              )}
-
-                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                <div className="rounded-lg border border-black/5 bg-white/90 px-3 py-2">
-                                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                    Promedio productivo
-                                  </p>
-                                  <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
-                                    {formatPercent(rangeIndicators.totalProductiveRatio)}
-                                  </p>
-                                </div>
-                                <div className="rounded-lg border border-black/5 bg-white/90 px-3 py-2">
-                                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                                    Promedio cobertura
-                                  </p>
-                                  <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
-                                    {formatPercent(rangeIndicators.totalExpectedRatio)}
-                                  </p>
-                                </div>
-                              </div>
-                              <p className="mt-3 text-xs text-[var(--ink-muted)]">
-                                {lastFullDay
-                                  ? `Ultimo dia completo ${lastFullDay.key}: ${formatPercent(
-                                      lastFullDay.productiveRatio
-                                    )} productivo · ${formatPercent(
-                                      lastFullDay.expectedRatio
-                                    )} cobertura`
-                                  : 'Sin ultimo dia completo para mostrar.'}
-                              </p>
-                              {(hasErrors || hasWarnings) && (
-                                <p className="mt-2 text-xs text-amber-700">
-                                  {summary.attendanceError ? `GeoVictoria: ${summary.attendanceError}` : ''}
-                                  {summary.attendanceError && summary.activityError ? ' · ' : ''}
-                                  {summary.activityError ? `Actividad: ${summary.activityError}` : ''}
-                                  {!summary.attendanceError && !summary.activityError && hasWarnings
-                                    ? 'Error en entrega de datos de GeoVictoria.'
-                                    : ''}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          {rangeIndicators.rows?.length ? (
+                            <CompactSparkline rows={rangeIndicators.rows} />
+                          ) : (
+                            <span className="text-xs text-[var(--ink-muted)]">Sin datos</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-[var(--ink)]">{formatPercent(rangeIndicators.totalProductiveRatio)}</span>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-[var(--ink)]">{formatPercent(rangeIndicators.totalExpectedRatio)}</span>
+                        </td>
+                        <td className="px-4 py-2"></td>
+                      </tr>
+                    );
+                  })}
+                  {isOpen && !cache?.loading && (!cache?.workers || !cache.workers.length) && (
+                    <tr className="border-b border-black/5 bg-slate-50/30">
+                      <td colSpan={5} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
+                        No hay trabajadores asignados o datos disponibles.
+                      </td>
+                    </tr>
                   )}
-
-                  {!cache?.loading && !cache?.stationSummary && (
-                    <p className="text-sm text-[var(--ink-muted)]">
-                      No hay trabajadores asignados o datos disponibles para este rango.
-                    </p>
+                  {isOpen && cache?.loading && (
+                    <tr className="border-b border-black/5 bg-slate-50/30">
+                      <td colSpan={5} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
+                        Cargando datos...
+                      </td>
+                    </tr>
                   )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
