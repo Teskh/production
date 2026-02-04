@@ -31,3 +31,4 @@ class GeoVictoriaAttendanceResponse(BaseModel):
     end_date: str
     attendance: Any | None = None
     consolidated: Any | None = None
+    warnings: list[str] | None = None

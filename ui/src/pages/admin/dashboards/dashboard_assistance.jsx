@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
+import StationWideAssistanceTab from './StationWideAssistanceTab';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -29,6 +30,10 @@ const DETAIL_TABS = [
   { id: 'timeline', label: 'Linea de tiempo' },
   { id: 'monthly', label: 'Asistencia mensual' },
   { id: 'range', label: 'Indicadores rango' },
+];
+const VIEW_TABS = [
+  { id: 'worker', label: 'Por trabajador' },
+  { id: 'station', label: 'Por estacion' },
 ];
 
 const DATE_KEYS = ['Fecha', 'fecha', 'Date', 'date', 'Dia', 'dia', 'Day', 'day'];
@@ -1826,6 +1831,7 @@ const DashboardAssistance = () => {
   const [dayIndex, setDayIndex] = useState(0);
   const [rangeDays, setRangeDays] = useState(DEFAULT_RANGE);
   const [detailTab, setDetailTab] = useState(DETAIL_TABS[0].id);
+  const [viewTab, setViewTab] = useState(VIEW_TABS[0].id);
 
   useEffect(() => {
     setHeader({
@@ -1991,6 +1997,10 @@ const DashboardAssistance = () => {
     () => normalizeAttendance(attendanceResponse?.attendance),
     [attendanceResponse]
   );
+  const geovictoriaWarnings = useMemo(
+    () => (Array.isArray(attendanceResponse?.warnings) ? attendanceResponse.warnings : []),
+    [attendanceResponse]
+  );
 
   const activityDays = useMemo(() => buildActivityDays(activityRows), [activityRows]);
 
@@ -2102,14 +2112,35 @@ const DashboardAssistance = () => {
               Consulta marcajes de GeoVictoria y actividad registrada en la linea.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => selectedWorker && fetchData(selectedWorker, rangeDays)}
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Recargar
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex rounded-full border border-black/10 bg-white p-1">
+              {VIEW_TABS.map((tab) => {
+                const isActive = viewTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setViewTab(tab.id)}
+                    className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                      isActive ? 'bg-[var(--ink)] text-white' : 'text-[var(--ink)] hover:bg-black/5'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+            {viewTab === 'worker' && (
+              <button
+                type="button"
+                onClick={() => selectedWorker && fetchData(selectedWorker, rangeDays)}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Recargar
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2119,392 +2150,421 @@ const DashboardAssistance = () => {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-        <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex-1 min-w-[220px]">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                Estacion
-              </label>
-              <select
-                className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
-                value={selectedStationKey}
-                onChange={(event) => setSelectedStationKey(event.target.value)}
-              >
-                <option value="">Seleccione</option>
-                {stationGroups.map((group) => (
-                  <option key={group.key} value={group.key}>
-                    {group.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex-1 min-w-[220px]">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                Trabajador
-              </label>
-              <select
-                className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
-                value={selectedWorkerId}
-                onChange={(event) => setSelectedWorkerId(event.target.value)}
-                disabled={!selectedStationKey}
-              >
-                <option value="">
-                  {selectedStationKey ? 'Seleccione' : 'Seleccione estacion'}
-                </option>
-                {filteredWorkers.map((worker) => (
-                  <option key={worker.id} value={worker.id}>
-                    {formatWorkerDisplayName(worker) || `${worker.first_name} ${worker.last_name}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="min-w-[160px]">
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                Rango
-              </label>
-              <select
-                className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
-                value={rangeDays}
-                onChange={(event) => setRangeDays(Number(event.target.value))}
-              >
-                {RANGE_OPTIONS.map((days) => (
-                  <option key={days} value={days}>
-                    Ultimos {days} dias
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {selectedWorker && !selectedWorker.geovictoria_identifier && (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-              Este trabajador no esta vinculado a GeoVictoria. Asigne un identificador (RUT) en{' '}
-              <Link to="/admin/workers" className="font-semibold underline">
-                Personal
-              </Link>{' '}
-              para ver sus marcajes.
-            </div>
-          )}
-
-          {attendanceError && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {attendanceError}
-            </div>
-          )}
-          {activityError && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-              {activityError}
-            </div>
-          )}
-        </div>
-
-        <div className="grid gap-3">
-          <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              Dias con presencia
-            </p>
-            <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-              {totals.presenceDays}
-            </p>
-            <p className="text-xs text-[var(--ink-muted)]">
-              {formatSeconds(totals.presenceSeconds)} totales
-            </p>
-          </div>
-          <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              Actividad registrada
-            </p>
-            <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-              {totals.activityDays}
-            </p>
-            <p className="text-xs text-[var(--ink-muted)]">
-              {formatSeconds(totals.activeSeconds)} activas · {formatSeconds(totals.pausedSeconds)}
-              pausas
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
-              disabled={dayIndex <= 0}
-              onClick={() => setDayIndex((prev) => Math.max(0, prev - 1))}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Anterior
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
-              disabled={dayIndex >= combinedDays.length - 1}
-              onClick={() => setDayIndex((prev) => Math.min(combinedDays.length - 1, prev + 1))}
-            >
-              Siguiente
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            <p className="text-xs text-[var(--ink-muted)]">
-              Dia {combinedDays.length ? dayIndex + 1 : 0} de {combinedDays.length}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
-            <label htmlFor="assistance-date-picker">Ir a fecha</label>
-            <input
-              id="assistance-date-picker"
-              type="date"
-              className="rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
-              value={selectedDay?.date || ''}
-              min={minDate || undefined}
-              max={maxDate || undefined}
-              onChange={(event) => goToDate(event.target.value)}
-            />
-          </div>
-        </div>
-
-        {loading && <p className="mt-4 text-sm text-[var(--ink-muted)]">Cargando...</p>}
-
-        {!loading && !selectedWorker && (
-          <p className="mt-4 text-sm text-[var(--ink-muted)]">
-            Seleccione un trabajador para revisar sus datos.
-          </p>
-        )}
-
-        {!loading && selectedWorker && !combinedDays.length && (
-          <p className="mt-4 text-sm text-[var(--ink-muted)]">
-            No hay registros recientes para este trabajador.
-          </p>
-        )}
-
-        {!loading && selectedDay && (
-          <div className="mt-6 space-y-4">
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Entrada
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                  {formatTime(selectedDay.attendance?.entry || selectedDay.activity?.firstTaskStart)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Fuente: {entrySource(selectedDay)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Salida
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                  {formatTime(selectedDay.attendance?.exit || selectedDay.activity?.lastTaskEnd)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">Fuente: {exitSource(selectedDay)}</p>
-              </div>
-              <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Presencia
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                  {formatSeconds(dayPresenceSeconds(selectedDay))}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Colacion: {formatSeconds(
-                    selectedDay.attendance?.lunchStart && selectedDay.attendance?.lunchEnd
-                      ? (selectedDay.attendance.lunchEnd - selectedDay.attendance.lunchStart) / 1000
-                      : null
-                  )}
-                </p>
-                {Number.isFinite(selectedDay.attendance?.delayMinutes) &&
-                  selectedDay.attendance.delayMinutes > 0 && (
-                  <p className="text-xs text-[var(--ink-muted)]">
-                    Retraso: {Math.round(selectedDay.attendance.delayMinutes)}m
-                  </p>
-                )}
-              </div>
-              <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Actividad
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                  {formatSeconds(selectedDay.activity?.activeSeconds)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Pausas: {formatSeconds(selectedDay.activity?.pausedSeconds)}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div
-                className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
-                title="(Presencia sin colacion - (ocioso + extra)) / presencia sin colacion"
-              >
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Tiempo productivo
-                </p>
-                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                  {formatPercent(dailyIndicators?.productiveRatio)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Improductivo: {formatSeconds(dailyIndicators?.idleOverrunSeconds)} · Ocioso:{' '}
-                  {formatSeconds(dailyIndicators?.idleSeconds)} · Extra:{' '}
-                  {formatSeconds(dailyIndicators?.overtimeSeconds)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
-                </p>
-              </div>
-              <div
-                className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
-                title="Suma de tiempos esperados / presencia sin colacion"
-              >
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Cobertura esperada
-                </p>
-                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                  {formatPercent(dailyIndicators?.expectedRatio)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Esperado: {formatSeconds(dailyIndicators?.expectedSecondsTotal)}
-                </p>
-                <p className="text-xs text-[var(--ink-muted)]">
-                  Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                    {detailTab === 'monthly'
-                      ? 'Asistencia mensual'
-                      : detailTab === 'range'
-                        ? 'Indicadores del rango'
-                        : 'Actividad del dia'}
-                  </p>
-                  <p className="text-sm text-[var(--ink)]">
-                    {detailTab === 'monthly'
-                      ? monthLabel || selectedDay.date
-                      : detailTab === 'range'
-                        ? rangeIndicators.startDate && rangeIndicators.endDate
-                          ? `${rangeIndicators.startDate} → ${rangeIndicators.endDate}`
-                          : selectedDay.date
-                        : selectedDay.date}
-                  </p>
+      {viewTab === 'worker' ? (
+        <>
+          <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
+            <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex-1 min-w-[220px]">
+                  <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Estacion
+                  </label>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                    value={selectedStationKey}
+                    onChange={(event) => setSelectedStationKey(event.target.value)}
+                  >
+                    <option value="">Seleccione</option>
+                    {stationGroups.map((group) => (
+                      <option key={group.key} value={group.key}>
+                        {group.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {detailTab === 'timeline' && (
-                    <p className="text-xs text-[var(--ink-muted)]">
-                      {selectedDay.activity?.tasks?.length || 0} tareas
-                    </p>
-                  )}
-                  {detailTab === 'range' && (
-                    <p className="text-xs text-[var(--ink-muted)]">
-                      {rangeIndicators.daysWithData} dias con datos
-                    </p>
-                  )}
-                  <div className="flex rounded-full border border-black/10 bg-white p-1">
-                    {DETAIL_TABS.map((tab) => {
-                      const isActive = detailTab === tab.id;
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => setDetailTab(tab.id)}
-                          className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${
-                            isActive
-                              ? 'bg-[var(--ink)] text-white'
-                              : 'text-[var(--ink)] hover:bg-black/5'
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="flex-1 min-w-[220px]">
+                  <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Trabajador
+                  </label>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                    value={selectedWorkerId}
+                    onChange={(event) => setSelectedWorkerId(event.target.value)}
+                    disabled={!selectedStationKey}
+                  >
+                    <option value="">
+                      {selectedStationKey ? 'Seleccione' : 'Seleccione estacion'}
+                    </option>
+                    {filteredWorkers.map((worker) => (
+                      <option key={worker.id} value={worker.id}>
+                        {formatWorkerDisplayName(worker) || `${worker.first_name} ${worker.last_name}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="min-w-[160px]">
+                  <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Rango
+                  </label>
+                  <select
+                    className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                    value={rangeDays}
+                    onChange={(event) => setRangeDays(Number(event.target.value))}
+                  >
+                    {RANGE_OPTIONS.map((days) => (
+                      <option key={days} value={days}>
+                        Ultimos {days} dias
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
-              {detailTab === 'monthly' ? (
-                <MonthlyAssistanceChart
-                  key="monthly"
-                  combinedDays={combinedDays}
-                  anchorDate={selectedDay.date}
-                />
-              ) : detailTab === 'range' ? (
-                <RangeIndicatorsChart key="range" combinedDays={combinedDays} />
-              ) : (
-                <>
-                  <TaskTimeline key="timeline" day={selectedDay} />
-                  {selectedDay.activity?.tasks?.length ? (
-                    <div className="mt-6 overflow-x-auto">
-                      <table className="min-w-full text-left text-xs">
-                        <thead className="text-[var(--ink-muted)]">
-                          <tr>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Contexto
-                            </th>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Tarea
-                            </th>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Estacion
-                            </th>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Inicio
-                            </th>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Fin
-                            </th>
-                            <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
-                              Duracion
-                            </th>
-                            <th className="pb-2 font-semibold uppercase tracking-[0.2em]">
-                              Pausas
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-[var(--ink)]">
-                          {selectedDay.activity.tasks
-                            .slice()
-                            .sort((a, b) => {
-                              const aStart = parseDateTime(a?.started_at)?.getTime() || 0;
-                              const bStart = parseDateTime(b?.started_at)?.getTime() || 0;
-                              return aStart - bStart;
-                            })
-                            .map((task) => {
-                              const pauseSeconds = sumPauseSeconds(task?.pauses);
-                              return (
-                                <tr key={task.task_instance_id} className="border-t border-black/5">
-                                  <td className="py-2 pr-4">{taskContextLabel(task)}</td>
-                                  <td className="py-2 pr-4">{task.task_definition_name || '-'}</td>
-                                  <td className="py-2 pr-4">{task.station_name || '-'}</td>
-                                  <td className="py-2 pr-4">{formatTime(task.started_at)}</td>
-                                  <td className="py-2 pr-4">{formatTime(task.completed_at)}</td>
-                                  <td className="py-2 pr-4">
-                                    {formatSeconds(
-                                      Number.isFinite(Number(task.duration_minutes))
-                                        ? Number(task.duration_minutes) * 60
-                                        : null
-                                    )}
-                                  </td>
-                                  <td className="py-2">{formatSeconds(pauseSeconds)}</td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
-                </>
+              {selectedWorker && !selectedWorker.geovictoria_identifier && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  Este trabajador no esta vinculado a GeoVictoria. Asigne un identificador (RUT) en{' '}
+                  <Link to="/admin/workers" className="font-semibold underline">
+                    Personal
+                  </Link>{' '}
+                  para ver sus marcajes.
+                </div>
+              )}
+
+              {attendanceError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                  Error en entrega de datos de GeoVictoria.
+                  <span className="ml-2 text-xs text-red-500">{attendanceError}</span>
+                </div>
+              )}
+              {!attendanceError && geovictoriaWarnings.length > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  Error en entrega de datos de GeoVictoria.
+                </div>
+              )}
+              {activityError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                  {activityError}
+                </div>
               )}
             </div>
+
+            <div className="grid gap-3">
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Dias con presencia
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                  {totals.presenceDays}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  {formatSeconds(totals.presenceSeconds)} totales
+                </p>
+              </div>
+              <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Actividad registrada
+                </p>
+                <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                  {totals.activityDays}
+                </p>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  {formatSeconds(totals.activeSeconds)} activas · {formatSeconds(totals.pausedSeconds)}
+                  pausas
+                </p>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+
+          <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
+                  disabled={dayIndex <= 0}
+                  onClick={() => setDayIndex((prev) => Math.max(0, prev - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Anterior
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
+                  disabled={dayIndex >= combinedDays.length - 1}
+                  onClick={() => setDayIndex((prev) => Math.min(combinedDays.length - 1, prev + 1))}
+                >
+                  Siguiente
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Dia {combinedDays.length ? dayIndex + 1 : 0} de {combinedDays.length}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                <label htmlFor="assistance-date-picker">Ir a fecha</label>
+                <input
+                  id="assistance-date-picker"
+                  type="date"
+                  className="rounded-full border border-black/10 px-3 py-1.5 text-xs text-[var(--ink)]"
+                  value={selectedDay?.date || ''}
+                  min={minDate || undefined}
+                  max={maxDate || undefined}
+                  onChange={(event) => goToDate(event.target.value)}
+                />
+              </div>
+            </div>
+
+            {loading && <p className="mt-4 text-sm text-[var(--ink-muted)]">Cargando...</p>}
+
+            {!loading && !selectedWorker && (
+              <p className="mt-4 text-sm text-[var(--ink-muted)]">
+                Seleccione un trabajador para revisar sus datos.
+              </p>
+            )}
+
+            {!loading &&
+              selectedWorker &&
+              !combinedDays.length &&
+              !attendanceError &&
+              geovictoriaWarnings.length === 0 && (
+              <p className="mt-4 text-sm text-[var(--ink-muted)]">
+                Sin datos para el rango de busqueda.
+              </p>
+            )}
+
+            {!loading && selectedDay && (
+              <div className="mt-6 space-y-4">
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Entrada
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
+                      {formatTime(selectedDay.attendance?.entry || selectedDay.activity?.firstTaskStart)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Fuente: {entrySource(selectedDay)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Salida
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
+                      {formatTime(selectedDay.attendance?.exit || selectedDay.activity?.lastTaskEnd)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">Fuente: {exitSource(selectedDay)}</p>
+                  </div>
+                  <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Presencia
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
+                      {formatSeconds(dayPresenceSeconds(selectedDay))}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Colacion: {formatSeconds(
+                        selectedDay.attendance?.lunchStart && selectedDay.attendance?.lunchEnd
+                          ? (selectedDay.attendance.lunchEnd - selectedDay.attendance.lunchStart) / 1000
+                          : null
+                      )}
+                    </p>
+                    {Number.isFinite(selectedDay.attendance?.delayMinutes) &&
+                      selectedDay.attendance.delayMinutes > 0 && (
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        Retraso: {Math.round(selectedDay.attendance.delayMinutes)}m
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Actividad
+                    </p>
+                    <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
+                      {formatSeconds(selectedDay.activity?.activeSeconds)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Pausas: {formatSeconds(selectedDay.activity?.pausedSeconds)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div
+                    className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+                    title="(Presencia sin colacion - (ocioso + extra)) / presencia sin colacion"
+                  >
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Tiempo productivo
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {formatPercent(dailyIndicators?.productiveRatio)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Improductivo: {formatSeconds(dailyIndicators?.idleOverrunSeconds)} · Ocioso:{' '}
+                      {formatSeconds(dailyIndicators?.idleSeconds)} · Extra:{' '}
+                      {formatSeconds(dailyIndicators?.overtimeSeconds)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
+                    </p>
+                  </div>
+                  <div
+                    className="rounded-xl border border-black/5 bg-white/80 px-4 py-3"
+                    title="Suma de tiempos esperados / presencia sin colacion"
+                  >
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Cobertura esperada
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {formatPercent(dailyIndicators?.expectedRatio)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Esperado: {formatSeconds(dailyIndicators?.expectedSecondsTotal)}
+                    </p>
+                    <p className="text-xs text-[var(--ink-muted)]">
+                      Sobre {formatSeconds(dailyIndicators?.presenceNetSeconds)} sin colacion
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        {detailTab === 'monthly'
+                          ? 'Asistencia mensual'
+                          : detailTab === 'range'
+                            ? 'Indicadores del rango'
+                            : 'Actividad del dia'}
+                      </p>
+                      <p className="text-sm text-[var(--ink)]">
+                        {detailTab === 'monthly'
+                          ? monthLabel || selectedDay.date
+                          : detailTab === 'range'
+                            ? rangeIndicators.startDate && rangeIndicators.endDate
+                              ? `${rangeIndicators.startDate} → ${rangeIndicators.endDate}`
+                              : selectedDay.date
+                            : selectedDay.date}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {detailTab === 'timeline' && (
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {selectedDay.activity?.tasks?.length || 0} tareas
+                        </p>
+                      )}
+                      {detailTab === 'range' && (
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {rangeIndicators.daysWithData} dias con datos
+                        </p>
+                      )}
+                      <div className="flex rounded-full border border-black/10 bg-white p-1">
+                        {DETAIL_TABS.map((tab) => {
+                          const isActive = detailTab === tab.id;
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setDetailTab(tab.id)}
+                              className={`rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                                isActive
+                                  ? 'bg-[var(--ink)] text-white'
+                                  : 'text-[var(--ink)] hover:bg-black/5'
+                              }`}
+                            >
+                              {tab.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {detailTab === 'monthly' ? (
+                    <MonthlyAssistanceChart
+                      key="monthly"
+                      combinedDays={combinedDays}
+                      anchorDate={selectedDay.date}
+                    />
+                  ) : detailTab === 'range' ? (
+                    <RangeIndicatorsChart key="range" combinedDays={combinedDays} />
+                  ) : (
+                    <>
+                      <TaskTimeline key="timeline" day={selectedDay} />
+                      {selectedDay.activity?.tasks?.length ? (
+                        <div className="mt-6 overflow-x-auto">
+                          <table className="min-w-full text-left text-xs">
+                            <thead className="text-[var(--ink-muted)]">
+                              <tr>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Contexto
+                                </th>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Tarea
+                                </th>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Estacion
+                                </th>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Inicio
+                                </th>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Fin
+                                </th>
+                                <th className="pb-2 pr-4 font-semibold uppercase tracking-[0.2em]">
+                                  Duracion
+                                </th>
+                                <th className="pb-2 font-semibold uppercase tracking-[0.2em]">
+                                  Pausas
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="text-[var(--ink)]">
+                              {selectedDay.activity.tasks
+                                .slice()
+                                .sort((a, b) => {
+                                  const aStart = parseDateTime(a?.started_at)?.getTime() || 0;
+                                  const bStart = parseDateTime(b?.started_at)?.getTime() || 0;
+                                  return aStart - bStart;
+                                })
+                                .map((task) => {
+                                  const pauseSeconds = sumPauseSeconds(task?.pauses);
+                                  return (
+                                    <tr key={task.task_instance_id} className="border-t border-black/5">
+                                      <td className="py-2 pr-4">{taskContextLabel(task)}</td>
+                                      <td className="py-2 pr-4">{task.task_definition_name || '-'}</td>
+                                      <td className="py-2 pr-4">{task.station_name || '-'}</td>
+                                      <td className="py-2 pr-4">{formatTime(task.started_at)}</td>
+                                      <td className="py-2 pr-4">{formatTime(task.completed_at)}</td>
+                                      <td className="py-2 pr-4">
+                                        {formatSeconds(
+                                          Number.isFinite(Number(task.duration_minutes))
+                                            ? Number(task.duration_minutes) * 60
+                                            : null
+                                        )}
+                                      </td>
+                                      <td className="py-2">{formatSeconds(pauseSeconds)}</td>
+                                    </tr>
+                                  );
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <StationWideAssistanceTab
+          stations={stations}
+          stationGroups={stationGroups}
+          workers={workers}
+          apiRequest={apiRequest}
+          isoDaysAgo={isoDaysAgo}
+          todayIso={todayIso}
+          normalizeAttendance={normalizeAttendance}
+          buildActivityDays={buildActivityDays}
+          buildRangeIndicators={buildRangeIndicators}
+          formatWorkerDisplayName={formatWorkerDisplayName}
+          formatPercent={formatPercent}
+          toDateOnly={toDateOnly}
+        />
+      )}
     </div>
   );
 };

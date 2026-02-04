@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
+import logging
+import re
 from typing import Any, Mapping
 
 import httpx
@@ -18,6 +20,7 @@ from app.schemas.geovictoria import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict[str, object] = {"token": None, "expires_at": 0.0}
 
@@ -91,6 +94,53 @@ def _post_geovictoria(endpoint: str, payload: Mapping[str, Any]) -> Any:
             detail=f"GeoVictoria request failed: {exc}",
         ) from exc
     return resp.json()
+
+
+def _candidate_user_ids(identifier: str, geovictoria_id: str) -> list[str]:
+    candidates: list[str] = []
+
+    def add(value: str) -> None:
+        normalized = value.strip()
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+
+    if identifier:
+        add(identifier)
+        cleaned = re.sub(r"[^0-9kK]", "", identifier).upper()
+        if cleaned and cleaned != identifier:
+            add(cleaned)
+    if geovictoria_id:
+        add(geovictoria_id)
+    return candidates
+
+
+def _is_geovictoria_bad_request(exc: HTTPException) -> bool:
+    if exc.status_code != status.HTTP_502_BAD_GATEWAY:
+        return False
+    detail = str(exc.detail)
+    return "400" in detail and "Bad Request" in detail
+
+
+def _post_with_candidates(
+    endpoint: str,
+    payload: Mapping[str, Any],
+    candidates: list[str],
+) -> tuple[Any, str]:
+    last_exc: HTTPException | None = None
+    for candidate in candidates:
+        try:
+            return _post_geovictoria(endpoint, {**payload, "UserIds": candidate}), candidate
+        except HTTPException as exc:
+            last_exc = exc
+            if _is_geovictoria_bad_request(exc):
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="GeoVictoria request failed: No valid identifiers provided",
+    )
 
 
 def _parse_date_input(raw: str, *, end_of_day: bool) -> datetime:
@@ -302,6 +352,12 @@ def get_attendance(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Worker is not linked to a GeoVictoria identifier",
         )
+    candidates = _candidate_user_ids(geovictoria_identifier, geovictoria_id)
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Worker is not linked to a GeoVictoria identifier",
+        )
 
     start_dt, end_dt = _resolve_range(
         start_date=start_date,
@@ -315,8 +371,36 @@ def get_attendance(
     }
     consolidated_payload = {**payload, "IncludeAll": 0}
 
-    attendance = _post_geovictoria("AttendanceBook", payload)
-    consolidated = _post_geovictoria("Consolidated", consolidated_payload)
+    warnings: list[str] = []
+    attendance, attendance_identifier = _post_with_candidates(
+        "AttendanceBook",
+        payload,
+        candidates,
+    )
+    consolidated = None
+    try:
+        consolidated, consolidated_identifier = _post_with_candidates(
+            "Consolidated",
+            consolidated_payload,
+            candidates,
+        )
+        if consolidated_identifier != attendance_identifier:
+            logger.warning(
+                "GeoVictoria consolidated fallback used worker_id=%s identifier=%s fallback=%s",
+                worker.id,
+                attendance_identifier,
+                consolidated_identifier,
+            )
+    except HTTPException as exc:
+        if _is_geovictoria_bad_request(exc):
+            warnings.append("consolidated_failed")
+            logger.warning(
+                "GeoVictoria consolidated failed for worker_id=%s candidates=%s",
+                worker.id,
+                candidates,
+            )
+        else:
+            raise
 
     return GeoVictoriaAttendanceResponse(
         worker_id=worker.id,
@@ -328,4 +412,5 @@ def get_attendance(
         end_date=end_dt.isoformat(),
         attendance=attendance,
         consolidated=consolidated,
+        warnings=warnings or None,
     )
