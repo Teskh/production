@@ -104,6 +104,30 @@ class PanelTaskHistoryRow(BaseModel):
     pauses: list[PanelTaskHistoryPause] | None = None
 
 
+class TaskHistoryRow(BaseModel):
+    task_instance_id: int
+    scope: str | None = None
+    task_definition_id: int | None = None
+    task_definition_name: str | None = None
+    panel_definition_id: int | None = None
+    panel_code: str | None = None
+    house_type_id: int | None = None
+    house_type_name: str | None = None
+    house_sub_type_name: str | None = None
+    house_identifier: str | None = None
+    project_name: str | None = None
+    module_number: int | None = None
+    station_id: int | None = None
+    station_name: str | None = None
+    worker_name: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_minutes: float | None = None
+    expected_minutes: float | None = None
+    notes: str | None = None
+    pauses: list[PanelTaskHistoryPause] | None = None
+
+
 class StationPanelsFinishedWorkerEntry(BaseModel):
     worker_id: int | None = None
     worker_name: str | None = None

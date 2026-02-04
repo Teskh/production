@@ -102,3 +102,6 @@
 
 ## 2026-01-26
 - Station workspace start confirmation treats "tasks that move the module" as module-scope tasks with `advance_trigger = true`.
+
+## 2026-02-04
+- Assistance dashboard uses `GET /api/task-history` to fetch task activity across panel/module/aux scopes (completed tasks only), using task pause records to compute durations and module expected minutes resolved in the same module -> house type -> default order as the House Configurator.
