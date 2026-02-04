@@ -215,28 +215,37 @@ const formatSeconds = (seconds) => {
 const useContainerWidth = () => {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
+  const [ready, setReady] = useState(false);
 
   useLayoutEffect(() => {
     if (!ref.current) return undefined;
     const element = ref.current;
     const update = () => {
-      setWidth(element.clientWidth || 0);
+      const w = element.clientWidth || 0;
+      if (w > 0) {
+        setWidth(w);
+        setReady(true);
+      }
     };
     update();
     const frame = window.requestAnimationFrame(update);
-    const timeout = window.setTimeout(update, 120);
+    const timeout1 = window.setTimeout(update, 50);
+    const timeout2 = window.setTimeout(update, 150);
+    const timeout3 = window.setTimeout(update, 300);
     const observer = new ResizeObserver(update);
     observer.observe(element);
     window.addEventListener('resize', update);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
+      window.clearTimeout(timeout1);
+      window.clearTimeout(timeout2);
+      window.clearTimeout(timeout3);
       observer.disconnect();
       window.removeEventListener('resize', update);
     };
   }, []);
 
-  return { ref, width };
+  return { ref, width, ready };
 };
 
 const parseDateOnly = (value) => {
@@ -320,11 +329,16 @@ const taskContextLabel = (task) => {
   return scope !== '-' ? scope : '-';
 };
 
-const taskDisplayLabel = (task) => {
+const truncateLabel = (text, maxLength = 40) => {
+  if (!text || text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+};
+
+const taskDisplayLabel = (task, maxLength = 40) => {
   const name = task?.task_definition_name || 'Tarea';
   const context = taskContextLabel(task);
-  if (context && context !== '-') return `${name} · ${context}`;
-  return name;
+  const full = context && context !== '-' ? `${name} · ${context}` : name;
+  return truncateLabel(full, maxLength);
 };
 
 const normalizeIntervals = (intervals) => {
@@ -347,19 +361,55 @@ const normalizeIntervals = (intervals) => {
   return merged;
 };
 
-const buildTaskIntervals = (task) => {
-  const start = parseDateTime(task?.started_at);
-  const end = parseDateTime(task?.completed_at);
-  if (!start || !end || end <= start) return null;
+const clampToWindow = (value, windowStart, windowEnd) => {
+  if (!value) return null;
+  let result = value;
+  if (windowStart && result < windowStart) result = windowStart;
+  if (windowEnd && result > windowEnd) result = windowEnd;
+  return result;
+};
+
+const buildDayBounds = (day) => {
+  const baseDate = parseDateOnly(day?.date);
+  if (!baseDate) return null;
+  const baseKey = toDateOnly(baseDate);
+  const dayStart = new Date(baseDate);
+  dayStart.setHours(0, 0, 0, 0);
+  const defaultStart = new Date(baseDate);
+  defaultStart.setHours(8, 0, 0, 0);
+  const defaultEnd = new Date(baseDate);
+  defaultEnd.setHours(Math.floor(REGULAR_END_MINUTES / 60), REGULAR_END_MINUTES % 60, 0, 0);
+  const logoff = parseDateTime(day?.attendance?.exit);
+  const logoffSameDay = logoff && baseKey && toDateOnly(logoff) === baseKey;
+  let dayEnd = logoffSameDay ? logoff : defaultEnd;
+  if (!dayEnd || dayEnd <= dayStart) {
+    dayEnd = defaultEnd;
+  }
+  return { baseDate, dayStart, dayEnd, defaultStart, defaultEnd };
+};
+
+const buildTaskIntervals = (task, windowStart, windowEnd) => {
+  const rawStart = parseDateTime(task?.started_at);
+  if (!rawStart) return null;
+  const rawEnd = parseDateTime(task?.completed_at);
+  let end = rawEnd && rawEnd > rawStart ? rawEnd : null;
+  if (!end && windowEnd && windowEnd > rawStart) {
+    end = windowEnd;
+  }
+  if (!end || end <= rawStart) return null;
+
+  const start = clampToWindow(rawStart, windowStart, windowEnd);
+  const boundedEnd = clampToWindow(end, windowStart, windowEnd);
+  if (!start || !boundedEnd || boundedEnd <= start) return null;
   const pauseIntervals = (task?.pauses || [])
     .map((pause) => {
       const pauseStart = parseDateTime(pause?.paused_at);
       const pauseEnd = parseDateTime(pause?.resumed_at) || end;
       if (!pauseStart || !pauseEnd || pauseEnd <= pauseStart) return null;
       const boundedStart = pauseStart < start ? start : pauseStart;
-      const boundedEnd = pauseEnd > end ? end : pauseEnd;
-      if (boundedEnd <= boundedStart) return null;
-      return { start: boundedStart, end: boundedEnd };
+      const boundedPauseEnd = pauseEnd > boundedEnd ? boundedEnd : pauseEnd;
+      if (boundedPauseEnd <= boundedStart) return null;
+      return { start: boundedStart, end: boundedPauseEnd };
     })
     .filter(Boolean);
   const mergedPauses = normalizeIntervals(pauseIntervals);
@@ -371,12 +421,12 @@ const buildTaskIntervals = (task) => {
     }
     cursor = pause.end > cursor ? pause.end : cursor;
   });
-  if (cursor < end) {
-    activeIntervals.push({ start: cursor, end });
+  if (cursor < boundedEnd) {
+    activeIntervals.push({ start: cursor, end: boundedEnd });
   }
   return {
     start,
-    end,
+    end: boundedEnd,
     pauses: mergedPauses,
     active: activeIntervals,
   };
@@ -714,7 +764,7 @@ const normalizeAttendance = (attendanceRaw) => {
 };
 
 const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
-  const { ref, width } = useContainerWidth();
+  const { ref, width, ready } = useContainerWidth();
   const dataset = useMemo(
     () => buildMonthlyDataset(combinedDays, anchorDate),
     [combinedDays, anchorDate]
@@ -726,6 +776,12 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
       <p className="mt-4 text-sm text-[var(--ink-muted)]">
         No hay marcajes con entrada y salida registrados para este mes.
       </p>
+    );
+  }
+
+  if (!ready) {
+    return (
+      <div ref={ref} className="mt-4 w-full min-h-[280px]" />
     );
   }
 
@@ -879,13 +935,16 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
 };
 
 const TaskTimeline = ({ day }) => {
-  const { ref, width } = useContainerWidth();
+  const { ref, width, ready } = useContainerWidth();
   const timeline = useMemo(() => {
     if (!day) return null;
+    const dayBounds = buildDayBounds(day);
+    if (!dayBounds) return null;
+    const { baseDate, dayStart, dayEnd, defaultStart, defaultEnd } = dayBounds;
     const tasksRaw = Array.isArray(day.activity?.tasks) ? day.activity.tasks : [];
     const taskRows = tasksRaw
       .map((task, index) => {
-        const intervals = buildTaskIntervals(task);
+        const intervals = buildTaskIntervals(task, dayStart, dayEnd);
         if (!intervals) return null;
         const expectedMinutes = Number.isFinite(Number(task.expected_minutes))
           ? Number(task.expected_minutes)
@@ -918,16 +977,27 @@ const TaskTimeline = ({ day }) => {
       ? new Date(Math.max(...allActive.map((interval) => interval.end.getTime())))
       : null;
 
-    const baseDate = parseDateOnly(day.date) || new Date();
-    const defaultStart = new Date(baseDate);
-    defaultStart.setHours(8, 0, 0, 0);
-    const defaultEnd = new Date(baseDate);
-    defaultEnd.setHours(18, 0, 0, 0);
+    const startCandidates = [
+      day.attendance?.entry,
+      day.activity?.firstTaskStart,
+      minStart,
+      defaultStart,
+    ]
+      .map((value) => parseDateTime(value))
+      .filter(Boolean);
+    let windowStart = startCandidates.length
+      ? new Date(Math.min(...startCandidates.map((value) => value.getTime())))
+      : defaultStart;
+    if (windowStart < dayStart) {
+      windowStart = dayStart;
+    }
 
-    let windowStart =
-      day.attendance?.entry || day.activity?.firstTaskStart || minStart || defaultStart;
-    let windowEnd =
-      day.attendance?.exit || day.activity?.lastTaskEnd || maxEnd || defaultEnd;
+    const endCandidates = [day.attendance?.exit, day.activity?.lastTaskEnd, maxEnd, defaultEnd]
+      .map((value) => parseDateTime(value))
+      .filter(Boolean);
+    let windowEnd = endCandidates.length
+      ? new Date(Math.max(...endCandidates.map((value) => value.getTime())))
+      : dayEnd;
 
     if (maxEnd && maxEnd > windowEnd) {
       windowEnd = maxEnd;
@@ -941,9 +1011,17 @@ const TaskTimeline = ({ day }) => {
       });
     });
 
+    if (dayEnd && windowEnd > dayEnd) {
+      windowEnd = dayEnd;
+    }
+
     if (!windowStart || !windowEnd || windowEnd <= windowStart) {
-      windowStart = defaultStart;
-      windowEnd = defaultEnd;
+      windowStart = defaultStart < dayEnd ? defaultStart : dayStart;
+      windowEnd = dayEnd;
+    }
+
+    if (!windowStart || !windowEnd || windowEnd <= windowStart) {
+      return null;
     }
 
     const grid = buildGridTicks(windowStart, windowEnd);
@@ -969,6 +1047,12 @@ const TaskTimeline = ({ day }) => {
       <p className="mt-4 text-sm text-[var(--ink-muted)]">
         No se registraron tareas en este dia.
       </p>
+    );
+  }
+
+  if (!ready) {
+    return (
+      <div ref={ref} className="mt-4 w-full min-h-[200px]" />
     );
   }
 
