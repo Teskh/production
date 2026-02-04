@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
+import { formatMinutesDetailed } from '../../../utils/timeUtils';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
 const GEO_REQUEST_DELAY_MS = 400;
+const defaultFormatSeconds = (seconds) => {
+  if (!Number.isFinite(seconds)) return '-';
+  return formatMinutesDetailed(seconds / 60);
+};
 
 const buildCombinedDays = (attendanceResponse, activityRows, normalizeAttendance, buildActivityDays) => {
   const attendanceDays = normalizeAttendance(attendanceResponse?.attendance) || [];
@@ -148,6 +153,8 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
     <div className="relative inline-block">
       <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img">
         <rect x={padX} y={padY} width={innerWidth} height={innerHeight} fill="#f8fafc" rx={2} />
+        <line x1={padX} y1={padY} x2={padX + innerWidth} y2={padY} stroke="#cbd5e1" strokeWidth={0.5} />
+        <line x1={padX} y1={padY + innerHeight} x2={padX + innerWidth} y2={padY + innerHeight} stroke="#cbd5e1" strokeWidth={0.5} />
         {productivePath && <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={1.5} />}
         {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={1.5} />}
         {rows.map((row, idx) => {
@@ -209,7 +216,7 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto"
+        className="bg-white rounded-2xl shadow-xl max-w-[95vw] w-full mx-4 max-h-[90vh] overflow-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
@@ -664,7 +671,7 @@ const StationWideAssistanceTab = ({
           onClose={() => setModalData(null)}
           TaskTimeline={TaskTimeline}
           formatPercent={formatPercent}
-          formatSeconds={formatSeconds || ((s) => Number.isFinite(s) ? `${Math.round(s / 60)}m` : '-')}
+          formatSeconds={formatSeconds || defaultFormatSeconds}
         />
       )}
     </div>
