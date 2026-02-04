@@ -2562,7 +2562,9 @@ const DashboardAssistance = () => {
           buildRangeIndicators={buildRangeIndicators}
           formatWorkerDisplayName={formatWorkerDisplayName}
           formatPercent={formatPercent}
+          formatSeconds={formatSeconds}
           toDateOnly={toDateOnly}
+          TaskTimeline={TaskTimeline}
         />
       )}
     </div>

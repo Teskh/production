@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, X } from 'lucide-react';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
@@ -102,7 +102,10 @@ const aggregateStationRows = (workerSummaries) => {
     }));
 };
 
-const CompactSparkline = ({ rows, width = 140, height = 36 }) => {
+const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
+  const [hovered, setHovered] = useState(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
   if (!rows || !rows.length) return <div style={{ width, height }} className="bg-slate-50 rounded" />;
   const padX = 4;
   const padY = 4;
@@ -128,22 +131,64 @@ const CompactSparkline = ({ rows, width = 140, height = 36 }) => {
   const productivePath = buildPath('productiveRatio');
   const expectedPath = buildPath('expectedRatio');
 
+  const handleMouseEnter = (row, idx, event) => {
+    const rect = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    setHovered(row);
+    setTooltipPos({ x: rect.left + xAt(idx), y: rect.top });
+  };
+
+  const handleMouseLeave = () => setHovered(null);
+
+  const handleClick = (row, event) => {
+    event.stopPropagation();
+    if (onPointClick) onPointClick(row);
+  };
+
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img">
-      <rect x={padX} y={padY} width={innerWidth} height={innerHeight} fill="#f8fafc" rx={2} />
-      {productivePath && <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={1.5} />}
-      {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={1.5} />}
-      {rows.map((row, idx) => {
-        const x = xAt(idx);
-        return (
-          <g key={row.key}>
-            <title>{`${row.key}: ${Number.isFinite(row.productiveRatio) ? Math.round(row.productiveRatio * 100) + '%' : '—'} prod · ${Number.isFinite(row.expectedRatio) ? Math.round(row.expectedRatio * 100) + '%' : '—'} cob`}</title>
-            {Number.isFinite(row.productiveRatio) && <circle cx={x} cy={yAt(row.productiveRatio)} r={2} fill="#16a34a" />}
-            {Number.isFinite(row.expectedRatio) && <circle cx={x} cy={yAt(row.expectedRatio)} r={2} fill="#2563eb" />}
-          </g>
-        );
-      })}
-    </svg>
+    <div className="relative inline-block">
+      <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img">
+        <rect x={padX} y={padY} width={innerWidth} height={innerHeight} fill="#f8fafc" rx={2} />
+        {productivePath && <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={1.5} />}
+        {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={1.5} />}
+        {rows.map((row, idx) => {
+          const x = xAt(idx);
+          const isHovered = hovered?.key === row.key;
+          return (
+            <g
+              key={row.key}
+              onMouseEnter={(e) => handleMouseEnter(row, idx, e)}
+              onMouseLeave={handleMouseLeave}
+              onClick={(e) => handleClick(row, e)}
+              style={{ cursor: onPointClick ? 'pointer' : 'default' }}
+            >
+              <rect x={x - 6} y={padY} width={12} height={innerHeight} fill="transparent" />
+              {Number.isFinite(row.productiveRatio) && (
+                <circle cx={x} cy={yAt(row.productiveRatio)} r={isHovered ? 4 : 2} fill="#16a34a" />
+              )}
+              {Number.isFinite(row.expectedRatio) && (
+                <circle cx={x} cy={yAt(row.expectedRatio)} r={isHovered ? 4 : 2} fill="#2563eb" />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      {hovered && (
+        <div
+          className="fixed z-50 bg-white border border-black/10 rounded-lg shadow-lg px-3 py-2 text-xs pointer-events-none"
+          style={{ left: tooltipPos.x, top: tooltipPos.y - 8, transform: 'translate(-50%, -100%)' }}
+        >
+          <div className="font-medium text-[var(--ink)]">{hovered.key}</div>
+          <div className="flex gap-3 mt-1">
+            <span className="text-[#16a34a]">
+              Prod: {Number.isFinite(hovered.productiveRatio) ? Math.round(hovered.productiveRatio * 100) + '%' : '—'}
+            </span>
+            <span className="text-[#2563eb]">
+              Cob: {Number.isFinite(hovered.expectedRatio) ? Math.round(hovered.expectedRatio * 100) + '%' : '—'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -154,6 +199,67 @@ const formatWorkerLabel = (worker, formatWorkerDisplayName) => {
   if (fallback) return fallback;
   if (worker?.name) return worker.name;
   return worker?.id ? `Trabajador ${worker.id}` : 'Trabajador';
+};
+
+const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent, formatSeconds }) => {
+  if (!day) return null;
+
+  const indicators = day.indicators;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Detalle del dia</p>
+            <h3 className="text-lg font-semibold text-[var(--ink)]">{day.key}{workerName ? ` - ${workerName}` : ''}</h3>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-black/5 rounded-full">
+            <X className="h-5 w-5 text-[var(--ink-muted)]" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {indicators && (
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+              <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo productivo</p>
+                <p className="mt-1 text-xl font-semibold text-[#16a34a]">{formatPercent(indicators.productiveRatio)}</p>
+              </div>
+              <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Cobertura esperada</p>
+                <p className="mt-1 text-xl font-semibold text-[#2563eb]">{formatPercent(indicators.expectedRatio)}</p>
+              </div>
+              <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo ocioso</p>
+                <p className="mt-1 text-lg font-semibold text-[var(--ink)]">{formatSeconds(indicators.idleSeconds)}</p>
+              </div>
+              <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo extra</p>
+                <p className="mt-1 text-lg font-semibold text-[var(--ink)]">{formatSeconds(indicators.overtimeSeconds)}</p>
+              </div>
+            </div>
+          )}
+
+          {TaskTimeline && day.combinedDay && (
+            <div className="rounded-xl border border-black/5 bg-white p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-3">Linea de tiempo</p>
+              <TaskTimeline day={day.combinedDay} />
+            </div>
+          )}
+
+          {!TaskTimeline && (
+            <p className="text-sm text-[var(--ink-muted)]">
+              Componente de linea de tiempo no disponible.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const StationWideAssistanceTab = ({
@@ -168,11 +274,14 @@ const StationWideAssistanceTab = ({
   buildRangeIndicators,
   formatWorkerDisplayName,
   formatPercent,
+  formatSeconds,
   toDateOnly,
+  TaskTimeline,
 }) => {
   const [rangeDays, setRangeDays] = useState(RANGE_OPTIONS[0]);
   const [expandedGroups, setExpandedGroups] = useState({});
   const [groupCache, setGroupCache] = useState({});
+  const [modalData, setModalData] = useState(null);
   const loadTokensRef = useRef(new Map());
   const prevRangeRef = useRef(rangeDays);
   const geoThrottleRef = useRef(null);
@@ -259,6 +368,9 @@ const StationWideAssistanceTab = ({
         ? attendanceResponse.warnings
         : [];
 
+      const combinedDaysMap = new Map();
+      combinedDays.forEach((day) => combinedDaysMap.set(day.date, day));
+
       return {
         worker,
         rangeIndicators,
@@ -266,6 +378,7 @@ const StationWideAssistanceTab = ({
         attendanceError,
         activityError,
         geovictoriaWarnings: warnings,
+        combinedDaysMap,
       };
     },
     [
@@ -487,6 +600,16 @@ const StationWideAssistanceTab = ({
                     const hasWarnings = Array.isArray(workerSummary.geovictoriaWarnings) && workerSummary.geovictoriaWarnings.length > 0;
                     const hasErrors = workerSummary.attendanceError || workerSummary.activityError;
 
+                    const handlePointClick = (row) => {
+                      const combinedDay = workerSummary.combinedDaysMap?.get(row.key);
+                      setModalData({
+                        key: row.key,
+                        indicators: row.indicators,
+                        combinedDay,
+                        workerName: workerLabel,
+                      });
+                    };
+
                     return (
                       <tr key={workerSummary.worker.id} className="border-b border-black/5 bg-slate-50/30">
                         <td className="px-4 py-2 pl-8">
@@ -498,7 +621,7 @@ const StationWideAssistanceTab = ({
                         </td>
                         <td className="px-4 py-2 text-center">
                           {rangeIndicators.rows?.length ? (
-                            <CompactSparkline rows={rangeIndicators.rows} />
+                            <CompactSparkline rows={rangeIndicators.rows} onPointClick={handlePointClick} />
                           ) : (
                             <span className="text-xs text-[var(--ink-muted)]">Sin datos</span>
                           )}
@@ -533,6 +656,17 @@ const StationWideAssistanceTab = ({
           </tbody>
         </table>
       </div>
+
+      {modalData && (
+        <DayDetailModal
+          day={modalData}
+          workerName={modalData.workerName}
+          onClose={() => setModalData(null)}
+          TaskTimeline={TaskTimeline}
+          formatPercent={formatPercent}
+          formatSeconds={formatSeconds || ((s) => Number.isFinite(s) ? `${Math.round(s / 60)}m` : '-')}
+        />
+      )}
     </div>
   );
 };
