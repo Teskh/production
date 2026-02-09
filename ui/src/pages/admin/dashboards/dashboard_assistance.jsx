@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, RefreshCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
+import { buildDailyIndicators, buildRangeIndicators } from './assistanceIndicators';
 import StationWideAssistanceTab from './StationWideAssistanceTab';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -575,143 +576,6 @@ const buildLunchBreak = (baseDate, windowStart, windowEnd) => {
   const boundedEnd = windowEnd && end > windowEnd ? windowEnd : end;
   if (boundedEnd <= boundedStart) return null;
   return { start: boundedStart, end: boundedEnd };
-};
-
-const buildDailyIndicators = (day) => {
-  if (!day) return null;
-  const dayBounds = buildDayBounds(day);
-  if (!dayBounds) return null;
-  const { baseDate, dayStart, dayEnd } = dayBounds;
-  const entry =
-    parseDateTime(day?.attendance?.entry) || parseDateTime(day?.activity?.firstTaskStart);
-  const exit =
-    parseDateTime(day?.attendance?.exit) || parseDateTime(day?.activity?.lastTaskEnd);
-  if (!entry || !exit || exit <= entry) return null;
-  const presenceStart = entry < dayStart ? dayStart : entry;
-  const presenceEnd = exit > dayEnd ? dayEnd : exit;
-  if (!presenceStart || !presenceEnd || presenceEnd <= presenceStart) return null;
-
-  const adjustedStart = new Date(presenceStart.getTime() + 30 * 60 * 1000);
-  const adjustedEnd = new Date(presenceEnd.getTime() - 30 * 60 * 1000);
-  if (adjustedEnd <= adjustedStart) return null;
-
-  const lunchBreak = buildLunchBreak(baseDate, adjustedStart, adjustedEnd);
-  const lunchSeconds = lunchBreak ? (lunchBreak.end - lunchBreak.start) / 1000 : 0;
-  const presenceSeconds = Math.max(0, (adjustedEnd - adjustedStart) / 1000);
-  const presenceNetSeconds = Math.max(0, presenceSeconds - lunchSeconds);
-
-  const tasks = Array.isArray(day.activity?.tasks) ? day.activity.tasks : [];
-  const activeIntervals = [];
-  let overtimeSeconds = 0;
-  let expectedSecondsTotal = 0;
-
-  tasks.forEach((task) => {
-    const intervals = buildTaskIntervals(task, adjustedStart, adjustedEnd);
-    if (!intervals) return;
-    const expectedMinutesValue = Number.isFinite(Number(task.expected_minutes))
-      ? Number(task.expected_minutes)
-      : null;
-    const activeWithoutLunch = lunchBreak
-      ? subtractInterval(intervals.active, lunchBreak)
-      : intervals.active.slice();
-    const activeSeconds = sumIntervalsSeconds(activeWithoutLunch);
-    if (activeWithoutLunch.length) {
-      activeIntervals.push(...activeWithoutLunch);
-      if (expectedMinutesValue != null) {
-        const expectedSeconds = expectedMinutesValue * 60;
-        expectedSecondsTotal += expectedSeconds;
-        overtimeSeconds += Math.max(0, activeSeconds - expectedSeconds);
-      }
-    }
-  });
-
-  const activeUnionSeconds = sumIntervalsSeconds(mergeIntervals(activeIntervals));
-  const idleSeconds = Math.max(0, presenceNetSeconds - activeUnionSeconds);
-  const idleOverrunSeconds = idleSeconds + overtimeSeconds;
-  const productiveSeconds = Math.max(0, presenceNetSeconds - idleOverrunSeconds);
-
-  return {
-    presenceSeconds,
-    presenceNetSeconds,
-    lunchSeconds,
-    idleSeconds,
-    overtimeSeconds,
-    expectedSecondsTotal,
-    idleOverrunSeconds,
-    productiveSeconds,
-    idleOverrunRatio: presenceNetSeconds > 0 ? idleOverrunSeconds / presenceNetSeconds : null,
-    productiveRatio: presenceNetSeconds > 0 ? productiveSeconds / presenceNetSeconds : null,
-    expectedRatio: presenceNetSeconds > 0 ? expectedSecondsTotal / presenceNetSeconds : null,
-  };
-};
-
-const buildRangeIndicators = (combinedDays) => {
-  const empty = {
-    rows: [],
-    totals: {
-      presenceNetSeconds: 0,
-      productiveSeconds: 0,
-      expectedSecondsTotal: 0,
-      idleOverrunSeconds: 0,
-      idleSeconds: 0,
-      overtimeSeconds: 0,
-    },
-    totalProductiveRatio: null,
-    totalExpectedRatio: null,
-    startDate: '',
-    endDate: '',
-    daysWithData: 0,
-    daysTotal: combinedDays.length,
-  };
-  if (!combinedDays.length) return empty;
-
-  const entries = combinedDays
-    .map((day) => ({ day, dateObj: parseDateOnly(day.date) }))
-    .filter((item) => item.dateObj)
-    .sort((a, b) => a.dateObj - b.dateObj);
-  if (!entries.length) return empty;
-
-  const totals = { ...empty.totals };
-  const rows = [];
-
-  entries.forEach(({ day, dateObj }) => {
-    const indicators = buildDailyIndicators(day);
-    if (!indicators || !Number.isFinite(indicators.productiveRatio)) return;
-    rows.push({
-      key: day.date,
-      label: dateObj.getDate(),
-      dateObj,
-      productiveRatio: indicators.productiveRatio,
-      expectedRatio: indicators.expectedRatio,
-      indicators,
-    });
-    totals.presenceNetSeconds += indicators.presenceNetSeconds || 0;
-    totals.productiveSeconds += indicators.productiveSeconds || 0;
-    totals.expectedSecondsTotal += indicators.expectedSecondsTotal || 0;
-    totals.idleOverrunSeconds += indicators.idleOverrunSeconds || 0;
-    totals.idleSeconds += indicators.idleSeconds || 0;
-    totals.overtimeSeconds += indicators.overtimeSeconds || 0;
-  });
-
-  if (!rows.length) return empty;
-
-  const totalProductiveRatio =
-    totals.presenceNetSeconds > 0 ? totals.productiveSeconds / totals.presenceNetSeconds : null;
-  const totalExpectedRatio =
-    totals.presenceNetSeconds > 0
-      ? totals.expectedSecondsTotal / totals.presenceNetSeconds
-      : null;
-
-  return {
-    rows,
-    totals,
-    totalProductiveRatio,
-    totalExpectedRatio,
-    startDate: rows[0].key,
-    endDate: rows[rows.length - 1].key,
-    daysWithData: rows.length,
-    daysTotal: combinedDays.length,
-  };
 };
 
 const buildMonthlyDataset = (combinedDays, anchorDate) => {
@@ -2559,7 +2423,6 @@ const DashboardAssistance = () => {
           todayIso={todayIso}
           normalizeAttendance={normalizeAttendance}
           buildActivityDays={buildActivityDays}
-          buildRangeIndicators={buildRangeIndicators}
           formatWorkerDisplayName={formatWorkerDisplayName}
           formatPercent={formatPercent}
           formatSeconds={formatSeconds}

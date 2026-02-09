@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
+import { buildRangeIndicators } from './assistanceIndicators';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
@@ -278,7 +279,6 @@ const StationWideAssistanceTab = ({
   todayIso,
   normalizeAttendance,
   buildActivityDays,
-  buildRangeIndicators,
   formatWorkerDisplayName,
   formatPercent,
   formatSeconds,
@@ -395,7 +395,6 @@ const StationWideAssistanceTab = ({
       rangeDays,
       normalizeAttendance,
       buildActivityDays,
-      buildRangeIndicators,
       todayKey,
     ]
   );
