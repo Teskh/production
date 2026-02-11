@@ -1,8 +1,11 @@
 import asyncio
 import contextlib
 import logging
+import random
+import time
+import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +33,26 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def add_perf_headers(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    response.headers["x-request-id"] = request_id
+    response.headers["server-timing"] = f"app;dur={duration_ms:.1f}"
+    if duration_ms >= 250 or random.random() < 0.02:
+        logger.info(
+            "perf method=%s path=%s status=%s dur_ms=%.1f req_id=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            request_id,
+        )
+    return response
 
 
 async def _run_backup_scheduler() -> None:

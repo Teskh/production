@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import type { ReactElement } from 'react';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
@@ -24,6 +25,7 @@ import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
+import DashboardPerformance from './pages/admin/dashboards/dashboard_performance';
 import Personnel from './pages/admin/personnel/Personnel';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -39,6 +41,15 @@ import QCChecks from './pages/admin/quality/QCChecks';
 import DaySummary from './pages/utility/DaySummary';
 import GeneralOverview from './pages/utility/GeneralOverview';
 import FloorStatus from './pages/utility/floorStatus';
+import { isSysadminUser, useAdminSession } from './layouts/AdminLayoutContext';
+
+const SysadminOnlyRoute = ({ element }: { element: ReactElement }) => {
+  const admin = useAdminSession();
+  if (!isSysadminUser(admin)) {
+    return <Navigate to="/admin/dashboards" replace />;
+  }
+  return element;
+};
 
 function App() {
   return (
@@ -101,8 +112,18 @@ function App() {
           <Route path="dashboards/stations" element={<DashboardStations />} />
           <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
-          <Route path="dashboards/assistance" element={<DashboardAssistance />} />
-          <Route path="dashboards/plant-view" element={<DashboardPlantView />} />
+          <Route
+            path="dashboards/assistance"
+            element={<SysadminOnlyRoute element={<DashboardAssistance />} />}
+          />
+          <Route
+            path="dashboards/plant-view"
+            element={<SysadminOnlyRoute element={<DashboardPlantView />} />}
+          />
+          <Route
+            path="dashboards/performance"
+            element={<SysadminOnlyRoute element={<DashboardPerformance />} />}
+          />
         </Route>
 
         {/* Utility Pages (Standalone?) - Spec says "accessed outside the primary navigation" */}

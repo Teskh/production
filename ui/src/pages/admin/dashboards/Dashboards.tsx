@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   ArrowUpRight,
   BarChart3,
   ClipboardList,
@@ -11,7 +12,7 @@ import {
   Timer,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import { isSysadminUser, useAdminHeader, useAdminSession } from '../../../layouts/AdminLayoutContext';
 
 type DashboardCard = {
   id: string;
@@ -21,6 +22,7 @@ type DashboardCard = {
   status: 'ready' | 'planned';
   tags: string[];
   icon: React.ElementType;
+  sysadminOnly?: boolean;
 };
 
 const dashboards: DashboardCard[] = [
@@ -33,6 +35,7 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Planta', 'Tiempo', 'Operarios'],
     icon: MapPin,
+    sysadminOnly: true,
   },
   {
     id: 'panel-linear-meters',
@@ -75,6 +78,17 @@ const dashboards: DashboardCard[] = [
     icon: Timer,
   },
   {
+    id: 'performance-rum',
+    name: 'Performance (RUM)',
+    description:
+      'Monitorea p50/p95 de carga y APIs por dispositivo real desplegado.',
+    path: '/admin/dashboards/performance',
+    status: 'ready',
+    tags: ['Rendimiento', 'Dispositivos', 'Latencia'],
+    icon: Activity,
+    sysadminOnly: true,
+  },
+  {
     id: 'assistance-activity',
     name: 'Asistencias y actividad',
     description:
@@ -83,6 +97,7 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Personal', 'GeoVictoria', 'Actividad'],
     icon: Clock,
+    sysadminOnly: true,
   },
 ];
 
@@ -109,7 +124,9 @@ const getStoredFavorites = (): string[] => {
 
 const Dashboards: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const admin = useAdminSession();
   const [favorites, setFavorites] = useState<string[]>(getStoredFavorites);
+  const isSysadmin = isSysadminUser(admin);
 
   useEffect(() => {
     setHeader({
@@ -122,14 +139,19 @@ const Dashboards: React.FC = () => {
     window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
   }, [favorites]);
 
+  const visibleDashboards = useMemo(
+    () => dashboards.filter((dashboard) => !dashboard.sysadminOnly || isSysadmin),
+    [isSysadmin],
+  );
+
   const favoriteDashboards = useMemo(
-    () => dashboards.filter((dashboard) => favorites.includes(dashboard.id)),
-    [favorites],
+    () => visibleDashboards.filter((dashboard) => favorites.includes(dashboard.id)),
+    [favorites, visibleDashboards],
   );
 
   const nonFavoriteDashboards = useMemo(
-    () => dashboards.filter((dashboard) => !favorites.includes(dashboard.id)),
-    [favorites],
+    () => visibleDashboards.filter((dashboard) => !favorites.includes(dashboard.id)),
+    [favorites, visibleDashboards],
   );
 
   const toggleFavorite = (id: string) => {
@@ -150,7 +172,7 @@ const Dashboards: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 rounded-full border border-[var(--accent-soft)] bg-white/80 px-4 py-2 text-xs text-[var(--ink)]">
             <BarChart3 className="h-4 w-4 text-[var(--accent)]" />
-            {dashboards.length} dashboards disponibles
+            {visibleDashboards.length} dashboards disponibles
           </div>
         </div>
       </div>
@@ -162,7 +184,7 @@ const Dashboards: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 rounded-full border border-[var(--accent-soft)] bg-white/80 px-4 py-2 text-xs text-[var(--ink)]">
             <Star className="h-4 w-4 text-[var(--accent)]" />
-            {favorites.length} favoritos
+            {favoriteDashboards.length} favoritos
           </div>
         </div>
         {favoriteDashboards.length === 0 ? (

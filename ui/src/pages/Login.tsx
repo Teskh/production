@@ -6,6 +6,12 @@ import QRCodeScannerModal from '../components/QRCodeScannerModal';
 import PanelStationGoalPanel from '../components/PanelStationGoalPanel';
 import type { StationContext } from '../utils/stationContext';
 import {
+  createRequestId,
+  parseServerTimingDuration,
+  trackApiPerformance,
+  trackPageLoadPerformance,
+} from '../utils/perfTelemetry';
+import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
   STATION_CONTEXT_STORAGE_KEY,
   formatStationContext,
@@ -18,6 +24,7 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QR_SCANNING_STORAGE_KEY = 'login_qr_scanning_enabled';
+const LOGIN_PAGE_PATH = '/login';
 
 type Station = {
   id: number;
@@ -166,10 +173,38 @@ const buildHeaders = (options: RequestInit): Headers => {
 };
 
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: buildHeaders(options),
-    credentials: 'include',
+  const method = (options.method ?? 'GET').toUpperCase();
+  const requestId = createRequestId();
+  const headers = buildHeaders(options);
+  headers.set('x-request-id', requestId);
+  const startedAt = performance.now();
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+  } catch (error) {
+    trackApiPerformance({
+      pagePath: LOGIN_PAGE_PATH,
+      apiPath: path,
+      method,
+      durationMs: performance.now() - startedAt,
+      ok: false,
+      requestId,
+    });
+    throw error;
+  }
+  trackApiPerformance({
+    pagePath: LOGIN_PAGE_PATH,
+    apiPath: path,
+    method,
+    durationMs: performance.now() - startedAt,
+    serverDurationMs: parseServerTimingDuration(response.headers.get('server-timing')),
+    statusCode: response.status,
+    ok: response.ok,
+    requestId,
   });
   if (!response.ok) {
     const text = await response.text();
@@ -246,6 +281,8 @@ const Login: React.FC = () => {
   });
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
   const lastTapRef = useRef(0);
+  const loadTimerStartRef = useRef(performance.now());
+  const loadTimerReportedRef = useRef(false);
   const isTouchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -259,6 +296,7 @@ const Login: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       setLoading(true);
+      let ok = false;
       try {
         const taskPromise = apiRequest<TaskDefinition[]>('/api/task-definitions').then(
           (data) => ({ ok: true, data }),
@@ -313,11 +351,20 @@ const Login: React.FC = () => {
         } else if (normalizedContext.kind !== 'station' && !resolvedStationId) {
           setShowStationPicker(true);
         }
+        ok = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'No se pudo cargar la informacion de inicio de sesion.';
         setStatusMessage(message);
       } finally {
         setLoading(false);
+        if (!loadTimerReportedRef.current) {
+          trackPageLoadPerformance({
+            pagePath: LOGIN_PAGE_PATH,
+            durationMs: performance.now() - loadTimerStartRef.current,
+            ok,
+          });
+          loadTimerReportedRef.current = true;
+        }
       }
     };
     load();

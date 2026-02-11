@@ -11,6 +11,7 @@ from app.api.routes import (
     panel_definitions,
     panel_linear_meters,
     panel_task_history,
+    performance,
     task_history,
     station_panels_finished,
     pause_reasons,
@@ -55,6 +56,7 @@ api_router.include_router(
     prefix="/panel-task-history",
     tags=["panel-task-history"],
 )
+api_router.include_router(performance.router, prefix="/performance", tags=["performance"])
 api_router.include_router(
     task_history.router,
     prefix="/task-history",
