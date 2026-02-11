@@ -87,6 +87,51 @@ def _required_panel_task_ids(
     return required_ids
 
 
+def _applicable_panel_definitions_for_work_unit(
+    db: Session, work_unit: WorkUnit, work_order: WorkOrder
+) -> list[PanelDefinition]:
+    panel_definitions = list(
+        db.execute(
+            select(PanelDefinition)
+            .where(PanelDefinition.house_type_id == work_order.house_type_id)
+            .where(PanelDefinition.module_sequence_number == work_unit.module_number)
+        ).scalars()
+    )
+    general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
+    if work_order.sub_type_id is not None:
+        specific = [
+            panel_def
+            for panel_def in panel_definitions
+            if panel_def.sub_type_id == work_order.sub_type_id
+        ]
+        return general + specific
+    return general
+
+
+def _all_applicable_panels_terminal(
+    db: Session, work_unit: WorkUnit, work_order: WorkOrder
+) -> bool:
+    panel_definitions = _applicable_panel_definitions_for_work_unit(db, work_unit, work_order)
+    if not panel_definitions:
+        return False
+
+    panel_units = list(
+        db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
+    )
+    panel_units_by_definition: dict[int, list[PanelUnit]] = {}
+    for panel_unit in panel_units:
+        panel_units_by_definition.setdefault(panel_unit.panel_definition_id, []).append(panel_unit)
+
+    terminal_statuses = {PanelUnitStatus.COMPLETED, PanelUnitStatus.CONSUMED}
+    for panel_definition in panel_definitions:
+        units = panel_units_by_definition.get(panel_definition.id, [])
+        if not units:
+            return False
+        if any(panel_unit.status not in terminal_statuses for panel_unit in units):
+            return False
+    return True
+
+
 def _next_panel_station(
     panel_stations: list[Station],
     current_station: Station,
@@ -252,8 +297,16 @@ def main() -> None:
                     f"advance to station {next_station.id} ({next_station.name})"
                 )
             else:
-                if work_unit.status in (WorkUnitStatus.PLANNED, WorkUnitStatus.PANELS):
+                all_applicable_panels_done = _all_applicable_panels_terminal(
+                    session, work_unit, work_order
+                )
+                if all_applicable_panels_done and work_unit.status in (
+                    WorkUnitStatus.PLANNED,
+                    WorkUnitStatus.PANELS,
+                ):
                     work_unit_status_change = (work_unit.status, WorkUnitStatus.MAGAZINE)
+                elif work_unit.status == WorkUnitStatus.PLANNED:
+                    work_unit_status_change = (work_unit.status, WorkUnitStatus.PANELS)
                 action = "complete panel"
 
             reason = f"required {len(required_ids)}; satisfied {len(satisfied_ids)}"
