@@ -251,6 +251,10 @@ const QCDashboard: React.FC = () => {
 
   const pendingChecks = useMemo(() => dashboard.pending_checks, [dashboard.pending_checks]);
   const reworkTasks = useMemo(() => dashboard.rework_tasks, [dashboard.rework_tasks]);
+  const activeReworkTasks = useMemo(
+    () => reworkTasks.filter((task) => task.current_station_id !== null),
+    [reworkTasks]
+  );
   const stationActivity = useMemo(() => {
     const activity = new Map<
       number,
@@ -272,7 +276,7 @@ const QCDashboard: React.FC = () => {
       }
       ensureEntry(stationId).openChecks.push(check);
     });
-    reworkTasks.forEach((task) => {
+    activeReworkTasks.forEach((task) => {
       const stationId = resolveStationId(task.station_id, task.current_station_id);
       if (stationId === null) {
         return;
@@ -284,7 +288,7 @@ const QCDashboard: React.FC = () => {
       entry.reworks.sort((a, b) => toTimestamp(b.created_at) - toTimestamp(a.created_at));
     });
     return activity;
-  }, [pendingChecks, reworkTasks]);
+  }, [pendingChecks, activeReworkTasks]);
   const stationGroups = useMemo(() => {
     const panels: StationSummary[] = [];
     const lines: Record<'1' | '2' | '3', StationSummary[]> = {
@@ -477,23 +481,23 @@ const QCDashboard: React.FC = () => {
                 Re-trabajos activos
               </p>
               <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                {reworkTasks.length} re-trabajos abiertos
+                {activeReworkTasks.length} re-trabajos abiertos
               </h3>
             </div>
             <Wrench className="h-5 w-5 text-[var(--ink-muted)]" />
           </div>
           <div className="mt-4 grid gap-3">
-            {loading && !reworkTasks.length ? (
+            {loading && !activeReworkTasks.length ? (
               <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
                 Cargando re-trabajos...
               </div>
             ) : null}
-            {!loading && !reworkTasks.length ? (
+            {!loading && !activeReworkTasks.length ? (
               <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
                 No hay re-trabajos activos.
               </div>
             ) : null}
-            {reworkTasks.map((task) => {
+            {activeReworkTasks.map((task) => {
               const workUnitLabel = buildWorkUnitLabel(
                 task.project_name,
                 task.house_type_name,
