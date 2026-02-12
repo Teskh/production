@@ -298,6 +298,18 @@ const formatWorkerLabel = (worker, formatWorkerDisplayName) => {
   return worker?.id ? `Trabajador ${worker.id}` : 'Trabajador';
 };
 
+const normalizeReportWorkerSummaries = (summaries, formatWorkerDisplayName) =>
+  (Array.isArray(summaries) ? summaries : [])
+    .map((summary) => {
+      if (!summary || !summary.worker) return null;
+      return {
+        ...summary,
+        workerLabel: formatWorkerLabel(summary.worker, formatWorkerDisplayName),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.workerLabel.localeCompare(b.workerLabel, 'es'));
+
 const isWorkerInactive = (worker) =>
   String(worker?.status ?? '')
     .trim()
@@ -676,24 +688,38 @@ const StationWideAssistanceTab = ({
       const selectedGroupData = [];
 
       for (const group of selectedGroups) {
-        const groupWorkers = workersByGroup.get(group.key) || [];
-        const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, (worker) =>
-          fetchWorkerSummary(worker, safeReportDays)
-        );
+        const cached = groupCache[group.key];
+        const canReuseCache =
+          cached &&
+          !cached.loading &&
+          !cached.error &&
+          cached.rangeDays === safeReportDays &&
+          Array.isArray(cached.workers);
 
-        const workerSummaries = summaries
-          .map((summary) => {
-            if (!summary || summary.error) return null;
-            return summary;
-          })
-          .filter(Boolean)
-          .map((summary) => ({
-            ...summary,
-            workerLabel: formatWorkerLabel(summary.worker, formatWorkerDisplayName),
-          }))
-          .sort((a, b) => a.workerLabel.localeCompare(b.workerLabel, 'es'));
+        let workerSummaries = [];
+        let stationSummary = null;
 
-        const stationSummary = buildStationSummary(workerSummaries);
+        if (canReuseCache) {
+          workerSummaries = normalizeReportWorkerSummaries(cached.workers, formatWorkerDisplayName);
+          stationSummary = cached.stationSummary || buildStationSummary(workerSummaries);
+        } else {
+          const groupWorkers = workersByGroup.get(group.key) || [];
+          const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, (worker) =>
+            fetchWorkerSummary(worker, safeReportDays)
+          );
+
+          workerSummaries = normalizeReportWorkerSummaries(
+            summaries
+              .map((summary) => {
+                if (!summary || summary.error) return null;
+                return summary;
+              })
+              .filter(Boolean),
+            formatWorkerDisplayName
+          );
+          stationSummary = buildStationSummary(workerSummaries);
+        }
+
         selectedGroupData.push({
           group,
           workerSummaries,
@@ -759,6 +785,7 @@ const StationWideAssistanceTab = ({
     todayIso,
     groupedStations,
     reportSelection,
+    groupCache,
     workersByGroup,
     fetchWorkerSummary,
     formatWorkerDisplayName,
