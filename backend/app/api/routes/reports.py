@@ -389,7 +389,7 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     pdf.drawString(
         margin + 8,
         notes_y + notes_h - 42,
-        "• Cobertura esperada: grado en que el tiempo util quedo respaldado por tareas registradas.",
+        "• Cobertura esperada: grado general de uso del sistema",
     )
 
     _draw_station_summary_table(
