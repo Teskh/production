@@ -33,6 +33,15 @@ except Exception as exc:  # pragma: no cover - import guard only
     _REPORTLAB_ERROR = exc
 
 
+_CLR_DARK = "#0f172a"
+_CLR_MID = "#475569"
+_CLR_LIGHT = "#94a3b8"
+_CLR_RULE = "#cbd5e1"
+_CLR_ZEBRA = "#f8fafc"
+_CLR_GREEN = "#16a34a"
+_CLR_BLUE = "#2563eb"
+
+
 def _format_percent(value: float | None) -> str:
     if value is None:
         return "-"
@@ -75,15 +84,21 @@ def _draw_metric_card(
     label: str,
     value: str,
 ) -> None:
-    pdf.setFillColor(colors.HexColor("#f8fafc"))
-    pdf.setStrokeColor(colors.HexColor("#d6dce5"))
-    pdf.roundRect(x, y, width, height, 6, stroke=1, fill=1)
-    pdf.setFillColor(colors.HexColor("#475569"))
-    pdf.setFont("Helvetica", 8)
-    pdf.drawString(x + 8, y + height - 14, label.upper())
-    pdf.setFillColor(colors.HexColor("#0f172a"))
-    pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(x + 8, y + 12, value)
+    pdf.setStrokeColor(colors.HexColor(_CLR_RULE))
+    pdf.setFillColor(colors.white)
+    pdf.roundRect(x, y, width, height, 4, stroke=1, fill=1)
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
+    pdf.setFont("Helvetica", 7)
+    pdf.drawString(x + 10, y + height - 14, label.upper())
+    pdf.setFillColor(colors.HexColor(_CLR_DARK))
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(x + 10, y + 10, value)
+
+
+def _hline(pdf: "canvas.Canvas", x1: float, x2: float, y: float) -> None:
+    pdf.setStrokeColor(colors.HexColor(_CLR_RULE))
+    pdf.setLineWidth(0.5)
+    pdf.line(x1, y, x2, y)
 
 
 def _draw_station_chart(
@@ -95,28 +110,25 @@ def _draw_station_chart(
     width: float,
     height: float,
 ) -> None:
-    inner_left = x + 36
-    inner_right = x + width - 12
-    inner_bottom = y + 22
-    inner_top = y + height - 20
+    inner_left = x + 30
+    inner_right = x + width - 8
+    inner_bottom = y + 20
+    inner_top = y + height - 8
     inner_width = max(1.0, inner_right - inner_left)
     inner_height = max(1.0, inner_top - inner_bottom)
 
-    pdf.setFillColor(colors.HexColor("#f8fafc"))
-    pdf.setStrokeColor(colors.HexColor("#d6dce5"))
-    pdf.roundRect(x, y, width, height, 6, stroke=1, fill=1)
-
-    for tick in (0.0, 0.5, 1.0):
+    for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
         y_tick = inner_bottom + tick * inner_height
-        pdf.setStrokeColor(colors.HexColor("#e8edf5"))
+        pdf.setStrokeColor(colors.HexColor("#e2e8f0"))
+        pdf.setLineWidth(0.4)
         pdf.line(inner_left, y_tick, inner_right, y_tick)
-        pdf.setFillColor(colors.HexColor("#4b5d73"))
-        pdf.setFont("Helvetica", 8)
+        pdf.setFillColor(colors.HexColor(_CLR_LIGHT))
+        pdf.setFont("Helvetica", 7)
         pdf.drawRightString(inner_left - 4, y_tick - 2, f"{round(tick * 100)}%")
 
     ordered = sorted(rows, key=lambda row: row.key)
     if not ordered:
-        pdf.setFillColor(colors.HexColor("#64748b"))
+        pdf.setFillColor(colors.HexColor(_CLR_LIGHT))
         pdf.setFont("Helvetica", 9)
         pdf.drawString(inner_left, inner_bottom + inner_height / 2, "Sin datos suficientes para graficar.")
         return
@@ -138,14 +150,14 @@ def _draw_station_chart(
         if not points:
             return
         pdf.setStrokeColor(line_color)
-        pdf.setLineWidth(1.8)
+        pdf.setLineWidth(1.6)
         for idx in range(1, len(points)):
             x1, y1 = points[idx - 1]
             x2, y2 = points[idx]
             pdf.line(x1, y1, x2, y2)
         pdf.setFillColor(line_color)
         for x_pos, y_pos in points:
-            pdf.circle(x_pos, y_pos, 2.2, stroke=0, fill=1)
+            pdf.circle(x_pos, y_pos, 2, stroke=0, fill=1)
 
     productive_points = []
     expected_points = []
@@ -158,17 +170,17 @@ def _draw_station_chart(
         if exp_y is not None:
             expected_points.append((x_pos, exp_y))
 
-    draw_series(productive_points, colors.HexColor("#16a34a"))
-    draw_series(expected_points, colors.HexColor("#2563eb"))
+    draw_series(productive_points, colors.HexColor(_CLR_GREEN))
+    draw_series(expected_points, colors.HexColor(_CLR_BLUE))
 
     label_step = max(1, len(ordered) // 9) if len(ordered) > 12 else 1
-    pdf.setFillColor(colors.HexColor("#4b5d73"))
-    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
+    pdf.setFont("Helvetica", 7)
     for idx, row in enumerate(ordered):
         if idx % label_step != 0 and idx != len(ordered) - 1:
             continue
         label = row.key[8:10] + "/" + row.key[5:7] if len(row.key) >= 10 else row.key
-        pdf.drawCentredString(x_at(idx), y + 8, label)
+        pdf.drawCentredString(x_at(idx), y + 6, label)
 
 
 def _draw_station_summary_table(
@@ -180,26 +192,23 @@ def _draw_station_summary_table(
     margin: float,
     start_y: float,
 ) -> None:
-    col_station = 280
-    col_workers = 78
-    col_prod = 72
-    col_exp = 72
-    row_h = 15
+    usable = page_width - margin * 2
+    pad = 6
+    col_trab = 56
+    col_uc = 72
+    col_um = 72
+    col_station = usable - col_trab - col_uc - col_um
+    row_h = 16
+    right_edge = margin + usable
 
     def draw_header(y_pos: float) -> None:
-        pdf.setFillColor(colors.HexColor("#f1f5f9"))
-        pdf.setStrokeColor(colors.HexColor("#d6dce5"))
-        pdf.rect(margin, y_pos - row_h + 2, page_width - margin * 2, row_h, stroke=1, fill=1)
-        pdf.setFillColor(colors.HexColor("#475569"))
-        pdf.setFont("Helvetica-Bold", 8)
-        pdf.drawString(margin + 5, y_pos - 9, "ESTACION")
-        pdf.drawRightString(margin + col_station + col_workers - 6, y_pos - 9, "TRAB.")
-        pdf.drawRightString(
-            margin + col_station + col_workers + col_prod - 6, y_pos - 9, "PRODUCTIVO"
-        )
-        pdf.drawRightString(
-            margin + col_station + col_workers + col_prod + col_exp - 6, y_pos - 9, "COBERTURA"
-        )
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
+        pdf.setFont("Helvetica-Bold", 7.5)
+        pdf.drawString(margin + pad, y_pos - 10, "ESTACION")
+        pdf.drawRightString(margin + col_station + col_trab - pad, y_pos - 10, "TRAB.")
+        pdf.drawRightString(margin + col_station + col_trab + col_uc - pad, y_pos - 10, "USO CORRECTO")
+        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO MINIMO")
+        _hline(pdf, margin, right_edge, y_pos - row_h + 2)
 
     y_pos = start_y
     draw_header(y_pos)
@@ -208,37 +217,37 @@ def _draw_station_summary_table(
     for idx, station in enumerate(stations):
         if y_pos < margin + 26:
             pdf.showPage()
-            pdf.setFont("Helvetica-Bold", 14)
-            pdf.setFillColor(colors.HexColor("#0f172a"))
+            pdf.setFont("Helvetica-Bold", 13)
+            pdf.setFillColor(colors.HexColor(_CLR_DARK))
             pdf.drawString(margin, page_height - margin, "Resumen por estacion (continuacion)")
             y_pos = page_height - margin - 24
             draw_header(y_pos)
             y_pos -= row_h
 
         if idx % 2 == 0:
-            pdf.setFillColor(colors.HexColor("#f8fafc"))
-            pdf.setStrokeColor(colors.HexColor("#f1f5f9"))
-            pdf.rect(margin, y_pos - row_h + 2, page_width - margin * 2, row_h, stroke=0, fill=1)
+            pdf.setFillColor(colors.HexColor(_CLR_ZEBRA))
+            pdf.rect(margin, y_pos - row_h + 2, usable, row_h, stroke=0, fill=1)
 
-        pdf.setFillColor(colors.HexColor("#0f172a"))
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
         pdf.setFont("Helvetica", 8)
-        station_label = _truncate_text(pdf, station.label, col_station - 10, font_size=8)
-        pdf.drawString(margin + 5, y_pos - 9, station_label)
+        station_label = _truncate_text(pdf, station.label, col_station - pad * 2, font_size=8)
+        pdf.drawString(margin + pad, y_pos - 10, station_label)
         pdf.drawRightString(
-            margin + col_station + col_workers - 6,
-            y_pos - 9,
+            margin + col_station + col_trab - pad,
+            y_pos - 10,
             f"{station.workers_with_data}/{station.workers_total}",
         )
         pdf.drawRightString(
-            margin + col_station + col_workers + col_prod - 6,
-            y_pos - 9,
+            margin + col_station + col_trab + col_uc - pad,
+            y_pos - 10,
             _format_percent(station.average_productive),
         )
         pdf.drawRightString(
-            margin + col_station + col_workers + col_prod + col_exp - 6,
-            y_pos - 9,
+            right_edge - pad,
+            y_pos - 10,
             _format_percent(station.average_expected),
         )
+        _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
 
 
@@ -253,62 +262,54 @@ def _draw_worker_table(
     start_y: float,
 ) -> None:
     if not workers:
-        pdf.setFillColor(colors.HexColor("#64748b"))
+        pdf.setFillColor(colors.HexColor(_CLR_LIGHT))
         pdf.setFont("Helvetica", 9)
         pdf.drawString(margin, start_y, "Sin detalle de trabajadores para este rango.")
         return
 
-    col_name = 270
-    col_prod = 74
-    col_exp = 74
-    col_days = 70
-    row_h = 14
+    usable = page_width - margin * 2
+    pad = 6
+    col_uc = 80
+    col_um = 80
+    col_name = usable - col_uc - col_um
+    row_h = 15
+    right_edge = margin + usable
 
     def draw_table_header(y_pos: float) -> float:
-        pdf.setFillColor(colors.HexColor("#f1f5f9"))
-        pdf.setStrokeColor(colors.HexColor("#d6dce5"))
-        pdf.rect(margin, y_pos - row_h + 2, page_width - margin * 2, row_h, stroke=1, fill=1)
-        pdf.setFillColor(colors.HexColor("#475569"))
-        pdf.setFont("Helvetica-Bold", 8)
-        pdf.drawString(margin + 5, y_pos - 9, "TRABAJADOR")
-        pdf.drawRightString(margin + col_name + col_prod - 6, y_pos - 9, "PRODUCTIVO")
-        pdf.drawRightString(margin + col_name + col_prod + col_exp - 6, y_pos - 9, "COBERTURA")
-        pdf.drawRightString(
-            margin + col_name + col_prod + col_exp + col_days - 6, y_pos - 9, "DIAS"
-        )
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
+        pdf.setFont("Helvetica-Bold", 7.5)
+        pdf.drawString(margin + pad, y_pos - 10, "TRABAJADOR")
+        pdf.drawRightString(margin + col_name + col_uc - pad, y_pos - 10, "USO CORRECTO")
+        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO MINIMO")
+        _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         return y_pos - row_h
 
     y_pos = draw_table_header(start_y)
     for idx, worker in enumerate(workers):
         if y_pos < margin + 20:
             pdf.showPage()
-            pdf.setFillColor(colors.HexColor("#0f172a"))
+            pdf.setFillColor(colors.HexColor(_CLR_DARK))
             pdf.setFont("Helvetica-Bold", 13)
             pdf.drawString(
-                margin, page_height - margin, f"{station_label} - detalle por trabajador (cont.)"
+                margin, page_height - margin, f"{station_label} - detalle (cont.)"
             )
             y_pos = draw_table_header(page_height - margin - 20)
 
         if idx % 2 == 0:
-            pdf.setFillColor(colors.HexColor("#f8fafc"))
-            pdf.setStrokeColor(colors.HexColor("#f1f5f9"))
-            pdf.rect(margin, y_pos - row_h + 2, page_width - margin * 2, row_h, stroke=0, fill=1)
+            pdf.setFillColor(colors.HexColor(_CLR_ZEBRA))
+            pdf.rect(margin, y_pos - row_h + 2, usable, row_h, stroke=0, fill=1)
 
-        pdf.setFillColor(colors.HexColor("#0f172a"))
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
         pdf.setFont("Helvetica", 8)
-        worker_label = _truncate_text(pdf, worker.label, col_name - 10, font_size=8)
-        pdf.drawString(margin + 5, y_pos - 9, worker_label)
+        worker_label = _truncate_text(pdf, worker.label, col_name - pad * 2, font_size=8)
+        pdf.drawString(margin + pad, y_pos - 10, worker_label)
         pdf.drawRightString(
-            margin + col_name + col_prod - 6, y_pos - 9, _format_percent(worker.productive_ratio)
+            margin + col_name + col_uc - pad, y_pos - 10, _format_percent(worker.productive_ratio)
         )
         pdf.drawRightString(
-            margin + col_name + col_prod + col_exp - 6, y_pos - 9, _format_percent(worker.expected_ratio)
+            right_edge - pad, y_pos - 10, _format_percent(worker.expected_ratio)
         )
-        pdf.drawRightString(
-            margin + col_name + col_prod + col_exp + col_days - 6,
-            y_pos - 9,
-            f"{worker.days_with_data}/{worker.days_total}",
-        )
+        _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
 
 
@@ -319,140 +320,127 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     page_width, page_height = A4
-    margin = 16 * mm
+    margin = 14 * mm
+    usable = page_width - margin * 2
 
     generated = payload.generated_at or datetime.now()
     generated_label = generated.strftime("%Y-%m-%d %H:%M")
 
-    # First page: global summary.
-    title_y = page_height - margin
-    pdf.setFillColor(colors.HexColor("#0f172a"))
-    pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(margin, title_y, "Reporte de asistencia y uso del sistema")
-    pdf.setFillColor(colors.HexColor("#475569"))
-    pdf.setFont("Helvetica", 9)
-    pdf.drawString(
-        margin,
-        title_y - 14,
-        (
-            f"Generado: {generated_label}  |  Rango: ultimos {payload.report_days} dias "
-            f"({payload.from_date} -> {payload.to_date})  |  Estaciones: {len(payload.stations)}"
-        ),
-    )
+    # ── First page: global summary ──
+    y = page_height - margin
+    pdf.setFillColor(colors.HexColor(_CLR_DARK))
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(margin, y, "Reporte de asistencia y uso del sistema")
 
-    card_y = title_y - 80
-    card_w = (page_width - margin * 2 - 16) / 3
-    card_h = 52
-    _draw_metric_card(
-        pdf,
-        x=margin,
-        y=card_y,
-        width=card_w,
-        height=card_h,
-        label="Productivo global",
-        value=_format_percent(payload.global_productive),
-    )
-    _draw_metric_card(
-        pdf,
-        x=margin + card_w + 8,
-        y=card_y,
-        width=card_w,
-        height=card_h,
-        label="Cobertura global",
-        value=_format_percent(payload.global_expected),
-    )
-    _draw_metric_card(
-        pdf,
-        x=margin + (card_w + 8) * 2,
-        y=card_y,
-        width=card_w,
-        height=card_h,
-        label="Trabajadores",
-        value=str(payload.total_workers),
-    )
-
-    notes_y = card_y - 84
-    notes_h = 60
-    pdf.setFillColor(colors.white)
-    pdf.setStrokeColor(colors.HexColor("#d6dce5"))
-    pdf.roundRect(margin, notes_y, page_width - margin * 2, notes_h, 6, stroke=1, fill=1)
-    pdf.setFillColor(colors.HexColor("#0f172a"))
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(margin + 8, notes_y + notes_h - 14, "Como leer los indicadores")
-    pdf.setFillColor(colors.HexColor("#475569"))
+    y -= 16
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
     pdf.setFont("Helvetica", 8)
     pdf.drawString(
-        margin + 8,
-        notes_y + notes_h - 28,
-        "• Tiempo productivo: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo.",
-    )
-    pdf.drawString(
-        margin + 8,
-        notes_y + notes_h - 42,
-        "• Cobertura esperada: grado general de uso del sistema",
+        margin, y,
+        f"Generado: {generated_label}   |   Rango: ultimos {payload.report_days} dias "
+        f"({payload.from_date} \u2192 {payload.to_date})   |   Estaciones: {len(payload.stations)}",
     )
 
+    # Metric cards
+    y -= 58
+    gap = 10
+    card_w = (usable - gap * 2) / 3
+    card_h = 46
+    _draw_metric_card(
+        pdf, x=margin, y=y, width=card_w, height=card_h,
+        label="Uso correcto global", value=_format_percent(payload.global_productive),
+    )
+    _draw_metric_card(
+        pdf, x=margin + card_w + gap, y=y, width=card_w, height=card_h,
+        label="Uso minimo global", value=_format_percent(payload.global_expected),
+    )
+    _draw_metric_card(
+        pdf, x=margin + (card_w + gap) * 2, y=y, width=card_w, height=card_h,
+        label="Trabajadores", value=str(payload.total_workers),
+    )
+
+    # Explanation block
+    y -= 52
+    pdf.setFillColor(colors.HexColor(_CLR_DARK))
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawString(margin, y, "Como leer los indicadores")
+    y -= 12
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
+    pdf.setFont("Helvetica", 7.5)
+    pdf.drawString(margin + 4, y, "\u2022 Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo.")
+    y -= 11
+    pdf.drawString(margin + 4, y, "\u2022 Uso minimo: grado general de uso del sistema.")
+
+    # Summary table
+    y -= 18
     _draw_station_summary_table(
-        pdf,
-        payload.stations,
-        page_width=page_width,
-        page_height=page_height,
-        margin=margin,
-        start_y=notes_y - 16,
+        pdf, payload.stations,
+        page_width=page_width, page_height=page_height, margin=margin, start_y=y,
     )
 
-    # One page per station.
+    # ── Per-station pages ──
     for station in payload.stations:
         pdf.showPage()
+        y = page_height - margin
+
         station_title = station.label.strip() or "Estacion"
-        pdf.setFillColor(colors.HexColor("#0f172a"))
-        pdf.setFont("Helvetica-Bold", 16)
-        pdf.drawString(margin, page_height - margin, station_title)
-        pdf.setFillColor(colors.HexColor("#475569"))
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
+        pdf.setFont("Helvetica-Bold", 15)
+        pdf.drawString(margin, y, station_title)
+
+        # Large averages
+        y -= 36
+        pdf.setFont("Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_GREEN))
+        uc_text = _format_percent(station.average_productive)
+        pdf.drawString(margin, y, uc_text)
+        uc_w = pdf.stringWidth(uc_text, "Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_MID))
         pdf.setFont("Helvetica", 9)
-        pdf.drawString(
-            margin,
-            page_height - margin - 14,
-            (
-                f"Trabajadores con datos: {station.workers_with_data}/{station.workers_total}  |  "
-                f"Productivo: {_format_percent(station.average_productive)}  |  "
-                f"Cobertura: {_format_percent(station.average_expected)}"
-            ),
+        pdf.drawString(margin + uc_w + 4, y + 2, "Uso Correcto")
+
+        mid_x = margin + usable * 0.35
+        pdf.setFont("Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_BLUE))
+        um_text = _format_percent(station.average_expected)
+        pdf.drawString(mid_x, y, um_text)
+        um_w = pdf.stringWidth(um_text, "Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_MID))
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(mid_x + um_w + 4, y + 2, "Uso Minimo")
+
+        # Chart
+        y -= 16
+        chart_h = 170
+        chart_y = y - chart_h
+        _draw_station_chart(
+            pdf, station.rows,
+            x=margin, y=chart_y, width=usable, height=chart_h,
         )
 
-        chart_y = page_height - margin - 250
-        _draw_station_chart(
-            pdf,
-            station.rows,
-            x=margin,
-            y=chart_y,
-            width=page_width - margin * 2,
-            height=190,
-        )
-        legend_y = chart_y - 12
-        pdf.setFont("Helvetica", 8)
-        pdf.setFillColor(colors.HexColor("#475569"))
-        pdf.setStrokeColor(colors.HexColor("#16a34a"))
+        # Legend
+        legend_y = chart_y - 14
+        pdf.setFont("Helvetica", 7.5)
+        pdf.setFillColor(colors.HexColor(_CLR_MID))
+        pdf.setStrokeColor(colors.HexColor(_CLR_GREEN))
         pdf.setLineWidth(2)
         pdf.line(margin, legend_y, margin + 12, legend_y)
-        pdf.drawString(margin + 16, legend_y - 3, "Productivo")
-        pdf.setStrokeColor(colors.HexColor("#2563eb"))
-        pdf.line(margin + 88, legend_y, margin + 100, legend_y)
-        pdf.drawString(margin + 104, legend_y - 3, "Cobertura esperada")
+        pdf.drawString(margin + 16, legend_y - 3, "Uso Correcto")
+        pdf.setStrokeColor(colors.HexColor(_CLR_BLUE))
+        pdf.line(margin + 90, legend_y, margin + 102, legend_y)
+        pdf.drawString(margin + 106, legend_y - 3, "Uso Minimo")
 
+        # Worker detail table
         if payload.include_workers:
-            worker_title_y = legend_y - 22
-            pdf.setFillColor(colors.HexColor("#0f172a"))
-            pdf.setFont("Helvetica-Bold", 10)
-            pdf.drawString(margin, worker_title_y, "Detalle por trabajador")
+            worker_y = legend_y - 22
+            pdf.setFillColor(colors.HexColor(_CLR_DARK))
+            pdf.setFont("Helvetica-Bold", 9)
+            pdf.drawString(margin, worker_y, "Detalle por trabajador")
             _draw_worker_table(
-                pdf,
-                station.workers,
+                pdf, station.workers,
                 station_label=station_title,
-                page_width=page_width,
-                page_height=page_height,
-                margin=margin,
-                start_y=worker_title_y - 10,
+                page_width=page_width, page_height=page_height,
+                margin=margin, start_y=worker_y - 12,
             )
 
     pdf.save()

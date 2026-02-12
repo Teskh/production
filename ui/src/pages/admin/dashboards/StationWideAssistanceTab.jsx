@@ -6,6 +6,64 @@ import { buildRangeIndicators, isAbsentNoDataDay } from './assistanceIndicators'
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
 const GEO_REQUEST_DELAY_MS = 400;
+const REPORT_MAX_DAYS_BACK = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const clampDaysBack = (value) => {
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.max(1, Math.min(REPORT_MAX_DAYS_BACK, numeric));
+};
+
+const parseIsoDateOnly = (value) => {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return parsed;
+};
+
+const formatIsoDateOnly = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const compareIsoDates = (left, right) => {
+  const leftDate = parseIsoDateOnly(left);
+  const rightDate = parseIsoDateOnly(right);
+  if (!leftDate || !rightDate) return null;
+  return leftDate.getTime() - rightDate.getTime();
+};
+
+const daysBackBetweenIso = (fromDate, toDate) => {
+  const from = parseIsoDateOnly(fromDate);
+  const to = parseIsoDateOnly(toDate);
+  if (!from || !to) return null;
+  const diffDays = Math.round((to.getTime() - from.getTime()) / DAY_MS);
+  return Math.max(0, diffDays);
+};
+
+const shiftIsoDate = (anchorDate, deltaDays) => {
+  const anchor = parseIsoDateOnly(anchorDate);
+  if (!anchor) return null;
+  const shifted = new Date(anchor.getTime() + deltaDays * DAY_MS);
+  return formatIsoDateOnly(shifted);
+};
 const defaultFormatSeconds = (seconds) => {
   if (!Number.isFinite(seconds)) return '-';
   return formatMinutesDetailed(seconds / 60);
@@ -397,7 +455,9 @@ const StationWideAssistanceTab = ({
   const [groupCache, setGroupCache] = useState({});
   const [modalData, setModalData] = useState(null);
   const [reportModalOpen, setReportModalOpen] = useState(false);
-  const [reportDays, setReportDays] = useState(RANGE_OPTIONS[0]);
+  const [reportDays, setReportDays] = useState(() => clampDaysBack(RANGE_OPTIONS[0]));
+  const [reportFromDate, setReportFromDate] = useState(() => isoDaysAgo(RANGE_OPTIONS[0]));
+  const [reportToDate, setReportToDate] = useState(() => todayIso());
   const [reportIncludeWorkers, setReportIncludeWorkers] = useState(false);
   const [reportSelection, setReportSelection] = useState({});
   const [reportGenerating, setReportGenerating] = useState(false);
@@ -462,17 +522,42 @@ const StationWideAssistanceTab = ({
   const todayKey = useMemo(() => toDateOnly(new Date()), [toDateOnly]);
 
   const fetchWorkerSummary = useCallback(
-    async (worker, customRangeDays = rangeDays) => {
-      const safeRangeDays = Math.max(1, Math.round(Number(customRangeDays) || rangeDays));
-      const fromDate = isoDaysAgo(safeRangeDays);
-      const toDate = todayIso();
+    async (worker, options = undefined) => {
+      const requestedFromDate = typeof options === 'object' ? options?.fromDate : '';
+      const requestedToDate = typeof options === 'object' ? options?.toDate : '';
+      const fromParsed = parseIsoDateOnly(requestedFromDate);
+      const toParsed = parseIsoDateOnly(requestedToDate);
+
+      let safeRangeDays = clampDaysBack(
+        typeof options === 'number' ? options : options?.days ?? rangeDays
+      );
+      let fromDate = isoDaysAgo(safeRangeDays);
+      let toDate = todayIso();
+
+      if (fromParsed && toParsed) {
+        if (fromParsed.getTime() <= toParsed.getTime()) {
+          fromDate = requestedFromDate;
+          toDate = requestedToDate;
+        } else {
+          fromDate = requestedToDate;
+          toDate = requestedFromDate;
+        }
+        safeRangeDays = clampDaysBack(daysBackBetweenIso(fromDate, toDate));
+      }
+
       let attendanceResponse = null;
       let attendanceError = '';
       if (worker.geovictoria_identifier) {
         try {
           await geoThrottleRef.current();
+          const attendanceQuery = new URLSearchParams({
+            worker_id: String(worker.id),
+            days: String(safeRangeDays),
+            start_date: fromDate,
+            end_date: toDate,
+          });
           attendanceResponse = await apiRequest(
-            `/api/geovictoria/attendance?worker_id=${worker.id}&days=${safeRangeDays}`
+            `/api/geovictoria/attendance?${attendanceQuery.toString()}`
           );
         } catch (err) {
           attendanceError = err instanceof Error ? err.message : 'Error cargando asistencia.';
@@ -482,8 +567,14 @@ const StationWideAssistanceTab = ({
       let activityRows = [];
       let activityError = '';
       try {
+        const historyQuery = new URLSearchParams({
+          worker_id: String(worker.id),
+          from_date: fromDate,
+          to_date: toDate,
+          limit: '4000',
+        });
         const rows = await apiRequest(
-          `/api/task-history?worker_id=${worker.id}&from_date=${fromDate}&to_date=${toDate}&limit=4000`
+          `/api/task-history?${historyQuery.toString()}`
         );
         activityRows = Array.isArray(rows) ? rows : [];
       } catch (err) {
@@ -604,7 +695,9 @@ const StationWideAssistanceTab = ({
         return;
       }
 
-      const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, fetchWorkerSummary);
+      const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, (worker) =>
+        fetchWorkerSummary(worker)
+      );
       if (loadTokensRef.current.get(groupKey) !== token) return;
 
       const workerSummaries = summaries
@@ -642,11 +735,15 @@ const StationWideAssistanceTab = ({
       defaults[group.key] = true;
     });
     setReportSelection(defaults);
-    setReportDays(rangeDays);
+    const defaultToDate = todayIso();
+    const defaultFromDate = isoDaysAgo(rangeDays);
+    setReportDays(clampDaysBack(daysBackBetweenIso(defaultFromDate, defaultToDate)));
+    setReportFromDate(defaultFromDate);
+    setReportToDate(defaultToDate);
     setReportIncludeWorkers(false);
     setReportError('');
     setReportModalOpen(true);
-  }, [groupedStations, rangeDays]);
+  }, [groupedStations, rangeDays, isoDaysAgo, todayIso]);
 
   const selectedReportGroups = useMemo(
     () => groupedStations.filter((group) => reportSelection[group.key] !== false),
@@ -671,10 +768,76 @@ const StationWideAssistanceTab = ({
     [groupedStations]
   );
 
+  const handleReportFromDateChange = useCallback(
+    (event) => {
+      const nextFromDate = event.target.value;
+      setReportFromDate(nextFromDate);
+      if (!parseIsoDateOnly(nextFromDate) || !parseIsoDateOnly(reportToDate)) return;
+      let nextToDate = reportToDate;
+      const compare = compareIsoDates(nextFromDate, reportToDate);
+      if (compare != null && compare > 0) {
+        nextToDate = nextFromDate;
+        setReportToDate(nextToDate);
+      }
+      setReportDays(clampDaysBack(daysBackBetweenIso(nextFromDate, nextToDate)));
+    },
+    [reportToDate]
+  );
+
+  const handleReportToDateChange = useCallback(
+    (event) => {
+      const nextToDate = event.target.value;
+      setReportToDate(nextToDate);
+      if (!parseIsoDateOnly(nextToDate) || !parseIsoDateOnly(reportFromDate)) return;
+      let nextFromDate = reportFromDate;
+      const compare = compareIsoDates(reportFromDate, nextToDate);
+      if (compare != null && compare > 0) {
+        nextFromDate = nextToDate;
+        setReportFromDate(nextFromDate);
+      }
+      setReportDays(clampDaysBack(daysBackBetweenIso(nextFromDate, nextToDate)));
+    },
+    [reportFromDate]
+  );
+
+  const handleReportDaysChange = useCallback(
+    (event) => {
+      const safeDaysBack = clampDaysBack(event.target.value);
+      const anchorToDate = parseIsoDateOnly(reportToDate) ? reportToDate : todayIso();
+      const computedFromDate = shiftIsoDate(anchorToDate, -safeDaysBack);
+      setReportDays(safeDaysBack);
+      setReportToDate(anchorToDate);
+      if (computedFromDate) {
+        setReportFromDate(computedFromDate);
+      }
+    },
+    [reportToDate, todayIso]
+  );
+
   const generateReport = useCallback(async () => {
-    const safeReportDays = Math.max(1, Math.round(Number(reportDays) || rangeDays));
-    const fromDate = isoDaysAgo(safeReportDays);
-    const toDate = todayIso();
+    const todayDate = todayIso();
+    let fromDate = parseIsoDateOnly(reportFromDate)
+      ? reportFromDate
+      : parseIsoDateOnly(reportToDate)
+        ? reportToDate
+        : todayDate;
+    let toDate = parseIsoDateOnly(reportToDate)
+      ? reportToDate
+      : parseIsoDateOnly(reportFromDate)
+        ? reportFromDate
+        : todayDate;
+
+    const rangeOrder = compareIsoDates(fromDate, toDate);
+    if (rangeOrder != null && rangeOrder > 0) {
+      const swappedFrom = toDate;
+      toDate = fromDate;
+      fromDate = swappedFrom;
+    }
+
+    const safeReportDays = clampDaysBack(daysBackBetweenIso(fromDate, toDate) ?? reportDays);
+    const currentFromDate = isoDaysAgo(rangeDays);
+    const currentToDate = todayDate;
+    const canReuseCurrentWindow = fromDate === currentFromDate && toDate === currentToDate;
     const selectedGroups = groupedStations.filter((group) => reportSelection[group.key] !== false);
     if (!selectedGroups.length) {
       setReportError('Seleccione al menos una estacion para generar el reporte.');
@@ -690,10 +853,11 @@ const StationWideAssistanceTab = ({
       for (const group of selectedGroups) {
         const cached = groupCache[group.key];
         const canReuseCache =
+          canReuseCurrentWindow &&
           cached &&
           !cached.loading &&
           !cached.error &&
-          cached.rangeDays === safeReportDays &&
+          cached.rangeDays === rangeDays &&
           Array.isArray(cached.workers);
 
         let workerSummaries = [];
@@ -705,7 +869,11 @@ const StationWideAssistanceTab = ({
         } else {
           const groupWorkers = workersByGroup.get(group.key) || [];
           const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, (worker) =>
-            fetchWorkerSummary(worker, safeReportDays)
+            fetchWorkerSummary(worker, {
+              days: safeReportDays,
+              fromDate,
+              toDate,
+            })
           );
 
           workerSummaries = normalizeReportWorkerSummaries(
@@ -791,6 +959,8 @@ const StationWideAssistanceTab = ({
     formatWorkerDisplayName,
     buildStationSummary,
     reportIncludeWorkers,
+    reportFromDate,
+    reportToDate,
   ]);
 
   useEffect(() => {
@@ -992,7 +1162,7 @@ const StationWideAssistanceTab = ({
           onClick={() => !reportGenerating && setReportModalOpen(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl max-w-[92vw] w-full mx-4 md:max-w-2xl max-h-[90vh] overflow-auto"
+            className="bg-white rounded-2xl shadow-xl max-w-[96vw] w-full mx-4 lg:max-w-4xl max-h-[90vh] overflow-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
@@ -1010,20 +1180,51 @@ const StationWideAssistanceTab = ({
             </div>
 
             <div className="p-6 space-y-5">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-4">
                 <div>
                   <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-1">
                     Rango del reporte
                   </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={120}
-                    value={reportDays}
-                    onChange={(event) => setReportDays(Number(event.target.value))}
-                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
-                  />
-                  <p className="mt-1 text-xs text-[var(--ink-muted)]">Se usa "ultimos N dias".</p>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-[0.15em] text-[var(--ink-muted)] mb-1">
+                        Desde
+                      </label>
+                      <input
+                        type="date"
+                        value={reportFromDate}
+                        onChange={handleReportFromDateChange}
+                        className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-[0.15em] text-[var(--ink-muted)] mb-1">
+                        Hasta
+                      </label>
+                      <input
+                        type="date"
+                        value={reportToDate}
+                        onChange={handleReportToDateChange}
+                        className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-[0.15em] text-[var(--ink-muted)] mb-1">
+                        Dias hacia atras (N)
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={REPORT_MAX_DAYS_BACK}
+                        value={reportDays}
+                        onChange={handleReportDaysChange}
+                        className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                      />
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                    Si cambia N, "Desde" se recalcula a N dias hacia atras desde "Hasta".
+                  </p>
                 </div>
 
                 <div>
