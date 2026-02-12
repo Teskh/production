@@ -8,6 +8,7 @@ __all__ = [
     "parameters",
     "performance",
     "qc",
+    "reports",
     "stations",
     "tasks",
     "worker_sessions",

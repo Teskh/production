@@ -202,6 +202,36 @@ const subtractInterval = (intervals, cut) => {
   });
 };
 
+const buildOverrunIntervals = (activeIntervals, expectedSeconds) => {
+  if (!Array.isArray(activeIntervals) || !activeIntervals.length) return [];
+  if (!Number.isFinite(expectedSeconds) || expectedSeconds < 0) return [];
+
+  let remainingExpected = expectedSeconds;
+  const overrun = [];
+
+  activeIntervals.forEach((interval) => {
+    if (!interval?.start || !interval?.end) return;
+    const durationSeconds = (interval.end - interval.start) / 1000;
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
+
+    if (remainingExpected >= durationSeconds) {
+      remainingExpected -= durationSeconds;
+      return;
+    }
+
+    const overrunStart =
+      remainingExpected > 0
+        ? new Date(interval.start.getTime() + remainingExpected * 1000)
+        : interval.start;
+    if (interval.end > overrunStart) {
+      overrun.push({ start: overrunStart, end: interval.end });
+    }
+    remainingExpected = 0;
+  });
+
+  return overrun;
+};
+
 const buildLunchBreak = (baseDate, windowStart, windowEnd) => {
   if (!baseDate) return null;
   const start = new Date(baseDate);
@@ -216,15 +246,33 @@ const buildLunchBreak = (baseDate, windowStart, windowEnd) => {
   return { start: boundedStart, end: boundedEnd };
 };
 
+const hasAttendancePunch = (day) =>
+  Boolean(parseDateTime(day?.attendance?.entry) || parseDateTime(day?.attendance?.exit));
+
+const hasActivityLog = (day) => {
+  const tasks = Array.isArray(day?.activity?.tasks) ? day.activity.tasks : [];
+  if (tasks.length > 0) return true;
+  const activeSeconds = Number(day?.activity?.activeSeconds);
+  return Number.isFinite(activeSeconds) && activeSeconds > 0;
+};
+
+const isAbsentNoDataDay = (day) => {
+  if (!day) return false;
+  return !hasAttendancePunch(day) && !hasActivityLog(day);
+};
+
 const buildDailyIndicators = (day) => {
   if (!day) return null;
+  if (isAbsentNoDataDay(day)) return null;
   const dayBounds = buildDayBounds(day);
   if (!dayBounds) return null;
   const { baseDate, dayStart, dayEnd } = dayBounds;
-  const entry =
-    parseDateTime(day?.attendance?.entry) || parseDateTime(day?.activity?.firstTaskStart);
-  const exit =
-    parseDateTime(day?.attendance?.exit) || parseDateTime(day?.activity?.lastTaskEnd);
+
+  // For missing attendance punches, assume canonical shift bounds instead of inferring from activity.
+  let entry = parseDateTime(day?.attendance?.entry);
+  let exit = parseDateTime(day?.attendance?.exit);
+  if (!entry) entry = dayStart;
+  if (!exit) exit = dayEnd;
   if (!entry || !exit || exit <= entry) return null;
   const presenceStart = entry < dayStart ? dayStart : entry;
   const presenceEnd = exit > dayEnd ? dayEnd : exit;
@@ -241,7 +289,7 @@ const buildDailyIndicators = (day) => {
 
   const tasks = Array.isArray(day.activity?.tasks) ? day.activity.tasks : [];
   const activeIntervals = [];
-  let overtimeSeconds = 0;
+  const overrunIntervals = [];
   let expectedSecondsTotal = 0;
 
   tasks.forEach((task) => {
@@ -253,18 +301,18 @@ const buildDailyIndicators = (day) => {
     const activeWithoutLunch = lunchBreak
       ? subtractInterval(intervals.active, lunchBreak)
       : intervals.active.slice();
-    const activeSeconds = sumIntervalsSeconds(activeWithoutLunch);
     if (activeWithoutLunch.length) {
       activeIntervals.push(...activeWithoutLunch);
       if (expectedMinutesValue != null) {
         const expectedSeconds = expectedMinutesValue * 60;
         expectedSecondsTotal += expectedSeconds;
-        overtimeSeconds += Math.max(0, activeSeconds - expectedSeconds);
+        overrunIntervals.push(...buildOverrunIntervals(activeWithoutLunch, expectedSeconds));
       }
     }
   });
 
   const activeUnionSeconds = sumIntervalsSeconds(mergeIntervals(activeIntervals));
+  const overtimeSeconds = sumIntervalsSeconds(mergeIntervals(overrunIntervals));
   const idleSeconds = Math.max(0, presenceNetSeconds - activeUnionSeconds);
   const idleOverrunSeconds = idleSeconds + overtimeSeconds;
   const productiveSeconds = Math.max(0, presenceNetSeconds - idleOverrunSeconds);
@@ -285,6 +333,9 @@ const buildDailyIndicators = (day) => {
 };
 
 const buildRangeIndicators = (combinedDays) => {
+  const eligibleDays = Array.isArray(combinedDays)
+    ? combinedDays.filter((day) => !isAbsentNoDataDay(day))
+    : [];
   const empty = {
     rows: [],
     totals: {
@@ -300,11 +351,11 @@ const buildRangeIndicators = (combinedDays) => {
     startDate: '',
     endDate: '',
     daysWithData: 0,
-    daysTotal: combinedDays.length,
+    daysTotal: eligibleDays.length,
   };
-  if (!combinedDays.length) return empty;
+  if (!eligibleDays.length) return empty;
 
-  const entries = combinedDays
+  const entries = eligibleDays
     .map((day) => ({ day, dateObj: parseDateOnly(day.date) }))
     .filter((item) => item.dateObj)
     .sort((a, b) => a.dateObj - b.dateObj);
@@ -349,8 +400,8 @@ const buildRangeIndicators = (combinedDays) => {
     startDate: rows[0].key,
     endDate: rows[rows.length - 1].key,
     daysWithData: rows.length,
-    daysTotal: combinedDays.length,
+    daysTotal: eligibleDays.length,
   };
 };
 
-export { buildDailyIndicators, buildRangeIndicators };
+export { buildDailyIndicators, buildRangeIndicators, isAbsentNoDataDay };

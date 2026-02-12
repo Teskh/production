@@ -210,7 +210,7 @@ def upgrade() -> None:
             {"id": 29, "name": "Estacion 6", "role": "Assembly", "line_type": "1", "sequence_order": 17},
             {"id": 30, "name": "Estacion 6", "role": "Assembly", "line_type": "2", "sequence_order": 17},
             {"id": 31, "name": "Estacion 6", "role": "Assembly", "line_type": "3", "sequence_order": 17},
-            {"id": 32, "name": "Sheathing Prep Saw", "role": "AUX", "line_type": None, "sequence_order": None},
+            {"id": 32, "name": "Precorte Holzma", "role": "AUX", "line_type": None, "sequence_order": None},
         ],
     )
     op.execute(

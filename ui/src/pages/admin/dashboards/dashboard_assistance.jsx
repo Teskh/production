@@ -3,13 +3,18 @@ import { ChevronLeft, ChevronRight, RefreshCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
-import { buildDailyIndicators, buildRangeIndicators } from './assistanceIndicators';
+import {
+  buildDailyIndicators,
+  buildRangeIndicators,
+  isAbsentNoDataDay,
+} from './assistanceIndicators';
 import StationWideAssistanceTab from './StationWideAssistanceTab';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 const RANGE_OPTIONS = [7, 14, 30, 60, 90, 120];
 const DEFAULT_RANGE = 30;
+const REGULAR_START_MINUTES = 8 * 60;
 const REGULAR_END_MINUTES = 17 * 60 + 30;
 const LUNCH_START_MINUTES = 13 * 60;
 const LUNCH_END_MINUTES = 13 * 60 + 30;
@@ -270,6 +275,11 @@ const formatWorkerName = (worker) => {
   return '';
 };
 
+const isWorkerInactive = (worker) =>
+  String(worker?.status ?? '')
+    .trim()
+    .toLowerCase() === 'inactive';
+
 const useContainerWidth = () => {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
@@ -317,6 +327,66 @@ const parseDateOnly = (value) => {
   if (!year || !month || !day) return null;
   const date = new Date(year, month - 1, day);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const buildCanonicalShiftBounds = (day) => {
+  const baseDate = parseDateOnly(day?.date);
+  if (!baseDate) return null;
+  const dayStart = new Date(baseDate);
+  dayStart.setHours(Math.floor(REGULAR_START_MINUTES / 60), REGULAR_START_MINUTES % 60, 0, 0);
+  const dayEnd = new Date(baseDate);
+  dayEnd.setHours(Math.floor(REGULAR_END_MINUTES / 60), REGULAR_END_MINUTES % 60, 0, 0);
+  return { dayStart, dayEnd };
+};
+
+const resolveShiftDisplay = (day) => {
+  if (!day) {
+    return {
+      entry: null,
+      exit: null,
+      entrySource: '-',
+      exitSource: '-',
+      presenceSeconds: null,
+    };
+  }
+
+  const attendanceEntry = parseDateTime(day?.attendance?.entry);
+  const attendanceExit = parseDateTime(day?.attendance?.exit);
+  const bounds = buildCanonicalShiftBounds(day);
+
+  if (bounds) {
+    const resolvedEntry = attendanceEntry || bounds.dayStart;
+    const resolvedExit = attendanceExit || bounds.dayEnd;
+    const presenceStart = resolvedEntry < bounds.dayStart ? bounds.dayStart : resolvedEntry;
+    const presenceEnd = resolvedExit > bounds.dayEnd ? bounds.dayEnd : resolvedExit;
+    const presenceSeconds =
+      presenceStart && presenceEnd && presenceEnd > presenceStart
+        ? (presenceEnd - presenceStart) / 1000
+        : null;
+    return {
+      entry: resolvedEntry,
+      exit: resolvedExit,
+      entrySource: attendanceEntry ? 'GeoVictoria' : 'Asumida (08:00)',
+      exitSource: attendanceExit ? 'GeoVictoria' : 'Asumida (17:30)',
+      presenceSeconds,
+    };
+  }
+
+  const activityEntry = parseDateTime(day?.activity?.firstTaskStart);
+  const activityExit = parseDateTime(day?.activity?.lastTaskEnd);
+  const fallbackEntry = attendanceEntry || activityEntry || null;
+  const fallbackExit = attendanceExit || activityExit || null;
+  const presenceSeconds =
+    fallbackEntry && fallbackExit && fallbackExit > fallbackEntry
+      ? (fallbackExit - fallbackEntry) / 1000
+      : null;
+  return {
+    entry: fallbackEntry,
+    exit: fallbackExit,
+    entrySource: attendanceEntry ? 'GeoVictoria' : activityEntry ? 'Actividad' : '-',
+    exitSource: attendanceExit ? 'GeoVictoria' : activityExit ? 'Actividad' : '-',
+    presenceSeconds,
+  };
 };
 
 const minutesOf = (date) => date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
@@ -1709,7 +1779,8 @@ const DashboardAssistance = () => {
     apiRequest('/api/workers')
       .then((result) => {
         if (!active) return;
-        setWorkers(Array.isArray(result) ? result : []);
+        const workerRows = Array.isArray(result) ? result : [];
+        setWorkers(workerRows.filter((worker) => !isWorkerInactive(worker)));
       })
       .catch((err) => {
         if (!active) return;
@@ -1786,15 +1857,20 @@ const DashboardAssistance = () => {
     [selectedStationKey, stationGroups]
   );
 
+  const activeWorkers = useMemo(
+    () => workers.filter((worker) => !isWorkerInactive(worker)),
+    [workers]
+  );
+
   const filteredWorkers = useMemo(() => {
     if (!selectedStationGroup) return [];
     const allowed = new Set(selectedStationGroup.stationIds);
-    return workers.filter((worker) =>
+    return activeWorkers.filter((worker) =>
       Array.isArray(worker.assigned_station_ids)
         ? worker.assigned_station_ids.some((id) => allowed.has(id))
         : false
     );
-  }, [selectedStationGroup, workers]);
+  }, [selectedStationGroup, activeWorkers]);
 
   const selectedWorker = useMemo(
     () => filteredWorkers.find((worker) => String(worker.id) === String(selectedWorkerId)),
@@ -1877,7 +1953,9 @@ const DashboardAssistance = () => {
       const existing = map.get(day.date) || { date: day.date, attendance: null, activity: null };
       map.set(day.date, { ...existing, activity: day });
     });
-    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+    return Array.from(map.values())
+      .filter((day) => !isAbsentNoDataDay(day))
+      .sort((a, b) => b.date.localeCompare(a.date));
   }, [attendanceDays, activityDays]);
 
   const selectedDay = combinedDays[dayIndex] || null;
@@ -1934,24 +2012,7 @@ const DashboardAssistance = () => {
     }
   };
 
-  const entrySource = (day) => {
-    if (day?.attendance?.entry) return 'GeoVictoria';
-    if (day?.activity?.firstTaskStart) return 'Actividad';
-    return '-';
-  };
-  const exitSource = (day) => {
-    if (day?.attendance?.exit) return 'GeoVictoria';
-    if (day?.activity?.lastTaskEnd) return 'Actividad';
-    return '-';
-  };
-  const dayPresenceSeconds = (day) => {
-    const fromAttendance = attendancePresenceSeconds(day?.attendance);
-    if (fromAttendance !== null) return fromAttendance;
-    if (day?.activity?.firstTaskStart && day?.activity?.lastTaskEnd) {
-      return Math.max(0, (day.activity.lastTaskEnd - day.activity.firstTaskStart) / 1000);
-    }
-    return null;
-  };
+  const shiftDisplay = useMemo(() => resolveShiftDisplay(selectedDay), [selectedDay]);
 
   const dailyIndicators = useMemo(
     () => buildDailyIndicators(selectedDay),
@@ -2194,10 +2255,10 @@ const DashboardAssistance = () => {
                       Entrada
                     </p>
                     <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                      {formatTime(selectedDay.attendance?.entry || selectedDay.activity?.firstTaskStart)}
+                      {formatTime(shiftDisplay.entry)}
                     </p>
                     <p className="text-xs text-[var(--ink-muted)]">
-                      Fuente: {entrySource(selectedDay)}
+                      Fuente: {shiftDisplay.entrySource}
                     </p>
                   </div>
                   <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
@@ -2205,16 +2266,16 @@ const DashboardAssistance = () => {
                       Salida
                     </p>
                     <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                      {formatTime(selectedDay.attendance?.exit || selectedDay.activity?.lastTaskEnd)}
+                      {formatTime(shiftDisplay.exit)}
                     </p>
-                    <p className="text-xs text-[var(--ink-muted)]">Fuente: {exitSource(selectedDay)}</p>
+                    <p className="text-xs text-[var(--ink-muted)]">Fuente: {shiftDisplay.exitSource}</p>
                   </div>
                   <div className="rounded-xl border border-black/5 bg-[var(--accent-soft)]/60 px-4 py-3">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
                       Presencia
                     </p>
                     <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                      {formatSeconds(dayPresenceSeconds(selectedDay))}
+                      {formatSeconds(shiftDisplay.presenceSeconds)}
                     </p>
                     <p className="text-xs text-[var(--ink-muted)]">
                       Colacion: {formatSeconds(
@@ -2417,7 +2478,8 @@ const DashboardAssistance = () => {
         <StationWideAssistanceTab
           stations={stations}
           stationGroups={stationGroups}
-          workers={workers}
+          workers={activeWorkers}
+          apiBaseUrl={API_BASE_URL}
           apiRequest={apiRequest}
           isoDaysAgo={isoDaysAgo}
           todayIso={todayIso}

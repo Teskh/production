@@ -183,6 +183,36 @@ type NormalizedHistogramSummary = {
   maxValue: number;
 };
 
+type RegressionSample = {
+  x: number;
+  y: number;
+};
+
+type RegressionConfidencePoint = {
+  x: number;
+  predictedY: number;
+  lowerY: number;
+  upperY: number;
+};
+
+type LinearRegressionResult = {
+  sampleCount: number;
+  slope: number;
+  intercept: number;
+  correlation: number | null;
+  rSquared: number | null;
+  adjustedRSquared: number | null;
+  rmse: number;
+  mae: number;
+  meanX: number;
+  meanY: number;
+  minX: number;
+  maxX: number;
+  startPredictedY: number;
+  endPredictedY: number;
+  confidenceBand: RegressionConfidencePoint[] | null;
+};
+
 const DEFAULT_BIN_SIZE = 2;
 const DEFAULT_MIN_MULTIPLIER = 0.5;
 const DEFAULT_MAX_MULTIPLIER = 2;
@@ -253,6 +283,11 @@ const formatMinutesPerUnit = (value: number | null | undefined, unit: string) =>
 const formatMeasure = (value: number | null | undefined, unit: string, digits = 2) => {
   if (value == null || !Number.isFinite(value)) return '-';
   return `${value.toFixed(digits)} ${unit}`;
+};
+
+const formatRegressionIndicator = (value: number | null | undefined, digits = 3) => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return value.toFixed(digits);
 };
 
 const buildPanelLabel = (panel: PanelDefinition | null): string => {
@@ -449,6 +484,149 @@ const buildNormalizedHistogramData = (
   return { bins, maxCount, binSize: step, maxValue: binCount * step };
 };
 
+const getTwoTailedCritical95 = (degreesOfFreedom: number): number => {
+  if (degreesOfFreedom <= 0) return 1.96;
+  const lookup = [
+    0,
+    12.706,
+    4.303,
+    3.182,
+    2.776,
+    2.571,
+    2.447,
+    2.365,
+    2.306,
+    2.262,
+    2.228,
+    2.201,
+    2.179,
+    2.160,
+    2.145,
+    2.131,
+    2.120,
+    2.110,
+    2.101,
+    2.093,
+    2.086,
+    2.080,
+    2.074,
+    2.069,
+    2.064,
+    2.060,
+    2.056,
+    2.052,
+    2.048,
+    2.045,
+    2.042,
+  ];
+  if (degreesOfFreedom < lookup.length) return lookup[degreesOfFreedom];
+  if (degreesOfFreedom <= 60) return 2;
+  if (degreesOfFreedom <= 120) return 1.98;
+  return 1.96;
+};
+
+const calculateLinearRegression = (samples: RegressionSample[]): LinearRegressionResult | null => {
+  const regressionSamples = samples.filter((sample) =>
+    Number.isFinite(sample.x) && Number.isFinite(sample.y) && sample.x > 0 && sample.y > 0
+  );
+  if (regressionSamples.length < 2) {
+    return null;
+  }
+
+  const sampleCount = regressionSamples.length;
+  const sumX = regressionSamples.reduce((sum, item) => sum + item.x, 0);
+  const sumY = regressionSamples.reduce((sum, item) => sum + item.y, 0);
+  const meanX = sumX / sampleCount;
+  const meanY = sumY / sampleCount;
+
+  let sumSquaredXDeviation = 0;
+  let sumCrossDeviation = 0;
+  let totalYDeviationSquared = 0;
+
+  regressionSamples.forEach((item) => {
+    const xDeviation = item.x - meanX;
+    const yDeviation = item.y - meanY;
+    sumSquaredXDeviation += xDeviation * xDeviation;
+    sumCrossDeviation += xDeviation * yDeviation;
+    totalYDeviationSquared += yDeviation * yDeviation;
+  });
+
+  if (!(sumSquaredXDeviation > 0)) {
+    return null;
+  }
+
+  const slope = sumCrossDeviation / sumSquaredXDeviation;
+  const intercept = meanY - slope * meanX;
+
+  let sumSquaredError = 0;
+  let sumAbsoluteError = 0;
+  regressionSamples.forEach((item) => {
+    const predictedY = intercept + slope * item.x;
+    const residual = item.y - predictedY;
+    sumSquaredError += residual * residual;
+    sumAbsoluteError += Math.abs(residual);
+  });
+
+  const rmse = Math.sqrt(sumSquaredError / sampleCount);
+  const mae = sumAbsoluteError / sampleCount;
+
+  const correlation = totalYDeviationSquared > 0
+    ? sumCrossDeviation / Math.sqrt(sumSquaredXDeviation * totalYDeviationSquared)
+    : null;
+  const rSquared = totalYDeviationSquared > 0
+    ? 1 - sumSquaredError / totalYDeviationSquared
+    : null;
+  const adjustedRSquared = rSquared != null && sampleCount > 2
+    ? 1 - (1 - rSquared) * ((sampleCount - 1) / (sampleCount - 2))
+    : null;
+
+  const minX = Math.min(...regressionSamples.map((item) => item.x));
+  const maxX = Math.max(...regressionSamples.map((item) => item.x));
+  const startPredictedY = intercept + slope * minX;
+  const endPredictedY = intercept + slope * maxX;
+
+  let confidenceBand: RegressionConfidencePoint[] | null = null;
+  if (sampleCount > 2) {
+    const residualStdError = Math.sqrt(sumSquaredError / (sampleCount - 2));
+    const tCritical = getTwoTailedCritical95(sampleCount - 2);
+    if (Number.isFinite(residualStdError) && Number.isFinite(tCritical)) {
+      const pointsCount = Math.max(24, Math.min(60, sampleCount * 2));
+      confidenceBand = Array.from({ length: pointsCount }, (_, index) => {
+        const ratio = pointsCount > 1 ? index / (pointsCount - 1) : 0;
+        const x = minX + (maxX - minX) * ratio;
+        const predictedY = intercept + slope * x;
+        const standardErrorMean =
+          residualStdError * Math.sqrt((1 / sampleCount) + ((x - meanX) ** 2) / sumSquaredXDeviation);
+        const margin = tCritical * standardErrorMean;
+        return {
+          x,
+          predictedY,
+          lowerY: predictedY - margin,
+          upperY: predictedY + margin,
+        };
+      });
+    }
+  }
+
+  return {
+    sampleCount,
+    slope,
+    intercept,
+    correlation,
+    rSquared,
+    adjustedRSquared,
+    rmse,
+    mae,
+    meanX,
+    meanY,
+    minX,
+    maxX,
+    startPredictedY,
+    endPredictedY,
+    confidenceBand,
+  };
+};
+
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
@@ -508,6 +686,8 @@ const DashboardTasks: React.FC = () => {
   const [normalizedMaxMinutes, setNormalizedMaxMinutes] = useState('');
   const [normalizedBinSize, setNormalizedBinSize] = useState(String(DEFAULT_NORMALIZED_BIN_SIZE));
   const [normalizedView, setNormalizedView] = useState<'histogram' | 'scatter'>('histogram');
+  const [normalizedScatterDisplay, setNormalizedScatterDisplay] = useState<'all' | 'averages'>('all');
+  const [showNormalizedRegression, setShowNormalizedRegression] = useState(false);
   const [normalizedData, setNormalizedData] = useState<StationPanelsFinishedResponse | null>(null);
   const [normalizedLoading, setNormalizedLoading] = useState(false);
   const [normalizedError, setNormalizedError] = useState('');
@@ -1328,6 +1508,8 @@ const DashboardTasks: React.FC = () => {
     setNormalizedMaxMinutes('');
     setNormalizedBinSize(String(DEFAULT_NORMALIZED_BIN_SIZE));
     setNormalizedView('histogram');
+    setNormalizedScatterDisplay('all');
+    setShowNormalizedRegression(false);
     setNormalizedData(null);
     setNormalizedError('');
   };
@@ -1725,9 +1907,9 @@ const DashboardTasks: React.FC = () => {
         </div>
       );
     }
-    const maxX = Math.max(...points.map((item) => item.measure));
-    const maxY = Math.max(...points.map((item) => item.row.actual_minutes));
-    if (!(maxX > 0) || !(maxY > 0)) {
+    const maxMeasure = Math.max(...points.map((item) => item.measure));
+    const maxActualMinutesBase = Math.max(...points.map((item) => item.row.actual_minutes));
+    if (!(maxMeasure > 0) || !(maxActualMinutesBase > 0)) {
       return (
         <div className="text-sm text-[var(--ink-muted)]">
           No hay datos suficientes para la dispersion.
@@ -1741,6 +1923,78 @@ const DashboardTasks: React.FC = () => {
     const svgHeight = chartHeight + margin.top + margin.bottom;
     const axisBaseY = margin.top + chartHeight;
     const measureUnit = normalizedMetric === 'area' ? 'm2' : 'm';
+    const measureLabel = normalizedMetric === 'area' ? 'Area' : 'Largo';
+    const regressionSamples: RegressionSample[] = points.map((item) => ({
+      x: item.measure,
+      y: item.row.actual_minutes,
+    }));
+    const showRegression = showNormalizedRegression;
+    const regressionResult = showRegression ? calculateLinearRegression(regressionSamples) : null;
+    const maxRegressionMinutes = regressionResult
+      ? Math.max(
+          regressionResult.startPredictedY,
+          regressionResult.endPredictedY,
+          ...(regressionResult.confidenceBand || []).map((point) => point.upperY),
+        )
+      : 0;
+    const maxMinutesForAxis = Math.max(maxActualMinutesBase, maxRegressionMinutes);
+    if (!(maxMinutesForAxis > 0)) {
+      return (
+        <div className="text-sm text-[var(--ink-muted)]">
+          No hay datos suficientes para la dispersion.
+        </div>
+      );
+    }
+    const toXPosition = (measureValue: number) => margin.left + (measureValue / maxMeasure) * chartWidth;
+    const toYPosition = (minutesValue: number) =>
+      margin.top + chartHeight - (minutesValue / maxMinutesForAxis) * chartHeight;
+    const clampToChartArea = (coordinate: number) =>
+      Math.min(axisBaseY, Math.max(margin.top, Number.isFinite(coordinate) ? coordinate : axisBaseY));
+    const averageByMeasure = Array.from(
+      points
+        .reduce((accumulator, item) => {
+          const key = item.measure.toFixed(3);
+          const current = accumulator.get(key);
+          if (current) {
+            current.totalMinutes += item.row.actual_minutes;
+            current.count += 1;
+          } else {
+            accumulator.set(key, {
+              measure: item.measure,
+              totalMinutes: item.row.actual_minutes,
+              count: 1,
+            });
+          }
+          return accumulator;
+        }, new Map<string, { measure: number; totalMinutes: number; count: number }>())
+        .values(),
+    )
+      .map((entry) => ({
+        measure: entry.measure,
+        count: entry.count,
+        averageMinutes: entry.totalMinutes / entry.count,
+      }))
+      .sort((a, b) => a.measure - b.measure);
+    const showRawPoints = normalizedScatterDisplay === 'all';
+    const regressionLine = regressionResult && regressionResult.maxX > regressionResult.minX
+      ? {
+          startX: toXPosition(regressionResult.minX),
+          endX: toXPosition(regressionResult.maxX),
+          startY: clampToChartArea(toYPosition(regressionResult.startPredictedY)),
+          endY: clampToChartArea(toYPosition(regressionResult.endPredictedY)),
+        }
+      : null;
+    const regressionBandPath = regressionResult?.confidenceBand && regressionResult.confidenceBand.length > 1
+      ? (() => {
+          const upper = regressionResult.confidenceBand.map((point) =>
+            `${toXPosition(point.x)},${clampToChartArea(toYPosition(point.upperY))}`
+          );
+          const lower = [...regressionResult.confidenceBand]
+            .reverse()
+            .map((point) => `${toXPosition(point.x)},${clampToChartArea(toYPosition(point.lowerY))}`);
+          return `M ${upper.join(' L ')} L ${lower.join(' L ')} Z`;
+        })()
+      : null;
 
     return (
       <div className="space-y-3">
@@ -1755,9 +2009,14 @@ const DashboardTasks: React.FC = () => {
               strokeWidth={1}
             />
             <line x1={margin.left} y1={margin.top} x2={margin.left} y2={axisBaseY} stroke="#374151" />
-            {points.map((item, index) => {
-              const x = margin.left + (item.measure / maxX) * chartWidth;
-              const y = margin.top + chartHeight - (item.row.actual_minutes / maxY) * chartHeight;
+            {showRegression && regressionBandPath && (
+              <path d={regressionBandPath} fill="rgba(185, 28, 28, 0.14)" stroke="none">
+                <title>Banda de confianza al 95% para la media estimada.</title>
+              </path>
+            )}
+            {showRawPoints && points.map((item, index) => {
+              const xPosition = toXPosition(item.measure);
+              const yPosition = toYPosition(item.row.actual_minutes);
               const tooltip = [
                 `${item.row.panel_label} / ${item.row.house_type_name}`,
                 `Grupo: ${item.row.panel_group}`,
@@ -1768,8 +2027,8 @@ const DashboardTasks: React.FC = () => {
               return (
                 <circle
                   key={`${item.row.id}-${index}`}
-                  cx={x}
-                  cy={y}
+                  cx={xPosition}
+                  cy={yPosition}
                   r={3}
                   fill="rgba(59,130,246,0.45)"
                 >
@@ -1777,6 +2036,53 @@ const DashboardTasks: React.FC = () => {
                 </circle>
               );
             })}
+            {averageByMeasure.map((entry, index) => {
+              const xPosition = toXPosition(entry.measure);
+              const yPosition = toYPosition(entry.averageMinutes);
+              const tooltip = [
+                `Promedio por medida: ${formatMeasure(entry.measure, measureUnit)}`,
+                `Muestras: ${entry.count}`,
+                `Tiempo promedio: ${formatMinutesWithUnit(entry.averageMinutes)}`,
+              ].join('\n');
+              return (
+                <g key={`avg-${entry.measure}-${index}`}>
+                  <title>{tooltip}</title>
+                  <line
+                    x1={xPosition - 5}
+                    y1={yPosition - 5}
+                    x2={xPosition + 5}
+                    y2={yPosition + 5}
+                    stroke="rgba(220, 38, 38, 0.55)"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                  />
+                  <line
+                    x1={xPosition - 5}
+                    y1={yPosition + 5}
+                    x2={xPosition + 5}
+                    y2={yPosition - 5}
+                    stroke="rgba(220, 38, 38, 0.55)"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                  />
+                </g>
+              );
+            })}
+            {showRegression && regressionLine && regressionResult && (
+              <line
+                x1={regressionLine.startX}
+                y1={regressionLine.startY}
+                x2={regressionLine.endX}
+                y2={regressionLine.endY}
+                stroke="rgba(185, 28, 28, 0.82)"
+                strokeWidth={2}
+                strokeDasharray="6 5"
+              >
+                <title>
+                  {`Regresion lineal - pendiente: ${formatRegressionIndicator(regressionResult.slope)} min/${measureUnit}, intercepto: ${formatRegressionIndicator(regressionResult.intercept)} min, R2: ${formatRegressionIndicator(regressionResult.rSquared, 4)}`}
+                </title>
+              </line>
+            )}
             <text x={margin.left} y={svgHeight - 18} fontSize="11" fill="#4b5563">
               {`Medida (${measureUnit})`}
             </text>
@@ -1794,6 +2100,57 @@ const DashboardTasks: React.FC = () => {
         <p className="text-xs text-[var(--ink-muted)]">
           Eje X: {measureUnit}. Eje Y: tiempo de estacion (min).
         </p>
+        {!showRawPoints && (
+          <p className="text-xs text-[var(--ink-muted)]">Mostrando solo promedios por medida.</p>
+        )}
+        <p className="text-xs text-[var(--ink-muted)]">Cruces rojas: promedio de tiempo por cada medida unica.</p>
+        {showRegression && regressionBandPath && (
+          <p className="text-xs text-[var(--ink-muted)]">Franja roja: banda de confianza del 95%.</p>
+        )}
+        {showRegression && (
+          <div className="rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm text-[var(--ink)]">
+            {!regressionResult ? (
+              <p className="text-xs text-[var(--ink-muted)]">
+                Se necesitan al menos dos paneles con medida y tiempo validos para calcular la regresion.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  {`Regresion tiempo vs ${measureLabel.toLowerCase()}`}
+                </p>
+                <p className="text-xs text-[var(--ink)]">
+                  {`Tiempo (min) = ${formatRegressionIndicator(regressionResult.slope)} * ${measureLabel} (${measureUnit}) + ${formatRegressionIndicator(regressionResult.intercept)}`}
+                </p>
+                <div className="grid gap-2 text-xs text-[var(--ink-muted)] md:grid-cols-2 xl:grid-cols-4">
+                  <span>
+                    <strong>Muestras:</strong> {regressionResult.sampleCount}
+                  </span>
+                  <span>
+                    <strong>R2:</strong> {formatRegressionIndicator(regressionResult.rSquared, 4)}
+                  </span>
+                  <span>
+                    <strong>R2 ajustado:</strong> {formatRegressionIndicator(regressionResult.adjustedRSquared, 4)}
+                  </span>
+                  <span>
+                    <strong>Correlacion (r):</strong> {formatRegressionIndicator(regressionResult.correlation, 4)}
+                  </span>
+                  <span>
+                    <strong>RMSE:</strong> {formatRegressionIndicator(regressionResult.rmse)} min
+                  </span>
+                  <span>
+                    <strong>MAE:</strong> {formatRegressionIndicator(regressionResult.mae)} min
+                  </span>
+                  <span>
+                    <strong>Promedio medida:</strong> {formatRegressionIndicator(regressionResult.meanX)} {measureUnit}
+                  </span>
+                  <span>
+                    <strong>Promedio tiempo:</strong> {formatRegressionIndicator(regressionResult.meanY)} min
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -2562,6 +2919,28 @@ const DashboardTasks: React.FC = () => {
                     </button>
                   ))}
                 </div>
+                {normalizedView === 'scatter' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <label className="inline-flex items-center gap-2 text-xs text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={normalizedScatterDisplay === 'all'}
+                        onChange={(event) =>
+                          setNormalizedScatterDisplay(event.target.checked ? 'all' : 'averages')
+                        }
+                      />
+                      <span>Mostrar puntos individuales</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-xs text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={showNormalizedRegression}
+                        onChange={(event) => setShowNormalizedRegression(event.target.checked)}
+                      />
+                      <span>Mostrar regresion lineal + banda 95%</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

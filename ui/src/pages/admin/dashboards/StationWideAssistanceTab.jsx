@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
-import { buildRangeIndicators } from './assistanceIndicators';
+import { buildRangeIndicators, isAbsentNoDataDay } from './assistanceIndicators';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
@@ -22,7 +22,9 @@ const buildCombinedDays = (attendanceResponse, activityRows, normalizeAttendance
     const existing = map.get(day.date) || { date: day.date, attendance: null, activity: null };
     map.set(day.date, { ...existing, activity: day });
   });
-  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  return Array.from(map.values())
+    .filter((day) => !isAbsentNoDataDay(day))
+    .sort((a, b) => b.date.localeCompare(a.date));
 };
 
 const runWithLimit = async (items, limit, task) => {
@@ -63,12 +65,6 @@ const createThrottle = (delayMs) => {
   };
 };
 
-const average = (values) => {
-  if (!values.length) return null;
-  const sum = values.reduce((acc, value) => acc + value, 0);
-  return sum / values.length;
-};
-
 const pickLastFullDayRow = (rows, todayKey) => {
   if (!rows || !rows.length) return null;
   const sorted = rows.slice().sort((a, b) => a.key.localeCompare(b.key));
@@ -82,17 +78,22 @@ const aggregateStationRows = (workerSummaries) => {
     const rows = summary?.rangeIndicators?.rows || [];
     rows.forEach((row) => {
       if (!Number.isFinite(row.productiveRatio) || !Number.isFinite(row.expectedRatio)) return;
+      const presenceWeightRaw = Number(row?.indicators?.presenceNetSeconds);
+      const presenceWeight =
+        Number.isFinite(presenceWeightRaw) && presenceWeightRaw > 0 ? presenceWeightRaw : 0;
       const entry = map.get(row.key) || {
         key: row.key,
         label: row.label,
         dateObj: row.dateObj,
-        productiveTotal: 0,
-        expectedTotal: 0,
-        count: 0,
+        productiveWeighted: 0,
+        expectedWeighted: 0,
+        weightTotal: 0,
       };
-      entry.productiveTotal += row.productiveRatio;
-      entry.expectedTotal += row.expectedRatio;
-      entry.count += 1;
+      if (presenceWeight > 0) {
+        entry.productiveWeighted += row.productiveRatio * presenceWeight;
+        entry.expectedWeighted += row.expectedRatio * presenceWeight;
+        entry.weightTotal += presenceWeight;
+      }
       map.set(row.key, entry);
     });
   });
@@ -103,9 +104,97 @@ const aggregateStationRows = (workerSummaries) => {
       key: entry.key,
       label: entry.label,
       dateObj: entry.dateObj,
-      productiveRatio: entry.count ? entry.productiveTotal / entry.count : null,
-      expectedRatio: entry.count ? entry.expectedTotal / entry.count : null,
+      productiveRatio: entry.weightTotal ? entry.productiveWeighted / entry.weightTotal : null,
+      expectedRatio: entry.weightTotal ? entry.expectedWeighted / entry.weightTotal : null,
     }));
+};
+
+const parseFilenameFromDisposition = (dispositionHeader, fallbackName) => {
+  const fallback = fallbackName || 'reporte_asistencia_estaciones.pdf';
+  if (!dispositionHeader) return fallback;
+  const utf8Match = dispositionHeader.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      return utf8Match[1].trim() || fallback;
+    }
+  }
+  const basicMatch = dispositionHeader.match(/filename=\"?([^\";]+)\"?/i);
+  return basicMatch?.[1]?.trim() || fallback;
+};
+
+const toFiniteOrNull = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const buildPdfPayload = ({
+  reportDays,
+  fromDate,
+  toDate,
+  includeWorkers,
+  selectedGroupData,
+}) => {
+  let globalPresence = 0;
+  let globalProductive = 0;
+  let globalExpected = 0;
+  let totalWorkers = 0;
+
+  const stations = selectedGroupData.map((groupData) => {
+    const summary = groupData.stationSummary || {};
+    const workerSummaries = Array.isArray(groupData.workerSummaries) ? groupData.workerSummaries : [];
+    totalWorkers += workerSummaries.length;
+
+    workerSummaries.forEach((summaryItem) => {
+      const totals = summaryItem?.rangeIndicators?.totals;
+      const presence = Number(totals?.presenceNetSeconds);
+      if (!Number.isFinite(presence) || presence <= 0) return;
+      globalPresence += presence;
+      globalProductive += Number(totals?.productiveSeconds) || 0;
+      globalExpected += Number(totals?.expectedSecondsTotal) || 0;
+    });
+
+    return {
+      key: groupData.group.key,
+      label: groupData.group.label,
+      workers_total: workerSummaries.length,
+      workers_with_data: Number(summary?.workersWithData) || 0,
+      average_productive: toFiniteOrNull(summary?.averageProductive),
+      average_expected: toFiniteOrNull(summary?.averageExpected),
+      rows: Array.isArray(summary?.rows)
+        ? summary.rows.map((row) => ({
+            key: row.key,
+            productive_ratio: toFiniteOrNull(row.productiveRatio),
+            expected_ratio: toFiniteOrNull(row.expectedRatio),
+          }))
+        : [],
+      workers: includeWorkers
+        ? workerSummaries.map((summaryRow) => {
+            const range = summaryRow.rangeIndicators || {};
+            return {
+              label: summaryRow.workerLabel,
+              productive_ratio: toFiniteOrNull(range.totalProductiveRatio),
+              expected_ratio: toFiniteOrNull(range.totalExpectedRatio),
+              days_with_data: Number(range.daysWithData) || 0,
+              days_total: Number(range.daysTotal) || 0,
+            };
+          })
+        : [],
+    };
+  });
+
+  return {
+    report_days: reportDays,
+    from_date: fromDate,
+    to_date: toDate,
+    include_workers: includeWorkers,
+    generated_at: new Date().toISOString(),
+    global_productive: globalPresence > 0 ? globalProductive / globalPresence : null,
+    global_expected: globalPresence > 0 ? globalExpected / globalPresence : null,
+    total_workers: totalWorkers,
+    stations,
+  };
 };
 
 const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
@@ -209,6 +298,11 @@ const formatWorkerLabel = (worker, formatWorkerDisplayName) => {
   return worker?.id ? `Trabajador ${worker.id}` : 'Trabajador';
 };
 
+const isWorkerInactive = (worker) =>
+  String(worker?.status ?? '')
+    .trim()
+    .toLowerCase() === 'inactive';
+
 const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent, formatSeconds }) => {
   if (!day) return null;
 
@@ -274,6 +368,7 @@ const StationWideAssistanceTab = ({
   stations,
   stationGroups,
   workers,
+  apiBaseUrl,
   apiRequest,
   isoDaysAgo,
   todayIso,
@@ -289,6 +384,12 @@ const StationWideAssistanceTab = ({
   const [expandedGroups, setExpandedGroups] = useState({});
   const [groupCache, setGroupCache] = useState({});
   const [modalData, setModalData] = useState(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportDays, setReportDays] = useState(RANGE_OPTIONS[0]);
+  const [reportIncludeWorkers, setReportIncludeWorkers] = useState(false);
+  const [reportSelection, setReportSelection] = useState({});
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportError, setReportError] = useState('');
   const loadTokensRef = useRef(new Map());
   const prevRangeRef = useRef(rangeDays);
   const geoThrottleRef = useRef(null);
@@ -297,9 +398,14 @@ const StationWideAssistanceTab = ({
     geoThrottleRef.current = createThrottle(GEO_REQUEST_DELAY_MS);
   }
 
+  const activeWorkers = useMemo(
+    () => workers.filter((worker) => !isWorkerInactive(worker)),
+    [workers]
+  );
+
   const workersByStation = useMemo(() => {
     const map = new Map();
-    workers.forEach((worker) => {
+    activeWorkers.forEach((worker) => {
       if (!Array.isArray(worker.assigned_station_ids)) return;
       worker.assigned_station_ids.forEach((stationId) => {
         const entry = map.get(stationId) || [];
@@ -308,11 +414,21 @@ const StationWideAssistanceTab = ({
       });
     });
     return map;
-  }, [workers]);
+  }, [activeWorkers]);
 
   const groupedStations = useMemo(() => {
     return stationGroups.filter((group) => (group.stationIds || []).length > 0);
   }, [stationGroups]);
+
+  useEffect(() => {
+    setReportSelection((prev) => {
+      const next = {};
+      groupedStations.forEach((group) => {
+        next[group.key] = prev[group.key] !== false;
+      });
+      return next;
+    });
+  }, [groupedStations]);
 
   const workersByGroup = useMemo(() => {
     const map = new Map();
@@ -334,8 +450,9 @@ const StationWideAssistanceTab = ({
   const todayKey = useMemo(() => toDateOnly(new Date()), [toDateOnly]);
 
   const fetchWorkerSummary = useCallback(
-    async (worker) => {
-      const fromDate = isoDaysAgo(rangeDays);
+    async (worker, customRangeDays = rangeDays) => {
+      const safeRangeDays = Math.max(1, Math.round(Number(customRangeDays) || rangeDays));
+      const fromDate = isoDaysAgo(safeRangeDays);
       const toDate = todayIso();
       let attendanceResponse = null;
       let attendanceError = '';
@@ -343,7 +460,7 @@ const StationWideAssistanceTab = ({
         try {
           await geoThrottleRef.current();
           attendanceResponse = await apiRequest(
-            `/api/geovictoria/attendance?worker_id=${worker.id}&days=${rangeDays}`
+            `/api/geovictoria/attendance?worker_id=${worker.id}&days=${safeRangeDays}`
           );
         } catch (err) {
           attendanceError = err instanceof Error ? err.message : 'Error cargando asistencia.';
@@ -354,7 +471,7 @@ const StationWideAssistanceTab = ({
       let activityError = '';
       try {
         const rows = await apiRequest(
-          `/api/task-history?worker_id=${worker.id}&from_date=${fromDate}&to_date=${toDate}&limit=2000`
+          `/api/task-history?worker_id=${worker.id}&from_date=${fromDate}&to_date=${toDate}&limit=4000`
         );
         activityRows = Array.isArray(rows) ? rows : [];
       } catch (err) {
@@ -401,21 +518,40 @@ const StationWideAssistanceTab = ({
 
   const buildStationSummary = useCallback(
     (workerSummaries) => {
-      const productiveValues = workerSummaries
-        .map((summary) => summary?.rangeIndicators?.totalProductiveRatio)
-        .filter((value) => Number.isFinite(value));
-      const expectedValues = workerSummaries
-        .map((summary) => summary?.rangeIndicators?.totalExpectedRatio)
-        .filter((value) => Number.isFinite(value));
+      let productiveWeightedTotal = 0;
+      let expectedWeightedTotal = 0;
+      let productiveWeight = 0;
+      let expectedWeight = 0;
+      let workersWithData = 0;
+
+      workerSummaries.forEach((summary) => {
+        const range = summary?.rangeIndicators;
+        const workerPresence = Number(range?.totals?.presenceNetSeconds);
+        if (!Number.isFinite(workerPresence) || workerPresence <= 0) return;
+        const hasProductive = Number.isFinite(range?.totalProductiveRatio);
+        const hasExpected = Number.isFinite(range?.totalExpectedRatio);
+        if (hasProductive) {
+          productiveWeightedTotal += range.totalProductiveRatio * workerPresence;
+          productiveWeight += workerPresence;
+        }
+        if (hasExpected) {
+          expectedWeightedTotal += range.totalExpectedRatio * workerPresence;
+          expectedWeight += workerPresence;
+        }
+        if (hasProductive || hasExpected) {
+          workersWithData += 1;
+        }
+      });
+
       const rows = aggregateStationRows(workerSummaries);
       const lastFullDay = pickLastFullDayRow(rows, todayKey);
       return {
-        averageProductive: average(productiveValues),
-        averageExpected: average(expectedValues),
+        averageProductive: productiveWeight ? productiveWeightedTotal / productiveWeight : null,
+        averageExpected: expectedWeight ? expectedWeightedTotal / expectedWeight : null,
         rows,
         lastFullDay,
         workersTotal: workerSummaries.length,
-        workersWithData: productiveValues.length || expectedValues.length,
+        workersWithData,
       };
     },
     [todayKey]
@@ -488,6 +624,148 @@ const StationWideAssistanceTab = ({
     ]
   );
 
+  const openReportModal = useCallback(() => {
+    const defaults = {};
+    groupedStations.forEach((group) => {
+      defaults[group.key] = true;
+    });
+    setReportSelection(defaults);
+    setReportDays(rangeDays);
+    setReportIncludeWorkers(false);
+    setReportError('');
+    setReportModalOpen(true);
+  }, [groupedStations, rangeDays]);
+
+  const selectedReportGroups = useMemo(
+    () => groupedStations.filter((group) => reportSelection[group.key] !== false),
+    [groupedStations, reportSelection]
+  );
+
+  const toggleReportGroup = useCallback((groupKey) => {
+    setReportSelection((prev) => ({
+      ...prev,
+      [groupKey]: !(prev[groupKey] !== false),
+    }));
+  }, []);
+
+  const setReportSelectionAll = useCallback(
+    (checked) => {
+      const next = {};
+      groupedStations.forEach((group) => {
+        next[group.key] = checked;
+      });
+      setReportSelection(next);
+    },
+    [groupedStations]
+  );
+
+  const generateReport = useCallback(async () => {
+    const safeReportDays = Math.max(1, Math.round(Number(reportDays) || rangeDays));
+    const fromDate = isoDaysAgo(safeReportDays);
+    const toDate = todayIso();
+    const selectedGroups = groupedStations.filter((group) => reportSelection[group.key] !== false);
+    if (!selectedGroups.length) {
+      setReportError('Seleccione al menos una estacion para generar el reporte.');
+      return;
+    }
+
+    setReportGenerating(true);
+    setReportError('');
+
+    try {
+      const selectedGroupData = [];
+
+      for (const group of selectedGroups) {
+        const groupWorkers = workersByGroup.get(group.key) || [];
+        const summaries = await runWithLimit(groupWorkers, LOAD_CONCURRENCY, (worker) =>
+          fetchWorkerSummary(worker, safeReportDays)
+        );
+
+        const workerSummaries = summaries
+          .map((summary) => {
+            if (!summary || summary.error) return null;
+            return summary;
+          })
+          .filter(Boolean)
+          .map((summary) => ({
+            ...summary,
+            workerLabel: formatWorkerLabel(summary.worker, formatWorkerDisplayName),
+          }))
+          .sort((a, b) => a.workerLabel.localeCompare(b.workerLabel, 'es'));
+
+        const stationSummary = buildStationSummary(workerSummaries);
+        selectedGroupData.push({
+          group,
+          workerSummaries,
+          stationSummary,
+        });
+      }
+
+      const payload = buildPdfPayload({
+        reportDays: safeReportDays,
+        fromDate,
+        toDate,
+        includeWorkers: reportIncludeWorkers,
+        selectedGroupData,
+      });
+
+      const response = await fetch(`${apiBaseUrl || ''}/api/reports/station-assistance-pdf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const errorPayload = await response.json();
+          detail = errorPayload?.detail ? String(errorPayload.detail) : '';
+        } catch {
+          const rawText = await response.text();
+          detail = rawText || '';
+        }
+        throw new Error(detail || `Error generando reporte PDF (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition');
+      const fallbackName = `reporte_asistencia_estaciones_${toDate}.pdf`;
+      const filename = parseFilenameFromDisposition(disposition, fallbackName);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 1000);
+      setReportModalOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No fue posible generar el reporte.';
+      setReportError(message);
+    } finally {
+      setReportGenerating(false);
+    }
+  }, [
+    apiBaseUrl,
+    reportDays,
+    rangeDays,
+    isoDaysAgo,
+    todayIso,
+    groupedStations,
+    reportSelection,
+    workersByGroup,
+    fetchWorkerSummary,
+    formatWorkerDisplayName,
+    buildStationSummary,
+    reportIncludeWorkers,
+  ]);
+
   useEffect(() => {
     if (prevRangeRef.current === rangeDays) return;
     prevRangeRef.current = rangeDays;
@@ -543,6 +821,13 @@ const StationWideAssistanceTab = ({
                 <option key={days} value={days}>{days} dias</option>
               ))}
             </select>
+            <button
+              type="button"
+              onClick={openReportModal}
+              className="ml-2 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-black/5"
+            >
+              Generar reporte
+            </button>
           </div>
         </div>
       </div>
@@ -672,6 +957,146 @@ const StationWideAssistanceTab = ({
           formatPercent={formatPercent}
           formatSeconds={formatSeconds || defaultFormatSeconds}
         />
+      )}
+
+      {reportModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => !reportGenerating && setReportModalOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-[92vw] w-full mx-4 md:max-w-2xl max-h-[90vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Reporte</p>
+                <h3 className="text-lg font-semibold text-[var(--ink)]">Configurar reporte PDF</h3>
+              </div>
+              <button
+                onClick={() => !reportGenerating && setReportModalOpen(false)}
+                className="p-2 hover:bg-black/5 rounded-full"
+                disabled={reportGenerating}
+              >
+                <X className="h-5 w-5 text-[var(--ink-muted)]" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-1">
+                    Rango del reporte
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    value={reportDays}
+                    onChange={(event) => setReportDays(Number(event.target.value))}
+                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                  />
+                  <p className="mt-1 text-xs text-[var(--ink-muted)]">Se usa "ultimos N dias".</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-1">
+                    Nivel de detalle
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setReportIncludeWorkers((prev) => !prev)}
+                    className={`inline-flex items-center justify-between w-full rounded-lg border px-3 py-2 text-sm ${
+                      reportIncludeWorkers
+                        ? 'border-[var(--ink)] bg-[var(--ink)] text-white'
+                        : 'border-black/10 bg-white text-[var(--ink)]'
+                    }`}
+                  >
+                    <span>
+                      {reportIncludeWorkers
+                        ? 'Incluir detalle por trabajador'
+                        : 'Solo resumen por estacion'}
+                    </span>
+                    <span className="text-xs uppercase tracking-[0.15em]">
+                      {reportIncludeWorkers ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Estaciones incluidas ({selectedReportGroups.length}/{groupedStations.length})
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setReportSelectionAll(true)}
+                      className="rounded-md border border-black/10 bg-white px-2 py-1 text-[11px] text-[var(--ink)] hover:bg-black/5"
+                    >
+                      Todas
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportSelectionAll(false)}
+                      className="rounded-md border border-black/10 bg-white px-2 py-1 text-[11px] text-[var(--ink)] hover:bg-black/5"
+                    >
+                      Ninguna
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-56 overflow-auto rounded-xl border border-black/10 bg-white p-2">
+                  {groupedStations.map((group) => {
+                    const checked = reportSelection[group.key] !== false;
+                    const workersCount = (workersByGroup.get(group.key) || []).length;
+                    return (
+                      <label
+                        key={group.key}
+                        className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-slate-50/80 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleReportGroup(group.key)}
+                          />
+                          <span className="text-sm text-[var(--ink)]">{group.label}</span>
+                        </span>
+                        <span className="text-xs text-[var(--ink-muted)]">{workersCount} trab.</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {reportError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {reportError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-black/5">
+              <button
+                type="button"
+                className="rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-black/5"
+                onClick={() => setReportModalOpen(false)}
+                disabled={reportGenerating}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--ink)] bg-[var(--ink)] px-3 py-1.5 text-sm text-white disabled:opacity-60"
+                onClick={generateReport}
+                disabled={reportGenerating || selectedReportGroups.length === 0}
+              >
+                {reportGenerating ? 'Generando...' : 'Generar y descargar PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
