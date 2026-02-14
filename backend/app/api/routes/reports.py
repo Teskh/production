@@ -20,7 +20,7 @@ router = APIRouter()
 
 try:  # pragma: no cover - import guard only
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
 
@@ -28,6 +28,7 @@ try:  # pragma: no cover - import guard only
 except Exception as exc:  # pragma: no cover - import guard only
     colors = None  # type: ignore[assignment]
     A4 = None  # type: ignore[assignment]
+    landscape = None  # type: ignore[assignment]
     mm = None  # type: ignore[assignment]
     canvas = None  # type: ignore[assignment]
     _REPORTLAB_ERROR = exc
@@ -40,6 +41,10 @@ _CLR_RULE = "#cbd5e1"
 _CLR_ZEBRA = "#f8fafc"
 _CLR_GREEN = "#16a34a"
 _CLR_BLUE = "#2563eb"
+_NOTE_BLOCK_HEIGHT = 34
+_NOTE_TITLE = "Como leer los indicadores"
+_NOTE_LINE_1 = "Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo."
+_NOTE_LINE_2 = "Uso minimo: grado general de uso del sistema."
 
 
 def _format_percent(value: float | None) -> str:
@@ -99,6 +104,17 @@ def _hline(pdf: "canvas.Canvas", x1: float, x2: float, y: float) -> None:
     pdf.setStrokeColor(colors.HexColor(_CLR_RULE))
     pdf.setLineWidth(0.5)
     pdf.line(x1, y, x2, y)
+
+
+def _draw_indicator_note(pdf: "canvas.Canvas", *, margin: float) -> None:
+    note_y = margin + 3
+    pdf.setFillColor(colors.HexColor(_CLR_DARK))
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawString(margin, note_y + 18, _NOTE_TITLE)
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(margin + 4, note_y + 9, f"- {_NOTE_LINE_1}")
+    pdf.drawString(margin + 4, note_y, f"- {_NOTE_LINE_2}")
 
 
 def _draw_station_chart(
@@ -194,10 +210,9 @@ def _draw_station_summary_table(
 ) -> None:
     usable = page_width - margin * 2
     pad = 6
-    col_trab = 56
-    col_uc = 72
-    col_um = 72
-    col_station = usable - col_trab - col_uc - col_um
+    col_uc = usable * 0.22
+    col_um = usable * 0.22
+    col_station = usable - col_uc - col_um
     row_h = 16
     right_edge = margin + usable
 
@@ -205,8 +220,7 @@ def _draw_station_summary_table(
         pdf.setFillColor(colors.HexColor(_CLR_DARK))
         pdf.setFont("Helvetica-Bold", 7.5)
         pdf.drawString(margin + pad, y_pos - 10, "ESTACION")
-        pdf.drawRightString(margin + col_station + col_trab - pad, y_pos - 10, "TRAB.")
-        pdf.drawRightString(margin + col_station + col_trab + col_uc - pad, y_pos - 10, "USO CORRECTO")
+        pdf.drawRightString(margin + col_station + col_uc - pad, y_pos - 10, "USO CORRECTO")
         pdf.drawRightString(right_edge - pad, y_pos - 10, "USO MINIMO")
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
 
@@ -215,7 +229,8 @@ def _draw_station_summary_table(
     y_pos -= row_h
 
     for idx, station in enumerate(stations):
-        if y_pos < margin + 26:
+        if y_pos < margin + _NOTE_BLOCK_HEIGHT + 18:
+            _draw_indicator_note(pdf, margin=margin)
             pdf.showPage()
             pdf.setFont("Helvetica-Bold", 13)
             pdf.setFillColor(colors.HexColor(_CLR_DARK))
@@ -233,12 +248,7 @@ def _draw_station_summary_table(
         station_label = _truncate_text(pdf, station.label, col_station - pad * 2, font_size=8)
         pdf.drawString(margin + pad, y_pos - 10, station_label)
         pdf.drawRightString(
-            margin + col_station + col_trab - pad,
-            y_pos - 10,
-            f"{station.workers_with_data}/{station.workers_total}",
-        )
-        pdf.drawRightString(
-            margin + col_station + col_trab + col_uc - pad,
+            margin + col_station + col_uc - pad,
             y_pos - 10,
             _format_percent(station.average_productive),
         )
@@ -249,6 +259,8 @@ def _draw_station_summary_table(
         )
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
+
+    _draw_indicator_note(pdf, margin=margin)
 
 
 def _draw_worker_table(
@@ -265,6 +277,7 @@ def _draw_worker_table(
         pdf.setFillColor(colors.HexColor(_CLR_LIGHT))
         pdf.setFont("Helvetica", 9)
         pdf.drawString(margin, start_y, "Sin detalle de trabajadores para este rango.")
+        _draw_indicator_note(pdf, margin=margin)
         return
 
     usable = page_width - margin * 2
@@ -286,7 +299,8 @@ def _draw_worker_table(
 
     y_pos = draw_table_header(start_y)
     for idx, worker in enumerate(workers):
-        if y_pos < margin + 20:
+        if y_pos < margin + _NOTE_BLOCK_HEIGHT + 12:
+            _draw_indicator_note(pdf, margin=margin)
             pdf.showPage()
             pdf.setFillColor(colors.HexColor(_CLR_DARK))
             pdf.setFont("Helvetica-Bold", 13)
@@ -312,14 +326,17 @@ def _draw_worker_table(
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
 
+    _draw_indicator_note(pdf, margin=margin)
+
 
 def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes:
     if _REPORTLAB_ERROR is not None or canvas is None or A4 is None or mm is None:
         raise RuntimeError("reportlab is not available")
 
     buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=A4)
-    page_width, page_height = A4
+    page_size = landscape(A4)
+    pdf = canvas.Canvas(buffer, pagesize=page_size)
+    page_width, page_height = page_size
     margin = 14 * mm
     usable = page_width - margin * 2
 
@@ -343,8 +360,8 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
 
     # Metric cards
     y -= 58
-    gap = 10
-    card_w = (usable - gap * 2) / 3
+    gap = 14
+    card_w = (usable - gap) / 2
     card_h = 46
     _draw_metric_card(
         pdf, x=margin, y=y, width=card_w, height=card_h,
@@ -354,25 +371,9 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         pdf, x=margin + card_w + gap, y=y, width=card_w, height=card_h,
         label="Uso minimo global", value=_format_percent(payload.global_expected),
     )
-    _draw_metric_card(
-        pdf, x=margin + (card_w + gap) * 2, y=y, width=card_w, height=card_h,
-        label="Trabajadores", value=str(payload.total_workers),
-    )
-
-    # Explanation block
-    y -= 52
-    pdf.setFillColor(colors.HexColor(_CLR_DARK))
-    pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawString(margin, y, "Como leer los indicadores")
-    y -= 12
-    pdf.setFillColor(colors.HexColor(_CLR_MID))
-    pdf.setFont("Helvetica", 7.5)
-    pdf.drawString(margin + 4, y, "\u2022 Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo.")
-    y -= 11
-    pdf.drawString(margin + 4, y, "\u2022 Uso minimo: grado general de uso del sistema.")
 
     # Summary table
-    y -= 18
+    y -= 26
     _draw_station_summary_table(
         pdf, payload.stations,
         page_width=page_width, page_height=page_height, margin=margin, start_y=y,
@@ -442,6 +443,8 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
                 page_width=page_width, page_height=page_height,
                 margin=margin, start_y=worker_y - 12,
             )
+        else:
+            _draw_indicator_note(pdf, margin=margin)
 
     pdf.save()
     buffer.seek(0)

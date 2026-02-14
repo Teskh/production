@@ -1941,6 +1941,14 @@ const DashboardAssistance = () => {
     () => (Array.isArray(attendanceResponse?.warnings) ? attendanceResponse.warnings : []),
     [attendanceResponse]
   );
+  const geovictoriaConsolidatedWarning = useMemo(
+    () => geovictoriaWarnings.includes('consolidated_failed'),
+    [geovictoriaWarnings]
+  );
+  const geovictoriaUnknownWarnings = useMemo(
+    () => geovictoriaWarnings.filter((warning) => warning !== 'consolidated_failed'),
+    [geovictoriaWarnings]
+  );
 
   const activityDays = useMemo(() => buildActivityDays(activityRows), [activityRows]);
 
@@ -2151,11 +2159,21 @@ const DashboardAssistance = () => {
                   <span className="ml-2 text-xs text-red-500">{attendanceError}</span>
                 </div>
               )}
-              {!attendanceError && geovictoriaWarnings.length > 0 && (
+              {!attendanceError && geovictoriaUnknownWarnings.length > 0 && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Error en entrega de datos de GeoVictoria.
+                  GeoVictoria devolvio advertencias al cargar asistencia.
+                  <span className="ml-2 text-xs text-amber-700">
+                    {geovictoriaUnknownWarnings.join(', ')}
+                  </span>
                 </div>
               )}
+              {!attendanceError &&
+                geovictoriaUnknownWarnings.length === 0 &&
+                geovictoriaConsolidatedWarning && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    Datos de marcaje cargados. No se pudo obtener el consolidado de GeoVictoria.
+                  </div>
+                )}
               {activityError && (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
                   {activityError}
@@ -2241,7 +2259,7 @@ const DashboardAssistance = () => {
               selectedWorker &&
               !combinedDays.length &&
               !attendanceError &&
-              geovictoriaWarnings.length === 0 && (
+              geovictoriaUnknownWarnings.length === 0 && (
               <p className="mt-4 text-sm text-[var(--ink-muted)]">
                 Sin datos para el rango de busqueda.
               </p>
