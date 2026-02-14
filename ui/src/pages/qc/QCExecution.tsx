@@ -34,6 +34,7 @@ type QCCheckInstanceSummary = {
   id: number;
   check_definition_id: number | null;
   check_name: string | null;
+  ad_hoc_guidance: string | null;
   scope: 'panel' | 'module' | 'aux';
   work_unit_id: number;
   panel_unit_id: number | null;
@@ -313,7 +314,10 @@ const QCExecution: React.FC = () => {
         checkDetail?.check_definition?.name ??
         checkDetail?.check_instance?.check_name ??
         'Revision QC',
-      desc: checkDetail?.check_definition?.guidance_text ?? 'Sin guia adicional.',
+      desc:
+        checkDetail?.check_definition?.guidance_text ??
+        checkDetail?.check_instance?.ad_hoc_guidance ??
+        'Sin guia adicional.',
       required: true,
       image: null,
     };
@@ -634,7 +638,7 @@ const QCExecution: React.FC = () => {
       setShowEvidenceRequiredModal(true);
       return;
     }
-    if (outcome === 'Fail' && selectedFailureModeIds.length === 0) {
+    if (outcome === 'Fail' && failureModes.length > 0 && selectedFailureModeIds.length === 0) {
       setActionError('Seleccione al menos un modo de falla antes de confirmar.');
       return;
     }
@@ -761,7 +765,9 @@ const QCExecution: React.FC = () => {
       }
     };
 
-  const canSubmitFail = selectedFailureModeIds.length > 0 && !!selectedSeverityId;
+  const canSubmitFail =
+    !!selectedSeverityId &&
+    (failureModes.length === 0 || selectedFailureModeIds.length > 0);
   const previewEvidence = previewEvidenceId
     ? evidence.find((item) => item.id === previewEvidenceId) ?? null
     : null;
@@ -1353,7 +1359,7 @@ const QCExecution: React.FC = () => {
                 )}
               </div>
 
-              {selectedFailureModeIds.length > 0 && (
+              {(failureModes.length === 0 || selectedFailureModeIds.length > 0) && (
                 <div className="mb-6">
                   <label className="block text-sm font-bold text-slate-300 mb-2">Severidad</label>
                   <div className="flex flex-wrap gap-2">

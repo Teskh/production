@@ -11,6 +11,7 @@
 - Triggers: events that can open a check (task completion).
 - Applicability rules: scope checks by house type, subtype, and optional panel type.
 - Check instances: a specific check opened for a module or panel, optionally tied to the triggering task.
+- Manual checks: QC can open checks directly (free-form or from an existing check definition) without waiting for triggers.
 - Executions: the recorded outcome of a check (pass, fail, waive, skip) with notes.
 - Failure modes: predefined reasons for a failed check, each with a default severity and optional defaults for rework/evidence.
 - Severity: chosen on a failed check from a fixed three-level scale (Baja, Media, Crítica), prefilled by failure mode defaults.
@@ -24,6 +25,7 @@
 - Sampling is deterministic per plan, check, and trigger event so results are repeatable.
 - If a check is not selected by sampling, it is still recorded as skipped for audit.
 - Adaptive sampling (when enabled): a fail spikes the rate to 100%; passes step it down toward the base rate.
+- Manual checks bypass trigger sampling and open immediately.
 
 ## Check lifecycle
 - Open checks are executed by QC staff with an outcome and notes.

@@ -150,20 +150,6 @@ type QCReworkAttemptSummary = {
   workers: Array<{ worker_id: number; worker_name: string }>;
 };
 
-type QCCheckDefinitionSummary = {
-  id: number;
-  name: string;
-  guidance_text: string | null;
-  category_id: number | null;
-};
-
-type QCCheckMediaSummary = {
-  id: number;
-  media_type: 'guidance' | 'reference';
-  uri: string;
-  created_at: string | null;
-};
-
 type QCFailureModeSummary = {
   id: number;
   check_definition_id: number | null;
@@ -175,9 +161,7 @@ type QCFailureModeSummary = {
 
 type QCCheckInstanceDetail = {
   check_instance: QCCheckInstanceSummary;
-  check_definition: QCCheckDefinitionSummary | null;
   failure_modes: QCFailureModeSummary[];
-  media_assets: QCCheckMediaSummary[];
   executions: QCExecutionRead[];
   rework_tasks: QCReworkTaskSummary[];
   rework_attempts: QCReworkAttemptSummary[];
@@ -244,6 +228,11 @@ const classForOutcome = (outcome: QCExecutionOutcome | null | undefined) => {
 const classForCheckStatus = (status: QCCheckStatus) => {
   if (status === 'Open') return 'bg-sky-50 text-sky-800 border-sky-100';
   return 'bg-white text-[var(--ink-muted)] border-black/10';
+};
+
+const manualSubtypeLabel = (check: QCCheckInstanceSummary): string | null => {
+  if (check.origin !== 'manual') return null;
+  return check.check_definition_id === null ? 'Ad-hoc' : 'Manual desde check';
 };
 
 const QCLibrary: React.FC = () => {
@@ -634,7 +623,7 @@ const QCLibrary: React.FC = () => {
         ts: exec.performed_at,
         kind: 'execution',
         title: `${outcomeLabel[exec.outcome]} · ${checkNameById.get(exec.check_instance_id) ?? `Check #${exec.check_instance_id}`}`,
-        subtitle: `${formatDateTimeShort(exec.performed_at)} · ${adminNameById.get(exec.performed_by_user_id) ?? `Usuario #${exec.performed_by_user_id}`}`,
+        subtitle: `${adminNameById.get(exec.performed_by_user_id) ?? `Usuario #${exec.performed_by_user_id}`}`,
         outcome: exec.outcome,
         checkId: exec.check_instance_id,
         executionId: exec.id,
@@ -1029,6 +1018,11 @@ const QCLibrary: React.FC = () => {
                                       {check.check_name ?? `Check #${check.id}`}
                                     </div>
                                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
+                                      {manualSubtypeLabel(check) ? (
+                                        <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
+                                          {manualSubtypeLabel(check)}
+                                        </span>
+                                      ) : null}
                                       <span className={clsx('rounded-full border px-2 py-0.5', classForCheckStatus(check.status))}>
                                         {checkStatusLabel[check.status]}
                                       </span>
@@ -1076,6 +1070,11 @@ const QCLibrary: React.FC = () => {
                                   <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
                                     {scopeLabel[check.scope]}
                                   </span>
+                                  {manualSubtypeLabel(check) ? (
+                                    <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
+                                      {manualSubtypeLabel(check)}
+                                    </span>
+                                  ) : null}
                                   <span className={clsx('rounded-full border px-2 py-0.5', classForCheckStatus(check.status))}>
                                     {checkStatusLabel[check.status]}
                                   </span>
@@ -1171,6 +1170,11 @@ const QCLibrary: React.FC = () => {
                       <div className="mt-2 text-xs text-[var(--ink-muted)]">
                         Origen: {checkDetail.check_instance.origin === 'triggered' ? 'Trigger' : 'Manual'}
                       </div>
+                      {manualSubtypeLabel(checkDetail.check_instance) ? (
+                        <div className="mt-2 text-xs text-[var(--ink-muted)]">
+                          Tipo manual: {manualSubtypeLabel(checkDetail.check_instance)}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
                       <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Acciones</p>

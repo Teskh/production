@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, LayoutGrid, Wrench, X } from 'lucide-react';
+import { ClipboardCheck, ClipboardPlus, LayoutGrid, Wrench, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutContext';
 
@@ -399,6 +399,39 @@ const QCDashboard: React.FC = () => {
           {errorMessage}
         </div>
       )}
+      <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+              Flujo manual
+            </p>
+            <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
+              Crear inspeccion fuera de trigger
+            </h3>
+            <p className="mt-1 text-sm text-[var(--ink-muted)]">
+              Abra checks libres o desde checks predefinidos para modulo o panel.
+            </p>
+          </div>
+          {canExecuteChecks ? (
+            <Link
+              to="/qc/new"
+              className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <ClipboardPlus className="h-4 w-4" />
+              Nueva inspeccion manual
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] opacity-70"
+            >
+              <ClipboardPlus className="h-4 w-4" />
+              Nueva inspeccion manual
+            </button>
+          )}
+        </div>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">

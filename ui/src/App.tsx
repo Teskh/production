@@ -16,6 +16,7 @@ import StationWorkspace from './pages/worker/StationWorkspace';
 import QCDashboard from './pages/qc/QCDashboard';
 import QCExecution from './pages/qc/QCExecution';
 import QCLibrary from './pages/qc/QCLibrary';
+import QCManualCheck from './pages/qc/QCManualCheck';
 
 // Admin Pages
 import Dashboards from './pages/admin/dashboards/Dashboards';
@@ -66,6 +67,7 @@ function App() {
         {/* QC Routes */}
         <Route path="/qc" element={<QCLayout />}>
           <Route index element={<QCDashboard />} />
+          <Route path="new" element={<QCManualCheck />} />
           <Route path="library" element={<QCLibrary />} />
           <Route path="checks" element={<QCChecks />} />
         </Route>

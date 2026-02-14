@@ -20,6 +20,7 @@ from app.models.enums import (
     QCExecutionOutcome,
     QCNotificationStatus,
     QCReworkStatus,
+    QCTriggerEventType,
     TaskScope,
     TaskStatus,
     WorkUnitStatus,
@@ -37,6 +38,7 @@ from app.models.qc import (
     QCEvidence,
     QCNotification,
     QCReworkTask,
+    QCTrigger,
 )
 from app.models.stations import Station
 from app.models.tasks import TaskDefinition, TaskInstance, TaskParticipation, TaskPause
@@ -102,6 +104,75 @@ def _resolve_current_station(
     return station_id, station_name
 
 
+def _resolve_definition_locked_station_id(
+    db: Session,
+    check_definition_id: int,
+) -> int | None:
+    trigger_rows = list(
+        db.execute(
+            select(QCTrigger).where(
+                QCTrigger.check_definition_id == check_definition_id,
+                QCTrigger.event_type == QCTriggerEventType.TASK_COMPLETED,
+            )
+        ).scalars()
+    )
+    if not trigger_rows:
+        return None
+
+    task_definition_ids: set[int] = set()
+    for trigger in trigger_rows:
+        params = trigger.params_json or {}
+        if not isinstance(params, dict):
+            continue
+        task_ids = params.get("task_definition_ids")
+        if not isinstance(task_ids, list):
+            continue
+        for task_id in task_ids:
+            try:
+                task_definition_ids.add(int(task_id))
+            except (TypeError, ValueError):
+                continue
+
+    if not task_definition_ids:
+        return None
+
+    task_rows = list(
+        db.execute(
+            select(TaskDefinition.id, TaskDefinition.default_station_sequence).where(
+                TaskDefinition.id.in_(sorted(task_definition_ids))
+            )
+        ).all()
+    )
+    sequences = {
+        sequence for _, sequence in task_rows if sequence is not None
+    }
+    if not sequences:
+        return None
+    if len(sequences) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Triggered check maps to multiple stations; cannot lock manual station",
+        )
+
+    sequence_order = next(iter(sequences))
+    station_ids = list(
+        db.execute(
+            select(Station.id).where(Station.sequence_order == sequence_order)
+        ).scalars()
+    )
+    if not station_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No station found for trigger task sequence",
+        )
+    if len(station_ids) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Multiple stations share trigger task sequence; cannot lock manual station",
+        )
+    return station_ids[0]
+
+
 def _build_check_summary(
     instance: QCCheckInstance,
     check_name: str | None,
@@ -118,6 +189,7 @@ def _build_check_summary(
         id=instance.id,
         check_definition_id=instance.check_definition_id,
         check_name=check_name,
+        ad_hoc_guidance=instance.ad_hoc_guidance,
         origin=instance.origin,
         scope=instance.scope,
         work_unit_id=instance.work_unit_id,
@@ -720,6 +792,7 @@ def create_manual_check(
     admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCCheckInstanceSummary:
+    admin = _require_qc_admin(admin)
     work_unit = db.get(WorkUnit, payload.work_unit_id)
     if not work_unit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
@@ -736,10 +809,15 @@ def create_manual_check(
         check_def = db.get(QCCheckDefinition, payload.check_definition_id)
         if not check_def:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check definition not found")
-        if check_def.kind != QCCheckKind.MANUAL_TEMPLATE:
+        if not check_def.active:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Check definition is not a manual template",
+                detail="QC check definition is inactive",
+            )
+        if check_def.archived_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="QC check definition is archived",
             )
     if not payload.ad_hoc_title and not check_def:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Manual check title required")
@@ -774,6 +852,15 @@ def create_manual_check(
         if not applies:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Check does not apply")
 
+    station_id = payload.station_id
+    if check_def and check_def.kind == QCCheckKind.TRIGGERED:
+        station_id = _resolve_definition_locked_station_id(db, check_def.id)
+        if station_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Triggered check has no resolvable station; cannot create manual check",
+            )
+
     instance = QCCheckInstance(
         check_definition_id=check_def.id if check_def else None,
         origin=QCCheckOrigin.MANUAL,
@@ -783,7 +870,7 @@ def create_manual_check(
         work_unit_id=payload.work_unit_id,
         panel_unit_id=payload.panel_unit_id,
         related_task_instance_id=None,
-        station_id=payload.station_id,
+        station_id=station_id,
         status=QCCheckStatus.OPEN,
         opened_by_user_id=admin.id,
         opened_at=utc_now(),
@@ -792,7 +879,7 @@ def create_manual_check(
     db.commit()
     db.refresh(instance)
 
-    station_name = db.get(Station, payload.station_id).name if payload.station_id else None
+    station_name = db.get(Station, station_id).name if station_id else None
     panel_code = None
     if payload.panel_unit_id:
         panel = db.get(PanelUnit, payload.panel_unit_id)

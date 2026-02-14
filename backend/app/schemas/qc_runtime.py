@@ -17,6 +17,7 @@ class QCCheckInstanceSummary(BaseModel):
     id: int
     check_definition_id: int | None = None
     check_name: str | None = None
+    ad_hoc_guidance: str | None = None
     origin: QCCheckOrigin
     scope: TaskScope
     work_unit_id: int
