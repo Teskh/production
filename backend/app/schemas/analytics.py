@@ -8,8 +8,18 @@ class TaskAnalysisTaskBreakdown(BaseModel):
     task_name: str | None = None
     duration_minutes: float | None = None
     expected_minutes: float | None = None
+    started_at: datetime | None = None
     completed_at: datetime | None = None
     worker_name: str | None = None
+    pause_minutes: float | None = None
+    pauses: list["TaskAnalysisTaskPause"] | None = None
+
+
+class TaskAnalysisTaskPause(BaseModel):
+    paused_at: datetime | None = None
+    resumed_at: datetime | None = None
+    duration_minutes: float | None = None
+    reason: str | None = None
 
 
 class TaskAnalysisDataPoint(BaseModel):

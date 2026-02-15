@@ -58,9 +58,21 @@ type TaskBreakdownRow = {
   task_name?: string | null;
   duration_minutes?: number | null;
   expected_minutes?: number | null;
+  started_at?: string | null;
   completed_at?: string | null;
   worker_name?: string | null;
+  pause_minutes?: number | null;
+  pauses?: {
+    paused_at?: string | null;
+    resumed_at?: string | null;
+    duration_minutes?: number | null;
+    duration_seconds?: number | null;
+    reason?: string | null;
+  }[] | null;
 };
+
+type DataTableSortKey = 'plan' | 'duration' | 'expected' | 'ratio' | 'completed' | 'worker';
+type DataTableSortDirection = 'asc' | 'desc';
 
 type AnalysisPoint = {
   plan_id?: number | null;
@@ -288,6 +300,24 @@ const formatMeasure = (value: number | null | undefined, unit: string, digits = 
 const formatRegressionIndicator = (value: number | null | undefined, digits = 3) => {
   if (value == null || !Number.isFinite(value)) return '-';
   return value.toFixed(digits);
+};
+
+const normalizeDateToComparable = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const normalizePauseMinutes = (pause: {
+  duration_minutes?: number | null;
+  duration_seconds?: number | null;
+} | null | undefined): number | null => {
+  if (!pause) return null;
+  const minutes = Number(pause.duration_minutes);
+  if (Number.isFinite(minutes) && minutes >= 0) return minutes;
+  const seconds = Number(pause.duration_seconds);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds / 60;
+  return null;
 };
 
 const buildPanelLabel = (panel: PanelDefinition | null): string => {
@@ -697,6 +727,11 @@ const DashboardTasks: React.FC = () => {
   const panelTypeDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [analysisData, setAnalysisData] = useState<TaskAnalysisResponse | null>(null);
+  const [showHistogramMethodologyModal, setShowHistogramMethodologyModal] = useState(false);
+  const [dataTableSort, setDataTableSort] = useState<{ key: DataTableSortKey; direction: DataTableSortDirection }>({
+    key: 'duration',
+    direction: 'desc',
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [panelsError, setPanelsError] = useState('');
@@ -855,6 +890,21 @@ const DashboardTasks: React.FC = () => {
     setHouseTypeDropdownOpen(false);
     setPanelTypeDropdownOpen(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!showHistogramMethodologyModal) {
+      return undefined;
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowHistogramMethodologyModal(false);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [showHistogramMethodologyModal]);
 
   const selectedHouseType = useMemo(
     () => houseTypes.find((item) => String(item.id) === String(selectedHouseTypeId)) || null,
@@ -1531,6 +1581,77 @@ const DashboardTasks: React.FC = () => {
     return `Casa ${house} - Fecha ${date} - Duracion ${duration} - Trabajador(es) ${workersLabel}`;
   };
 
+  const buildTaskBreakdownTooltip = (task: TaskBreakdownRow): string => {
+    const taskLabel = task.task_name || String(task.task_definition_id || 'Tarea');
+    const durationLabel = formatMinutesWithUnit(task.duration_minutes);
+    const expectedLabel = formatMinutesWithUnit(task.expected_minutes);
+    const startedLabel = formatDateTime(task.started_at);
+    const completedLabel = formatDateTime(task.completed_at);
+    const workersLabel = task.worker_name || '-';
+    const totalPauseLabel = formatMinutesWithUnit(task.pause_minutes);
+    const pauseLines = Array.isArray(task.pauses)
+      ? task.pauses.map((pause, index) => {
+          const pausedAt = formatDateTime(pause.paused_at);
+          const resumedAt = formatDateTime(pause.resumed_at);
+          const pauseMinutes = normalizePauseMinutes(pause);
+          const duration = pauseMinutes != null ? formatMinutesWithUnit(pauseMinutes) : '-';
+          const reason = pause.reason ? ` / Motivo: ${pause.reason}` : '';
+          return `Pausa ${index + 1}: ${pausedAt} -> ${resumedAt} / Duracion ${duration}${reason}`;
+        })
+      : [];
+    const pausesSummary = pauseLines.length ? pauseLines.join('\n') : 'Pausas: Sin pausas';
+    return [
+      `Tarea: ${taskLabel}`,
+      `Inicio: ${startedLabel}`,
+      `Fin: ${completedLabel}`,
+      `Duracion activa: ${durationLabel}`,
+      `Esperado: ${expectedLabel}`,
+      `Trabajador(es): ${workersLabel}`,
+      `Pausas totales: ${totalPauseLabel}`,
+      pausesSummary,
+    ].join('\n');
+  };
+
+  const compareRowsBySort = (a: AnalysisPoint, b: AnalysisPoint, key: DataTableSortKey): number => {
+    const ratioA = (a as AnalysisPoint & { ratio?: number | null }).ratio ?? null;
+    const ratioB = (b as AnalysisPoint & { ratio?: number | null }).ratio ?? null;
+    switch (key) {
+      case 'plan': {
+        const planA = `${a.house_identifier || ''}-${a.module_number || ''}`;
+        const planB = `${b.house_identifier || ''}-${b.module_number || ''}`;
+        return planA.localeCompare(planB, 'es', { sensitivity: 'base' });
+      }
+      case 'duration':
+        return (Number(a.duration_minutes) || 0) - (Number(b.duration_minutes) || 0);
+      case 'expected':
+        return (Number(a.expected_minutes) || 0) - (Number(b.expected_minutes) || 0);
+      case 'ratio':
+        return (ratioA ?? Number.NEGATIVE_INFINITY) - (ratioB ?? Number.NEGATIVE_INFINITY);
+      case 'completed':
+        return (normalizeDateToComparable(a.completed_at) ?? Number.NEGATIVE_INFINITY)
+          - (normalizeDateToComparable(b.completed_at) ?? Number.NEGATIVE_INFINITY);
+      case 'worker':
+        return (a.worker_name || '').localeCompare(b.worker_name || '', 'es', { sensitivity: 'base' });
+      default:
+        return 0;
+    }
+  };
+
+  const handleDataTableSort = (key: DataTableSortKey) => {
+    setDataTableSort((prev) => {
+      if (prev.key === key) {
+        return {
+          key,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc',
+        };
+      }
+      return {
+        key,
+        direction: key === 'plan' || key === 'worker' ? 'asc' : 'desc',
+      };
+    });
+  };
+
   const renderHistogram = () => {
     const { bins, maxCount, binSize: size, maxDuration } = analysisSummary.histogram;
     if (!bins.length || !maxCount) {
@@ -1740,22 +1861,41 @@ const DashboardTasks: React.FC = () => {
     if (!rows.length) {
       return <div className="text-sm text-[var(--ink-muted)]">{emptyLabel}</div>;
     }
+    const sortedRows = [...rows].sort((a, b) => {
+      const comparison = compareRowsBySort(a, b, dataTableSort.key);
+      return dataTableSort.direction === 'asc' ? comparison : -comparison;
+    });
+    const renderSortableHeader = (label: string, key: DataTableSortKey) => {
+      const isActive = dataTableSort.key === key;
+      const indicator = isActive ? (dataTableSort.direction === 'asc' ? '▲' : '▼') : '↕';
+      return (
+        <button
+          type="button"
+          onClick={() => handleDataTableSort(key)}
+          className="inline-flex items-center gap-1 text-left hover:text-[var(--ink)]"
+          title={`Ordenar por ${label.toLowerCase()}`}
+        >
+          <span>{label}</span>
+          <span aria-hidden="true" className="text-[10px]">{indicator}</span>
+        </button>
+      );
+    };
     return (
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
             <tr className="border-b border-black/10 text-left text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              <th className="px-3 py-2">Plan</th>
-              <th className="px-3 py-2">Duracion</th>
-              <th className="px-3 py-2">Esperado</th>
-              <th className="px-3 py-2">Ratio</th>
-              <th className="px-3 py-2">Completado</th>
-              <th className="px-3 py-2">Trabajador</th>
+              <th className="px-3 py-2">{renderSortableHeader('Plan', 'plan')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Duracion', 'duration')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Esperado', 'expected')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Ratio', 'ratio')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Completado', 'completed')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Trabajador', 'worker')}</th>
               <th className="px-3 py-2">Detalle</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {sortedRows.map((row) => (
               <tr
                 key={`${row.plan_id}-${row.task_definition_id || 'panel'}-${row.completed_at || row.worker_name || ''}`}
                 className="border-b border-black/5 text-[var(--ink)]"
@@ -1776,7 +1916,11 @@ const DashboardTasks: React.FC = () => {
                         <summary className="cursor-pointer text-[var(--ink-muted)]">Ver tareas</summary>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-[var(--ink)]">
                           {row.task_breakdown.map((task) => (
-                            <li key={`${row.plan_id}-${task.task_definition_id ?? task.task_name}-${task.completed_at ?? ''}`}>
+                            <li
+                              key={`${row.plan_id}-${task.task_definition_id ?? task.task_name}-${task.completed_at ?? ''}`}
+                              title={buildTaskBreakdownTooltip(task)}
+                              className="cursor-help"
+                            >
                               <strong>{task.task_name || task.task_definition_id}</strong>
                               {` - ${formatMinutesWithUnit(task.duration_minutes)}`}
                               {task.expected_minutes !== null && task.expected_minutes !== undefined
@@ -2830,6 +2974,15 @@ const DashboardTasks: React.FC = () => {
                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
                   <Filter className="h-4 w-4" />
                   Histograma
+                  <button
+                    type="button"
+                    onClick={() => setShowHistogramMethodologyModal(true)}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-black/20 bg-white text-[10px] font-bold normal-case tracking-normal text-[var(--ink-muted)] transition hover:border-black/40 hover:text-[var(--ink)]"
+                    title="Como se calcula la duracion"
+                    aria-label="Como se calcula la duracion"
+                  >
+                    i
+                  </button>
                 </div>
                 <div className="mt-4">{renderHistogram()}</div>
               </div>
@@ -3017,6 +3170,66 @@ const DashboardTasks: React.FC = () => {
             </section>
           )}
         </>
+      )}
+
+      {showHistogramMethodologyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Metodologia de calculo de duraciones"
+          onClick={() => setShowHistogramMethodologyModal(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-black/10 bg-white p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Como se calculan las duraciones
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowHistogramMethodologyModal(false)}
+                className="rounded-full border border-black/10 px-2 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm text-[var(--ink)]">
+              <p>
+                <strong>Unidad base:</strong> minutos.
+              </p>
+              <p>
+                <strong>Modo panel (sin tarea seleccionada):</strong> cada muestra es un panel terminado. La duracion
+                del panel se calcula uniendo los intervalos de tiempo de sus tareas y restando pausas.
+              </p>
+              <p>
+                <strong>Modo tarea (con tarea seleccionada):</strong> cada muestra es una ejecucion de esa tarea.
+                No se suman otras tareas.
+              </p>
+              <p>
+                <strong>Pausas:</strong> se descuentan del tiempo activo. El tooltip de "Ver tareas" muestra inicio,
+                fin, pausa total y detalle por pausa.
+              </p>
+              <p>
+                <strong>Solapamientos entre tareas:</strong> no se duplican minutos. Se usa tiempo de pared (union de
+                intervalos), no suma ciega de duraciones.
+              </p>
+              <p className="rounded-lg border border-black/10 bg-black/[0.03] px-3 py-2 text-[13px]">
+                Ejemplo: Tarea A dura 10 min (00:00-00:10). Tarea B dura 10 min y empieza al minuto 5
+                (00:05-00:15). El total del panel es <strong>15 min</strong>, no 20 min, porque hay 5 min de
+                traslape.
+              </p>
+              <p>
+                <strong>Incluidas vs excluidas:</strong> el histograma usa solo "Muestras incluidas", definidas por el
+                rango [esperado x min multiplicador, esperado x max multiplicador]. Las demas aparecen en "Muestras
+                excluidas".
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

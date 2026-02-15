@@ -20,6 +20,7 @@ from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import Worker
 from app.schemas.analytics import (
     TaskAnalysisDataPoint,
+    TaskAnalysisTaskPause,
     TaskAnalysisResponse,
     TaskAnalysisStats,
     TaskAnalysisTaskBreakdown,
@@ -108,6 +109,40 @@ def _average(values: list[float]) -> float | None:
     if not values:
         return None
     return round(sum(values) / len(values), 2)
+
+
+def _build_task_pause_details(
+    pauses: list[TaskPause], completed_at: datetime | None
+) -> tuple[float | None, list[TaskAnalysisTaskPause]]:
+    if not pauses:
+        return None, []
+
+    pause_details: list[TaskAnalysisTaskPause] = []
+    total_minutes = 0.0
+    has_any_duration = False
+    for pause in pauses:
+        paused_at = pause.paused_at
+        resumed_at = pause.resumed_at
+        duration_minutes = None
+        if paused_at:
+            end_time = resumed_at or completed_at
+            if end_time is not None and end_time >= paused_at:
+                duration_minutes = round(
+                    (end_time - paused_at).total_seconds() / 60,
+                    2,
+                )
+                total_minutes += duration_minutes
+                has_any_duration = True
+        pause_details.append(
+            TaskAnalysisTaskPause(
+                paused_at=paused_at,
+                resumed_at=resumed_at,
+                duration_minutes=duration_minutes,
+                reason=pause.reason_text,
+            )
+        )
+
+    return (round(total_minutes, 2) if has_any_duration else None, pause_details)
 
 
 @router.get("/", response_model=TaskAnalysisResponse)
@@ -299,13 +334,23 @@ def get_task_analysis(
                 )
 
             task_def = entry["task_def"]
+            instance = entry["instance"]
+            if not isinstance(instance, TaskInstance):
+                continue
+            pause_minutes, pause_details = _build_task_pause_details(
+                pause_map.get(instance.id, []),
+                instance.completed_at,
+            )
             breakdown = TaskAnalysisTaskBreakdown(
                 task_definition_id=task_def.id,
                 task_name=task_def.name,
                 duration_minutes=duration,
                 expected_minutes=entry["expected"],
+                started_at=instance.started_at,
                 completed_at=completed_at,
                 worker_name=worker_label,
+                pause_minutes=pause_minutes,
+                pauses=pause_details,
             )
             group["breakdown"].append(breakdown)
 
