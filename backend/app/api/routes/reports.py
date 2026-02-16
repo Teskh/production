@@ -342,6 +342,12 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
 
     generated = payload.generated_at or datetime.now()
     generated_label = generated.strftime("%Y-%m-%d %H:%M")
+    document_title = (
+        f"Reporte asistencia estaciones {payload.from_date} a {payload.to_date}"
+    )
+    pdf.setTitle(document_title)
+    pdf.setSubject("Reporte de asistencia y uso del sistema por estacion")
+    pdf.setCreator("backend/app/api/routes/reports.py")
 
     # ── First page: global summary ──
     y = page_height - margin
