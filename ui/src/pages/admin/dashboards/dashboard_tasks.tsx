@@ -353,18 +353,27 @@ const collectPointWorkers = (point: AnalysisPoint): string[] => {
   return Array.from(new Set(names)).filter(Boolean);
 };
 
-const toIsoDateString = (date: Date) => date.toISOString().slice(0, 10);
+const buildLocalDayRange = (year: number, monthIndex: number, day: number) => {
+  const start = new Date(year, monthIndex, day, 0, 0, 0, 0);
+  const end = new Date(year, monthIndex, day, 23, 59, 59, 999);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const isoDate = `${String(year).padStart(4, '0')}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return { isoDate, startOfDay: start.getTime(), endOfDay: end.getTime() };
+};
 
-const parseDateOperand = (rawValue: string): { isoDate: string; timestamp: number } | null => {
+const parseDateOperand = (rawValue: string): { isoDate: string; startOfDay: number; endOfDay: number } | null => {
   if (!rawValue) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
-    const timestamp = Date.parse(`${rawValue}T00:00:00Z`);
-    if (Number.isNaN(timestamp)) return null;
-    return { isoDate: rawValue, timestamp };
+    const [yearRaw, monthRaw, dayRaw] = rawValue.split('-');
+    const year = Number(yearRaw);
+    const monthIndex = Number(monthRaw) - 1;
+    const day = Number(dayRaw);
+    return buildLocalDayRange(year, monthIndex, day);
   }
   const parsed = Date.parse(rawValue);
   if (Number.isNaN(parsed)) return null;
-  return { isoDate: toIsoDateString(new Date(parsed)), timestamp: parsed };
+  const date = new Date(parsed);
+  return buildLocalDayRange(date.getFullYear(), date.getMonth(), date.getDate());
 };
 
 const buildHypothesisFromConfig = (config: HypothesisConfig | null) => {
@@ -411,20 +420,19 @@ const buildHypothesisFromConfig = (config: HypothesisConfig | null) => {
       const pointDate = new Date(point.completed_at);
       if (Number.isNaN(pointDate.getTime())) return false;
       const pointTimestamp = pointDate.getTime();
-      const pointIsoDate = toIsoDateString(pointDate);
       switch (operator) {
         case '==':
-          return pointIsoDate === operand.isoDate;
+          return pointTimestamp >= operand.startOfDay && pointTimestamp <= operand.endOfDay;
         case '!=':
-          return pointIsoDate !== operand.isoDate;
+          return pointTimestamp < operand.startOfDay || pointTimestamp > operand.endOfDay;
         case '>':
-          return pointTimestamp > operand.timestamp;
+          return pointTimestamp > operand.endOfDay;
         case '>=':
-          return pointTimestamp >= operand.timestamp;
+          return pointTimestamp >= operand.startOfDay;
         case '<':
-          return pointTimestamp < operand.timestamp;
+          return pointTimestamp < operand.startOfDay;
         case '<=':
-          return pointTimestamp <= operand.timestamp;
+          return pointTimestamp <= operand.endOfDay;
         default:
           return false;
       }
@@ -704,6 +712,7 @@ const DashboardTasks: React.FC = () => {
   const [binSize, setBinSize] = useState(String(DEFAULT_BIN_SIZE));
   const [minMultiplier, setMinMultiplier] = useState(String(DEFAULT_MIN_MULTIPLIER));
   const [maxMultiplier, setMaxMultiplier] = useState(String(DEFAULT_MAX_MULTIPLIER));
+  const [includeWithoutExpected, setIncludeWithoutExpected] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'panel' | 'normalized'>('panel');
   const [normalizedStationId, setNormalizedStationId] = useState('');
@@ -1154,10 +1163,19 @@ const DashboardTasks: React.FC = () => {
     points.forEach((point) => {
       const duration = Number(point.duration_minutes) || 0;
       const expected = Number(point.expected_minutes);
-      const ratio = expected > 0 ? duration / expected : null;
+      const hasExpected = Number.isFinite(expected) && expected > 0;
+      const ratio = hasExpected ? duration / expected : null;
       const pointWithRatio = { ...point, duration_minutes: duration, ratio } as AnalysisPoint & {
         ratio: number | null;
       };
+      if (!hasExpected) {
+        if (includeWithoutExpected) {
+          included.push(pointWithRatio);
+        } else {
+          excluded.push(pointWithRatio);
+        }
+        return;
+      }
       if (ratio !== null && (ratio < minVal || ratio > maxVal)) {
         excluded.push(pointWithRatio);
       } else {
@@ -1192,6 +1210,7 @@ const DashboardTasks: React.FC = () => {
     effectiveBinSize,
     effectiveMaxMultiplier,
     effectiveMinMultiplier,
+    includeWithoutExpected,
     hypothesis.predicate,
   ]);
 
@@ -1246,7 +1265,8 @@ const DashboardTasks: React.FC = () => {
           const panelLength = panelMeta?.panel_length_m ?? null;
           const hasArea = panelArea != null && Number(panelArea) > 0;
           const hasLength = panelLength != null && Number(panelLength) > 0;
-          if (!hasArea || !hasLength) {
+          const hasSelectedMeasure = normalizedMetric === 'area' ? hasArea : hasLength;
+          if (!hasSelectedMeasure) {
             missingMetric += 1;
             return;
           }
@@ -1541,6 +1561,7 @@ const DashboardTasks: React.FC = () => {
     setBinSize(String(DEFAULT_BIN_SIZE));
     setMinMultiplier(String(DEFAULT_MIN_MULTIPLIER));
     setMaxMultiplier(String(DEFAULT_MAX_MULTIPLIER));
+    setIncludeWithoutExpected(true);
     setAnalysisData(null);
     setError('');
   };
@@ -2520,6 +2541,16 @@ const DashboardTasks: React.FC = () => {
             </label>
           </div>
         </div>
+        <div className="mt-3 flex items-center gap-2">
+          <label className="inline-flex items-center gap-2 text-xs text-[var(--ink)]">
+            <input
+              type="checkbox"
+              checked={includeWithoutExpected}
+              onChange={(event) => setIncludeWithoutExpected(event.target.checked)}
+            />
+            <span>Incluir muestras sin tiempo esperado</span>
+          </label>
+        </div>
 
         <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/60 p-4">
           <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
@@ -3098,7 +3129,9 @@ const DashboardTasks: React.FC = () => {
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Completados filtrados</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Candidatos (tipo/grupo)
+                  </p>
                   <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
                     {normalizedReport.summary.totalMatching}
                   </p>
@@ -3226,6 +3259,10 @@ const DashboardTasks: React.FC = () => {
                 <strong>Incluidas vs excluidas:</strong> el histograma usa solo "Muestras incluidas", definidas por el
                 rango [esperado x min multiplicador, esperado x max multiplicador]. Las demas aparecen en "Muestras
                 excluidas".
+              </p>
+              <p>
+                <strong>Sin esperado:</strong> si una muestra no tiene tiempo esperado valido, se incluye o excluye
+                segun el switch "Incluir muestras sin tiempo esperado".
               </p>
             </div>
           </div>
