@@ -46,6 +46,11 @@ class TaskAnalysisResponse(BaseModel):
     stats: TaskAnalysisStats | None = None
 
 
+class TaskAnalysisWorkerOption(BaseModel):
+    worker_id: int
+    worker_name: str
+
+
 class PanelLinearMetersStationStats(BaseModel):
     station_id: int
     station_name: str | None = None

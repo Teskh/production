@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.models.enums import TaskScope, TaskStatus
 from app.models.house import PanelDefinition
+from app.models.stations import Station
 from app.models.tasks import (
     TaskDefinition,
     TaskExpectedDuration,
@@ -24,6 +25,7 @@ from app.schemas.analytics import (
     TaskAnalysisResponse,
     TaskAnalysisStats,
     TaskAnalysisTaskBreakdown,
+    TaskAnalysisWorkerOption,
 )
 
 router = APIRouter()
@@ -111,6 +113,49 @@ def _average(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2)
 
 
+def _resolve_module_expected(
+    duration_rows: list[TaskExpectedDuration],
+    house_type_id: int | None,
+    module_number: int | None,
+) -> float | None:
+    if not duration_rows:
+        return None
+    module_match = None
+    house_match = None
+    default_match = None
+    for row in duration_rows:
+        if row.panel_definition_id is not None:
+            continue
+        if row.sub_type_id is not None:
+            continue
+        if row.house_type_id is None and row.module_number is None:
+            if default_match is None:
+                default_match = row
+            continue
+        if (
+            row.house_type_id == house_type_id
+            and row.module_number == module_number
+            and house_type_id is not None
+            and module_number is not None
+        ):
+            module_match = row
+            continue
+        if (
+            row.house_type_id == house_type_id
+            and row.module_number is None
+            and house_type_id is not None
+        ):
+            if house_match is None:
+                house_match = row
+    if module_match is not None:
+        return float(module_match.expected_minutes)
+    if house_match is not None:
+        return float(house_match.expected_minutes)
+    if default_match is not None:
+        return float(default_match.expected_minutes)
+    return None
+
+
 def _build_task_pause_details(
     pauses: list[TaskPause], completed_at: datetime | None
 ) -> tuple[float | None, list[TaskAnalysisTaskPause]]:
@@ -145,10 +190,126 @@ def _build_task_pause_details(
     return (round(total_minutes, 2) if has_any_duration else None, pause_details)
 
 
+@router.get("/workers", response_model=list[TaskAnalysisWorkerOption])
+def list_task_analysis_workers(
+    house_type_id: int = Query(...),
+    scope: TaskScope = Query(TaskScope.PANEL),
+    panel_definition_id: int | None = None,
+    module_number: int | None = Query(None, ge=1),
+    task_definition_id: int | None = None,
+    station_id: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[TaskAnalysisWorkerOption]:
+    if scope == TaskScope.AUX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task analysis supports panel or module scope only",
+        )
+
+    if scope == TaskScope.PANEL:
+        if panel_definition_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="panel_definition_id is required for panel scope",
+            )
+        panel_definition = db.get(PanelDefinition, panel_definition_id)
+        if not panel_definition:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Panel definition not found",
+            )
+        if panel_definition.house_type_id != house_type_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="House type does not match panel definition",
+            )
+    elif module_number is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="module_number is required for module scope",
+        )
+
+    from_dt = _parse_datetime(from_date, "from_date")
+    to_dt = _parse_datetime(to_date, "to_date")
+
+    if scope == TaskScope.PANEL:
+        instance_stmt = (
+            select(TaskInstance.id)
+            .join(PanelUnit, TaskInstance.panel_unit_id == PanelUnit.id)
+            .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .where(TaskInstance.scope == TaskScope.PANEL)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+            .where(TaskInstance.completed_at.is_not(None))
+            .where(PanelUnit.panel_definition_id == panel_definition_id)
+            .where(WorkOrder.house_type_id == house_type_id)
+        )
+    else:
+        instance_stmt = (
+            select(TaskInstance.id)
+            .join(WorkUnit, TaskInstance.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .where(TaskInstance.scope == TaskScope.MODULE)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+            .where(TaskInstance.completed_at.is_not(None))
+            .where(WorkOrder.house_type_id == house_type_id)
+            .where(WorkUnit.module_number == module_number)
+        )
+
+    if station_id is not None:
+        if scope == TaskScope.MODULE:
+            selected_station = db.get(Station, station_id)
+            if selected_station and selected_station.sequence_order is not None:
+                instance_stmt = (
+                    instance_stmt.join(
+                        Station, TaskInstance.station_id == Station.id
+                    ).where(
+                        Station.sequence_order == selected_station.sequence_order
+                    )
+                )
+            else:
+                instance_stmt = instance_stmt.where(TaskInstance.station_id == station_id)
+        else:
+            instance_stmt = instance_stmt.where(TaskInstance.station_id == station_id)
+    if task_definition_id is not None:
+        instance_stmt = instance_stmt.where(
+            TaskInstance.task_definition_id == task_definition_id
+        )
+    if from_dt is not None:
+        instance_stmt = instance_stmt.where(TaskInstance.completed_at >= from_dt)
+    if to_dt is not None:
+        instance_stmt = instance_stmt.where(TaskInstance.completed_at <= to_dt)
+
+    instance_ids = list(db.execute(instance_stmt).scalars())
+    if not instance_ids:
+        return []
+
+    workers = list(
+        db.execute(
+            select(Worker)
+            .join(TaskParticipation, TaskParticipation.worker_id == Worker.id)
+            .where(TaskParticipation.task_instance_id.in_(instance_ids))
+            .distinct()
+            .order_by(Worker.first_name, Worker.last_name, Worker.id)
+        ).scalars()
+    )
+    return [
+        TaskAnalysisWorkerOption(
+            worker_id=worker.id,
+            worker_name=_format_worker_name(worker),
+        )
+        for worker in workers
+    ]
+
+
 @router.get("/", response_model=TaskAnalysisResponse)
 def get_task_analysis(
     house_type_id: int = Query(...),
-    panel_definition_id: int = Query(...),
+    scope: TaskScope = Query(TaskScope.PANEL),
+    panel_definition_id: int | None = None,
+    module_number: int | None = Query(None, ge=1),
     task_definition_id: int | None = None,
     station_id: int | None = None,
     worker_id: int | None = None,
@@ -156,42 +317,89 @@ def get_task_analysis(
     to_date: str | None = None,
     db: Session = Depends(get_db),
 ) -> TaskAnalysisResponse:
-    panel_definition = db.get(PanelDefinition, panel_definition_id)
-    if not panel_definition:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Panel definition not found",
-        )
-    if panel_definition.house_type_id != house_type_id:
+    if scope == TaskScope.AUX:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="House type does not match panel definition",
+            detail="Task analysis supports panel or module scope only",
+        )
+
+    panel_definition: PanelDefinition | None = None
+    if scope == TaskScope.PANEL:
+        if panel_definition_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="panel_definition_id is required for panel scope",
+            )
+        panel_definition = db.get(PanelDefinition, panel_definition_id)
+        if not panel_definition:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Panel definition not found",
+            )
+        if panel_definition.house_type_id != house_type_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="House type does not match panel definition",
+            )
+    elif module_number is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="module_number is required for module scope",
         )
 
     from_dt = _parse_datetime(from_date, "from_date")
     to_dt = _parse_datetime(to_date, "to_date")
 
-    stmt = (
-        select(
-            TaskInstance,
-            TaskDefinition,
-            PanelUnit,
-            WorkUnit,
-            WorkOrder,
+    if scope == TaskScope.PANEL:
+        stmt = (
+            select(
+                TaskInstance,
+                TaskDefinition,
+                PanelUnit,
+                WorkUnit,
+                WorkOrder,
+            )
+            .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+            .join(PanelUnit, TaskInstance.panel_unit_id == PanelUnit.id)
+            .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .where(TaskInstance.scope == TaskScope.PANEL)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+            .where(TaskInstance.completed_at.is_not(None))
+            .where(PanelUnit.panel_definition_id == panel_definition_id)
+            .where(WorkOrder.house_type_id == house_type_id)
         )
-        .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
-        .join(PanelUnit, TaskInstance.panel_unit_id == PanelUnit.id)
-        .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
-        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
-        .where(TaskInstance.scope == TaskScope.PANEL)
-        .where(TaskInstance.status == TaskStatus.COMPLETED)
-        .where(TaskInstance.completed_at.is_not(None))
-        .where(PanelUnit.panel_definition_id == panel_definition_id)
-        .where(WorkOrder.house_type_id == house_type_id)
-    )
+    else:
+        stmt = (
+            select(
+                TaskInstance,
+                TaskDefinition,
+                WorkUnit,
+                WorkOrder,
+            )
+            .join(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+            .join(WorkUnit, TaskInstance.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .where(TaskInstance.scope == TaskScope.MODULE)
+            .where(TaskInstance.status == TaskStatus.COMPLETED)
+            .where(TaskInstance.completed_at.is_not(None))
+            .where(WorkOrder.house_type_id == house_type_id)
+            .where(WorkUnit.module_number == module_number)
+        )
 
     if station_id is not None:
-        stmt = stmt.where(TaskInstance.station_id == station_id)
+        if scope == TaskScope.MODULE:
+            selected_station = db.get(Station, station_id)
+            if selected_station and selected_station.sequence_order is not None:
+                stmt = (
+                    stmt.join(Station, TaskInstance.station_id == Station.id).where(
+                        Station.sequence_order == selected_station.sequence_order
+                    )
+                )
+            else:
+                stmt = stmt.where(TaskInstance.station_id == station_id)
+        else:
+            stmt = stmt.where(TaskInstance.station_id == station_id)
     if task_definition_id is not None:
         stmt = stmt.where(TaskInstance.task_definition_id == task_definition_id)
     if worker_id is not None:
@@ -208,8 +416,11 @@ def get_task_analysis(
 
     rows = list(db.execute(stmt.order_by(TaskInstance.completed_at)).all())
     if not rows:
+        empty_mode = "task" if task_definition_id else (
+            "panel" if scope == TaskScope.PANEL else "module"
+        )
         return TaskAnalysisResponse(
-            mode="task" if task_definition_id else "panel",
+            mode=empty_mode,
             data_points=[],
             expected_reference_minutes=None,
             stats=TaskAnalysisStats(average_duration=None),
@@ -242,60 +453,112 @@ def get_task_analysis(
     for pause in pause_rows:
         pause_map.setdefault(pause.task_instance_id, []).append(pause)
 
-    panel_tasks = list(
-        db.execute(
-            select(TaskDefinition)
-            .where(TaskDefinition.scope == TaskScope.PANEL)
-            .where(TaskDefinition.active == True)
-        ).scalars()
-    )
-    expected_map = _build_panel_expected_map(panel_definition, panel_tasks)
-    duration_rows = list(
-        db.execute(
-            select(TaskExpectedDuration).where(
-                TaskExpectedDuration.panel_definition_id == panel_definition_id
+    expected_map: dict[int, float] = {}
+    module_duration_map: dict[int, list[TaskExpectedDuration]] = {}
+    if scope == TaskScope.PANEL:
+        if panel_definition is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Panel definition not resolved",
             )
-        ).scalars()
-    )
-    for row in duration_rows:
-        expected_map[row.task_definition_id] = float(row.expected_minutes)
+        panel_tasks = list(
+            db.execute(
+                select(TaskDefinition)
+                .where(TaskDefinition.scope == TaskScope.PANEL)
+                .where(TaskDefinition.active == True)
+            ).scalars()
+        )
+        expected_map = _build_panel_expected_map(panel_definition, panel_tasks)
+        duration_rows = list(
+            db.execute(
+                select(TaskExpectedDuration).where(
+                    TaskExpectedDuration.panel_definition_id == panel_definition_id
+                )
+            ).scalars()
+        )
+        for row in duration_rows:
+            expected_map[row.task_definition_id] = float(row.expected_minutes)
+    else:
+        module_task_ids = {
+            row[1].id
+            for row in rows
+            if isinstance(row[1], TaskDefinition)
+        }
+        if module_task_ids:
+            module_duration_rows = list(
+                db.execute(
+                    select(TaskExpectedDuration).where(
+                        TaskExpectedDuration.task_definition_id.in_(module_task_ids)
+                    )
+                ).scalars()
+            )
+            for row in module_duration_rows:
+                module_duration_map.setdefault(row.task_definition_id, []).append(row)
 
     task_entries: list[dict[str, object]] = []
-    for instance, task_def, panel_unit, work_unit, work_order in rows:
-        duration = _duration_minutes(instance, pause_map)
-        if duration is None:
-            continue
-        expected = expected_map.get(task_def.id)
-        worker_names = worker_name_map.get(instance.id, [])
-        worker_label = ", ".join(worker_names) if worker_names else None
-        task_entries.append(
-            {
-                "instance": instance,
-                "task_def": task_def,
-                "panel_unit": panel_unit,
-                "work_unit": work_unit,
-                "work_order": work_order,
-                "duration": duration,
-                "expected": expected,
-                "worker_label": worker_label,
-            }
-        )
+    if scope == TaskScope.PANEL:
+        for instance, task_def, panel_unit, work_unit, work_order in rows:
+            duration = _duration_minutes(instance, pause_map)
+            if duration is None:
+                continue
+            expected = expected_map.get(task_def.id)
+            worker_names = worker_name_map.get(instance.id, [])
+            worker_label = ", ".join(worker_names) if worker_names else None
+            task_entries.append(
+                {
+                    "instance": instance,
+                    "task_def": task_def,
+                    "panel_unit": panel_unit,
+                    "work_unit": work_unit,
+                    "work_order": work_order,
+                    "duration": duration,
+                    "expected": expected,
+                    "worker_label": worker_label,
+                }
+            )
+    else:
+        for instance, task_def, work_unit, work_order in rows:
+            duration = _duration_minutes(instance, pause_map)
+            if duration is None:
+                continue
+            expected = _resolve_module_expected(
+                module_duration_map.get(task_def.id, []),
+                work_order.house_type_id,
+                work_unit.module_number,
+            )
+            worker_names = worker_name_map.get(instance.id, [])
+            worker_label = ", ".join(worker_names) if worker_names else None
+            task_entries.append(
+                {
+                    "instance": instance,
+                    "task_def": task_def,
+                    "work_unit": work_unit,
+                    "work_order": work_order,
+                    "duration": duration,
+                    "expected": expected,
+                    "worker_label": worker_label,
+                }
+            )
 
     if task_definition_id is None:
         grouped: dict[int, dict[str, object]] = {}
         for entry in task_entries:
-            panel_unit = entry["panel_unit"]
-            if not isinstance(panel_unit, PanelUnit):
+            work_unit = entry["work_unit"]
+            work_order = entry["work_order"]
+            if not isinstance(work_unit, WorkUnit) or not isinstance(
+                work_order, WorkOrder
+            ):
                 continue
-            panel_unit_id = panel_unit.id
-            group = grouped.get(panel_unit_id)
-            if not group:
-                work_unit = entry["work_unit"]
-                work_order = entry["work_order"]
-                if not isinstance(work_unit, WorkUnit) or not isinstance(
-                    work_order, WorkOrder
-                ):
+            group_key: int
+            if scope == TaskScope.PANEL:
+                panel_unit = entry.get("panel_unit")
+                if not isinstance(panel_unit, PanelUnit):
                     continue
+                group_key = panel_unit.id
+            else:
+                group_key = work_unit.id
+            group = grouped.get(group_key)
+            if not group:
                 house_identifier = (
                     work_order.house_identifier or f"WO-{work_order.id}"
                 )
@@ -310,7 +573,7 @@ def get_task_analysis(
                     "workers": set(),
                     "breakdown": [],
                 }
-                grouped[panel_unit_id] = group
+                grouped[group_key] = group
 
             duration = float(entry["duration"])
             group["duration"] = float(group["duration"]) + duration
@@ -384,7 +647,7 @@ def get_task_analysis(
             )
 
         return TaskAnalysisResponse(
-            mode="panel",
+            mode="panel" if scope == TaskScope.PANEL else "module",
             data_points=data_points,
             expected_reference_minutes=_average(expected_refs),
             stats=TaskAnalysisStats(average_duration=_average(durations)),
