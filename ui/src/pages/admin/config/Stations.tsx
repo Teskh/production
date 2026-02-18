@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Settings2, Trash2 } from 'lucide-react';
+import { Camera, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import DashboardShiftEstimation from './dashboard_shift_estimation';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const CAMERA_FEED_BASE_URL = import.meta.env.VITE_CAMERA_FEED_BASE_URL ?? 'http://127.0.0.1:5250';
 
 type StationRole = 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
 type StationLineType = '1' | '2' | '3';
@@ -14,6 +15,7 @@ type Station = {
   role: StationRole;
   line_type: StationLineType | null;
   sequence_order: number | null;
+  camera_feed_ip: string | null;
 };
 
 type StationDraft = {
@@ -79,6 +81,7 @@ const Stations: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'builder' | 'shift-estimation'>('builder');
+  const [cameraModalStation, setCameraModalStation] = useState<Station | null>(null);
 
   useEffect(() => {
     setHeader({
@@ -334,14 +337,42 @@ const Stations: React.FC = () => {
     }
   };
 
+  const openCameraModal = (station: Station) => {
+    if (!station.camera_feed_ip) {
+      return;
+    }
+    setCameraModalStation(station);
+  };
+
+  const closeCameraModal = () => {
+    setCameraModalStation(null);
+  };
+
+  const cameraStreamUrl = useMemo(
+    () =>
+      cameraModalStation?.camera_feed_ip
+        ? `${CAMERA_FEED_BASE_URL}/live.mjpeg?ip=${encodeURIComponent(cameraModalStation.camera_feed_ip)}`
+        : null,
+    [cameraModalStation]
+  );
+
   const renderStationRow = (station: Station) => {
     const isSelected = selectedStationId === station.id;
     const sequenceLabel = station.sequence_order !== null ? `Sec ${station.sequence_order}` : 'Sec n/a';
+    const hasCameraFeed = Boolean(station.camera_feed_ip?.trim());
     
     return (
-      <button
+      <div
         key={station.id}
+        role="button"
+        tabIndex={0}
         onClick={() => selectStation(station)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectStation(station);
+          }
+        }}
         className={`group flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
           isSelected
             ? 'bg-blue-50/50'
@@ -352,6 +383,31 @@ const Stations: React.FC = () => {
           <p className={`text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>{station.name}</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              openCameraModal(station);
+            }}
+            disabled={!hasCameraFeed}
+            className={`rounded-md p-1.5 transition-colors ${
+              hasCameraFeed
+                ? 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
+                : 'cursor-not-allowed text-gray-300'
+            }`}
+            title={
+              hasCameraFeed
+                ? `Ver camara de ${station.name}`
+                : `${station.name} no tiene feed de camara asignado`
+            }
+            aria-label={
+              hasCameraFeed
+                ? `Ver camara de ${station.name}`
+                : `${station.name} no tiene feed de camara asignado`
+            }
+          >
+            <Camera className="h-4 w-4" />
+          </button>
            {station.role !== 'AUX' && (
             <span className="text-xs text-gray-500 font-mono">
               {sequenceLabel}
@@ -359,7 +415,7 @@ const Stations: React.FC = () => {
            )}
            {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />}
         </div>
-      </button>
+      </div>
     );
   };
 
@@ -626,6 +682,52 @@ const Stations: React.FC = () => {
         </div>
       ) : (
         <DashboardShiftEstimation />
+      )}
+
+      {cameraModalStation && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Camara en vivo de ${cameraModalStation.name}`}
+          onClick={closeCameraModal}
+        >
+          <div
+            className="w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.18em] text-[var(--ink-muted)]">Vista en vivo</p>
+                <h3 className="text-lg font-semibold text-[var(--ink)]">{cameraModalStation.name}</h3>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  Stream IP: {cameraModalStation.camera_feed_ip}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeCameraModal}
+                className="rounded-md p-2 text-[var(--ink-muted)] hover:bg-black/5 hover:text-[var(--ink)]"
+                aria-label="Cerrar modal de camara"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {cameraStreamUrl ? (
+              <div className="overflow-hidden rounded-xl bg-black">
+                <img
+                  src={cameraStreamUrl}
+                  alt={`Stream en vivo de ${cameraModalStation.name}`}
+                  className="max-h-[72vh] w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-black/10 bg-black/5 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                Esta estacion no tiene feed de camara asignado.
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

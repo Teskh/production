@@ -116,7 +116,18 @@ type WorkerSessionResponse = {
   idle_timeout_seconds: number | null;
 };
 
-const WORKER_THRESHOLD = 16;
+const WORKER_THRESHOLD = 20;
+
+const workerNameTextSizeClass = (name: string): string => {
+  const length = name.trim().length;
+  if (length > 26) {
+    return 'text-xs';
+  }
+  if (length > 20) {
+    return 'text-sm';
+  }
+  return 'text-base';
+};
 
 type TaskCoverage = {
   panelSequences: Set<number>;
@@ -222,6 +233,47 @@ const parseStoredStationId = (value: string | null): number | null => {
   }
   const id = Number(value);
   return Number.isNaN(id) ? null : id;
+};
+
+const resolveAuthErrorMessage = (
+  error: unknown,
+  fallback: string,
+  invalidCredentialsMessage: string
+): string => {
+  const rawMessage = error instanceof Error ? error.message.trim() : '';
+  const normalized = rawMessage.toLowerCase();
+
+  if (!rawMessage) {
+    return fallback;
+  }
+
+  const isConnectivityError =
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('network request failed');
+  if (isConnectivityError) {
+    return 'No se pudo conectar con el servidor. Verifica tu conexion e intenta nuevamente.';
+  }
+
+  const isCredentialError =
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid credential') ||
+    normalized.includes('invalid password') ||
+    normalized.includes('wrong password') ||
+    normalized.includes('incorrect password') ||
+    normalized.includes('invalid pin') ||
+    normalized.includes('incorrect pin') ||
+    normalized.includes('credenciales') ||
+    normalized.includes('contrasena') ||
+    normalized.includes('password');
+  if (isCredentialError) {
+    return invalidCredentialsMessage;
+  }
+
+  return rawMessage;
 };
 
 const persistStationContext = (context: StationContext | null) => {
@@ -611,7 +663,11 @@ const Login: React.FC = () => {
       });
       navigate('/admin');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Fallo el inicio de sesion de admin.';
+      const message = resolveAuthErrorMessage(
+        error,
+        'Fallo el inicio de sesion de admin.',
+        'Usuario o contrasena incorrectos. Intenta nuevamente.'
+      );
       setAdminError(message);
     } finally {
       setAdminSubmitting(false);
@@ -682,7 +738,11 @@ const Login: React.FC = () => {
       setPinModalValue('');
       navigate('/worker/stationWorkspace');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Fallo el inicio de sesion del trabajador.';
+      const message = resolveAuthErrorMessage(
+        error,
+        'Fallo el inicio de sesion del trabajador.',
+        'PIN incorrecto. Verificalo e intenta nuevamente.'
+      );
       setLoginError(message);
       setPinModalError(message);
     } finally {
@@ -820,7 +880,7 @@ const Login: React.FC = () => {
       onTouchEnd={handleTouchEnd}
     >
       <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 bg-white shadow-xl z-10">
-        <div className="mx-auto w-full max-w-2xl">
+        <div className="mx-auto w-full max-w-3xl">
           <div className="flex items-center justify-between gap-4">
             <button
               type="button"
@@ -951,9 +1011,12 @@ const Login: React.FC = () => {
                         }`}
                       >
                         <span
-                          className={`font-medium ${
+                          className={`block min-w-0 flex-1 truncate whitespace-nowrap pr-2 font-medium ${workerNameTextSizeClass(
+                            formatWorkerDisplayName(worker)
+                          )} ${
                             selectedWorkerId === worker.id ? 'text-blue-900' : 'text-gray-900'
                           }`}
+                          title={formatWorkerFullName(worker)}
                         >
                           {formatWorkerDisplayName(worker)}
                         </span>

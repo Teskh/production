@@ -53,12 +53,20 @@ def _validate_station_payload(
             )
 
 
+def _normalize_camera_feed_ip(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 @router.post("/", response_model=StationRead, status_code=status.HTTP_201_CREATED)
 def create_station(
     payload: StationCreate,
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(get_current_admin),
 ) -> Station:
+    payload.camera_feed_ip = _normalize_camera_feed_ip(payload.camera_feed_ip)
     _validate_station_payload(
         role=payload.role,
         line_type=payload.line_type.value if payload.line_type else None,
@@ -90,6 +98,8 @@ def update_station(
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
     updates = payload.model_dump(exclude_unset=True)
+    if "camera_feed_ip" in updates:
+        updates["camera_feed_ip"] = _normalize_camera_feed_ip(updates["camera_feed_ip"])
     role = updates.get("role", station.role)
     line_type = updates.get("line_type", station.line_type)
     sequence_order = updates.get("sequence_order", station.sequence_order)

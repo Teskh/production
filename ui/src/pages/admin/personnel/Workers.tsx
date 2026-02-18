@@ -92,6 +92,9 @@ type WorkersProps = {
   hideRosterTabs?: boolean;
 };
 
+type WorkerStatusFilter = 'active' | 'inactive' | 'all';
+const DEFAULT_WORKER_STATUS_FILTER: WorkerStatusFilter = 'active';
+
 const emptyWorkerDraft = (): WorkerDraft => ({
   geovictoria_id: '',
   geovictoria_identifier: '',
@@ -250,13 +253,19 @@ const Workers: React.FC<WorkersProps> = ({
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [filterStation, setFilterStation] = useState<number | null>(null);
   const [filterSkill, setFilterSkill] = useState<number | null>(null);
+  const [filterStatus, setFilterStatus] = useState<WorkerStatusFilter>(
+    DEFAULT_WORKER_STATUS_FILTER
+  );
   const [workerSkillsMap, setWorkerSkillsMap] = useState<Map<number, number[]>>(new Map());
   const [badgePrinterOpen, setBadgePrinterOpen] = useState(false);
   const stationDropdownRef = useRef<HTMLDivElement | null>(null);
   const filterPanelRef = useRef<HTMLDivElement | null>(null);
 
   const isWorkerMode = rosterMode === 'workers';
-  const hasActiveFilters = filterStation !== null || filterSkill !== null;
+  const hasActiveFilters =
+    filterStation !== null ||
+    filterSkill !== null ||
+    filterStatus !== DEFAULT_WORKER_STATUS_FILTER;
 
   useEffect(() => {
     setRosterMode(initialRosterMode);
@@ -552,6 +561,11 @@ const Workers: React.FC<WorkersProps> = ({
   );
   const filteredWorkers = useMemo(() => {
     let result = workers;
+    if (filterStatus === 'active') {
+      result = result.filter((worker) => worker.active);
+    } else if (filterStatus === 'inactive') {
+      result = result.filter((worker) => !worker.active);
+    }
     const query = normalizeSearchValue(workerQuery.trim());
     if (query) {
       result = result.filter((worker) => {
@@ -577,7 +591,7 @@ const Workers: React.FC<WorkersProps> = ({
       });
     }
     return result;
-  }, [workerQuery, workers, filterStation, filterSkill, workerSkillsMap]);
+  }, [workerQuery, workers, filterStation, filterSkill, filterStatus, workerSkillsMap]);
   const filteredSupervisors = useMemo(() => {
     const query = normalizeSearchValue(supervisorQuery.trim());
     if (!query) {
@@ -710,6 +724,7 @@ const Workers: React.FC<WorkersProps> = ({
   const clearFilters = () => {
     setFilterStation(null);
     setFilterSkill(null);
+    setFilterStatus(DEFAULT_WORKER_STATUS_FILTER);
   };
 
   const updateDraft = (patch: Partial<WorkerDraft>) => {
@@ -1104,7 +1119,9 @@ const Workers: React.FC<WorkersProps> = ({
                     Filtros
                     {hasActiveFilters && (
                       <span className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold text-white">
-                        {(filterStation !== null ? 1 : 0) + (filterSkill !== null ? 1 : 0)}
+                        {(filterStatus !== DEFAULT_WORKER_STATUS_FILTER ? 1 : 0) +
+                          (filterStation !== null ? 1 : 0) +
+                          (filterSkill !== null ? 1 : 0)}
                       </span>
                     )}
                   </button>
@@ -1123,6 +1140,20 @@ const Workers: React.FC<WorkersProps> = ({
                         )}
                       </div>
                       <div className="space-y-3">
+                        <label className="block text-xs text-[var(--ink-muted)]">
+                          Estado
+                          <select
+                            className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                            value={filterStatus}
+                            onChange={(e) =>
+                              setFilterStatus(e.target.value as WorkerStatusFilter)
+                            }
+                          >
+                            <option value="active">Solo activos</option>
+                            <option value="all">Todos</option>
+                            <option value="inactive">Solo inactivos</option>
+                          </select>
+                        </label>
                         <label className="block text-xs text-[var(--ink-muted)]">
                           Estacion asignada
                           <select
@@ -1168,6 +1199,18 @@ const Workers: React.FC<WorkersProps> = ({
           {hasActiveFilters && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <span className="text-xs text-[var(--ink-muted)]">Filtros activos:</span>
+              {filterStatus !== DEFAULT_WORKER_STATUS_FILTER && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.1)] px-2 py-1 text-xs text-[var(--accent)]">
+                  Estado: {filterStatus === 'inactive' ? 'Inactivos' : 'Todos'}
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus(DEFAULT_WORKER_STATUS_FILTER)}
+                    className="ml-1 hover:text-[var(--ink)]"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               {filterStation !== null && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.1)] px-2 py-1 text-xs text-[var(--accent)]">
                   Estacion: {stationNameById.get(filterStation) ?? 'Desconocida'}

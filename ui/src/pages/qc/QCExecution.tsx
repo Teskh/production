@@ -418,6 +418,9 @@ const QCExecution: React.FC = () => {
   }, [combinedDefaultReworkText, selectedFailureModeIds.length]);
 
   useEffect(() => {
+    if (failureModes.length === 0) {
+      return;
+    }
     if (selectedFailureModeIds.length === 0) {
       if (selectedSeverityId !== null) {
         setSelectedSeverityId(null);
@@ -427,7 +430,7 @@ const QCExecution: React.FC = () => {
     if (highestSeverityId && selectedSeverityId !== highestSeverityId) {
       setSelectedSeverityId(highestSeverityId);
     }
-  }, [highestSeverityId, selectedFailureModeIds.length, selectedSeverityId]);
+  }, [failureModes.length, highestSeverityId, selectedFailureModeIds.length, selectedSeverityId]);
 
   const headerModule =
     checkDetail?.check_instance.module_number ?? reworkState?.module_number ?? 'Manual';

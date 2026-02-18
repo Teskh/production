@@ -58,6 +58,31 @@ const normalizeStationName = (station: Station) => {
   return normalized || trimmed;
 };
 
+const resolveAdminErrorMessage = (adminError: string | null): string | null => {
+  if (!adminError) {
+    return null;
+  }
+  const normalized = adminError.trim().toLowerCase();
+  const isCredentialError =
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid credential') ||
+    normalized.includes('invalid password') ||
+    normalized.includes('wrong password') ||
+    normalized.includes('incorrect password') ||
+    normalized.includes('invalid pin') ||
+    normalized.includes('incorrect pin') ||
+    normalized.includes('credenciales') ||
+    normalized.includes('contrasena') ||
+    normalized.includes('password');
+  if (isCredentialError) {
+    return 'Usuario o contrasena incorrectos. Intenta nuevamente.';
+  }
+  return adminError;
+};
+
 const buildInitialContextState = (
   stationContext: StationContext | null,
   selectedStation: Station | null
@@ -163,6 +188,10 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   }, [selectedStation, stationContext]);
 
   const specificStations = specificType === 'panel' ? panelStations : assemblyStations;
+  const resolvedAdminError = useMemo(
+    () => resolveAdminErrorMessage(adminError),
+    [adminError]
+  );
   const assemblySequenceLabelByOrder = useMemo(() => {
     const entries = new Map<number, Set<string>>();
     assemblyStations.forEach((station) => {
@@ -341,9 +370,9 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                       <span>SYS_ADMIN_PASSWORD</span>
                     </div>
 
-                    {adminError && (
+                    {resolvedAdminError && (
                       <div className="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
-                        {adminError}
+                        {resolvedAdminError}
                       </div>
                     )}
 

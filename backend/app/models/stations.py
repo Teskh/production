@@ -23,6 +23,7 @@ class Station(Base):
         nullable=True,
     )
     sequence_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    camera_feed_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     role: Mapped[StationRole] = mapped_column(
         Enum(
             StationRole,

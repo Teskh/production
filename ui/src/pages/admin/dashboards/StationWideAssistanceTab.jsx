@@ -368,10 +368,24 @@ const normalizeReportWorkerSummaries = (summaries, formatWorkerDisplayName) =>
     .filter(Boolean)
     .sort((a, b) => a.workerLabel.localeCompare(b.workerLabel, 'es'));
 
-const isWorkerInactive = (worker) =>
-  String(worker?.status ?? '')
+const INACTIVE_STATUSES = new Set(['inactive', 'inactivo', 'disabled', 'terminated', 'archived']);
+const ACTIVE_STATUSES = new Set(['active', 'activo']);
+
+const isWorkerActive = (worker) => {
+  if (!worker || typeof worker !== 'object') return false;
+
+  const status = String(worker?.status ?? '')
     .trim()
-    .toLowerCase() === 'inactive';
+    .toLowerCase();
+  if (status && INACTIVE_STATUSES.has(status)) return false;
+  if (status && ACTIVE_STATUSES.has(status)) return true;
+
+  if (typeof worker.active === 'boolean') return worker.active;
+  if (typeof worker.is_active === 'boolean') return worker.is_active;
+  if (typeof worker.isActive === 'boolean') return worker.isActive;
+
+  return true;
+};
 
 const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent, formatSeconds }) => {
   if (!day) return null;
@@ -471,7 +485,7 @@ const StationWideAssistanceTab = ({
   }
 
   const activeWorkers = useMemo(
-    () => workers.filter((worker) => !isWorkerInactive(worker)),
+    () => workers.filter(isWorkerActive),
     [workers]
   );
 

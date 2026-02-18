@@ -7,6 +7,7 @@ class StationBase(BaseModel):
     name: str
     line_type: StationLineType | None = None
     sequence_order: int | None = None
+    camera_feed_ip: str | None = None
     role: StationRole
 
 
@@ -18,6 +19,7 @@ class StationUpdate(BaseModel):
     name: str | None = None
     line_type: StationLineType | None = None
     sequence_order: int | None = None
+    camera_feed_ip: str | None = None
     role: StationRole | None = None
 
 

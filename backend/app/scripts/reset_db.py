@@ -25,6 +25,28 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 BACKEND_DIR = BASE_DIR / "backend"
 ALEMBIC_INI = BACKEND_DIR / "alembic.ini"
 VALID_DB_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+CAMERA_IP_BY_STATION_NAME = {
+    "framing": "10.0.10.68",
+    "mesa 1": "10.0.10.70",
+    "puente 1": "10.0.10.67",
+    "mesa 2": "10.0.10.67",
+    "puente 2": "10.0.10.48",
+    "mesa 3": "10.0.10.67",
+    "puente 3": "10.0.10.67",
+    "mesa 4": "10.0.10.70",
+    "puente 4": "10.0.10.70",
+    "armado": "10.0.10.241",
+    "estacion 1": "10.0.10.40",
+    "estacion 2": "10.0.10.40",
+    "estacion 3": "10.0.11.244",
+    "estacion 4": "10.0.10.246",
+    "estacion 5": "10.0.10.34",
+    "estacion 6": "10.0.10.237",
+    "precorte holzma": "10.0.10.42",
+}
+STATION_NAME_ALIASES = {
+    "precorte holzma aux": "precorte holzma",
+}
 
 
 def _validate_db_name(name: str) -> None:
@@ -88,6 +110,17 @@ def _run_alembic() -> None:
     )
 
 
+def _normalize_name(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def _apply_camera_seed(rows: list[dict]) -> None:
+    for row in rows:
+        name = _normalize_name(str(row["name"]))
+        station_key = STATION_NAME_ALIASES.get(name, name)
+        row["camera_feed_ip"] = CAMERA_IP_BY_STATION_NAME.get(station_key)
+
+
 def _seed_stations(force: bool = False) -> None:
     rows = [
         {"id": 1, "name": "Framing", "role": StationRole.PANELS, "line_type": None, "sequence_order": 1},
@@ -123,6 +156,7 @@ def _seed_stations(force: bool = False) -> None:
         {"id": 31, "name": "Estacion 6", "role": StationRole.ASSEMBLY, "line_type": StationLineType.LINE_3, "sequence_order": 17},
         {"id": 32, "name": "Precorte Holzma", "role": StationRole.AUX, "line_type": None, "sequence_order": None},
     ]
+    _apply_camera_seed(rows)
     session = SessionLocal()
     try:
         existing = session.query(Station).count()
