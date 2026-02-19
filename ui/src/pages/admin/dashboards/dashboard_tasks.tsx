@@ -86,6 +86,16 @@ type TaskBreakdownRow = {
 
 type DataTableSortKey = 'plan' | 'duration' | 'expected' | 'ratio' | 'completed' | 'worker';
 type DataTableSortDirection = 'asc' | 'desc';
+type TaskSummarySortKey =
+  | 'task'
+  | 'samples'
+  | 'avgDuration'
+  | 'avgExpected'
+  | 'avgRatio'
+  | 'trendScore'
+  | 'minDuration'
+  | 'maxDuration'
+  | 'lastCompleted';
 
 type AnalysisPoint = {
   plan_id?: number | null;
@@ -98,6 +108,22 @@ type AnalysisPoint = {
   completed_at?: string | null;
   worker_name?: string | null;
   task_breakdown?: TaskBreakdownRow[] | null;
+};
+
+type TaskSummaryRow = {
+  key: string;
+  task_definition_id: number | null;
+  task_name: string;
+  sample_count: number;
+  expected_sample_count: number;
+  ratio_sample_count: number;
+  average_duration: number | null;
+  average_expected: number | null;
+  average_ratio: number | null;
+  trend_score: number | null;
+  min_duration: number | null;
+  max_duration: number | null;
+  last_completed_at: string | null;
 };
 
 type AnalysisStats = {
@@ -250,6 +276,10 @@ const DEFAULT_MIN_MULTIPLIER = 0.5;
 const DEFAULT_MAX_MULTIPLIER = 2;
 const DEFAULT_NORMALIZED_BIN_SIZE = 0.5;
 const DEFAULT_HYPOTHESIS_FORM: HypothesisConfig = { field: 'worker', operator: '==', value: '' };
+const APP_TIMEZONE_OFFSET_MINUTES = -3 * 60;
+const SERVER_TIMESTAMP_WITH_TZ_PATTERN = /(Z|[+-]\d{2}:\d{2})$/i;
+const SERVER_NAIVE_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})(?::(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?)?$/;
 
 const HYPOTHESIS_FIELD_OPTIONS: HypothesisFieldOption[] = [
   {
@@ -273,6 +303,96 @@ const HYPOTHESIS_FIELD_OPTIONS: HypothesisFieldOption[] = [
 
 const getHypothesisFieldConfig = (field: HypothesisField) =>
   HYPOTHESIS_FIELD_OPTIONS.find((item) => item.value === field) || HYPOTHESIS_FIELD_OPTIONS[0];
+
+const parseIsoDateParts = (value: string): { year: number; monthIndex: number; day: number } | null => {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(monthIndex) || !Number.isFinite(day)) return null;
+  return { year, monthIndex, day };
+};
+
+const buildUtcMillisFromAppLocal = (
+  year: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  millisecond: number,
+) =>
+  Date.UTC(year, monthIndex, day, hour, minute, second, millisecond)
+  - (APP_TIMEZONE_OFFSET_MINUTES * 60 * 1000);
+
+const getAppLocalDatePartsFromUtcMillis = (utcMillis: number) => {
+  const localDate = new Date(utcMillis + (APP_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+  return {
+    year: localDate.getUTCFullYear(),
+    monthIndex: localDate.getUTCMonth(),
+    day: localDate.getUTCDate(),
+  };
+};
+
+const normalizeServerTimestamp = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
+};
+
+const parseServerTimestamp = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const normalized = normalizeServerTimestamp(value);
+  if (!normalized) return null;
+  if (SERVER_TIMESTAMP_WITH_TZ_PATTERN.test(normalized)) {
+    const parsed = Date.parse(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  const naiveMatch = normalized.match(SERVER_NAIVE_TIMESTAMP_PATTERN);
+  if (!naiveMatch) {
+    const fallbackParsed = Date.parse(normalized);
+    return Number.isNaN(fallbackParsed) ? null : fallbackParsed;
+  }
+  const year = Number(naiveMatch[1]);
+  const month = Number(naiveMatch[2]);
+  const day = Number(naiveMatch[3]);
+  const hour = Number(naiveMatch[4] ?? '0');
+  const minute = Number(naiveMatch[5] ?? '0');
+  const second = Number(naiveMatch[6] ?? '0');
+  const fractionRaw = naiveMatch[7] ?? '';
+  const millisecond = fractionRaw ? Number(fractionRaw.slice(0, 3).padEnd(3, '0')) : 0;
+  const utcMillis = buildUtcMillisFromAppLocal(year, month - 1, day, hour, minute, second, millisecond);
+  return Number.isNaN(utcMillis) ? null : utcMillis;
+};
+
+const toApiDateBoundary = (isoDate: string, boundary: 'start' | 'end'): string | null => {
+  const parsed = parseIsoDateParts(isoDate);
+  if (!parsed) return null;
+  const { year, monthIndex, day } = parsed;
+  const month = String(monthIndex + 1).padStart(2, '0');
+  const dayLabel = String(day).padStart(2, '0');
+  const time = boundary === 'start' ? '00:00:00' : '23:59:59';
+  return `${String(year).padStart(4, '0')}-${month}-${dayLabel} ${time}`;
+};
+
+const formatUtcMillisInAppTimezone = (utcMillis: number): string => {
+  const localDate = new Date(utcMillis + (APP_TIMEZONE_OFFSET_MINUTES * 60 * 1000));
+  const day = String(localDate.getUTCDate()).padStart(2, '0');
+  const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+  const year = String(localDate.getUTCFullYear()).padStart(4, '0');
+  const hours = String(localDate.getUTCHours()).padStart(2, '0');
+  const minutes = String(localDate.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(localDate.getUTCSeconds()).padStart(2, '0');
+  return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+};
+
+const formatDateTimeInAppTimezone = (value: unknown): string => {
+  if (typeof value !== 'string') return formatDateTime(value);
+  const utcMillis = parseServerTimestamp(value);
+  if (utcMillis == null) return formatDateTime(value);
+  return formatUtcMillisInAppTimezone(utcMillis);
+};
 
 const parseTaskIds = (raw: unknown): number[] | null => {
   if (!raw) return null;
@@ -362,6 +482,73 @@ const parseOptionalNumberInput = (rawValue: string): number | null => {
   return Math.max(0, parsed);
 };
 
+const clampNumber = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const resolveMultiplierBounds = (minMultiplier: number, maxMultiplier: number): { lower: number; upper: number } => {
+  const rawLower = Math.min(minMultiplier, maxMultiplier);
+  const rawUpper = Math.max(minMultiplier, maxMultiplier);
+  const lower = Number.isFinite(rawLower) && rawLower > 0 ? rawLower : DEFAULT_MIN_MULTIPLIER;
+  const upperCandidate = Number.isFinite(rawUpper) && rawUpper > lower
+    ? rawUpper
+    : Math.max(lower * 2, 1);
+  return { lower, upper: upperCandidate };
+};
+
+const ratioToBackgroundColor = (
+  ratio: number | null | undefined,
+  minMultiplier: number,
+  maxMultiplier: number,
+): string | null => {
+  const value = Number(ratio);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const { lower, upper } = resolveMultiplierBounds(minMultiplier, maxMultiplier);
+  if (value >= 1) {
+    const span = Math.max(upper - 1, 0.01);
+    const t = clampNumber((value - 1) / span, 0, 1);
+    const alpha = 0.06 + 0.28 * t;
+    return `rgba(220, 53, 69, ${alpha})`;
+  }
+  const span = Math.max(1 - lower, 0.01);
+  const t = clampNumber((1 - value) / span, 0, 1);
+  const alpha = 0.06 + 0.22 * t;
+  return `rgba(40, 167, 69, ${alpha})`;
+};
+
+const getRatioBackgroundStyle = (
+  ratio: number | null | undefined,
+  minMultiplier: number,
+  maxMultiplier: number,
+): React.CSSProperties | undefined => {
+  const color = ratioToBackgroundColor(ratio, minMultiplier, maxMultiplier);
+  return color ? { backgroundColor: color } : undefined;
+};
+
+const formatSignedNumber = (value: number | null | undefined, digits = 2): string => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(digits)}`;
+};
+
+const getTrendStrengthLabel = (score: number | null | undefined): string => {
+  if (score == null || !Number.isFinite(score)) return 'Sin senal';
+  const magnitude = Math.abs(score);
+  if (magnitude < 1.5) return 'Incierto';
+  if (magnitude < 2.5) return 'Debil';
+  if (magnitude < 4) return 'Moderado';
+  return 'Fuerte';
+};
+
+const getTrendScoreStyle = (score: number | null | undefined): React.CSSProperties => {
+  if (score == null || !Number.isFinite(score)) return { color: 'var(--ink-muted)' };
+  const magnitude = clampNumber(Math.abs(score), 0, 4);
+  if (magnitude < 0.2) return { color: 'var(--ink-muted)' };
+  const intensity = magnitude / 4;
+  const hue = score < 0 ? 120 : 0;
+  const lightness = 44 - intensity * 12;
+  return { color: `hsl(${hue} 70% ${lightness.toFixed(1)}%)` };
+};
+
 const getDefaultBinSizeFromExpected = (expectedReferenceMinutes: number | null | undefined): string => {
   const expected = Number(expectedReferenceMinutes);
   if (!Number.isFinite(expected) || expected <= 0) {
@@ -386,9 +573,7 @@ const formatRegressionIndicator = (value: number | null | undefined, digits = 3)
 };
 
 const normalizeDateToComparable = (value: string | null | undefined): number | null => {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
+  return parseServerTimestamp(value);
 };
 
 const normalizePauseMinutes = (pause: {
@@ -447,26 +632,28 @@ const collectPointWorkers = (point: AnalysisPoint): string[] => {
 };
 
 const buildLocalDayRange = (year: number, monthIndex: number, day: number) => {
-  const start = new Date(year, monthIndex, day, 0, 0, 0, 0);
-  const end = new Date(year, monthIndex, day, 23, 59, 59, 999);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const startOfDay = buildUtcMillisFromAppLocal(year, monthIndex, day, 0, 0, 0, 0);
+  const endOfDay = buildUtcMillisFromAppLocal(year, monthIndex, day, 23, 59, 59, 999);
+  if (Number.isNaN(startOfDay) || Number.isNaN(endOfDay)) return null;
+  const roundTrip = getAppLocalDatePartsFromUtcMillis(startOfDay);
+  if (roundTrip.year !== year || roundTrip.monthIndex !== monthIndex || roundTrip.day !== day) {
+    return null;
+  }
   const isoDate = `${String(year).padStart(4, '0')}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return { isoDate, startOfDay: start.getTime(), endOfDay: end.getTime() };
+  return { isoDate, startOfDay, endOfDay };
 };
 
 const parseDateOperand = (rawValue: string): { isoDate: string; startOfDay: number; endOfDay: number } | null => {
   if (!rawValue) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
-    const [yearRaw, monthRaw, dayRaw] = rawValue.split('-');
-    const year = Number(yearRaw);
-    const monthIndex = Number(monthRaw) - 1;
-    const day = Number(dayRaw);
+  const isoDateParts = parseIsoDateParts(rawValue);
+  if (isoDateParts) {
+    const { year, monthIndex, day } = isoDateParts;
     return buildLocalDayRange(year, monthIndex, day);
   }
-  const parsed = Date.parse(rawValue);
-  if (Number.isNaN(parsed)) return null;
-  const date = new Date(parsed);
-  return buildLocalDayRange(date.getFullYear(), date.getMonth(), date.getDate());
+  const parsed = parseServerTimestamp(rawValue);
+  if (parsed == null) return null;
+  const appLocalDate = getAppLocalDatePartsFromUtcMillis(parsed);
+  return buildLocalDayRange(appLocalDate.year, appLocalDate.monthIndex, appLocalDate.day);
 };
 
 const buildHypothesisFromConfig = (config: HypothesisConfig | null) => {
@@ -510,9 +697,8 @@ const buildHypothesisFromConfig = (config: HypothesisConfig | null) => {
     }
     const predicate = (point: AnalysisPoint) => {
       if (!point?.completed_at) return false;
-      const pointDate = new Date(point.completed_at);
-      if (Number.isNaN(pointDate.getTime())) return false;
-      const pointTimestamp = pointDate.getTime();
+      const pointTimestamp = parseServerTimestamp(point.completed_at);
+      if (pointTimestamp == null) return false;
       switch (operator) {
         case '==':
           return pointTimestamp >= operand.startOfDay && pointTimestamp <= operand.endOfDay;
@@ -811,8 +997,9 @@ const DashboardTasks: React.FC = () => {
   const [minMultiplier, setMinMultiplier] = useState(String(DEFAULT_MIN_MULTIPLIER));
   const [maxMultiplier, setMaxMultiplier] = useState(String(DEFAULT_MAX_MULTIPLIER));
   const [includeWithoutExpected, setIncludeWithoutExpected] = useState(true);
+  const [includeCrossStationExecutions, setIncludeCrossStationExecutions] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'panel' | 'normalized'>('panel');
+  const [activeTab, setActiveTab] = useState<'panel' | 'task-summary' | 'normalized'>('panel');
   const [normalizedStationId, setNormalizedStationId] = useState('');
   const [normalizedMetric, setNormalizedMetric] = useState<NormalizedMetric>('linear');
   const [normalizedHouseTypeIds, setNormalizedHouseTypeIds] = useState<number[]>([]);
@@ -837,6 +1024,13 @@ const DashboardTasks: React.FC = () => {
   const [showHistogramMethodologyModal, setShowHistogramMethodologyModal] = useState(false);
   const [dataTableSort, setDataTableSort] = useState<{ key: DataTableSortKey; direction: DataTableSortDirection }>({
     key: 'duration',
+    direction: 'desc',
+  });
+  const [taskSummarySort, setTaskSummarySort] = useState<{
+    key: TaskSummarySortKey;
+    direction: DataTableSortDirection;
+  }>({
+    key: 'avgDuration',
     direction: 'desc',
   });
   const [loading, setLoading] = useState(false);
@@ -1293,6 +1487,7 @@ const DashboardTasks: React.FC = () => {
     const exists = filteredTasksForSelection.some((task) => String(task.id) === String(selectedTaskId));
     return exists ? selectedTaskId : '';
   }, [filteredTasksForSelection, selectedTaskId]);
+  const shouldIncludeCrossStationExecutions = includeCrossStationExecutions && Boolean(effectiveSelectedTaskId);
 
   const selectionErrorMessage = useMemo(() => {
     if (!selectedHouseTypeId) {
@@ -1324,6 +1519,7 @@ const DashboardTasks: React.FC = () => {
       target,
       selectedStationId || '',
       effectiveSelectedTaskId || '',
+      shouldIncludeCrossStationExecutions ? 'cross-station' : 'selected-station',
     ].join('|');
   }, [
     analysisScope,
@@ -1332,12 +1528,14 @@ const DashboardTasks: React.FC = () => {
     effectiveSelectedModuleNumber,
     selectedStationId,
     effectiveSelectedTaskId,
+    shouldIncludeCrossStationExecutions,
   ]);
-  const displayAnalysisData = activeTab === 'panel' && panelSelectionReady ? analysisData : null;
-  const displayError = activeTab === 'panel'
+  const usesStationTaskAnalysis = activeTab === 'panel' || activeTab === 'task-summary';
+  const displayAnalysisData = usesStationTaskAnalysis && panelSelectionReady ? analysisData : null;
+  const displayError = usesStationTaskAnalysis
     ? selectionErrorMessage || (panelSelectionReady ? error : '')
     : '';
-  const displayLoading = activeTab === 'panel' && panelSelectionReady && loading;
+  const displayLoading = usesStationTaskAnalysis && panelSelectionReady && loading;
 
   const panelLabel = (panel: PanelDefinition | null): string => buildPanelLabel(panel);
 
@@ -1470,6 +1668,213 @@ const DashboardTasks: React.FC = () => {
     includeWithoutExpected,
     hypothesis.predicate,
   ]);
+
+  const taskSummaryRows = useMemo(() => {
+    const points = Array.isArray(displayAnalysisData?.data_points)
+      ? displayAnalysisData.data_points ?? []
+      : [];
+    if (!points.length) {
+      return [] as TaskSummaryRow[];
+    }
+
+    const minVal = Math.min(effectiveMinMultiplier, effectiveMaxMultiplier);
+    const maxVal = Math.max(effectiveMinMultiplier, effectiveMaxMultiplier);
+
+    type TaskSummaryAccumulator = {
+      key: string;
+      task_definition_id: number | null;
+      task_name: string;
+      sample_count: number;
+      duration_sum: number;
+      expected_sum: number;
+      expected_count: number;
+      ratio_sum: number;
+      ratio_count: number;
+      log_ratio_sum: number;
+      log_ratio_sum_squares: number;
+      min_duration: number | null;
+      max_duration: number | null;
+      last_completed_ms: number | null;
+      last_completed_at: string | null;
+    };
+
+    const aggregateMap = new Map<string, TaskSummaryAccumulator>();
+
+    const pushSample = (
+      taskDefinitionId: number | null | undefined,
+      taskName: string | null | undefined,
+      durationMinutes: number | null | undefined,
+      expectedMinutes: number | null | undefined,
+      completedAt: string | null | undefined,
+    ) => {
+      const duration = Number(durationMinutes);
+      if (!Number.isFinite(duration) || duration < 0) return;
+
+      const expected = Number(expectedMinutes);
+      const hasExpected = Number.isFinite(expected) && expected > 0;
+      const ratio = hasExpected ? duration / expected : null;
+      if (!hasExpected && !includeWithoutExpected) return;
+      if (ratio != null && (ratio < minVal || ratio > maxVal)) return;
+
+      const numericTaskId = Number(taskDefinitionId);
+      const safeTaskId = Number.isFinite(numericTaskId) ? numericTaskId : null;
+      const taskLabel = typeof taskName === 'string' && taskName.trim()
+        ? taskName.trim()
+        : safeTaskId != null
+          ? `Tarea ${safeTaskId}`
+          : 'Tarea sin nombre';
+      const key = safeTaskId != null ? `id:${safeTaskId}` : `name:${normalizeText(taskLabel)}`;
+
+      const completedMs = normalizeDateToComparable(completedAt);
+      const existing = aggregateMap.get(key);
+      if (existing) {
+        existing.sample_count += 1;
+        existing.duration_sum += duration;
+        if (existing.min_duration == null || duration < existing.min_duration) {
+          existing.min_duration = duration;
+        }
+        if (existing.max_duration == null || duration > existing.max_duration) {
+          existing.max_duration = duration;
+        }
+        if (hasExpected) {
+          existing.expected_sum += expected;
+          existing.expected_count += 1;
+          if (ratio != null) {
+            existing.ratio_sum += ratio;
+            existing.ratio_count += 1;
+            const logRatio = Math.log(ratio);
+            existing.log_ratio_sum += logRatio;
+            existing.log_ratio_sum_squares += logRatio * logRatio;
+          }
+        }
+        if (completedMs != null && (existing.last_completed_ms == null || completedMs > existing.last_completed_ms)) {
+          existing.last_completed_ms = completedMs;
+          existing.last_completed_at = completedAt ?? null;
+        }
+        return;
+      }
+
+      aggregateMap.set(key, {
+        key,
+        task_definition_id: safeTaskId,
+        task_name: taskLabel,
+        sample_count: 1,
+        duration_sum: duration,
+        expected_sum: hasExpected ? expected : 0,
+        expected_count: hasExpected ? 1 : 0,
+        ratio_sum: ratio != null ? ratio : 0,
+        ratio_count: ratio != null ? 1 : 0,
+        log_ratio_sum: ratio != null ? Math.log(ratio) : 0,
+        log_ratio_sum_squares: ratio != null ? Math.log(ratio) * Math.log(ratio) : 0,
+        min_duration: duration,
+        max_duration: duration,
+        last_completed_ms: completedMs,
+        last_completed_at: completedAt ?? null,
+      });
+    };
+
+    points.forEach((point) => {
+      if (Array.isArray(point.task_breakdown) && point.task_breakdown.length) {
+        point.task_breakdown.forEach((taskRow) => {
+          pushSample(
+            taskRow.task_definition_id,
+            taskRow.task_name,
+            taskRow.duration_minutes,
+            taskRow.expected_minutes,
+            taskRow.completed_at ?? point.completed_at,
+          );
+        });
+        return;
+      }
+      pushSample(
+        point.task_definition_id,
+        point.task_name,
+        point.duration_minutes,
+        point.expected_minutes,
+        point.completed_at,
+      );
+    });
+
+    return Array.from(aggregateMap.values()).map((row) => {
+      let trendScore: number | null = null;
+      if (row.ratio_count >= 3) {
+        const meanLogRatio = row.log_ratio_sum / row.ratio_count;
+        const varianceNumerator = row.log_ratio_sum_squares - ((row.log_ratio_sum ** 2) / row.ratio_count);
+        const sampleVariance = row.ratio_count > 1
+          ? Math.max(0, varianceNumerator / (row.ratio_count - 1))
+          : 0;
+        const standardDeviation = Math.sqrt(sampleVariance);
+        const standardError = Math.max(standardDeviation / Math.sqrt(row.ratio_count), 1e-6);
+        trendScore = Number(clampNumber(meanLogRatio / standardError, -9.99, 9.99).toFixed(2));
+      }
+
+      return {
+        key: row.key,
+        task_definition_id: row.task_definition_id,
+        task_name: row.task_name,
+        sample_count: row.sample_count,
+        expected_sample_count: row.expected_count,
+        ratio_sample_count: row.ratio_count,
+        average_duration: Number((row.duration_sum / row.sample_count).toFixed(2)),
+        average_expected: row.expected_count ? Number((row.expected_sum / row.expected_count).toFixed(2)) : null,
+        average_ratio: row.ratio_count ? Number((row.ratio_sum / row.ratio_count).toFixed(3)) : null,
+        trend_score: trendScore,
+        min_duration: row.min_duration != null ? Number(row.min_duration.toFixed(2)) : null,
+        max_duration: row.max_duration != null ? Number(row.max_duration.toFixed(2)) : null,
+        last_completed_at: row.last_completed_at,
+      };
+    });
+  }, [
+    displayAnalysisData,
+    effectiveMaxMultiplier,
+    effectiveMinMultiplier,
+    includeWithoutExpected,
+  ]);
+
+  const taskSummaryStats = useMemo(() => {
+    if (!taskSummaryRows.length) {
+      return {
+        taskCount: 0,
+        sampleCount: 0,
+        averageDuration: null as number | null,
+        averageExpected: null as number | null,
+        averageRatio: null as number | null,
+      };
+    }
+    const sampleCount = taskSummaryRows.reduce((sum, row) => sum + row.sample_count, 0);
+    const durationWeightedSum = taskSummaryRows.reduce(
+      (sum, row) => sum + (row.average_duration ?? 0) * row.sample_count,
+      0,
+    );
+    const expectedWeightedSum = taskSummaryRows.reduce(
+      (sum, row) => sum + (row.average_expected ?? 0) * row.expected_sample_count,
+      0,
+    );
+    const expectedSamples = taskSummaryRows.reduce(
+      (sum, row) => sum + row.expected_sample_count,
+      0,
+    );
+    const ratioWeightedSum = taskSummaryRows.reduce(
+      (sum, row) => sum + (row.average_ratio ?? 0) * row.ratio_sample_count,
+      0,
+    );
+    const ratioSamples = taskSummaryRows.reduce(
+      (sum, row) => sum + row.ratio_sample_count,
+      0,
+    );
+    return {
+      taskCount: taskSummaryRows.length,
+      sampleCount,
+      averageDuration: sampleCount ? Number((durationWeightedSum / sampleCount).toFixed(2)) : null,
+      averageExpected: expectedSamples ? Number((expectedWeightedSum / expectedSamples).toFixed(2)) : null,
+      averageRatio: ratioSamples ? Number((ratioWeightedSum / ratioSamples).toFixed(3)) : null,
+    };
+  }, [taskSummaryRows]);
+
+  const taskSummaryAverageShadeStyle = useMemo(
+    () => getRatioBackgroundStyle(taskSummaryStats.averageRatio, effectiveMinMultiplier, effectiveMaxMultiplier),
+    [taskSummaryStats.averageRatio, effectiveMinMultiplier, effectiveMaxMultiplier],
+  );
 
   const normalizedReport = useMemo(() => {
     const emptySummary = {
@@ -1700,7 +2105,7 @@ const DashboardTasks: React.FC = () => {
   };
 
   useEffect(() => {
-    if (activeTab !== 'panel') {
+    if (!usesStationTaskAnalysis) {
       return undefined;
     }
     const hasTarget = analysisScope === 'panel' ? Boolean(effectiveSelectedPanelId) : Boolean(effectiveSelectedModuleNumber);
@@ -1722,8 +2127,11 @@ const DashboardTasks: React.FC = () => {
       }
       params.append('station_id', String(selectedStationId));
       if (effectiveSelectedTaskId) params.append('task_definition_id', String(effectiveSelectedTaskId));
-      if (fromDate) params.append('from_date', `${fromDate} 00:00:00`);
-      if (toDate) params.append('to_date', `${toDate} 23:59:59`);
+      if (shouldIncludeCrossStationExecutions) params.append('include_cross_station', 'true');
+      const fromDateBoundary = toApiDateBoundary(fromDate, 'start');
+      const toDateBoundary = toApiDateBoundary(toDate, 'end');
+      if (fromDateBoundary) params.append('from_date', fromDateBoundary);
+      if (toDateBoundary) params.append('to_date', toDateBoundary);
 
       apiRequest<TaskAnalysisWorkerOption[]>(`/api/task-analysis/workers?${params.toString()}`)
         .then((result) => {
@@ -1749,13 +2157,14 @@ const DashboardTasks: React.FC = () => {
       cancelled = true;
     };
   }, [
-    activeTab,
+    usesStationTaskAnalysis,
     analysisScope,
     selectedHouseTypeId,
     effectiveSelectedPanelId,
     effectiveSelectedModuleNumber,
     selectedStationId,
     effectiveSelectedTaskId,
+    shouldIncludeCrossStationExecutions,
     fromDate,
     toDate,
   ]);
@@ -1772,7 +2181,7 @@ const DashboardTasks: React.FC = () => {
   }, [selectedWorkerId, workersForSelectionLoading, workersForSelection]);
 
   useEffect(() => {
-    if (activeTab !== 'panel') {
+    if (!usesStationTaskAnalysis) {
       return undefined;
     }
     const hasTarget = analysisScope === 'panel' ? Boolean(effectiveSelectedPanelId) : Boolean(effectiveSelectedModuleNumber);
@@ -1794,9 +2203,12 @@ const DashboardTasks: React.FC = () => {
       }
       if (effectiveSelectedTaskId) params.append('task_definition_id', String(effectiveSelectedTaskId));
       if (selectedStationId) params.append('station_id', String(selectedStationId));
+      if (shouldIncludeCrossStationExecutions) params.append('include_cross_station', 'true');
       if (selectedWorkerId) params.append('worker_id', String(selectedWorkerId));
-      if (fromDate) params.append('from_date', `${fromDate} 00:00:00`);
-      if (toDate) params.append('to_date', `${toDate} 23:59:59`);
+      const fromDateBoundary = toApiDateBoundary(fromDate, 'start');
+      const toDateBoundary = toApiDateBoundary(toDate, 'end');
+      if (fromDateBoundary) params.append('from_date', fromDateBoundary);
+      if (toDateBoundary) params.append('to_date', toDateBoundary);
 
       apiRequest<TaskAnalysisResponse>(`/api/task-analysis?${params.toString()}`)
         .then((result) => {
@@ -1827,12 +2239,13 @@ const DashboardTasks: React.FC = () => {
       cancelled = true;
     };
   }, [
-    activeTab,
+    usesStationTaskAnalysis,
     analysisScope,
     selectedHouseTypeId,
     effectiveSelectedPanelId,
     effectiveSelectedModuleNumber,
     effectiveSelectedTaskId,
+    shouldIncludeCrossStationExecutions,
     selectedStationId,
     selectedWorkerId,
     fromDate,
@@ -1856,8 +2269,10 @@ const DashboardTasks: React.FC = () => {
       setNormalizedError('');
       const params = new URLSearchParams();
       params.append('station_id', String(normalizedStationId));
-      if (normalizedDateRange.from) params.append('from_date', `${normalizedDateRange.from} 00:00:00`);
-      if (normalizedDateRange.to) params.append('to_date', `${normalizedDateRange.to} 23:59:59`);
+      const normalizedFromBoundary = toApiDateBoundary(normalizedDateRange.from, 'start');
+      const normalizedToBoundary = toApiDateBoundary(normalizedDateRange.to, 'end');
+      if (normalizedFromBoundary) params.append('from_date', normalizedFromBoundary);
+      if (normalizedToBoundary) params.append('to_date', normalizedToBoundary);
       try {
         const result = await apiRequest<StationPanelsFinishedResponse>(
           `/api/station-panels-finished?${params.toString()}`,
@@ -1908,6 +2323,11 @@ const DashboardTasks: React.FC = () => {
     setMinMultiplier(String(DEFAULT_MIN_MULTIPLIER));
     setMaxMultiplier(String(DEFAULT_MAX_MULTIPLIER));
     setIncludeWithoutExpected(true);
+    setIncludeCrossStationExecutions(false);
+    setTaskSummarySort({
+      key: 'avgDuration',
+      direction: 'desc',
+    });
     setAnalysisData(null);
     setError('');
     lastAppliedBinSizeViewKeyRef.current = '';
@@ -1934,7 +2354,7 @@ const DashboardTasks: React.FC = () => {
 
   const buildDataPointSummary = (row: AnalysisPoint): string => {
     const house = row.house_identifier || '-';
-    const date = formatDateTime(row.completed_at);
+    const date = formatDateTimeInAppTimezone(row.completed_at);
     const duration = formatMinutesWithUnit(row.duration_minutes);
     let workersSummary = row.worker_name || '';
     if (Array.isArray(row.task_breakdown) && row.task_breakdown.length) {
@@ -1953,14 +2373,14 @@ const DashboardTasks: React.FC = () => {
     const taskLabel = task.task_name || String(task.task_definition_id || 'Tarea');
     const durationLabel = formatMinutesWithUnit(task.duration_minutes);
     const expectedLabel = formatMinutesWithUnit(task.expected_minutes);
-    const startedLabel = formatDateTime(task.started_at);
-    const completedLabel = formatDateTime(task.completed_at);
+    const startedLabel = formatDateTimeInAppTimezone(task.started_at);
+    const completedLabel = formatDateTimeInAppTimezone(task.completed_at);
     const workersLabel = task.worker_name || '-';
     const totalPauseLabel = formatMinutesWithUnit(task.pause_minutes);
     const pauseLines = Array.isArray(task.pauses)
       ? task.pauses.map((pause, index) => {
-          const pausedAt = formatDateTime(pause.paused_at);
-          const resumedAt = formatDateTime(pause.resumed_at);
+          const pausedAt = formatDateTimeInAppTimezone(pause.paused_at);
+          const resumedAt = formatDateTimeInAppTimezone(pause.resumed_at);
           const pauseMinutes = normalizePauseMinutes(pause);
           const duration = pauseMinutes != null ? formatMinutesWithUnit(pauseMinutes) : '-';
           const reason = pause.reason ? ` / Motivo: ${pause.reason}` : '';
@@ -2016,6 +2436,51 @@ const DashboardTasks: React.FC = () => {
       return {
         key,
         direction: key === 'plan' || key === 'worker' ? 'asc' : 'desc',
+      };
+    });
+  };
+
+  const compareTaskSummaryBySort = (
+    a: TaskSummaryRow,
+    b: TaskSummaryRow,
+    key: TaskSummarySortKey,
+  ): number => {
+    switch (key) {
+      case 'task':
+        return a.task_name.localeCompare(b.task_name, 'es', { sensitivity: 'base' });
+      case 'samples':
+        return a.sample_count - b.sample_count;
+      case 'avgDuration':
+        return (a.average_duration ?? Number.NEGATIVE_INFINITY) - (b.average_duration ?? Number.NEGATIVE_INFINITY);
+      case 'avgExpected':
+        return (a.average_expected ?? Number.NEGATIVE_INFINITY) - (b.average_expected ?? Number.NEGATIVE_INFINITY);
+      case 'avgRatio':
+        return (a.average_ratio ?? Number.NEGATIVE_INFINITY) - (b.average_ratio ?? Number.NEGATIVE_INFINITY);
+      case 'trendScore':
+        return (a.trend_score ?? Number.NEGATIVE_INFINITY) - (b.trend_score ?? Number.NEGATIVE_INFINITY);
+      case 'minDuration':
+        return (a.min_duration ?? Number.NEGATIVE_INFINITY) - (b.min_duration ?? Number.NEGATIVE_INFINITY);
+      case 'maxDuration':
+        return (a.max_duration ?? Number.NEGATIVE_INFINITY) - (b.max_duration ?? Number.NEGATIVE_INFINITY);
+      case 'lastCompleted':
+        return (normalizeDateToComparable(a.last_completed_at) ?? Number.NEGATIVE_INFINITY)
+          - (normalizeDateToComparable(b.last_completed_at) ?? Number.NEGATIVE_INFINITY);
+      default:
+        return 0;
+    }
+  };
+
+  const handleTaskSummarySort = (key: TaskSummarySortKey) => {
+    setTaskSummarySort((prev) => {
+      if (prev.key === key) {
+        return {
+          key,
+          direction: prev.direction === 'asc' ? 'desc' : 'asc',
+        };
+      }
+      return {
+        key,
+        direction: key === 'task' ? 'asc' : 'desc',
       };
     });
   };
@@ -2275,7 +2740,7 @@ const DashboardTasks: React.FC = () => {
                 <td className="px-3 py-2">{formatMinutesWithUnit(row.duration_minutes)}</td>
                 <td className="px-3 py-2">{formatMinutesWithUnit(row.expected_minutes)}</td>
                 <td className="px-3 py-2">{formatRatio((row as AnalysisPoint & { ratio?: number | null }).ratio ?? null)}</td>
-                <td className="px-3 py-2">{formatDateTime(row.completed_at)}</td>
+                <td className="px-3 py-2">{formatDateTimeInAppTimezone(row.completed_at)}</td>
                 <td className="px-3 py-2">{row.worker_name || '-'}</td>
                 <td className="px-3 py-2">
                   {displayAnalysisData?.mode === 'panel' || displayAnalysisData?.mode === 'module' ? (
@@ -2308,6 +2773,102 @@ const DashboardTasks: React.FC = () => {
                 </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderTaskSummaryTable = () => {
+    if (!taskSummaryRows.length) {
+      return (
+        <div className="text-sm text-[var(--ink-muted)]">
+          No se encontraron tareas para la estacion y filtros actuales.
+        </div>
+      );
+    }
+
+    const sortedRows = [...taskSummaryRows].sort((a, b) => {
+      const comparison = compareTaskSummaryBySort(a, b, taskSummarySort.key);
+      return taskSummarySort.direction === 'asc' ? comparison : -comparison;
+    });
+
+    const renderSortableHeader = (label: string, key: TaskSummarySortKey, tooltip?: string) => {
+      const isActive = taskSummarySort.key === key;
+      const indicator = isActive ? (taskSummarySort.direction === 'asc' ? '▲' : '▼') : '↕';
+      const titleText = tooltip
+        ? `${tooltip}\nClick para ordenar por ${label.toLowerCase()}.`
+        : `Ordenar por ${label.toLowerCase()}`;
+      return (
+        <button
+          type="button"
+          onClick={() => handleTaskSummarySort(key)}
+          className="inline-flex items-center gap-1 text-left hover:text-[var(--ink)]"
+          title={titleText}
+        >
+          <span>{label}</span>
+          <span aria-hidden="true" className="text-[10px]">{indicator}</span>
+        </button>
+      );
+    };
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="border-b border-black/10 text-left text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+              <th className="px-3 py-2">{renderSortableHeader('Tarea', 'task')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Muestras', 'samples')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Prom. real', 'avgDuration')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Prom. esperado', 'avgExpected')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Prom. ratio', 'avgRatio')}</th>
+              <th className="px-3 py-2">
+                {renderSortableHeader(
+                  'Trend score',
+                  'trendScore',
+                  'Score de tendencia: media(log(real/esperado)) dividida por su error estandar. Negativo=mas rapido, positivo=mas lento. Magnitud alta=senal mas consistente. N<3: N/A.',
+                )}
+              </th>
+              <th className="px-3 py-2">{renderSortableHeader('Min', 'minDuration')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Max', 'maxDuration')}</th>
+              <th className="px-3 py-2">{renderSortableHeader('Ultimo registro', 'lastCompleted')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRows.map((row) => {
+              const ratioShadeStyle = getRatioBackgroundStyle(
+                row.average_ratio,
+                effectiveMinMultiplier,
+                effectiveMaxMultiplier,
+              );
+              const trendStyle = getTrendScoreStyle(row.trend_score);
+              const trendLabel = row.ratio_sample_count >= 3
+                ? `${getTrendStrengthLabel(row.trend_score)} · n=${row.ratio_sample_count}`
+                : `n=${row.ratio_sample_count}`;
+              return (
+                <tr key={row.key} className="border-b border-black/5 text-[var(--ink)]">
+                  <td className="px-3 py-2">
+                    {row.task_name}
+                    {row.task_definition_id != null ? (
+                      <span className="ml-2 text-xs text-[var(--ink-muted)]">{`#${row.task_definition_id}`}</span>
+                    ) : null}
+                  </td>
+                  <td className="px-3 py-2">{row.sample_count}</td>
+                  <td className="px-3 py-2" style={ratioShadeStyle}>{formatMinutesWithUnit(row.average_duration)}</td>
+                  <td className="px-3 py-2">{formatMinutesWithUnit(row.average_expected)}</td>
+                  <td className="px-3 py-2 font-semibold" style={ratioShadeStyle}>{formatRatio(row.average_ratio)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-col">
+                      <span style={trendStyle}>{row.trend_score == null ? 'N/A' : formatSignedNumber(row.trend_score, 2)}</span>
+                      <span className="text-[10px] text-[var(--ink-muted)]">{trendLabel}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">{formatMinutesWithUnit(row.min_duration)}</td>
+                  <td className="px-3 py-2">{formatMinutesWithUnit(row.max_duration)}</td>
+                  <td className="px-3 py-2">{formatDateTimeInAppTimezone(row.last_completed_at)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -2675,18 +3236,20 @@ const DashboardTasks: React.FC = () => {
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Filtro principal</p>
             <h1 className="font-display text-xl text-[var(--ink)]">Analisis de tiempos de tareas</h1>
             <p className="mt-2 text-sm text-[var(--ink-muted)]">
-              {activeTab === 'panel'
-                ? analysisScope === 'panel'
-                  ? 'Combina tipo de casa, panel y estacion para comparar duraciones reales contra lo esperado.'
-                  : 'Combina tipo de casa, modulo y estacion para comparar duraciones reales contra lo esperado.'
-                : 'Compara tiempos normalizados por area o largo entre paneles dentro de una misma estacion.'}
+              {activeTab === 'normalized'
+                ? 'Compara tiempos normalizados por area o largo entre paneles dentro de una misma estacion.'
+                : activeTab === 'task-summary'
+                  ? 'Resume tareas por estacion con promedios de tiempo real, esperado y ratio para comparar desempeno.'
+                  : analysisScope === 'panel'
+                    ? 'Combina tipo de casa, panel y estacion para comparar duraciones reales contra lo esperado.'
+                    : 'Combina tipo de casa, modulo y estacion para comparar duraciones reales contra lo esperado.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
-              onClick={activeTab === 'panel' ? resetFilters : resetNormalizedFilters}
+              onClick={activeTab === 'normalized' ? resetNormalizedFilters : resetFilters}
             >
               <RefreshCcw className="h-4 w-4" />
               Restablecer filtros
@@ -2697,12 +3260,13 @@ const DashboardTasks: React.FC = () => {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {[
             { key: 'panel', label: 'Tiempo Especifico' },
+            { key: 'task-summary', label: 'Tareas por estacion' },
             { key: 'normalized', label: 'Tiempo normalizado' },
           ].map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key === 'panel' ? 'panel' : 'normalized')}
+              onClick={() => setActiveTab(tab.key as 'panel' | 'task-summary' | 'normalized')}
               className={
                 activeTab === tab.key
                   ? 'rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
@@ -2714,7 +3278,7 @@ const DashboardTasks: React.FC = () => {
           ))}
         </div>
 
-        {activeTab === 'panel' && (
+        {(activeTab === 'panel' || activeTab === 'task-summary') && (
           <>
             <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
@@ -2914,20 +3478,22 @@ const DashboardTasks: React.FC = () => {
         <div className="mt-6 flex flex-wrap gap-4">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
             <Sliders className="h-4 w-4" />
-            Ajustes del histograma
+            {activeTab === 'panel' ? 'Ajustes del histograma' : 'Filtro por esperado'}
           </div>
-          <div className="grid flex-1 gap-4 md:grid-cols-3">
-            <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-              Tamano de barra (min)
-              <input
-                className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
-                type="number"
-                min="1"
-                step="1"
-                value={binSize}
-                onChange={(event) => setBinSize(event.target.value)}
-              />
-            </label>
+          <div className={`grid flex-1 gap-4 ${activeTab === 'panel' ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+            {activeTab === 'panel' && (
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Tamano de barra (min)
+                <input
+                  className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={binSize}
+                  onChange={(event) => setBinSize(event.target.value)}
+                />
+              </label>
+            )}
 
             <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
               Min. multiplicador
@@ -2961,142 +3527,157 @@ const DashboardTasks: React.FC = () => {
             />
             <span>Incluir muestras sin tiempo esperado</span>
           </label>
+          <label className="inline-flex items-center gap-2 text-xs text-[var(--ink)]">
+            <input
+              type="checkbox"
+              checked={includeCrossStationExecutions}
+              onChange={(event) => {
+                setIncludeCrossStationExecutions(event.target.checked);
+                setSelectedWorkerId('');
+                setAnalysisData(null);
+              }}
+              disabled={!effectiveSelectedTaskId}
+            />
+            <span>Incluir ejecuciones en otras estaciones (con tarea seleccionada)</span>
+          </label>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/60 p-4">
-          <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-            <FlaskConical className="h-4 w-4" />
-            Hipotesis de filtrado
-          </div>
-          <div className="mt-4 flex flex-wrap items-end gap-4">
-            {hypothesisEditorOpen ? (
-              <>
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Campo
-                  <select
-                    className="mt-2 w-full min-w-[160px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
-                    value={hypothesisForm.field}
-                    onChange={handleHypothesisFieldChange}
-                  >
-                    {HYPOTHESIS_FIELD_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Condicion
-                  <select
-                    className="mt-2 w-full min-w-[120px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
-                    value={hypothesisForm.operator}
-                    onChange={handleHypothesisOperatorChange}
-                  >
-                    {getHypothesisFieldConfig(hypothesisForm.field).operators.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {hypothesisForm.field === 'date' ? (
+        {activeTab === 'panel' && (
+          <div className="mt-6 rounded-2xl border border-dashed border-black/10 bg-white/60 p-4">
+            <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+              <FlaskConical className="h-4 w-4" />
+              Hipotesis de filtrado
+            </div>
+            <div className="mt-4 flex flex-wrap items-end gap-4">
+              {hypothesisEditorOpen ? (
+                <>
                   <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                    Fecha
-                    <input
-                      className="mt-2 w-full min-w-[180px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
-                      type="date"
-                      value={hypothesisForm.value}
-                      onChange={(event) => handleHypothesisValueChange(event.target.value)}
-                    />
+                    Campo
+                    <select
+                      className="mt-2 w-full min-w-[160px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
+                      value={hypothesisForm.field}
+                      onChange={handleHypothesisFieldChange}
+                    >
+                      {HYPOTHESIS_FIELD_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </label>
-                ) : (
-                  <div className="min-w-[220px]">
+
+                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    Condicion
+                    <select
+                      className="mt-2 w-full min-w-[120px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
+                      value={hypothesisForm.operator}
+                      onChange={handleHypothesisOperatorChange}
+                    >
+                      {getHypothesisFieldConfig(hypothesisForm.field).operators.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {hypothesisForm.field === 'date' ? (
                     <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                      Trabajador
-                      <select
-                        className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
+                      Fecha
+                      <input
+                        className="mt-2 w-full min-w-[180px] rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
+                        type="date"
                         value={hypothesisForm.value}
                         onChange={(event) => handleHypothesisValueChange(event.target.value)}
-                        disabled={!workerOptionsForHypothesis.length}
-                      >
-                        <option value="">Seleccione...</option>
-                        {workerOptionsForHypothesis.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </label>
-                    {!workerOptionsForHypothesis.length && (
-                      <p className="mt-2 text-xs text-[var(--ink-muted)]">
-                        No hay trabajadores registrados con los filtros actuales.
-                      </p>
-                    )}
-                  </div>
-                )}
+                  ) : (
+                    <div className="min-w-[220px]">
+                      <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        Trabajador
+                        <select
+                          className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm"
+                          value={hypothesisForm.value}
+                          onChange={(event) => handleHypothesisValueChange(event.target.value)}
+                          disabled={!workerOptionsForHypothesis.length}
+                        >
+                          <option value="">Seleccione...</option>
+                          {workerOptionsForHypothesis.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {!workerOptionsForHypothesis.length && (
+                        <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                          No hay trabajadores registrados con los filtros actuales.
+                        </p>
+                      )}
+                    </div>
+                  )}
 
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
-                    onClick={handleApplyHypothesis}
-                    disabled={
-                      (hypothesisForm.field === 'worker' && !hypothesisForm.value) ||
-                      (hypothesisForm.field === 'worker' && !workerOptionsForHypothesis.length) ||
-                      (hypothesisForm.field === 'date' && !hypothesisForm.value)
-                    }
-                  >
-                    Aplicar
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]"
-                    onClick={handleCancelHypothesis}
-                  >
-                    Cancelar
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
+                      onClick={handleApplyHypothesis}
+                      disabled={
+                        (hypothesisForm.field === 'worker' && !hypothesisForm.value) ||
+                        (hypothesisForm.field === 'worker' && !workerOptionsForHypothesis.length) ||
+                        (hypothesisForm.field === 'date' && !hypothesisForm.value)
+                      }
+                    >
+                      Aplicar
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]"
+                      onClick={handleCancelHypothesis}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </>
+              ) : activeHypothesisConfig ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="text-sm text-[var(--ink)]">
+                    <strong>Hipotesis activa:</strong> {hypothesis.description || '-'}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
+                      onClick={openHypothesisEditor}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-full bg-red-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-600"
+                      onClick={handleRemoveHypothesis}
+                    >
+                      Quitar
+                    </button>
+                  </div>
                 </div>
-              </>
-            ) : activeHypothesisConfig ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm text-[var(--ink)]">
-                  <strong>Hipotesis activa:</strong> {hypothesis.description || '-'}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
-                    onClick={openHypothesisEditor}
-                  >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 rounded-full bg-red-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-600"
-                    onClick={handleRemoveHypothesis}
-                  >
-                    Quitar
-                  </button>
-                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
+                  onClick={openHypothesisEditor}
+                >
+                  Agregar hipotesis
+                </button>
+              )}
+            </div>
+            {hypothesisError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {hypothesisError}
               </div>
-            ) : (
-              <button
-                type="button"
-                className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
-                onClick={openHypothesisEditor}
-              >
-                Agregar hipotesis
-              </button>
             )}
           </div>
-          {hypothesisError && (
-            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
-              {hypothesisError}
-            </div>
-          )}
-        </div>
+        )}
 
         {panelsLoading && <p className="mt-4 text-sm text-[var(--ink-muted)]">Cargando paneles...</p>}
         {stationsLoading && <p className="mt-2 text-sm text-[var(--ink-muted)]">Cargando estaciones...</p>}
@@ -3346,7 +3927,7 @@ const DashboardTasks: React.FC = () => {
         )}
       </section>
 
-      {activeTab === 'panel' && (
+      {(activeTab === 'panel' || activeTab === 'task-summary') && (
         <>
           {displayError && (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -3361,95 +3942,137 @@ const DashboardTasks: React.FC = () => {
           )}
 
           {displayAnalysisData && (
-            <section className="space-y-6">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                    {displayAnalysisData.data_points?.length || 0}
-                  </p>
+            activeTab === 'panel' ? (
+              <section className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {displayAnalysisData.data_points?.length || 0}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Incluidas</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.included.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.excluded.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {formatMinutesWithUnit(displayAnalysisData.stats?.average_duration)}
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Incluidas</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.included.length}</p>
-                </div>
-                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.excluded.length}</p>
-                </div>
-                <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
-                  <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
-                    {formatMinutesWithUnit(displayAnalysisData.stats?.average_duration)}
-                  </p>
-                </div>
-              </div>
 
-              {hypothesis.description && (
-                <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink)]">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                      <Users className="h-3 w-3" />
-                      Hipotesis
-                    </span>
-                    <span className="font-semibold">{hypothesis.description}</span>
-                    {analysisSummary.hypothesisMatches !== null && (
-                      <span className="text-sm text-[var(--ink-muted)]">
-                        Coinciden: {analysisSummary.hypothesisMatches}
+                {hypothesis.description && (
+                  <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink)]">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        <Users className="h-3 w-3" />
+                        Hipotesis
                       </span>
-                    )}
-                    {analysisSummary.hypothesisMatches !== null && (
-                      <span className="text-sm text-[var(--ink-muted)]">
-                        No coinciden: {Math.max(analysisSummary.included.length - analysisSummary.hypothesisMatches, 0)}
-                      </span>
-                    )}
-                    {analysisSummary.hypothesisMatchAverage !== null && (
-                      <span className="text-sm text-[var(--ink-muted)]">
-                        Promedio hipotesis: {formatMinutesWithUnit(analysisSummary.hypothesisMatchAverage)}
-                      </span>
+                      <span className="font-semibold">{hypothesis.description}</span>
+                      {analysisSummary.hypothesisMatches !== null && (
+                        <span className="text-sm text-[var(--ink-muted)]">
+                          Coinciden: {analysisSummary.hypothesisMatches}
+                        </span>
+                      )}
+                      {analysisSummary.hypothesisMatches !== null && (
+                        <span className="text-sm text-[var(--ink-muted)]">
+                          No coinciden: {Math.max(analysisSummary.included.length - analysisSummary.hypothesisMatches, 0)}
+                        </span>
+                      )}
+                      {analysisSummary.hypothesisMatchAverage !== null && (
+                        <span className="text-sm text-[var(--ink-muted)]">
+                          Promedio hipotesis: {formatMinutesWithUnit(analysisSummary.hypothesisMatchAverage)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                    <Filter className="h-4 w-4" />
+                    Histograma
+                    <button
+                      type="button"
+                      onClick={() => setShowHistogramMethodologyModal(true)}
+                      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-black/20 bg-white text-[10px] font-bold normal-case tracking-normal text-[var(--ink-muted)] transition hover:border-black/40 hover:text-[var(--ink)]"
+                      title="Como se calcula la duracion"
+                      aria-label="Como se calcula la duracion"
+                    >
+                      i
+                    </button>
+                  </div>
+                  <div className="mt-4">{renderHistogram()}</div>
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    Muestras incluidas
+                  </h2>
+                  <div className="mt-4">
+                    {renderDataTable(analysisSummary.included, 'No se encontraron muestras dentro del rango seleccionado.')}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    Muestras excluidas
+                  </h2>
+                  <div className="mt-4">
+                    {renderDataTable(
+                      analysisSummary.excluded,
+                      'No se excluyeron muestras con los multiplicadores actuales.',
                     )}
                   </div>
                 </div>
-              )}
-
-              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  <Filter className="h-4 w-4" />
-                  Histograma
-                  <button
-                    type="button"
-                    onClick={() => setShowHistogramMethodologyModal(true)}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-black/20 bg-white text-[10px] font-bold normal-case tracking-normal text-[var(--ink-muted)] transition hover:border-black/40 hover:text-[var(--ink)]"
-                    title="Como se calcula la duracion"
-                    aria-label="Como se calcula la duracion"
-                  >
-                    i
-                  </button>
+              </section>
+            ) : (
+              <section className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tareas</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {taskSummaryStats.taskCount}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Muestras</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {taskSummaryStats.sampleCount}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm" style={taskSummaryAverageShadeStyle}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio real</p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
+                      {formatMinutesWithUnit(taskSummaryStats.averageDuration)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm" style={taskSummaryAverageShadeStyle}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio ratio</p>
+                    <span className="mt-2 inline-flex items-center px-1 py-1 text-xl font-semibold text-[var(--ink)]">
+                      {formatRatio(taskSummaryStats.averageRatio)}
+                    </span>
+                  </div>
                 </div>
-                <div className="mt-4">{renderHistogram()}</div>
-              </div>
 
-              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Muestras incluidas
-                </h2>
-                <div className="mt-4">
-                  {renderDataTable(analysisSummary.included, 'No se encontraron muestras dentro del rango seleccionado.')}
+                <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    Resumen por tarea
+                  </h2>
+                  <div className="mt-4">{renderTaskSummaryTable()}</div>
+                  <p className="mt-3 text-xs text-[var(--ink-muted)]">
+                    Trend score = media(log(real/esperado)) / (desv_estandar(log(real/esperado)) / sqrt(n)).
+                    Valores negativos (verde) tienden a mas rapido que esperado; positivos (rojo), mas lento.
+                  </p>
                 </div>
-              </div>
-
-              <div className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
-                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Muestras excluidas
-                </h2>
-                <div className="mt-4">
-                  {renderDataTable(
-                    analysisSummary.excluded,
-                    'No se excluyeron muestras con los multiplicadores actuales.',
-                  )}
-                </div>
-              </div>
-            </section>
+              </section>
+            )
           )}
 
           {!displayAnalysisData && !displayLoading && !displayError && (

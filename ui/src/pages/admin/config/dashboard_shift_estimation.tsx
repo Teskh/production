@@ -95,6 +95,7 @@ type ShiftEstimate = {
   status: 'no-shift' | 'open' | 'review' | 'estimated';
   computed_at: string;
   algorithm_version: number;
+  present_worker_ids?: number[];
 };
 
 type ShiftEstimateDay = {
@@ -117,6 +118,7 @@ type ComputeResponse = {
   to_date: string;
   processed_days: number;
   computed_count: number;
+  computed_worker_rows: number;
   skipped_existing: number;
   excluded_days: number;
   worker_errors: number;
@@ -287,7 +289,7 @@ const DashboardShiftEstimation: React.FC = () => {
         });
         if (!silent) {
           setComputeMessage(
-            `Cache actualizado: +${response.computed_count} registros (${response.processed_days} dias).`
+            `Cache actualizado: +${response.computed_count} grupos y +${response.computed_worker_rows} filas worker (${response.processed_days} dias).`
           );
         }
         return response;
@@ -320,7 +322,7 @@ const DashboardShiftEstimation: React.FC = () => {
       ) {
         autoComputeRef.current = selectedDate;
         const computed = await computeRange(selectedDate, selectedDate, true);
-        if (computed && computed.computed_count > 0) {
+        if (computed && (computed.computed_count > 0 || computed.computed_worker_rows > 0)) {
           const refreshed = await apiRequest<ShiftEstimateDay>(
             `/api/shift-estimates?date=${selectedDate}`
           );
@@ -682,6 +684,7 @@ const DashboardShiftEstimation: React.FC = () => {
               <tr className="border-b border-black/10 text-left text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
                 <th className="px-3 py-2">Estacion</th>
                 <th className="px-3 py-2">Dotacion</th>
+                <th className="px-3 py-2">Trabajadores presentes</th>
                 <th className="px-3 py-2">Inicio</th>
                 <th className="px-3 py-2">Ultima salida</th>
                 <th className="px-3 py-2">Fin estimado</th>
@@ -693,6 +696,7 @@ const DashboardShiftEstimation: React.FC = () => {
               {groupSummaries.map((summary) => {
                 const estimate = summary.estimate;
                 const statusMeta = statusStyles[estimate?.status ?? 'no-cache'];
+                const presentWorkerIds = estimate?.present_worker_ids ?? [];
                 const stationIds = summary.stations.map((station) => station.id);
                 const uniqueLineTypes = Array.from(
                   new Set(
@@ -732,6 +736,17 @@ const DashboardShiftEstimation: React.FC = () => {
                       <div className="text-xs text-[var(--ink-muted)]">con marcaje</div>
                     </td>
                     <td className="px-3 py-3 align-top">
+                      <div className="font-mono text-xs text-[var(--ink)]">
+                        {estimate
+                          ? presentWorkerIds.length
+                            ? presentWorkerIds.join(', ')
+                            : estimate.present_count > 0
+                              ? 'Sin detalle'
+                              : '-'
+                          : '--'}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 align-top">
                       {estimate?.estimated_start ? formatTime(estimate.estimated_start) : 'Sin turno'}
                     </td>
                     <td className="px-3 py-3 align-top">{formatTime(estimate?.last_exit)}</td>
@@ -754,7 +769,7 @@ const DashboardShiftEstimation: React.FC = () => {
               {groupSummaries.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-3 py-6 text-center text-sm text-[var(--ink-muted)]"
                   >
                     No hay estaciones cargadas para estimar turnos.

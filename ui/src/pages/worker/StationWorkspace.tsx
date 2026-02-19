@@ -1662,6 +1662,10 @@ const StationWorkspace: React.FC = () => {
     if (!task.task_instance_id) {
       return;
     }
+    if (!selectedStationId) {
+      setError('Selecciona una estacion antes de terminar la tarea.');
+      return;
+    }
     if (!task.current_worker_participating) {
       setError('Unete a la tarea antes de terminarla.');
       return;

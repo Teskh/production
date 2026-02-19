@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_worker, get_db
+from app.api.deps import get_current_worker, get_current_worker_session, get_db
 from app.core.security import utc_now
 from app.models.enums import (
     PanelUnitStatus,
@@ -26,7 +26,7 @@ from app.models.tasks import (
 from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
-from app.models.workers import TaskWorkerRestriction, Worker
+from app.models.workers import TaskWorkerRestriction, Worker, WorkerSession
 from app.schemas.tasks import TaskInstanceRead, WorkerActiveTaskRead
 from app.schemas.worker_station import (
     TaskCompleteRequest,
@@ -41,6 +41,7 @@ from app.schemas.worker_station import (
 )
 from app.services.task_applicability import resolve_task_station_sequence
 from app.services.qc_runtime import open_qc_checks_for_task_completion
+from app.services.task_station_adherence import capture_task_station_adherence_fact
 
 router = APIRouter()
 
@@ -817,8 +818,18 @@ def complete_task(
     payload: TaskCompleteRequest,
     db: Session = Depends(get_db),
     worker: Worker = Depends(get_current_worker),
+    session: WorkerSession = Depends(get_current_worker_session),
 ) -> TaskInstance:
     instance = _get_task_instance(payload.task_instance_id, db)
+    completion_station_id = session.station_id
+    if completion_station_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Worker session station is not set",
+        )
+    if not db.get(Station, completion_station_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
+    task_def = db.get(TaskDefinition, instance.task_definition_id)
     active_participation = db.execute(
         select(TaskParticipation)
         .where(TaskParticipation.task_instance_id == instance.id)
@@ -859,13 +870,13 @@ def complete_task(
         pause.resumed_at = instance.completed_at
     # Ensure the completion is visible to subsequent queries in this request.
     db.flush()
+    auto_completed_instances: list[TaskInstance] = []
     if instance.scope == TaskScope.PANEL and instance.panel_unit_id is not None:
         panel_unit = db.get(PanelUnit, instance.panel_unit_id)
         station = db.get(Station, instance.station_id)
         if panel_unit and station:
             _advance_panel_if_satisfied(db, panel_unit, station)
     if instance.scope == TaskScope.MODULE and instance.panel_unit_id is None:
-        task_def = db.get(TaskDefinition, instance.task_definition_id)
         station = db.get(Station, instance.station_id)
         if (
             task_def
@@ -896,7 +907,7 @@ def complete_task(
                     for panel in panels:
                         panel.status = PanelUnitStatus.CONSUMED
                         panel.current_station_id = None
-                    _auto_complete_open_module_tasks_for_work_unit(
+                    auto_completed_instances = _auto_complete_open_module_tasks_for_work_unit(
                         db,
                         work_unit.id,
                         "término automatico por salida de módulo",
@@ -904,6 +915,24 @@ def complete_task(
 
     if instance.status == TaskStatus.COMPLETED:
         open_qc_checks_for_task_completion(db, instance)
+        capture_task_station_adherence_fact(
+            db,
+            instance,
+            task_def=task_def,
+            completed_station_id=completion_station_id,
+        )
+    for auto_instance in auto_completed_instances:
+        auto_task_def = (
+            task_def
+            if auto_instance.task_definition_id == instance.task_definition_id
+            else db.get(TaskDefinition, auto_instance.task_definition_id)
+        )
+        capture_task_station_adherence_fact(
+            db,
+            auto_instance,
+            task_def=auto_task_def,
+            completed_station_id=completion_station_id,
+        )
 
     db.commit()
     db.refresh(instance)

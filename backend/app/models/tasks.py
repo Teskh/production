@@ -103,6 +103,37 @@ class TaskInstance(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class TaskStationAdherenceFact(Base):
+    __tablename__ = "task_station_adherence_facts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_instance_id: Mapped[int] = mapped_column(
+        ForeignKey("task_instances.id"), unique=True, index=True
+    )
+    captured_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    task_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("task_definitions.id"), index=True
+    )
+    scope: Mapped[TaskScope] = mapped_column(Enum(TaskScope))
+    work_unit_id: Mapped[int] = mapped_column(ForeignKey("work_units.id"), index=True)
+    panel_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("panel_units.id"), nullable=True, index=True
+    )
+    actual_station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"), index=True)
+    completed_station_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stations.id"), nullable=True, index=True
+    )
+    planned_station_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planned_station_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stations.id"), nullable=True, index=True
+    )
+    planned_line_type: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    resolution_code: Mapped[str] = mapped_column(String(40), index=True)
+    is_deviation: Mapped[bool | None] = mapped_column(Boolean, nullable=True, index=True)
+    included_in_kpi: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
 class TaskParticipation(Base):
     __tablename__ = "task_participations"
 

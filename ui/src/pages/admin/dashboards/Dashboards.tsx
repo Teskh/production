@@ -7,6 +7,7 @@ import {
   Clock,
   History,
   MapPin,
+  Route,
   Ruler,
   Star,
   Timer,
@@ -76,6 +77,16 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Paneles', 'Estaciones', 'Tareas'],
     icon: Timer,
+  },
+  {
+    id: 'station-adherence',
+    name: 'Adherencia de estacion',
+    description:
+      'Compara estacion planificada vs estacion real al completar cada tarea.',
+    path: '/admin/dashboards/station-adherence',
+    status: 'ready',
+    tags: ['Plan', 'Ejecucion', 'Desviaciones'],
+    icon: Route,
   },
   {
     id: 'performance-rum',

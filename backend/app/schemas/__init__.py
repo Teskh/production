@@ -10,6 +10,7 @@ __all__ = [
     "qc",
     "reports",
     "stations",
+    "task_station_adherence",
     "tasks",
     "worker_sessions",
     "worker_station",

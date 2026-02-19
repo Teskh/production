@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.api.routes.geovictoria import _post_geovictoria
 from app.models.enums import StationRole
+from app.models.shift_estimate_worker_presence import ShiftEstimateWorkerPresence
 from app.models.shift_estimates import ShiftEstimate
 from app.models.stations import Station
 from app.models.workers import Worker
@@ -23,6 +24,7 @@ from app.schemas.shift_estimates import (
     ShiftEstimateCoverageDay,
     ShiftEstimateDay,
     ShiftEstimateRead,
+    ShiftEstimateWorkerPresenceRead,
 )
 
 
@@ -373,6 +375,51 @@ def _fetch_existing_map(
     return existing_map
 
 
+def _fetch_existing_worker_presence_map(
+    db: Session, start_date: date, end_date: date
+) -> dict[date, dict[str, set[int]]]:
+    existing_map: dict[date, dict[str, set[int]]] = {}
+    rows = db.execute(
+        select(
+            ShiftEstimateWorkerPresence.date,
+            ShiftEstimateWorkerPresence.group_key,
+            ShiftEstimateWorkerPresence.worker_id,
+        ).where(
+            ShiftEstimateWorkerPresence.date >= start_date,
+            ShiftEstimateWorkerPresence.date <= end_date,
+            ShiftEstimateWorkerPresence.algorithm_version == ALGORITHM_VERSION,
+        )
+    ).all()
+    for row_date, group_key, worker_id in rows:
+        day_bucket = existing_map.get(row_date)
+        if day_bucket is None:
+            day_bucket = {}
+            existing_map[row_date] = day_bucket
+        worker_bucket = day_bucket.get(group_key)
+        if worker_bucket is None:
+            worker_bucket = set()
+            day_bucket[group_key] = worker_bucket
+        worker_bucket.add(worker_id)
+    return existing_map
+
+
+def _attendance_status_for_worker(
+    worker: Worker,
+    state: AttendanceState | None,
+    failed_worker_ids: set[int],
+) -> tuple[bool, str]:
+    if worker.id in failed_worker_ids:
+        return False, "fetch-error"
+    identifier = (worker.geovictoria_identifier or "").strip()
+    if not identifier:
+        return False, "no-id"
+    if not state or (not state.entry and not state.exit):
+        return False, "absent"
+    if state.entry and not state.exit:
+        return True, "open"
+    return True, "present"
+
+
 def _compute_range(
     db: Session,
     start_date: date,
@@ -396,6 +443,7 @@ def _compute_range(
             to_date=start_date,
             processed_days=0,
             computed_count=0,
+            computed_worker_rows=0,
             skipped_existing=0,
             excluded_days=range_days,
             worker_errors=0,
@@ -410,6 +458,7 @@ def _compute_range(
     group_workers = _build_group_workers(groups, station_workers)
 
     computed_count = 0
+    computed_worker_rows = 0
     skipped_existing = 0
     worker_errors = 0
     processed_days = (final_end - start_date).days + 1
@@ -419,6 +468,9 @@ def _compute_range(
         chunk_end = min(final_end, chunk_start + timedelta(days=CHUNK_DAYS - 1))
         chunk_dates = _iter_dates(chunk_start, chunk_end)
         existing_map = _fetch_existing_map(db, chunk_start, chunk_end)
+        existing_worker_presence_map = _fetch_existing_worker_presence_map(
+            db, chunk_start, chunk_end
+        )
 
         missing_by_date: dict[date, set[str]] = {}
         for day in chunk_dates:
@@ -428,14 +480,37 @@ def _compute_range(
                 missing_by_date[day] = missing
             skipped_existing += len(cached)
 
-        if missing_by_date:
+        missing_worker_presence_by_date: dict[date, dict[str, list[Worker]]] = {}
+        for day in chunk_dates:
+            existing_for_day = existing_worker_presence_map.get(day, {})
+            day_missing: dict[str, list[Worker]] = {}
+            for key, workers_for_group in group_workers.items():
+                if not workers_for_group:
+                    continue
+                existing_worker_ids = existing_for_day.get(key, set())
+                missing_workers = [
+                    worker
+                    for worker in workers_for_group
+                    if worker.id not in existing_worker_ids
+                ]
+                if missing_workers:
+                    day_missing[key] = missing_workers
+            if day_missing:
+                missing_worker_presence_by_date[day] = day_missing
+
+        if missing_by_date or missing_worker_presence_by_date:
             needed_worker_ids: set[int] = set()
             for keys in missing_by_date.values():
                 for key in keys:
                     for worker in group_workers.get(key, []):
                         needed_worker_ids.add(worker.id)
+            for groups_for_day in missing_worker_presence_by_date.values():
+                for workers_for_group in groups_for_day.values():
+                    for worker in workers_for_group:
+                        needed_worker_ids.add(worker.id)
 
             attendance_by_worker: dict[int, dict[date, AttendanceState]] = {}
+            failed_worker_ids: set[int] = set()
             for worker in active_workers:
                 if worker.id not in needed_worker_ids:
                     continue
@@ -448,6 +523,7 @@ def _compute_range(
                     )
                 except HTTPException:
                     worker_errors += 1
+                    failed_worker_ids.add(worker.id)
                     attendance_by_worker[worker.id] = {}
                 time_module.sleep(SLEEP_SECONDS)
 
@@ -506,15 +582,59 @@ def _compute_range(
                             "algorithm_version": ALGORITHM_VERSION,
                         }
                     )
+
+            worker_rows: list[dict[str, Any]] = []
+            for day, missing_groups in missing_worker_presence_by_date.items():
+                for key, workers_for_group in missing_groups.items():
+                    group = groups[key]
+                    for worker in workers_for_group:
+                        state = attendance_by_worker.get(worker.id, {}).get(day)
+                        is_present, attendance_status = _attendance_status_for_worker(
+                            worker, state, failed_worker_ids
+                        )
+                        worker_rows.append(
+                            {
+                                "date": day,
+                                "group_key": key,
+                                "worker_id": worker.id,
+                                "station_role": group.role,
+                                "station_id": group.station_id,
+                                "sequence_order": group.sequence_order,
+                                "is_assigned": True,
+                                "is_present": is_present,
+                                "first_entry": state.entry if state else None,
+                                "last_exit": state.exit if state else None,
+                                "attendance_status": attendance_status,
+                                "computed_at": datetime.utcnow(),
+                                "algorithm_version": ALGORITHM_VERSION,
+                            }
+                        )
+
             if rows:
-                stmt = insert(ShiftEstimate).values(rows)
-                stmt = stmt.on_conflict_do_nothing(
+                estimate_stmt = insert(ShiftEstimate).values(rows)
+                estimate_stmt = estimate_stmt.on_conflict_do_nothing(
                     index_elements=["date", "group_key", "algorithm_version"]
                 )
-                result = db.execute(stmt)
+                estimate_result = db.execute(estimate_stmt)
+                if estimate_result.rowcount:
+                    computed_count += estimate_result.rowcount
+
+            if worker_rows:
+                worker_stmt = insert(ShiftEstimateWorkerPresence).values(worker_rows)
+                worker_stmt = worker_stmt.on_conflict_do_nothing(
+                    index_elements=[
+                        "date",
+                        "group_key",
+                        "worker_id",
+                        "algorithm_version",
+                    ]
+                )
+                worker_result = db.execute(worker_stmt)
+                if worker_result.rowcount:
+                    computed_worker_rows += worker_result.rowcount
+
+            if rows or worker_rows:
                 db.commit()
-                if result.rowcount:
-                    computed_count += result.rowcount
         chunk_start = chunk_end + timedelta(days=1)
 
     excluded_days = (end_date - final_end).days if end_date > final_end else 0
@@ -523,6 +643,7 @@ def _compute_range(
         to_date=final_end,
         processed_days=processed_days,
         computed_count=computed_count,
+        computed_worker_rows=computed_worker_rows,
         skipped_existing=skipped_existing,
         excluded_days=excluded_days,
         worker_errors=worker_errors,
@@ -545,6 +666,7 @@ def get_shift_estimates_for_day(
             expected_count=expected_count,
             cached_count=0,
             estimates=[],
+            worker_presence=[],
         )
 
     estimates = list(
@@ -552,9 +674,37 @@ def get_shift_estimates_for_day(
             select(ShiftEstimate).where(
                 ShiftEstimate.date == date_value,
                 ShiftEstimate.algorithm_version == ALGORITHM_VERSION,
+            ).order_by(ShiftEstimate.group_key)
+        ).scalars()
+    )
+    worker_presence_rows = list(
+        db.execute(
+            select(ShiftEstimateWorkerPresence).where(
+                ShiftEstimateWorkerPresence.date == date_value,
+                ShiftEstimateWorkerPresence.algorithm_version == ALGORITHM_VERSION,
+            ).order_by(
+                ShiftEstimateWorkerPresence.group_key,
+                ShiftEstimateWorkerPresence.worker_id,
             )
         ).scalars()
     )
+
+    present_worker_ids_by_group: dict[str, set[int]] = {}
+    for row in worker_presence_rows:
+        if not row.is_present:
+            continue
+        bucket = present_worker_ids_by_group.get(row.group_key)
+        if bucket is None:
+            bucket = set()
+            present_worker_ids_by_group[row.group_key] = bucket
+        bucket.add(row.worker_id)
+
+    estimates_payload: list[ShiftEstimateRead] = []
+    for item in estimates:
+        payload = ShiftEstimateRead.model_validate(item)
+        payload.present_worker_ids = sorted(present_worker_ids_by_group.get(item.group_key, set()))
+        estimates_payload.append(payload)
+
     cached_count = len(estimates)
     status_value = _date_status(date_value, cached_count, expected_count)
     return ShiftEstimateDay(
@@ -562,7 +712,11 @@ def get_shift_estimates_for_day(
         status=status_value,
         expected_count=expected_count,
         cached_count=cached_count,
-        estimates=[ShiftEstimateRead.model_validate(item) for item in estimates],
+        estimates=estimates_payload,
+        worker_presence=[
+            ShiftEstimateWorkerPresenceRead.model_validate(item)
+            for item in worker_presence_rows
+        ],
     )
 
 

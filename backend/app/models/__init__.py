@@ -28,12 +28,14 @@ from app.models.qc import (
 )
 from app.models.stations import Station
 from app.models.shift_estimates import ShiftEstimate
+from app.models.shift_estimate_worker_presence import ShiftEstimateWorkerPresence
 from app.models.tasks import (
     TaskApplicability,
     TaskDefinition,
     TaskException,
     TaskExpectedDuration,
     TaskInstance,
+    TaskStationAdherenceFact,
     TaskParticipation,
     TaskPause,
 )
@@ -79,11 +81,13 @@ __all__ = [
     "Skill",
     "Station",
     "ShiftEstimate",
+    "ShiftEstimateWorkerPresence",
     "TaskApplicability",
     "TaskDefinition",
     "TaskException",
     "TaskExpectedDuration",
     "TaskInstance",
+    "TaskStationAdherenceFact",
     "TaskParticipation",
     "TaskPause",
     "TaskSkillRequirement",

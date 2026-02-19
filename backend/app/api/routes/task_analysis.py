@@ -198,6 +198,7 @@ def list_task_analysis_workers(
     module_number: int | None = Query(None, ge=1),
     task_definition_id: int | None = None,
     station_id: int | None = None,
+    include_cross_station: bool = Query(False),
     from_date: str | None = None,
     to_date: str | None = None,
     db: Session = Depends(get_db),
@@ -258,7 +259,10 @@ def list_task_analysis_workers(
             .where(WorkUnit.module_number == module_number)
         )
 
-    if station_id is not None:
+    apply_station_filter = station_id is not None and not (
+        include_cross_station and task_definition_id is not None
+    )
+    if apply_station_filter:
         if scope == TaskScope.MODULE:
             selected_station = db.get(Station, station_id)
             if selected_station and selected_station.sequence_order is not None:
@@ -312,6 +316,7 @@ def get_task_analysis(
     module_number: int | None = Query(None, ge=1),
     task_definition_id: int | None = None,
     station_id: int | None = None,
+    include_cross_station: bool = Query(False),
     worker_id: int | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
@@ -387,7 +392,10 @@ def get_task_analysis(
             .where(WorkUnit.module_number == module_number)
         )
 
-    if station_id is not None:
+    apply_station_filter = station_id is not None and not (
+        include_cross_station and task_definition_id is not None
+    )
+    if apply_station_filter:
         if scope == TaskScope.MODULE:
             selected_station = db.get(Station, station_id)
             if selected_station and selected_station.sequence_order is not None:

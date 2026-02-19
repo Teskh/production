@@ -24,6 +24,7 @@ import DashboardPanels from './pages/admin/dashboards/dashboard_panels';
 import DashboardStations from './pages/admin/dashboards/dashboard_stations';
 import DashboardTasks from './pages/admin/dashboards/dashboard_tasks';
 import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_analysis';
+import DashboardTaskStationAdherence from './pages/admin/dashboards/dashboard_task_station_adherence';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
 import DashboardPerformance from './pages/admin/dashboards/dashboard_performance';
@@ -114,6 +115,7 @@ function App() {
           <Route path="dashboards/stations" element={<DashboardStations />} />
           <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
+          <Route path="dashboards/station-adherence" element={<DashboardTaskStationAdherence />} />
           <Route
             path="dashboards/assistance"
             element={<SysadminOnlyRoute element={<DashboardAssistance />} />}
