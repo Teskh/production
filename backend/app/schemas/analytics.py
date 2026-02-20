@@ -43,6 +43,7 @@ class TaskAnalysisResponse(BaseModel):
     mode: str
     data_points: list[TaskAnalysisDataPoint]
     expected_reference_minutes: float | None = None
+    strict_excluded_count: int | None = None
     stats: TaskAnalysisStats | None = None
 
 

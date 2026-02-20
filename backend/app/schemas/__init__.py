@@ -4,6 +4,7 @@ __all__ = [
     "backups",
     "config",
     "houses",
+    "line_attendance_throughput",
     "panels",
     "parameters",
     "performance",

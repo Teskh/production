@@ -11,6 +11,7 @@ from app.models.enums import TaskScope, TaskStatus
 from app.models.house import PanelDefinition
 from app.models.stations import Station
 from app.models.tasks import (
+    TaskApplicability,
     TaskDefinition,
     TaskExpectedDuration,
     TaskInstance,
@@ -27,6 +28,7 @@ from app.schemas.analytics import (
     TaskAnalysisTaskBreakdown,
     TaskAnalysisWorkerOption,
 )
+from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
 
@@ -85,26 +87,73 @@ def _build_panel_expected_map(
     return expected_map
 
 
-def _pause_minutes(pauses: list[TaskPause], completed_at: datetime) -> float:
-    total = 0.0
-    for pause in pauses:
-        if not pause.paused_at:
+def _merge_intervals(
+    intervals: list[tuple[datetime, datetime]]
+) -> list[tuple[datetime, datetime]]:
+    if not intervals:
+        return []
+    ordered = sorted(intervals, key=lambda item: item[0])
+    merged: list[tuple[datetime, datetime]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _active_intervals(
+    instance: TaskInstance, pause_map: dict[int, list[TaskPause]]
+) -> list[tuple[datetime, datetime]]:
+    started_at = instance.started_at
+    completed_at = instance.completed_at
+    if not started_at or not completed_at or completed_at < started_at:
+        return []
+    if completed_at == started_at:
+        return []
+
+    raw_pauses = pause_map.get(instance.id, [])
+    clipped_pauses: list[tuple[datetime, datetime]] = []
+    for pause in raw_pauses:
+        paused_at = pause.paused_at
+        resumed_at = pause.resumed_at or completed_at
+        if not paused_at:
             continue
-        end_time = pause.resumed_at or completed_at
-        if end_time is None:
+        if resumed_at < paused_at:
             continue
-        if end_time < pause.paused_at:
+        pause_start = max(paused_at, started_at)
+        pause_end = min(resumed_at, completed_at)
+        if pause_end <= pause_start:
             continue
-        total += (end_time - pause.paused_at).total_seconds() / 60
-    return total
+        clipped_pauses.append((pause_start, pause_end))
+
+    if not clipped_pauses:
+        return [(started_at, completed_at)]
+
+    active: list[tuple[datetime, datetime]] = []
+    cursor = started_at
+    for pause_start, pause_end in _merge_intervals(clipped_pauses):
+        if pause_start > cursor:
+            active.append((cursor, pause_start))
+        if pause_end > cursor:
+            cursor = pause_end
+    if cursor < completed_at:
+        active.append((cursor, completed_at))
+    return active
+
+
+def _intervals_total_minutes(intervals: list[tuple[datetime, datetime]]) -> float:
+    if not intervals:
+        return 0.0
+    return sum((end - start).total_seconds() / 60 for start, end in intervals)
 
 
 def _duration_minutes(instance: TaskInstance, pause_map: dict[int, list[TaskPause]]) -> float | None:
     if not instance.started_at or not instance.completed_at:
         return None
-    base_minutes = (instance.completed_at - instance.started_at).total_seconds() / 60
-    pause_minutes = _pause_minutes(pause_map.get(instance.id, []), instance.completed_at)
-    return round(max(base_minutes - pause_minutes, 0.0), 2)
+    active_minutes = _intervals_total_minutes(_active_intervals(instance, pause_map))
+    return round(max(active_minutes, 0.0), 2)
 
 
 def _average(values: list[float]) -> float | None:
@@ -354,6 +403,8 @@ def get_task_analysis(
 
     from_dt = _parse_datetime(from_date, "from_date")
     to_dt = _parse_datetime(to_date, "to_date")
+    selected_station = db.get(Station, station_id) if station_id is not None else None
+    selected_station_sequence = selected_station.sequence_order if selected_station else None
 
     if scope == TaskScope.PANEL:
         stmt = (
@@ -397,7 +448,6 @@ def get_task_analysis(
     )
     if apply_station_filter:
         if scope == TaskScope.MODULE:
-            selected_station = db.get(Station, station_id)
             if selected_station and selected_station.sequence_order is not None:
                 stmt = (
                     stmt.join(Station, TaskInstance.station_id == Station.id).where(
@@ -431,6 +481,7 @@ def get_task_analysis(
             mode=empty_mode,
             data_points=[],
             expected_reference_minutes=None,
+            strict_excluded_count=0,
             stats=TaskAnalysisStats(average_duration=None),
         )
 
@@ -461,6 +512,27 @@ def get_task_analysis(
     for pause in pause_rows:
         pause_map.setdefault(pause.task_instance_id, []).append(pause)
 
+    scope_tasks: list[TaskDefinition] = []
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    if task_definition_id is None:
+        scope_tasks = list(
+            db.execute(
+                select(TaskDefinition)
+                .where(TaskDefinition.scope == scope)
+                .where(TaskDefinition.active == True)
+            ).scalars()
+        )
+        if scope_tasks:
+            applicability_rows = list(
+                db.execute(
+                    select(TaskApplicability).where(
+                        TaskApplicability.task_definition_id.in_([task.id for task in scope_tasks])
+                    )
+                ).scalars()
+            )
+            for row in applicability_rows:
+                applicability_map.setdefault(row.task_definition_id, []).append(row)
+
     expected_map: dict[int, float] = {}
     module_duration_map: dict[int, list[TaskExpectedDuration]] = {}
     if scope == TaskScope.PANEL:
@@ -469,7 +541,7 @@ def get_task_analysis(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Panel definition not resolved",
             )
-        panel_tasks = list(
+        panel_tasks = scope_tasks if scope_tasks else list(
             db.execute(
                 select(TaskDefinition)
                 .where(TaskDefinition.scope == TaskScope.PANEL)
@@ -487,11 +559,15 @@ def get_task_analysis(
         for row in duration_rows:
             expected_map[row.task_definition_id] = float(row.expected_minutes)
     else:
-        module_task_ids = {
-            row[1].id
-            for row in rows
-            if isinstance(row[1], TaskDefinition)
-        }
+        module_task_ids = (
+            {task.id for task in scope_tasks}
+            if task_definition_id is None and scope_tasks
+            else {
+                row[1].id
+                for row in rows
+                if isinstance(row[1], TaskDefinition)
+            }
+        )
         if module_task_ids:
             module_duration_rows = list(
                 db.execute(
@@ -549,6 +625,15 @@ def get_task_analysis(
             )
 
     if task_definition_id is None:
+        if station_id is None or selected_station_sequence is None:
+            return TaskAnalysisResponse(
+                mode="panel" if scope == TaskScope.PANEL else "module",
+                data_points=[],
+                expected_reference_minutes=None,
+                strict_excluded_count=0,
+                stats=TaskAnalysisStats(average_duration=None),
+            )
+
         grouped: dict[int, dict[str, object]] = {}
         for entry in task_entries:
             work_unit = entry["work_unit"]
@@ -574,22 +659,18 @@ def get_task_analysis(
                     "plan_id": work_unit.id,
                     "house_identifier": house_identifier,
                     "module_number": work_unit.module_number,
-                    "duration": 0.0,
-                    "expected_values": [],
-                    "missing_expected": False,
                     "completed_at": entry["instance"].completed_at,
+                    "work_order": work_order,
+                    "work_unit": work_unit,
                     "workers": set(),
+                    "active_intervals": [],
+                    "executed_task_ids": set(),
+                    "task_counts": {},
                     "breakdown": [],
                 }
                 grouped[group_key] = group
 
             duration = float(entry["duration"])
-            group["duration"] = float(group["duration"]) + duration
-            expected = entry["expected"]
-            if expected is None:
-                group["missing_expected"] = True
-            else:
-                group["expected_values"].append(float(expected))
             completed_at = entry["instance"].completed_at
             if completed_at and group["completed_at"]:
                 group["completed_at"] = max(
@@ -608,6 +689,9 @@ def get_task_analysis(
             instance = entry["instance"]
             if not isinstance(instance, TaskInstance):
                 continue
+            group["executed_task_ids"].add(task_def.id)
+            group["task_counts"][task_def.id] = int(group["task_counts"].get(task_def.id, 0)) + 1
+            group["active_intervals"].extend(_active_intervals(instance, pause_map))
             pause_minutes, pause_details = _build_task_pause_details(
                 pause_map.get(instance.id, []),
                 instance.completed_at,
@@ -625,16 +709,100 @@ def get_task_analysis(
             )
             group["breakdown"].append(breakdown)
 
+        panel_task_order_set = (
+            set(panel_definition.applicable_task_ids or [])
+            if scope == TaskScope.PANEL and panel_definition and panel_definition.applicable_task_ids is not None
+            else None
+        )
+        required_expected_cache: dict[
+            tuple[int, int | None, int, int | None], dict[int, float] | None
+        ] = {}
+
+        def resolve_required_expected_by_task(
+            work_order: WorkOrder,
+            work_unit: WorkUnit,
+        ) -> dict[int, float] | None:
+            context_key = (
+                work_order.house_type_id,
+                work_order.sub_type_id,
+                work_unit.module_number,
+                panel_definition_id if scope == TaskScope.PANEL else None,
+            )
+            if context_key in required_expected_cache:
+                return required_expected_cache[context_key]
+            if not scope_tasks:
+                required_expected_cache[context_key] = None
+                return None
+
+            required_expected: dict[int, float] = {}
+            for task in scope_tasks:
+                if panel_task_order_set is not None and task.id not in panel_task_order_set:
+                    continue
+                applies, station_sequence = resolve_task_station_sequence(
+                    task,
+                    applicability_map.get(task.id, []),
+                    work_order.house_type_id,
+                    work_order.sub_type_id,
+                    work_unit.module_number,
+                    panel_definition_id if scope == TaskScope.PANEL else None,
+                )
+                if not applies or station_sequence is None or station_sequence != selected_station_sequence:
+                    continue
+
+                expected_minutes = (
+                    expected_map.get(task.id)
+                    if scope == TaskScope.PANEL
+                    else _resolve_module_expected(
+                        module_duration_map.get(task.id, []),
+                        work_order.house_type_id,
+                        work_unit.module_number,
+                    )
+                )
+                if expected_minutes is None or expected_minutes <= 0:
+                    required_expected_cache[context_key] = None
+                    return None
+                required_expected[task.id] = float(expected_minutes)
+
+            if not required_expected:
+                required_expected_cache[context_key] = None
+                return None
+            required_expected_cache[context_key] = required_expected
+            return required_expected
+
         data_points: list[TaskAnalysisDataPoint] = []
         durations: list[float] = []
         expected_refs: list[float] = []
+        strict_excluded_count = 0
         for group in grouped.values():
-            duration = round(float(group["duration"]), 2)
+            work_order = group["work_order"]
+            work_unit = group["work_unit"]
+            if not isinstance(work_order, WorkOrder) or not isinstance(work_unit, WorkUnit):
+                continue
+            required_expected = resolve_required_expected_by_task(work_order, work_unit)
+            if not required_expected:
+                strict_excluded_count += 1
+                continue
+            required_task_ids = set(required_expected.keys())
+            executed_task_ids = set(group["executed_task_ids"])
+            if executed_task_ids != required_task_ids:
+                strict_excluded_count += 1
+                continue
+            task_counts = group["task_counts"]
+            if not isinstance(task_counts, dict):
+                strict_excluded_count += 1
+                continue
+            if any(int(task_counts.get(task_id, 0)) != 1 for task_id in required_task_ids):
+                strict_excluded_count += 1
+                continue
+            if any(task_id not in required_task_ids for task_id in task_counts.keys()):
+                strict_excluded_count += 1
+                continue
+
+            merged_intervals = _merge_intervals(group["active_intervals"])
+            duration = round(_intervals_total_minutes(merged_intervals), 2)
             durations.append(duration)
-            expected_minutes = None
-            if not group["missing_expected"] and group["expected_values"]:
-                expected_minutes = round(sum(group["expected_values"]), 2)
-                expected_refs.append(expected_minutes)
+            expected_minutes = round(sum(required_expected.values()), 2)
+            expected_refs.append(expected_minutes)
             worker_names = sorted(group["workers"])
             worker_label = ", ".join(worker_names) if worker_names else None
             breakdown = sorted(
@@ -658,6 +826,7 @@ def get_task_analysis(
             mode="panel" if scope == TaskScope.PANEL else "module",
             data_points=data_points,
             expected_reference_minutes=_average(expected_refs),
+            strict_excluded_count=strict_excluded_count,
             stats=TaskAnalysisStats(average_duration=_average(durations)),
         )
 
@@ -697,5 +866,6 @@ def get_task_analysis(
         mode="task",
         data_points=data_points,
         expected_reference_minutes=_average(expected_refs),
+        strict_excluded_count=0,
         stats=TaskAnalysisStats(average_duration=_average(durations)),
     )

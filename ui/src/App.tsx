@@ -28,6 +28,7 @@ import DashboardTaskStationAdherence from './pages/admin/dashboards/dashboard_ta
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
 import DashboardPerformance from './pages/admin/dashboards/dashboard_performance';
+import DashboardLineAttendanceThroughput from './pages/admin/dashboards/dashboard_line_attendance_throughput';
 import Personnel from './pages/admin/personnel/Personnel';
 import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -127,6 +128,10 @@ function App() {
           <Route
             path="dashboards/performance"
             element={<SysadminOnlyRoute element={<DashboardPerformance />} />}
+          />
+          <Route
+            path="dashboards/line-attendance-throughput"
+            element={<DashboardLineAttendanceThroughput />}
           />
         </Route>
 

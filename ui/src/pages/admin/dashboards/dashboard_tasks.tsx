@@ -136,6 +136,7 @@ type TaskAnalysisResponse = {
   mode?: 'panel' | 'module' | 'task' | 'station' | string;
   data_points?: AnalysisPoint[] | null;
   expected_reference_minutes?: number | null;
+  strict_excluded_count?: number | null;
   stats?: AnalysisStats | null;
 };
 
@@ -1532,6 +1533,7 @@ const DashboardTasks: React.FC = () => {
   ]);
   const usesStationTaskAnalysis = activeTab === 'panel' || activeTab === 'task-summary';
   const displayAnalysisData = usesStationTaskAnalysis && panelSelectionReady ? analysisData : null;
+  const strictCompletenessExcludedCount = Math.max(0, Number(displayAnalysisData?.strict_excluded_count) || 0);
   const displayError = usesStationTaskAnalysis
     ? selectionErrorMessage || (panelSelectionReady ? error : '')
     : '';
@@ -1623,6 +1625,42 @@ const DashboardTasks: React.FC = () => {
       const pointWithRatio = { ...point, duration_minutes: duration, ratio } as AnalysisPoint & {
         ratio: number | null;
       };
+      const taskRows = Array.isArray(point.task_breakdown) ? point.task_breakdown : [];
+      if (taskRows.length) {
+        let hasTaskWithExpected = false;
+        let hasTaskWithoutExpected = false;
+        let isOutsideRange = false;
+        taskRows.forEach((taskRow) => {
+          if (isOutsideRange) return;
+          const taskExpected = Number(taskRow.expected_minutes);
+          const taskHasExpected = Number.isFinite(taskExpected) && taskExpected > 0;
+          if (!taskHasExpected) {
+            hasTaskWithoutExpected = true;
+            return;
+          }
+          hasTaskWithExpected = true;
+          const taskDuration = Number(taskRow.duration_minutes);
+          if (!Number.isFinite(taskDuration) || taskDuration < 0) {
+            isOutsideRange = true;
+            return;
+          }
+          const taskRatio = taskDuration / taskExpected;
+          if (taskRatio < minVal || taskRatio > maxVal) {
+            isOutsideRange = true;
+          }
+        });
+        const isMissingExpectedRejected = hasTaskWithoutExpected && !includeWithoutExpected;
+        const hasNoEvaluableExpected = !hasTaskWithExpected;
+        if (isOutsideRange || isMissingExpectedRejected || (hasNoEvaluableExpected && !includeWithoutExpected)) {
+          excluded.push(pointWithRatio);
+        } else {
+          included.push(pointWithRatio);
+          if (hypothesisDurations && predicate && predicate(pointWithRatio)) {
+            hypothesisDurations.push(duration);
+          }
+        }
+        return;
+      }
       if (!hasExpected) {
         if (includeWithoutExpected) {
           included.push(pointWithRatio);
@@ -1668,6 +1706,47 @@ const DashboardTasks: React.FC = () => {
     includeWithoutExpected,
     hypothesis.predicate,
   ]);
+
+  const expectedReferenceTooltip = useMemo(() => {
+    const expectedReference = analysisSummary.expectedReference;
+    if (expectedReference == null) {
+      return 'Sin valor esperado de referencia.';
+    }
+    const points = Array.isArray(displayAnalysisData?.data_points)
+      ? displayAnalysisData.data_points
+      : [];
+    const referencePoint = points.find((point) => Array.isArray(point.task_breakdown) && point.task_breakdown.length);
+    const baseLines = [
+      `Esperado por muestra: ${formatMinutesWithUnit(expectedReference)}.`,
+    ];
+    if (!referencePoint || !Array.isArray(referencePoint.task_breakdown)) {
+      return baseLines.join('\n');
+    }
+
+    const expectedByTask = new Map<string, { label: string; expected: number }>();
+    referencePoint.task_breakdown.forEach((taskRow) => {
+      const expected = Number(taskRow.expected_minutes);
+      if (!Number.isFinite(expected) || expected <= 0) return;
+      const numericTaskId = Number(taskRow.task_definition_id);
+      const taskLabel = taskRow.task_name || String(taskRow.task_definition_id || 'Tarea');
+      const key = Number.isFinite(numericTaskId) ? `id:${numericTaskId}` : `name:${normalizeText(taskLabel)}`;
+      if (!expectedByTask.has(key)) {
+        expectedByTask.set(key, { label: taskLabel, expected });
+      }
+    });
+    const tasks = Array.from(expectedByTask.values())
+      .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+    if (!tasks.length) {
+      return baseLines.join('\n');
+    }
+    const sum = tasks.reduce((total, task) => total + task.expected, 0);
+    return [
+      ...baseLines,
+      'Tareas relevantes:',
+      ...tasks.map((task) => `- ${task.label}: ${formatMinutesWithUnit(task.expected)}`),
+      `Suma: ${formatMinutesWithUnit(sum)}.`,
+    ].join('\n');
+  }, [analysisSummary.expectedReference, displayAnalysisData]);
 
   const taskSummaryRows = useMemo(() => {
     const points = Array.isArray(displayAnalysisData?.data_points)
@@ -2607,7 +2686,8 @@ const DashboardTasks: React.FC = () => {
               );
             })}
             {expectedX !== null && (
-              <g>
+              <g className="cursor-help">
+                <title>{expectedReferenceTooltip}</title>
                 <line
                   x1={margin.left + expectedX}
                   y1={margin.top - expectedGuideOvershoot}
@@ -3944,7 +4024,7 @@ const DashboardTasks: React.FC = () => {
           {displayAnalysisData && (
             activeTab === 'panel' ? (
               <section className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Total</p>
                     <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">
@@ -3956,8 +4036,14 @@ const DashboardTasks: React.FC = () => {
                     <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.included.length}</p>
                   </div>
                   <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas</p>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Excluidas (ratio)</p>
                     <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{analysisSummary.excluded.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+                    <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                      Excluidas (completitud)
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-[var(--ink)]">{strictCompletenessExcludedCount}</p>
                   </div>
                   <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
                     <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Promedio bruto</p>
@@ -4276,7 +4362,7 @@ const DashboardTasks: React.FC = () => {
               </p>
               <p>
                 <strong>Modo modulo (sin tarea seleccionada):</strong> cada muestra es un modulo en una casa. La
-                duracion suma las tareas de modulo completadas en la estacion/filtros seleccionados.
+                duracion del modulo se calcula uniendo los intervalos de tiempo de sus tareas y restando pausas.
               </p>
               <p>
                 <strong>Modo tarea (con tarea seleccionada):</strong> cada muestra es una ejecucion de esa tarea.
@@ -4297,8 +4383,13 @@ const DashboardTasks: React.FC = () => {
               </p>
               <p>
                 <strong>Incluidas vs excluidas:</strong> el histograma usa solo "Muestras incluidas", definidas por el
-                rango [esperado x min multiplicador, esperado x max multiplicador]. Las demas aparecen en "Muestras
-                excluidas".
+                rango [esperado x min multiplicador, esperado x max multiplicador]. En panel/modulo, cada tarea del
+                desglose debe quedar dentro del rango para que la muestra entre como incluida. Las demas aparecen en
+                "Muestras excluidas".
+              </p>
+              <p>
+                <strong>Comparabilidad estricta:</strong> en panel/modulo solo se consideran muestras que tengan el set
+                completo esperado de tareas para la estacion (sin faltantes ni tareas extra).
               </p>
               <p>
                 <strong>Sin esperado:</strong> si una muestra no tiene tiempo esperado valido, se incluye o excluye

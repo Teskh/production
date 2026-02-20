@@ -11,6 +11,7 @@ import {
   Ruler,
   Star,
   Timer,
+  TrendingUp,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { isSysadminUser, useAdminHeader, useAdminSession } from '../../../layouts/AdminLayoutContext';
@@ -67,6 +68,16 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Paneles', 'Estaciones', 'Tiempo'],
     icon: ClipboardList,
+  },
+  {
+    id: 'line-attendance-throughput',
+    name: 'Asistencia vs flujo de linea',
+    description:
+      'Cruza asistencia cacheada con produccion de paneles o movimiento de modulos por dia.',
+    path: '/admin/dashboards/line-attendance-throughput',
+    status: 'ready',
+    tags: ['Asistencia', 'Paneles', 'Modulos'],
+    icon: TrendingUp,
   },
   {
     id: 'tasks-analysis',
