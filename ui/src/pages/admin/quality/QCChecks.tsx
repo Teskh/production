@@ -147,6 +147,21 @@ type TriggerDraft = {
   task_definition_ids: number[];
 };
 
+type TriggerTaskIssue = {
+  trigger_id: number;
+  check_definition_id: number;
+  check_name: string;
+  task_definition_id: number;
+  task_name: string;
+  kind: 'inactive' | 'missing';
+};
+
+type DraftTaskIssue = {
+  task_definition_id: number;
+  task_name: string;
+  kind: 'inactive' | 'missing';
+};
+
 type ApplicabilityDraft = {
   id?: number;
   house_type_ids: number[];
@@ -552,11 +567,113 @@ const QCChecks: React.FC = () => {
     [triggers, selectedCheckId]
   );
 
+  const checkNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    checks.forEach((check) => map.set(check.id, check.name));
+    return map;
+  }, [checks]);
+
+  const taskById = useMemo(() => {
+    const map = new Map<number, TaskDefinition>();
+    tasks.forEach((task) => map.set(task.id, task));
+    return map;
+  }, [tasks]);
+
   const taskNameById = useMemo(() => {
     const map = new Map<number, string>();
     tasks.forEach((task) => map.set(task.id, task.name));
     return map;
   }, [tasks]);
+
+  const triggerTaskIssues = useMemo(() => {
+    const seen = new Set<string>();
+    const issues: TriggerTaskIssue[] = [];
+    triggers.forEach((trigger) => {
+      const checkName =
+        checkNameById.get(trigger.check_definition_id) ?? `Check ${trigger.check_definition_id}`;
+      const taskIds = trigger.params_json?.task_definition_ids ?? [];
+      taskIds.forEach((taskId) => {
+        const task = taskById.get(taskId);
+        if (!task) {
+          const key = `${trigger.id}-missing-${taskId}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            issues.push({
+              trigger_id: trigger.id,
+              check_definition_id: trigger.check_definition_id,
+              check_name: checkName,
+              task_definition_id: taskId,
+              task_name: `Tarea ${taskId}`,
+              kind: 'missing',
+            });
+          }
+          return;
+        }
+        if (!task.active) {
+          const key = `${trigger.id}-inactive-${task.id}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            issues.push({
+              trigger_id: trigger.id,
+              check_definition_id: trigger.check_definition_id,
+              check_name: checkName,
+              task_definition_id: task.id,
+              task_name: task.name,
+              kind: 'inactive',
+            });
+          }
+        }
+      });
+    });
+    return issues;
+  }, [checkNameById, taskById, triggers]);
+
+  const triggerIssueCountById = useMemo(() => {
+    const map = new Map<number, number>();
+    triggerTaskIssues.forEach((issue) => {
+      map.set(issue.trigger_id, (map.get(issue.trigger_id) ?? 0) + 1);
+    });
+    return map;
+  }, [triggerTaskIssues]);
+
+  const selectedCheckTriggerIssues = useMemo(() => {
+    if (!selectedCheckId) {
+      return [];
+    }
+    return triggerTaskIssues.filter((issue) => issue.check_definition_id === selectedCheckId);
+  }, [selectedCheckId, triggerTaskIssues]);
+
+  const triggerDraftTaskIssues = useMemo(() => {
+    const seen = new Set<string>();
+    const issues: DraftTaskIssue[] = [];
+    triggerDraft.task_definition_ids.forEach((taskId) => {
+      const task = taskById.get(taskId);
+      if (!task) {
+        const key = `missing-${taskId}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            task_definition_id: taskId,
+            task_name: `Tarea ${taskId}`,
+            kind: 'missing',
+          });
+        }
+        return;
+      }
+      if (!task.active) {
+        const key = `inactive-${task.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            task_definition_id: task.id,
+            task_name: task.name,
+            kind: 'inactive',
+          });
+        }
+      }
+    });
+    return issues;
+  }, [taskById, triggerDraft.task_definition_ids]);
 
   const triggerTaskLabel = (trigger: QCTrigger) => {
     const taskIds = trigger.params_json?.task_definition_ids ?? [];
@@ -564,7 +681,16 @@ const QCChecks: React.FC = () => {
       return 'Sin tareas';
     }
     return taskIds
-      .map((taskId) => taskNameById.get(taskId) ?? `Tarea ${taskId}`)
+      .map((taskId) => {
+        const task = taskById.get(taskId);
+        if (!task) {
+          return `Tarea ${taskId} (no encontrada)`;
+        }
+        if (!task.active) {
+          return `${task.name} (inactiva)`;
+        }
+        return task.name;
+      })
       .join(', ');
   };
 
@@ -1187,13 +1313,22 @@ const QCChecks: React.FC = () => {
     setFailureStatus(null);
   };
 
+  const removeTaskFromTriggerDraft = (taskId: number) => {
+    setTriggerDraft((prev) => ({
+      ...prev,
+      task_definition_ids: prev.task_definition_ids.filter((id) => id !== taskId),
+    }));
+  };
+
+  const activeTasks = useMemo(() => tasks.filter((task) => task.active), [tasks]);
+
   const filteredTasks = useMemo(() => {
     const query = normalizeSearch(triggerSearch.trim());
     if (!query) {
-      return tasks;
+      return activeTasks;
     }
-    return tasks.filter((task) => normalizeSearch(task.name).includes(query));
-  }, [tasks, triggerSearch]);
+    return activeTasks.filter((task) => normalizeSearch(task.name).includes(query));
+  }, [activeTasks, triggerSearch]);
 
   const catalogSequenceLabelByOrder = useMemo(() => {
     const entries = new Map<number, Set<string>>();
@@ -1454,6 +1589,25 @@ const QCChecks: React.FC = () => {
           <Filter className="h-3.5 w-3.5" /> {summaryLabel}
         </div>
       </div>
+
+      {triggerTaskIssues.length > 0 && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-900">
+            Hay gatillantes QC vinculados a tareas inactivas o no encontradas.
+          </p>
+          <p className="mt-1 text-xs text-amber-800">
+            Revise y actualice estos enlaces para evitar configuraciones obsoletas.
+          </p>
+          <div className="mt-2 max-h-36 overflow-auto space-y-1 pr-1 text-xs text-amber-900">
+            {triggerTaskIssues.map((issue) => (
+              <p key={`${issue.trigger_id}-${issue.kind}-${issue.task_definition_id}`}>
+                {issue.check_name} · Gatillante #{issue.trigger_id} · {issue.task_name}
+                {issue.kind === 'inactive' ? ' (inactiva)' : ' (no encontrada)'}
+              </p>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_1.9fr] items-start">
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
@@ -2036,6 +2190,16 @@ const QCChecks: React.FC = () => {
 
             {selectedTab === 'triggers' && (
               <div className="mt-6 space-y-5">
+                {selectedCheckId && selectedCheckTriggerIssues.length > 0 && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                    <p className="font-semibold">
+                      Esta revision tiene gatillantes ligados a tareas inactivas o no encontradas.
+                    </p>
+                    <p className="mt-1">
+                      Seleccione un gatillante y quite esas tareas para remediar.
+                    </p>
+                  </div>
+                )}
                 <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
                   <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
                     <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
@@ -2072,9 +2236,17 @@ const QCChecks: React.FC = () => {
                               selectedTriggerId === trigger.id ? 'bg-white' : 'bg-transparent'
                             }`}
                           >
-                            <span className="truncate text-[var(--ink)]">
-                              {triggerTaskLabel(trigger)}
-                            </span>
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-[var(--ink)]">
+                                {triggerTaskLabel(trigger)}
+                              </span>
+                              {(triggerIssueCountById.get(trigger.id) ?? 0) > 0 && (
+                                <span className="block text-[10px] text-amber-700">
+                                  {(triggerIssueCountById.get(trigger.id) ?? 0)} enlace(s) con
+                                  tarea inactiva/no encontrada
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[10px] text-[var(--ink-muted)]">
                               {Math.round(trigger.sampling_rate * 100)}%
                             </span>
@@ -2156,6 +2328,38 @@ const QCChecks: React.FC = () => {
                       </span>
                     </label>
 
+                    {triggerDraftTaskIssues.length > 0 && (
+                      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold text-amber-900">
+                          Este gatillante incluye tareas inactivas o no encontradas.
+                        </p>
+                        <div className="mt-2 space-y-2">
+                          {triggerDraftTaskIssues.map((issue) => (
+                            <div
+                              key={`${issue.kind}-${issue.task_definition_id}`}
+                              className="flex items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="text-amber-900">
+                                {issue.task_name}
+                                {issue.kind === 'inactive'
+                                  ? ' (inactiva)'
+                                  : ' (no encontrada)'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeTaskFromTriggerDraft(issue.task_definition_id)
+                                }
+                                className="rounded-full border border-amber-700 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
                       <label className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
                         <Search className="h-3.5 w-3.5" />
@@ -2197,7 +2401,9 @@ const QCChecks: React.FC = () => {
                                           })
                                         }
                                       />
-                                      <span className="text-[var(--ink)]">{task.name}</span>
+                                      <span className="text-[var(--ink)]">
+                                        {taskNameById.get(task.id) ?? task.name}
+                                      </span>
                                     </label>
                                   ))}
                                 </div>

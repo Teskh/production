@@ -310,24 +310,64 @@ def station_snapshot(
         else TaskScope.MODULE
     )
 
-    task_definitions = list(
+    open_task_definition_ids_by_item_scope: dict[tuple[int, int | None, TaskScope], set[int]] = {}
+    open_task_rows = list(
         db.execute(
-            select(TaskDefinition)
-            .where(TaskDefinition.active == True)
-            .where(TaskDefinition.scope == task_scope)
-            .where(TaskDefinition.is_rework == False)
-        ).scalars()
+            select(
+                TaskInstance.work_unit_id,
+                TaskInstance.panel_unit_id,
+                TaskInstance.scope,
+                TaskInstance.task_definition_id,
+            )
+            .where(TaskInstance.station_id == station.id)
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        ).all()
     )
-    if station.role == StationRole.AUX and not task_definitions:
+    for work_unit_id, panel_unit_id, instance_scope, task_definition_id in open_task_rows:
+        item_scope_key = (work_unit_id, panel_unit_id, instance_scope)
+        open_task_definition_ids_by_item_scope.setdefault(item_scope_key, set()).add(
+            task_definition_id
+        )
+
+    def load_active_task_definitions_for_scope(scope: TaskScope) -> list[TaskDefinition]:
+        stmt = (
+            select(TaskDefinition)
+            .where(TaskDefinition.scope == scope)
+            .where(TaskDefinition.is_rework == False)
+            .where(TaskDefinition.active == True)
+        )
+        return list(db.execute(stmt).scalars())
+
+    base_task_definitions = load_active_task_definitions_for_scope(task_scope)
+    if station.role == StationRole.AUX and not base_task_definitions:
         task_scope = TaskScope.MODULE
-        task_definitions = list(
-            db.execute(
+        base_task_definitions = load_active_task_definitions_for_scope(task_scope)
+
+    relevant_forced_scopes: set[TaskScope]
+    if station.role == StationRole.PANELS:
+        relevant_forced_scopes = {TaskScope.PANEL}
+    elif station.role == StationRole.AUX:
+        relevant_forced_scopes = {TaskScope.AUX, TaskScope.MODULE}
+    else:
+        relevant_forced_scopes = {task_scope}
+
+    forced_task_definition_ids: set[int] = set()
+    for (_work_unit_id, _panel_unit_id, instance_scope), definition_ids in (
+        open_task_definition_ids_by_item_scope.items()
+    ):
+        if instance_scope in relevant_forced_scopes:
+            forced_task_definition_ids.update(definition_ids)
+
+    forced_task_definitions_by_id: dict[int, TaskDefinition] = {}
+    if forced_task_definition_ids:
+        forced_task_definitions_by_id = {
+            task.id: task
+            for task in db.execute(
                 select(TaskDefinition)
-                .where(TaskDefinition.active == True)
-                .where(TaskDefinition.scope == task_scope)
+                .where(TaskDefinition.id.in_(sorted(forced_task_definition_ids)))
                 .where(TaskDefinition.is_rework == False)
             ).scalars()
-        )
+        }
 
     worker_skill_ids: set[int] = set()
     if _worker is not None:
@@ -336,7 +376,7 @@ def station_snapshot(
                 select(WorkerSkill.skill_id).where(WorkerSkill.worker_id == _worker.id)
             ).scalars()
         )
-    if task_definitions and _worker is not None:
+    if base_task_definitions and _worker is not None:
         requirement_rows = list(
             db.execute(
                 select(
@@ -344,7 +384,7 @@ def station_snapshot(
                     TaskSkillRequirement.skill_id,
                 ).where(
                     TaskSkillRequirement.task_definition_id.in_(
-                        [task.id for task in task_definitions]
+                        [task.id for task in base_task_definitions]
                     )
                 )
             ).all()
@@ -353,17 +393,48 @@ def station_snapshot(
             required_map: dict[int, set[int]] = {}
             for row in requirement_rows:
                 required_map.setdefault(row.task_definition_id, set()).add(row.skill_id)
-            task_definitions = [
+            base_task_definitions = [
                 task
-                for task in task_definitions
+                for task in base_task_definitions
                 if task.id not in required_map
                 or required_map[task.id].intersection(worker_skill_ids)
             ]
 
+    task_definition_by_id: dict[int, TaskDefinition] = {
+        task.id: task for task in base_task_definitions
+    }
+    for task_id, task in forced_task_definitions_by_id.items():
+        task_definition_by_id.setdefault(task_id, task)
+
+    if station.role == StationRole.PANELS:
+        item_scopes: tuple[TaskScope, ...] = (TaskScope.PANEL,)
+    elif station.role == StationRole.AUX:
+        item_scopes = (TaskScope.AUX, TaskScope.MODULE)
+    else:
+        item_scopes = (task_scope,)
+
+    def task_definitions_for_item(
+        work_unit_id: int,
+        panel_unit_id: int | None,
+    ) -> list[TaskDefinition]:
+        definition_ids = {task.id for task in base_task_definitions}
+        for scope in item_scopes:
+            definition_ids.update(
+                open_task_definition_ids_by_item_scope.get(
+                    (work_unit_id, panel_unit_id, scope),
+                    set(),
+                )
+            )
+        return [
+            task_definition_by_id[task_id]
+            for task_id in sorted(definition_ids)
+            if task_id in task_definition_by_id
+        ]
+
     applicability_rows = list(
         db.execute(
             select(TaskApplicability).where(
-                TaskApplicability.task_definition_id.in_([task.id for task in task_definitions])
+                TaskApplicability.task_definition_id.in_(list(task_definition_by_id.keys()))
             )
         ).scalars()
     )
@@ -372,7 +443,7 @@ def station_snapshot(
         applicability_map.setdefault(row.task_definition_id, []).append(row)
     allowed_worker_map: dict[int, set[int]] = {}
     allowed_worker_name_map: dict[int, list[str]] = {}
-    if task_definitions:
+    if task_definition_by_id:
         allowed_rows = list(
             db.execute(
                 select(
@@ -384,7 +455,7 @@ def station_snapshot(
                 .join(Worker, Worker.id == TaskWorkerRestriction.worker_id)
                 .where(
                     TaskWorkerRestriction.task_definition_id.in_(
-                        [task.id for task in task_definitions]
+                        list(task_definition_by_id.keys())
                     )
                 )
                 .where(TaskWorkerRestriction.restriction_type == RestrictionType.ALLOWED)
@@ -401,7 +472,7 @@ def station_snapshot(
             allowed_worker_name_map[task_id].sort()
 
     dependency_ids: set[int] = set()
-    for task in task_definitions:
+    for task in task_definition_by_id.values():
         dependencies = task.dependencies_json
         if not isinstance(dependencies, list):
             continue
@@ -467,6 +538,7 @@ def station_snapshot(
             completed_task_definition_ids = _completed_task_definition_ids(
                 db, work_unit.id, panel_unit.id, TaskScope.PANEL
             )
+            task_definitions = task_definitions_for_item(work_unit.id, panel_unit.id)
             tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
                 task_definitions,
@@ -622,6 +694,7 @@ def station_snapshot(
                         completed_task_definition_ids = _completed_task_definition_ids(
                             db, work_unit.id, panel_unit_id, TaskScope.PANEL
                         )
+                        task_definitions = task_definitions_for_item(work_unit.id, panel_unit_id)
                         tasks, other_tasks, backlog_tasks = _build_task_lists(
                             station,
                             task_definitions,
@@ -764,6 +837,7 @@ def station_snapshot(
             completed_task_definition_ids = _completed_task_definition_ids(
                 db, work_unit.id, None, task_scope
             )
+            task_definitions = task_definitions_for_item(work_unit.id, None)
             tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
                 task_definitions,
