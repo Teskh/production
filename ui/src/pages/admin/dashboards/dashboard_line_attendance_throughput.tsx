@@ -84,7 +84,6 @@ type ModuleAttendanceThroughputResponse = {
   min_total_line_attendance: number;
   min_moves_per_station_day: number;
   workday_hours: number;
-  first_station_entry_task_definition_id: number;
   movement_history_lookback_days: number;
   dropped_incomplete_days: number;
   dropped_low_attendance_days: number;
@@ -113,7 +112,9 @@ type TrendPointClick = {
   index: number;
 };
 
-type ChartViewMode = 'line' | 'scatter';
+type ChartViewMode = 'line' | 'scatter' | 'consistency';
+
+type DeltaDirection = -1 | 0 | 1;
 
 type RegressionStats = {
   n: number;
@@ -186,7 +187,6 @@ type ModuleMovementDayDetailResponse = {
   min_total_line_attendance: number;
   min_moves_per_station_day: number;
   workday_hours: number;
-  first_station_entry_task_definition_id: number;
   movement_history_lookback_days: number;
   cache_rows: number;
   cache_expected_rows: number;
@@ -300,6 +300,15 @@ const formatNum = (value: number | null | undefined, digits = 2) => {
   return value.toFixed(digits);
 };
 
+const integerCountFormatter = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 0,
+});
+
+const formatIntegerCount = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value)) return '-';
+  return integerCountFormatter.format(Math.round(value));
+};
+
 const formatLineTypeLabel = (value: string | null | undefined) => {
   if (!value) return 'Sin linea';
   return `Linea ${value}`;
@@ -336,6 +345,83 @@ const withDomainPadding = (values: number[]) => {
   const max = maxValue + pad;
   if (max <= min) return { min: 0, max: 1 };
   return { min, max };
+};
+
+const withSignedDomainPadding = (values: number[]) => {
+  if (values.length === 0) {
+    return { min: -1, max: 1 };
+  }
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return { min: -1, max: 1 };
+  }
+
+  if (minValue === maxValue) {
+    const pad = Math.max(Math.abs(minValue) * 0.12, 1);
+    const min = minValue - pad;
+    const max = maxValue + pad;
+    if (max <= min) return { min: -1, max: 1 };
+    return { min, max };
+  }
+
+  const span = maxValue - minValue;
+  const pad = Math.max(span * 0.12, 1);
+  const min = minValue - pad;
+  const max = maxValue + pad;
+  if (max <= min) return { min: -1, max: 1 };
+  return { min, max };
+};
+
+const buildNiceIntegerTicks = (minValue: number, maxValue: number, targetTicks: number) => {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return [0, 1];
+  }
+
+  const min = Math.floor(minValue);
+  const max = Math.ceil(maxValue);
+  if (max <= min) return [min];
+
+  const span = max - min;
+  const roughStep = Math.max(1, Math.ceil(span / Math.max(1, targetTicks)));
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+  const niceFactor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = niceFactor * magnitude;
+
+  const ticks: number[] = [];
+  const firstTick = Math.ceil(min / step) * step;
+  for (let value = firstTick; value <= max; value += step) {
+    ticks.push(value);
+  }
+
+  if (ticks.length === 0) {
+    return [min, max];
+  }
+  if (ticks[0] !== min) ticks.unshift(min);
+  if (ticks[ticks.length - 1] !== max) ticks.push(max);
+
+  return ticks;
+};
+
+const toDeltaDirection = (value: number, epsilon = 1e-6): DeltaDirection => {
+  if (!Number.isFinite(value)) return 0;
+  if (value > epsilon) return 1;
+  if (value < -epsilon) return -1;
+  return 0;
+};
+
+const directionLabel = (direction: DeltaDirection) => {
+  if (direction > 0) return '+';
+  if (direction < 0) return '-';
+  return '0';
+};
+
+const directionColor = (direction: DeltaDirection) => {
+  if (direction > 0) return '#15803d';
+  if (direction < 0) return '#b91c1c';
+  return '#64748b';
 };
 
 const computeLinearRegression = (points: Array<{ x: number; y: number }>): RegressionStats | null => {
@@ -667,6 +753,170 @@ const DualAxisTrendChart: React.FC<{
       : `Regresion: y = ${scatterRegression.slope.toFixed(3)}x + ${scatterRegression.intercept.toFixed(3)}`;
 
   const scatterTicks = 5;
+  const scatterXTicks = buildNiceIntegerTicks(scatterXDomain.min, scatterXDomain.max, scatterTicks);
+
+  const consistencyPairs = visibleRightSeries.flatMap((attendanceEntry, attendanceIndex) =>
+    visibleLeftSeries
+      .map((productionEntry, productionIndex) => {
+        const transitions = dates.flatMap((date, dateIndex) => {
+          if (dateIndex === 0) return [];
+          const previousIndex = dateIndex - 1;
+          const attendanceNow = toFiniteOrNull(attendanceEntry.values[dateIndex]);
+          const attendancePrevious = toFiniteOrNull(attendanceEntry.values[previousIndex]);
+          const productionNow = toFiniteOrNull(productionEntry.values[dateIndex]);
+          const productionPrevious = toFiniteOrNull(productionEntry.values[previousIndex]);
+          if (
+            attendanceNow == null ||
+            attendancePrevious == null ||
+            productionNow == null ||
+            productionPrevious == null
+          ) {
+            return [];
+          }
+          if (Math.abs(productionPrevious) < 1e-9) return [];
+
+          const deltaAttendance = attendanceNow - attendancePrevious;
+          const deltaProductionPct = ((productionNow - productionPrevious) / productionPrevious) * 100;
+          if (!Number.isFinite(deltaAttendance) || !Number.isFinite(deltaProductionPct)) return [];
+
+          const staffingDirection = toDeltaDirection(deltaAttendance, 1e-9);
+          const productionDirection = toDeltaDirection(deltaProductionPct, 1e-6);
+
+          return [
+            {
+              date,
+              previousDate: dates[previousIndex],
+              index: dateIndex,
+              previousIndex,
+              deltaAttendance,
+              deltaProductionPct,
+              staffingDirection,
+              productionDirection,
+            },
+          ];
+        });
+
+        if (transitions.length === 0) return null;
+
+        const color =
+          visibleRightSeries.length === 1
+            ? productionEntry.color
+            : visibleLeftSeries.length === 1
+              ? attendanceEntry.color
+              : LINE_COLORS[
+                  (attendanceIndex * Math.max(1, visibleLeftSeries.length) + productionIndex) %
+                    LINE_COLORS.length
+                ];
+
+        const directionStats = (direction: DeltaDirection) => {
+          const subset = transitions.filter((entry) => entry.staffingDirection === direction);
+          return {
+            count: subset.length,
+            avgProductionPct: average(subset.map((entry) => entry.deltaProductionPct)),
+          };
+        };
+
+        const signAgreementCount = transitions.filter(
+          (entry) => entry.staffingDirection === entry.productionDirection
+        ).length;
+
+        return {
+          id: `${attendanceEntry.id}__${productionEntry.id}`,
+          name: `${attendanceEntry.name} vs ${productionEntry.name}`,
+          attendanceEntry,
+          productionEntry,
+          color,
+          transitions,
+          regression: computeLinearRegression(
+            transitions.map((entry) => ({
+              x: entry.deltaAttendance,
+              y: entry.deltaProductionPct,
+            }))
+          ),
+          signAgreementRate: signAgreementCount / transitions.length,
+          directionStats: {
+            positive: directionStats(1),
+            neutral: directionStats(0),
+            negative: directionStats(-1),
+          },
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry != null)
+  );
+
+  const consistencyRenderablePairs = consistencyPairs.filter((pair) => pair.transitions.length > 0);
+  const consistencyTransitions = consistencyRenderablePairs.flatMap((pair) =>
+    pair.transitions.map((entry) => ({
+      ...entry,
+      pairId: pair.id,
+      pairName: pair.name,
+      pairColor: pair.color,
+    }))
+  );
+
+  const consistencyScatterXDomain = withSignedDomainPadding(
+    consistencyTransitions.map((entry) => entry.deltaAttendance)
+  );
+  const consistencyScatterYDomain = withSignedDomainPadding(
+    consistencyTransitions.map((entry) => entry.deltaProductionPct)
+  );
+  const consistencyScatterXSpan = Math.max(
+    consistencyScatterXDomain.max - consistencyScatterXDomain.min,
+    1e-9
+  );
+  const consistencyScatterYSpan = Math.max(
+    consistencyScatterYDomain.max - consistencyScatterYDomain.min,
+    1e-9
+  );
+  const toConsistencyScatterX = (value: number) =>
+    margin.left + ((value - consistencyScatterXDomain.min) / consistencyScatterXSpan) * plotWidth;
+  const toConsistencyScatterY = (value: number) =>
+    margin.top + plotHeight - ((value - consistencyScatterYDomain.min) / consistencyScatterYSpan) * plotHeight;
+
+  const consistencyTickCount = 5;
+
+  const consistencyRegression = computeLinearRegression(
+    consistencyTransitions.map((entry) => ({
+      x: entry.deltaAttendance,
+      y: entry.deltaProductionPct,
+    }))
+  );
+  const consistencyRegressionSegment =
+    consistencyRegression == null
+      ? null
+      : buildRegressionSegment({
+          slope: consistencyRegression.slope,
+          intercept: consistencyRegression.intercept,
+          xMin: consistencyScatterXDomain.min,
+          xMax: consistencyScatterXDomain.max,
+          yMin: consistencyScatterYDomain.min,
+          yMax: consistencyScatterYDomain.max,
+        });
+
+  const consistencyDirectionSummary = (direction: DeltaDirection) => {
+    const subset = consistencyTransitions.filter((entry) => entry.staffingDirection === direction);
+    return {
+      count: subset.length,
+      avgProductionPct: average(subset.map((entry) => entry.deltaProductionPct)),
+    };
+  };
+
+  const consistencyDirectionPositive = consistencyDirectionSummary(1);
+  const consistencyDirectionNeutral = consistencyDirectionSummary(0);
+  const consistencyDirectionNegative = consistencyDirectionSummary(-1);
+  const consistencyAgreementRate =
+    consistencyTransitions.length === 0
+      ? null
+      : consistencyTransitions.filter((entry) => entry.staffingDirection === entry.productionDirection).length /
+        consistencyTransitions.length;
+  const consistencyScatterZeroX =
+    consistencyScatterXDomain.min <= 0 && consistencyScatterXDomain.max >= 0
+      ? toConsistencyScatterX(0)
+      : null;
+  const consistencyScatterZeroY =
+    consistencyScatterYDomain.min <= 0 && consistencyScatterYDomain.max >= 0
+      ? toConsistencyScatterY(0)
+      : null;
 
   return (
     <section className="rounded-2xl border border-black/5 bg-white/90 p-5 shadow-sm">
@@ -695,6 +945,17 @@ const DualAxisTrendChart: React.FC<{
             }`}
           >
             Dispersion
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('consistency')}
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+              viewMode === 'consistency'
+                ? 'bg-[var(--ink)] text-white'
+                : 'text-[var(--ink-muted)] hover:bg-black/5'
+            }`}
+          >
+            Consistencia
           </button>
         </div>
       </div>
@@ -858,7 +1119,7 @@ const DualAxisTrendChart: React.FC<{
               {rightAxisLabel}
             </text>
           </svg>
-        ) : (
+        ) : viewMode === 'scatter' ? (
           <>
             {visibleLeftSeries.length === 0 || visibleRightSeries.length === 0 ? (
               <div className="flex h-[340px] min-w-[900px] items-center justify-center rounded-xl border border-dashed border-black/10 bg-white/70 px-4 text-sm text-[var(--ink-muted)]">
@@ -879,17 +1140,23 @@ const DualAxisTrendChart: React.FC<{
 
                 {Array.from({ length: scatterTicks + 1 }).map((_, idx) => {
                   const ratio = idx / scatterTicks;
-                  const xValue = scatterXDomain.min + ratio * (scatterXDomain.max - scatterXDomain.min);
                   const yValue = scatterYDomain.max - ratio * (scatterYDomain.max - scatterYDomain.min);
-                  const x = toScatterX(xValue);
                   const y = toScatterY(yValue);
                   return (
-                    <g key={`scatter-grid-${idx}`}>
+                    <g key={`scatter-y-grid-${idx}`}>
                       <line x1={margin.left} x2={margin.left + plotWidth} y1={y} y2={y} stroke="rgba(15,27,45,0.12)" />
-                      <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotHeight} stroke="rgba(15,27,45,0.08)" />
                       <text x={margin.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="rgba(15,27,45,0.78)">
                         {yValue.toFixed(1)}
                       </text>
+                    </g>
+                  );
+                })}
+
+                {scatterXTicks.map((xValue) => {
+                  const x = toScatterX(xValue);
+                  return (
+                    <g key={`scatter-x-grid-${xValue}`}>
+                      <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotHeight} stroke="rgba(15,27,45,0.08)" />
                       <text
                         x={x}
                         y={margin.top + plotHeight + 18}
@@ -897,7 +1164,7 @@ const DualAxisTrendChart: React.FC<{
                         fontSize="11"
                         fill="rgba(15,27,45,0.78)"
                       >
-                        {xValue.toFixed(1)}
+                        {formatIntegerCount(xValue)}
                       </text>
                     </g>
                   );
@@ -969,7 +1236,7 @@ const DualAxisTrendChart: React.FC<{
                           style={pointClickTarget ? { cursor: 'pointer' } : undefined}
                         >
                           <title>
-                            {`${formatDateLabel(point.date)} | ${pair.name} · Lag ${pair.selectedLag}d · X (${formatDateLabel(point.xDate)}) ${point.x.toFixed(3)} · Y ${point.y.toFixed(3)}${
+                            {`${formatDateLabel(point.date)} | ${pair.name} · Lag ${pair.selectedLag}d · X (${formatDateLabel(point.xDate)}) ${formatIntegerCount(point.x)} · Y ${point.y.toFixed(3)}${
                               pointClickTarget ? ' (click para detalle)' : ''
                             }`}
                           </title>
@@ -997,6 +1264,156 @@ const DualAxisTrendChart: React.FC<{
                   fill="rgba(15,27,45,0.8)"
                 >
                   {leftAxisLabel}
+                </text>
+              </svg>
+            )}
+          </>
+        ) : (
+          <>
+            {visibleLeftSeries.length === 0 || visibleRightSeries.length === 0 ? (
+              <div className="flex h-[340px] min-w-[900px] items-center justify-center rounded-xl border border-dashed border-black/10 bg-white/70 px-4 text-sm text-[var(--ink-muted)]">
+                Activa al menos una serie por eje para ver la consistencia.
+              </div>
+            ) : dates.length < 2 ? (
+              <div className="flex h-[340px] min-w-[900px] items-center justify-center rounded-xl border border-dashed border-black/10 bg-white/70 px-4 text-sm text-[var(--ink-muted)]">
+                Se necesitan al menos dos dias laborales consecutivos para calcular cambios.
+              </div>
+            ) : consistencyRenderablePairs.length === 0 ? (
+              <div className="flex h-[340px] min-w-[900px] items-center justify-center rounded-xl border border-dashed border-black/10 bg-white/70 px-4 text-sm text-[var(--ink-muted)]">
+                No hay transiciones validas para calcular consistencia con la seleccion actual.
+              </div>
+            ) : (
+              <svg
+                viewBox={`0 0 ${width} ${height}`}
+                className="h-[340px] min-w-[900px] w-full"
+                role="img"
+                aria-label={`${title} en vista consistencia dispersion`}
+              >
+                <rect x={margin.left} y={margin.top} width={plotWidth} height={plotHeight} fill="#f8fafc" rx={14} />
+
+                {Array.from({ length: consistencyTickCount + 1 }).map((_, idx) => {
+                  const ratio = idx / consistencyTickCount;
+                  const xValue =
+                    consistencyScatterXDomain.min +
+                    ratio * (consistencyScatterXDomain.max - consistencyScatterXDomain.min);
+                  const yValue =
+                    consistencyScatterYDomain.max -
+                    ratio * (consistencyScatterYDomain.max - consistencyScatterYDomain.min);
+                  const x = toConsistencyScatterX(xValue);
+                  const y = toConsistencyScatterY(yValue);
+                  return (
+                    <g key={`consistency-scatter-grid-${idx}`}>
+                      <line x1={margin.left} x2={margin.left + plotWidth} y1={y} y2={y} stroke="rgba(15,27,45,0.12)" />
+                      <line x1={x} x2={x} y1={margin.top} y2={margin.top + plotHeight} stroke="rgba(15,27,45,0.08)" />
+                      <text x={margin.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="rgba(15,27,45,0.78)">
+                        {yValue.toFixed(1)}%
+                      </text>
+                      <text
+                        x={x}
+                        y={margin.top + plotHeight + 18}
+                        textAnchor="middle"
+                        fontSize="11"
+                        fill="rgba(15,27,45,0.78)"
+                      >
+                        {xValue.toFixed(0)}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                <line
+                  x1={margin.left}
+                  x2={margin.left + plotWidth}
+                  y1={margin.top + plotHeight}
+                  y2={margin.top + plotHeight}
+                  stroke="rgba(15,27,45,0.55)"
+                />
+                <line
+                  x1={margin.left}
+                  x2={margin.left}
+                  y1={margin.top}
+                  y2={margin.top + plotHeight}
+                  stroke="rgba(15,27,45,0.55)"
+                />
+
+                {consistencyScatterZeroY != null && (
+                  <line
+                    x1={margin.left}
+                    x2={margin.left + plotWidth}
+                    y1={consistencyScatterZeroY}
+                    y2={consistencyScatterZeroY}
+                    stroke="rgba(15,27,45,0.45)"
+                    strokeDasharray="6 5"
+                  />
+                )}
+                {consistencyScatterZeroX != null && (
+                  <line
+                    x1={consistencyScatterZeroX}
+                    x2={consistencyScatterZeroX}
+                    y1={margin.top}
+                    y2={margin.top + plotHeight}
+                    stroke="rgba(15,27,45,0.45)"
+                    strokeDasharray="6 5"
+                  />
+                )}
+
+                {consistencyRegressionSegment && consistencyRegression && (
+                  <g>
+                    <line
+                      x1={toConsistencyScatterX(consistencyRegressionSegment.a.x)}
+                      y1={toConsistencyScatterY(consistencyRegressionSegment.a.y)}
+                      x2={toConsistencyScatterX(consistencyRegressionSegment.b.x)}
+                      y2={toConsistencyScatterY(consistencyRegressionSegment.b.y)}
+                      stroke="#0f172a"
+                      strokeWidth={2}
+                      strokeDasharray="7 5"
+                    />
+                    <text
+                      x={margin.left + 10}
+                      y={margin.top + 14}
+                      fontSize="11"
+                      fill="rgba(15,27,45,0.85)"
+                    >
+                      {`Regresion: y = ${consistencyRegression.slope.toFixed(3)}x + ${consistencyRegression.intercept.toFixed(3)}`}
+                    </text>
+                  </g>
+                )}
+
+                {consistencyTransitions.map((entry) => (
+                  <circle
+                    key={`consistency-scatter-point-${entry.pairId}-${entry.index}`}
+                    cx={toConsistencyScatterX(entry.deltaAttendance)}
+                    cy={toConsistencyScatterY(entry.deltaProductionPct)}
+                    r={3.2}
+                    fill={directionColor(entry.staffingDirection)}
+                    fillOpacity={0.78}
+                    stroke={entry.pairColor}
+                    strokeWidth={1}
+                  >
+                    <title>
+                      {`${entry.pairName} | ${formatDateLabel(entry.previousDate)} -> ${formatDateLabel(entry.date)} · Δasistencia ${entry.deltaAttendance.toFixed(0)} (${directionLabel(entry.staffingDirection)}) · Δproduccion ${entry.deltaProductionPct.toFixed(2)}% (${directionLabel(entry.productionDirection)})`}
+                    </title>
+                  </circle>
+                ))}
+
+                <text
+                  x={margin.left + plotWidth / 2}
+                  y={height - 8}
+                  textAnchor="middle"
+                  fontSize="12"
+                  fill="rgba(15,27,45,0.8)"
+                >
+                  Δ Asistencia (personas)
+                </text>
+                <text
+                  x={16}
+                  y={margin.top + plotHeight / 2}
+                  textAnchor="middle"
+                  fontSize="12"
+                  transform={`rotate(-90 16 ${margin.top + plotHeight / 2})`}
+                  fill="rgba(15,27,45,0.8)"
+                >
+                  Δ Produccion (%)
                 </text>
               </svg>
             )}
@@ -1092,6 +1509,63 @@ const DualAxisTrendChart: React.FC<{
           <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
             RMSE: {scatterRegression.rmse.toFixed(3)}
           </span>
+        </div>
+      )}
+
+      {viewMode === 'consistency' && consistencyRenderablePairs.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {consistencyRenderablePairs.map((pair) => (
+            <div
+              key={`consistency-pair-${pair.id}`}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-black/10 bg-white px-3 py-2"
+            >
+              <div className="inline-flex flex-wrap items-center gap-2 text-[11px] text-[var(--ink-muted)]">
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: pair.color }} />
+                <span className="text-[var(--ink)]">{pair.name}</span>
+                <span>transiciones: {pair.transitions.length}</span>
+                <span>alineacion: {(pair.signAgreementRate * 100).toFixed(1)}%</span>
+                <span>R2: {formatNum(pair.regression?.rSquared, 3)}</span>
+              </div>
+              <div className="inline-flex flex-wrap items-center gap-2 text-[11px] text-[var(--ink-muted)]">
+                <span>staff +: {pair.directionStats.positive.count} / {formatNum(pair.directionStats.positive.avgProductionPct, 2)}%</span>
+                <span>staff 0: {pair.directionStats.neutral.count} / {formatNum(pair.directionStats.neutral.avgProductionPct, 2)}%</span>
+                <span>staff -: {pair.directionStats.negative.count} / {formatNum(pair.directionStats.negative.avgProductionPct, 2)}%</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {viewMode === 'consistency' && consistencyTransitions.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+            transiciones: {consistencyTransitions.length}
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+            staff +: {consistencyDirectionPositive.count} / {formatNum(consistencyDirectionPositive.avgProductionPct, 2)}%
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+            staff 0: {consistencyDirectionNeutral.count} / {formatNum(consistencyDirectionNeutral.avgProductionPct, 2)}%
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+            staff -: {consistencyDirectionNegative.count} / {formatNum(consistencyDirectionNegative.avgProductionPct, 2)}%
+          </span>
+          <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+            alineacion de signo: {formatNum(consistencyAgreementRate == null ? null : consistencyAgreementRate * 100, 1)}%
+          </span>
+          {consistencyRegression && (
+            <>
+              <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+                pendiente: {consistencyRegression.slope.toFixed(3)}
+              </span>
+              <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+                R2: {consistencyRegression.rSquared.toFixed(3)}
+              </span>
+              <span className="rounded-full border border-black/10 bg-white px-3 py-1 text-[11px] text-[var(--ink-muted)]">
+                RMSE: {consistencyRegression.rmse.toFixed(3)}
+              </span>
+            </>
+          )}
         </div>
       )}
     </section>
@@ -1285,6 +1759,16 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
           String(Math.max(1, Math.floor(moduleMinMovesPerStationDay || 1)))
         );
         params.set('workday_hours', '8');
+        if (moduleData != null) {
+          params.set('from_date', moduleData.requested_from_date);
+          params.set('to_date', moduleData.effective_to_date);
+          if (moduleData.line_type != null) {
+            params.set('line_type', moduleData.line_type);
+          }
+          moduleData.selected_station_ids.forEach((selectedStationId) => {
+            params.append('station_ids', String(selectedStationId));
+          });
+        }
         if (sequenceOrder != null) {
           params.set('sequence_order', String(sequenceOrder));
         }
@@ -1304,7 +1788,7 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
         setMovementModalLoading(false);
       }
     },
-    [moduleMinAttendance, moduleMinMovesPerStationDay]
+    [moduleData, moduleMinAttendance, moduleMinMovesPerStationDay]
   );
 
   const panelOverviewSeries = useMemo<LineSeries[]>(() => {
@@ -1514,8 +1998,6 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
               Relacion asistencia y rendimiento de linea
             </h1>
             <p className="mt-2 max-w-3xl text-sm text-[var(--ink-muted)]">
-              Dashboard diario (sin polling) con enfoque principal en tendencias por fecha,
-              replicando la lectura de los scripts de referencia.
             </p>
           </div>
           <button

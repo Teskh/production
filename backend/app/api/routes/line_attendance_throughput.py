@@ -324,16 +324,16 @@ def _assembly_attendance_cache(
     )
 
 
-def _active_minutes_between_with_masks(
+def _active_minutes_by_day_between_with_masks(
     start_dt: datetime,
     end_dt: datetime,
     sequence_order: int,
     shift_masks_by_day_sequence: dict[date, dict[int, tuple[datetime, datetime]]],
-) -> float:
+) -> dict[date, float]:
     if end_dt <= start_dt:
-        return 0.0
+        return {}
 
-    total_minutes = 0.0
+    minutes_by_day: dict[date, float] = {}
     day_cursor = start_dt.date()
     end_day = end_dt.date()
     while day_cursor <= end_day:
@@ -344,9 +344,24 @@ def _active_minutes_between_with_masks(
             overlap_start = max(start_dt, work_start)
             overlap_end = min(end_dt, work_end)
             if overlap_end > overlap_start:
-                total_minutes += (overlap_end - overlap_start).total_seconds() / 60.0
+                minutes = (overlap_end - overlap_start).total_seconds() / 60.0
+                minutes_by_day[day_cursor] = minutes_by_day.get(day_cursor, 0.0) + minutes
         day_cursor += timedelta(days=1)
-    return total_minutes
+    return minutes_by_day
+
+
+def _assigned_interval_day(
+    start_dt: datetime,
+    end_dt: datetime,
+    active_minutes_by_day: dict[date, float],
+) -> date:
+    completed_day = end_dt.date()
+    if start_dt.date() == completed_day:
+        return completed_day
+    if not active_minutes_by_day:
+        return completed_day
+    # Prefer earliest date when active-minute shares are tied.
+    return min(active_minutes_by_day.items(), key=lambda item: (-item[1], item[0]))[0]
 
 
 def _module_move_intervals_with_details(
@@ -358,38 +373,47 @@ def _module_move_intervals_with_details(
     station_id_to_sequence: dict[int, int],
     first_sequence_order: int | None,
     shift_masks_by_day_sequence: dict[date, dict[int, tuple[datetime, datetime]]],
-    first_station_entry_task_definition_id: int,
     movement_history_lookback_days: int,
 ) -> tuple[dict[date, dict[int, list[float]]], dict[date, list[_ModuleMovementInterval]]]:
     end_dt = datetime.combine(end, time(23, 59, 59, 999999))
     lookback_start_day = start - timedelta(days=movement_history_lookback_days)
     lookback_start_dt = datetime.combine(lookback_start_day, time(0, 0, 0))
 
-    first_entry_rows = list(
-        db.execute(
-            select(
-                TaskInstance.work_unit_id,
-                TaskInstance.started_at,
-            )
-            .where(TaskInstance.scope == TaskScope.MODULE)
-            .where(TaskInstance.panel_unit_id.is_(None))
-            .where(TaskInstance.task_definition_id == first_station_entry_task_definition_id)
-            .where(TaskInstance.started_at.is_not(None))
-            .where(TaskInstance.started_at >= lookback_start_dt)
-            .where(TaskInstance.started_at <= end_dt)
-            .order_by(
-                TaskInstance.work_unit_id,
-                TaskInstance.started_at,
-                TaskInstance.id,
-            )
-        ).all()
+    first_sequence_station_ids = (
+        [
+            station_id
+            for station_id, sequence_order in station_id_to_sequence.items()
+            if sequence_order == first_sequence_order
+        ]
+        if first_sequence_order is not None
+        else []
     )
-    first_entry_task_name = db.execute(
-        select(TaskDefinition.name).where(
-            TaskDefinition.id == first_station_entry_task_definition_id
+    first_entry_rows = (
+        list(
+            db.execute(
+                select(
+                    TaskInstance.work_unit_id,
+                    TaskInstance.started_at,
+                    TaskInstance.task_definition_id,
+                    TaskDefinition.name,
+                )
+                .outerjoin(TaskDefinition, TaskDefinition.id == TaskInstance.task_definition_id)
+                .where(TaskInstance.scope == TaskScope.MODULE)
+                .where(TaskInstance.panel_unit_id.is_(None))
+                .where(TaskInstance.station_id.in_(first_sequence_station_ids))
+                .where(TaskInstance.started_at.is_not(None))
+                .where(TaskInstance.started_at >= lookback_start_dt)
+                .where(TaskInstance.started_at <= end_dt)
+                .order_by(
+                    TaskInstance.work_unit_id,
+                    TaskInstance.started_at,
+                    TaskInstance.id,
+                )
+            ).all()
         )
-    ).scalar_one_or_none()
-    first_entry_task_label = first_entry_task_name or f"Task {first_station_entry_task_definition_id}"
+        if first_sequence_station_ids
+        else []
+    )
 
     movement_rows = list(
         db.execute(
@@ -424,13 +448,17 @@ def _module_move_intervals_with_details(
         ).all()
     )
 
-    first_entry_started_by_work_unit: dict[int, datetime] = {}
-    for work_unit_id, started_at in first_entry_rows:
+    first_entry_by_work_unit: dict[int, tuple[datetime, str]] = {}
+    for work_unit_id, started_at, task_definition_id, task_definition_name in first_entry_rows:
         if started_at is None:
             continue
-        existing = first_entry_started_by_work_unit.get(work_unit_id)
-        if existing is None or started_at < existing:
-            first_entry_started_by_work_unit[work_unit_id] = started_at
+        existing = first_entry_by_work_unit.get(work_unit_id)
+        task_label = (
+            task_definition_name
+            or (f"Task {task_definition_id}" if task_definition_id is not None else "Unknown")
+        )
+        if existing is None or started_at < existing[0]:
+            first_entry_by_work_unit[work_unit_id] = (started_at, task_label)
 
     intervals_by_day_station: dict[date, dict[int, list[float]]] = defaultdict(
         lambda: defaultdict(list)
@@ -463,53 +491,62 @@ def _module_move_intervals_with_details(
         if interval_start is None and first_sequence_order is not None:
             station_sequence = station_id_to_sequence.get(station_id)
             if station_sequence == first_sequence_order:
-                fallback_started = first_entry_started_by_work_unit.get(work_unit_id)
-                if fallback_started is not None and fallback_started <= completed_at:
-                    interval_start = fallback_started
-                    tramo_start_task_name = first_entry_task_label
-                    tramo_start_task_started_at = fallback_started
+                fallback_entry = first_entry_by_work_unit.get(work_unit_id)
+                if fallback_entry is not None:
+                    fallback_started, fallback_task_name = fallback_entry
+                    if fallback_started <= completed_at:
+                        interval_start = fallback_started
+                        tramo_start_task_name = fallback_task_name
+                        tramo_start_task_started_at = fallback_started
 
-        if interval_start is not None:
-            day = completed_at.date()
-            if start <= day <= end and station_id in selected_station_ids_set:
-                sequence_order = station_id_to_sequence.get(station_id)
-                if sequence_order is None:
-                    previous_move_by_work_unit[work_unit_id] = _ModulePreviousMove(
-                        completed_at=completed_at,
-                        task_definition_name=(
-                            task_definition_name or f"Task {task_definition_id}"
-                        ),
-                        started_at=started_at,
-                    )
-                    continue
-                active_minutes = _active_minutes_between_with_masks(
-                    interval_start,
-                    completed_at,
-                    sequence_order,
-                    shift_masks_by_day_sequence,
+        if interval_start is not None and station_id in selected_station_ids_set:
+            sequence_order = station_id_to_sequence.get(station_id)
+            if sequence_order is None:
+                previous_move_by_work_unit[work_unit_id] = _ModulePreviousMove(
+                    completed_at=completed_at,
+                    task_definition_name=(task_definition_name or f"Task {task_definition_id}"),
+                    started_at=started_at,
                 )
-                current_task_name = task_definition_name or f"Task {task_definition_id}"
-                intervals_by_day_station[day][station_id].append(active_minutes)
-                interval_details_by_day[day].append(
-                    _ModuleMovementInterval(
-                        station_id=station_id,
-                        sequence_order=sequence_order,
-                        project_name=project_name,
-                        house_identifier=house_identifier,
-                        tramo_start_task_name=tramo_start_task_name or "Unknown",
-                        tramo_start_task_started_at=(
-                            tramo_start_task_started_at or interval_start
-                        ),
-                        tramo_end_task_name=current_task_name,
-                        tramo_end_task_started_at=started_at or completed_at,
-                        interval_start_at=interval_start,
-                        interval_end_at=completed_at,
-                        elapsed_minutes=(
-                            (completed_at - interval_start).total_seconds() / 60.0
-                        ),
-                        active_minutes=active_minutes,
-                    )
+                continue
+            active_minutes_by_day = _active_minutes_by_day_between_with_masks(
+                interval_start,
+                completed_at,
+                sequence_order,
+                shift_masks_by_day_sequence,
+            )
+            active_minutes = sum(active_minutes_by_day.values())
+            day = _assigned_interval_day(
+                interval_start,
+                completed_at,
+                active_minutes_by_day,
+            )
+            if day < start or day > end:
+                previous_move_by_work_unit[work_unit_id] = _ModulePreviousMove(
+                    completed_at=completed_at,
+                    task_definition_name=(task_definition_name or f"Task {task_definition_id}"),
+                    started_at=started_at,
                 )
+                continue
+            current_task_name = task_definition_name or f"Task {task_definition_id}"
+            intervals_by_day_station[day][station_id].append(active_minutes)
+            interval_details_by_day[day].append(
+                _ModuleMovementInterval(
+                    station_id=station_id,
+                    sequence_order=sequence_order,
+                    project_name=project_name,
+                    house_identifier=house_identifier,
+                    tramo_start_task_name=tramo_start_task_name or "Unknown",
+                    tramo_start_task_started_at=(
+                        tramo_start_task_started_at or interval_start
+                    ),
+                    tramo_end_task_name=current_task_name,
+                    tramo_end_task_started_at=started_at or completed_at,
+                    interval_start_at=interval_start,
+                    interval_end_at=completed_at,
+                    elapsed_minutes=((completed_at - interval_start).total_seconds() / 60.0),
+                    active_minutes=active_minutes,
+                )
+            )
         previous_move_by_work_unit[work_unit_id] = _ModulePreviousMove(
             completed_at=completed_at,
             task_definition_name=task_definition_name or f"Task {task_definition_id}",
@@ -534,7 +571,6 @@ def _module_move_intervals_active_minutes(
     station_id_to_sequence: dict[int, int],
     first_sequence_order: int | None,
     shift_masks_by_day_sequence: dict[date, dict[int, tuple[datetime, datetime]]],
-    first_station_entry_task_definition_id: int,
     movement_history_lookback_days: int,
 ) -> dict[date, dict[int, list[float]]]:
     intervals_by_day_station, _ = _module_move_intervals_with_details(
@@ -546,7 +582,6 @@ def _module_move_intervals_active_minutes(
         station_id_to_sequence=station_id_to_sequence,
         first_sequence_order=first_sequence_order,
         shift_masks_by_day_sequence=shift_masks_by_day_sequence,
-        first_station_entry_task_definition_id=first_station_entry_task_definition_id,
         movement_history_lookback_days=movement_history_lookback_days,
     )
     return intervals_by_day_station
@@ -778,7 +813,6 @@ def get_module_attendance_throughput(
     min_total_line_attendance: int = Query(default=1, ge=0),
     min_moves_per_station_day: int = Query(default=1, ge=1),
     workday_hours: float = Query(default=8.0, gt=0),
-    first_station_entry_task_definition_id: int = Query(default=27, ge=1),
     movement_history_lookback_days: int = Query(default=180, ge=0),
     db: Session = Depends(get_db),
 ) -> ModuleAttendanceThroughputResponse:
@@ -825,7 +859,6 @@ def get_module_attendance_throughput(
             min_total_line_attendance=min_total_line_attendance,
             min_moves_per_station_day=min_moves_per_station_day,
             workday_hours=workday_hours,
-            first_station_entry_task_definition_id=first_station_entry_task_definition_id,
             movement_history_lookback_days=movement_history_lookback_days,
             dropped_incomplete_days=0,
             dropped_low_attendance_days=0,
@@ -868,7 +901,6 @@ def get_module_attendance_throughput(
         station_id_to_sequence=station_id_to_sequence,
         first_sequence_order=first_sequence_order,
         shift_masks_by_day_sequence=shift_masks_by_day_sequence,
-        first_station_entry_task_definition_id=first_station_entry_task_definition_id,
         movement_history_lookback_days=movement_history_lookback_days,
     )
 
@@ -953,7 +985,6 @@ def get_module_attendance_throughput(
         min_total_line_attendance=min_total_line_attendance,
         min_moves_per_station_day=min_moves_per_station_day,
         workday_hours=workday_hours,
-        first_station_entry_task_definition_id=first_station_entry_task_definition_id,
         movement_history_lookback_days=movement_history_lookback_days,
         dropped_incomplete_days=dropped_incomplete_days,
         dropped_low_attendance_days=dropped_low_attendance_days,
@@ -966,13 +997,15 @@ def get_module_attendance_throughput(
 @router.get("/module/day-detail", response_model=ModuleMovementDayDetailResponse)
 def get_module_movement_day_detail(
     day: date = Query(...),
+    from_date: date | None = Query(default=None),
+    to_date: date | None = Query(default=None),
     line_type: StationLineType | None = Query(default=None),
+    station_ids: list[int] | None = Query(default=None),
     sequence_order: int | None = Query(default=None, ge=0),
     station_id: int | None = Query(default=None, ge=1),
     min_total_line_attendance: int = Query(default=1, ge=0),
     min_moves_per_station_day: int = Query(default=1, ge=1),
     workday_hours: float = Query(default=8.0, gt=0),
-    first_station_entry_task_definition_id: int = Query(default=27, ge=1),
     movement_history_lookback_days: int = Query(default=180, ge=0),
     db: Session = Depends(get_db),
 ) -> ModuleMovementDayDetailResponse:
@@ -986,6 +1019,16 @@ def get_module_movement_day_detail(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use either station_id or sequence_order, not both",
         )
+    range_start = from_date or day
+    range_end = to_date or day
+    effective_to_date = _cap_to_yesterday(range_start, range_end)
+    if day < range_start or day > effective_to_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"day must be within [{range_start.isoformat()}, {effective_to_date.isoformat()}]"
+            ),
+        )
 
     assembly_stations = _load_stations(db, role=StationRole.ASSEMBLY, line_type=line_type)
     if not assembly_stations:
@@ -994,7 +1037,8 @@ def get_module_movement_day_detail(
             detail="No assembly stations found for selected filters",
         )
 
-    station_by_id = {station.id: station for station in assembly_stations}
+    candidate_stations = _select_stations_by_ids(assembly_stations, station_ids)
+    station_by_id = {station.id: station for station in candidate_stations}
     if station_id is not None:
         picked = station_by_id.get(station_id)
         if picked is None:
@@ -1005,7 +1049,7 @@ def get_module_movement_day_detail(
         selected_stations = [picked]
     elif sequence_order is not None:
         selected_stations = [
-            station for station in assembly_stations if station.sequence_order == sequence_order
+            station for station in candidate_stations if station.sequence_order == sequence_order
         ]
         if not selected_stations:
             raise HTTPException(
@@ -1013,7 +1057,7 @@ def get_module_movement_day_detail(
                 detail=f"No assembly stations found for sequence_order={sequence_order}",
             )
     else:
-        selected_stations = list(assembly_stations)
+        selected_stations = list(candidate_stations)
 
     no_sequence = [station.name for station in selected_stations if station.sequence_order is None]
     if no_sequence:
@@ -1034,7 +1078,7 @@ def get_module_movement_day_detail(
     chain_station_ids = sorted(station_id_to_sequence.keys())
     first_sequence_order = min(selected_sequences) if selected_sequences else None
 
-    attendance_start = day - timedelta(days=movement_history_lookback_days)
+    attendance_start = range_start - timedelta(days=movement_history_lookback_days)
     (
         attendance_by_day_sequence,
         line_attendance_by_day,
@@ -1044,19 +1088,18 @@ def get_module_movement_day_detail(
     ) = _assembly_attendance_cache(
         db=db,
         attendance_start=attendance_start,
-        end=day,
+        end=effective_to_date,
         sequence_orders=selected_sequences,
     )
     move_intervals_by_day_station, interval_details_by_day = _module_move_intervals_with_details(
         db=db,
-        start=day,
-        end=day,
+        start=range_start,
+        end=effective_to_date,
         selected_station_ids=selected_station_ids,
         chain_station_ids=chain_station_ids,
         station_id_to_sequence=station_id_to_sequence,
         first_sequence_order=first_sequence_order,
         shift_masks_by_day_sequence=shift_masks_by_day_sequence,
-        first_station_entry_task_definition_id=first_station_entry_task_definition_id,
         movement_history_lookback_days=movement_history_lookback_days,
     )
 
@@ -1142,7 +1185,6 @@ def get_module_movement_day_detail(
         min_total_line_attendance=min_total_line_attendance,
         min_moves_per_station_day=min_moves_per_station_day,
         workday_hours=workday_hours,
-        first_station_entry_task_definition_id=first_station_entry_task_definition_id,
         movement_history_lookback_days=movement_history_lookback_days,
         cache_rows=row.cache_rows,
         cache_expected_rows=row.cache_expected_rows,

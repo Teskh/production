@@ -80,7 +80,6 @@ class ModuleAttendanceThroughputResponse(BaseModel):
     min_total_line_attendance: int
     min_moves_per_station_day: int
     workday_hours: float
-    first_station_entry_task_definition_id: int
     movement_history_lookback_days: int
     dropped_incomplete_days: int
     dropped_low_attendance_days: int
@@ -130,7 +129,6 @@ class ModuleMovementDayDetailResponse(BaseModel):
     min_total_line_attendance: int
     min_moves_per_station_day: int
     workday_hours: float
-    first_station_entry_task_definition_id: int
     movement_history_lookback_days: int
     cache_rows: int
     cache_expected_rows: int
