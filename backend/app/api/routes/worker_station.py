@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_optional_worker
@@ -914,6 +914,33 @@ def station_snapshot(
 
     active_participation_ids: set[int] = set()
     active_nonconcurrent_ids: set[int] = set()
+    active_participant_counts: dict[int, int] = {}
+    task_instance_ids = {
+        task.task_instance_id
+        for item in work_items
+        for task in (item.tasks + item.other_tasks + item.backlog_tasks)
+        if task.task_instance_id is not None
+    }
+    if task_instance_ids:
+        active_participant_counts = {
+            task_instance_id: participant_count
+            for task_instance_id, participant_count in db.execute(
+                select(
+                    TaskParticipation.task_instance_id,
+                    func.count(TaskParticipation.id),
+                )
+                .where(TaskParticipation.task_instance_id.in_(sorted(task_instance_ids)))
+                .where(TaskParticipation.left_at.is_(None))
+                .group_by(TaskParticipation.task_instance_id)
+            ).all()
+        }
+        for item in work_items:
+            for task in item.tasks + item.other_tasks + item.backlog_tasks:
+                if task.task_instance_id is None:
+                    continue
+                task.active_participant_count = active_participant_counts.get(
+                    task.task_instance_id, 0
+                )
     if _worker is not None:
         active_participation_ids = set(
             db.execute(

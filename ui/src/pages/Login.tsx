@@ -1034,7 +1034,7 @@ const Login: React.FC = () => {
                   onClick={() => setShowAllWorkers((prev) => !prev)}
                   className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
                 >
-                  No estas en tu estacion? Inicia sesion
+                  No estás en tu estacián? Inicia sesión
                 </button>
               </div>
             </div>

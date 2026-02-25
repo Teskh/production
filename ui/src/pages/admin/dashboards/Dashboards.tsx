@@ -78,6 +78,7 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Asistencia', 'Paneles', 'Modulos'],
     icon: TrendingUp,
+    sysadminOnly: true,
   },
   {
     id: 'tasks-analysis',

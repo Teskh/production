@@ -88,7 +88,10 @@ function App() {
           <Route path="assistance" element={<Navigate to="/admin/workers" replace />} />
           
           {/* Planning */}
-          <Route path="line-status" element={<LineStatus />} />
+          <Route
+            path="line-status"
+            element={<SysadminOnlyRoute element={<LineStatus />} />}
+          />
           <Route path="production-queue" element={<ProductionQueue />} />
           
           {/* Config */}
@@ -96,7 +99,10 @@ function App() {
           <Route path="house-config" element={<HouseConfigurator />} />
           <Route path="rules" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="house-types" element={<Navigate to="/admin/house-config" replace />} />
-          <Route path="house-params" element={<HouseParams />} />
+          <Route
+            path="house-params"
+            element={<SysadminOnlyRoute element={<HouseParams />} />}
+          />
           <Route path="house-panels" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="task-defs" element={<TaskDefs />} />
           <Route path="pause-note-defs" element={<PauseNoteDefs />} />
@@ -131,7 +137,7 @@ function App() {
           />
           <Route
             path="dashboards/line-attendance-throughput"
-            element={<DashboardLineAttendanceThroughput />}
+            element={<SysadminOnlyRoute element={<DashboardLineAttendanceThroughput />} />}
           />
         </Route>
 

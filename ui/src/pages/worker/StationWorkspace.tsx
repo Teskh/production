@@ -143,6 +143,7 @@ type StationTask = {
   completed_at: string | null;
   notes: string | null;
   current_worker_participating?: boolean;
+  active_participant_count?: number;
   backlog?: boolean;
 };
 
@@ -379,6 +380,8 @@ const StationWorkspace: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<StationTask | null>(null);
   const [selectedTaskWorkItem, setSelectedTaskWorkItem] = useState<StationWorkItem | null>(null);
   const [selectedRework, setSelectedRework] = useState<StationQCReworkTask | null>(null);
+  const [selectedReworkImageUri, setSelectedReworkImageUri] = useState<string | null>(null);
+  const [reworkImageZoom, setReworkImageZoom] = useState(1);
   const [startConfirmContext, setStartConfirmContext] = useState<StartConfirmContext | null>(
     null
   );
@@ -399,6 +402,8 @@ const StationWorkspace: React.FC = () => {
   const autoFocusAppliedRef = useRef(false);
   const loadTimerStartRef = useRef(performance.now());
   const loadTimerReportedRef = useRef(false);
+  const crewWorkersLoadingRef = useRef(false);
+  const quickCrewPrefetchAttemptedRef = useRef(false);
   const lastSelectedWorkItemRef = useRef<{
     work_unit_id: number;
     panel_unit_id: number | null;
@@ -414,6 +419,8 @@ const StationWorkspace: React.FC = () => {
     () => snapshot?.work_items.find((item) => item.id === selectedWorkItemId) ?? null,
     [snapshot, selectedWorkItemId]
   );
+
+  const isPanelStation = selectedStation?.role === 'Panels';
 
   useEffect(() => {
     if (!selectedWorkItem) {
@@ -615,6 +622,11 @@ const StationWorkspace: React.FC = () => {
         return 'bg-gray-100 text-gray-600 border-gray-200';
     }
   };
+
+  const formatReworkDisplayTitle = (rework: StationQCReworkTask): string =>
+    rework.check_name
+      ? `Check de calidad fallado: ${rework.check_name}`
+      : 'Check de calidad fallado';
 
   const hasBlockingNonConcurrent = useCallback(
     (taskInstanceId?: number | null) => {
@@ -1035,6 +1047,84 @@ const StationWorkspace: React.FC = () => {
     };
   }, [taskDefinitionIds, regularCrewByTaskId]);
 
+  const ensureCrewWorkersLoaded = useCallback(async () => {
+    if (crewWorkersLoadingRef.current || crewWorkers.length > 0) {
+      return;
+    }
+    crewWorkersLoadingRef.current = true;
+    try {
+      const data = await apiRequest<Worker[]>('/api/workers');
+      setCrewWorkers(data.filter((item) => item.active));
+    } catch {
+      setCrewWorkers([]);
+    } finally {
+      crewWorkersLoadingRef.current = false;
+    }
+  }, [crewWorkers.length]);
+
+  useEffect(() => {
+    if (!isPanelStation || !worker?.id || crewWorkers.length > 0 || !snapshot) {
+      return;
+    }
+    if (quickCrewPrefetchAttemptedRef.current) {
+      return;
+    }
+    const hasQuickCrewCandidate = snapshot.work_items.some((item) =>
+      [...item.tasks, ...item.backlog_tasks, ...item.other_tasks].some((task) => {
+        const regularCrew = regularCrewByTaskId[task.task_definition_id] ?? [];
+        return (
+          regularCrew.length >= 2 &&
+          regularCrew.length <= 3 &&
+          regularCrew.includes(worker.id)
+        );
+      })
+    );
+    if (!hasQuickCrewCandidate) {
+      return;
+    }
+    quickCrewPrefetchAttemptedRef.current = true;
+    void ensureCrewWorkersLoaded();
+  }, [crewWorkers.length, ensureCrewWorkersLoaded, isPanelStation, regularCrewByTaskId, snapshot, worker?.id]);
+
+  const crewWorkersById = useMemo(
+    () => new Map(crewWorkers.map((crewWorker) => [crewWorker.id, crewWorker])),
+    [crewWorkers]
+  );
+
+  const getQuickRegularCrewStart = useCallback(
+    (task: StationTask) => {
+      if (!isPanelStation || !worker?.id) {
+        return null;
+      }
+      if (task.status !== 'NotStarted') {
+        return null;
+      }
+      const regularCrew = regularCrewByTaskId[task.task_definition_id] ?? [];
+      if (regularCrew.length < 2 || regularCrew.length > 3) {
+        return null;
+      }
+      if (!regularCrew.includes(worker.id)) {
+        return null;
+      }
+      const otherWorkerIds = regularCrew.filter((id) => id !== worker.id);
+      if (otherWorkerIds.length < 1 || otherWorkerIds.length > 2) {
+        return null;
+      }
+      const otherNames = otherWorkerIds
+        .map((id) => crewWorkersById.get(id))
+        .map((crewWorker) => (crewWorker ? firstNamePart(crewWorker.first_name) : ''))
+        .filter(Boolean);
+      if (otherNames.length !== otherWorkerIds.length) {
+        return null;
+      }
+      return {
+        label: `Iniciar con ${otherNames.join(' y ')}`,
+        workerIds: Array.from(new Set([worker.id, ...otherWorkerIds])),
+      };
+    },
+    [crewWorkersById, isPanelStation, regularCrewByTaskId, worker?.id]
+  );
+
   const statusBadge = (status: string) => {
     const styles: Record<string, string> = {
       NotStarted: 'bg-gray-100 text-gray-600 border-gray-200',
@@ -1138,6 +1228,15 @@ const StationWorkspace: React.FC = () => {
       concurrencyAction: 'joining',
     });
     const completeLabel = task.advance_trigger ? 'Terminar y avanzar' : 'Terminar';
+    const quickRegularCrewStart = getQuickRegularCrewStart(task);
+    const regularCrewSize = regularCrewByTaskId[task.task_definition_id]?.length ?? 0;
+    const hideCrewButtonForPanelFullTeam =
+      isPanelStation &&
+      task.status !== 'NotStarted' &&
+      (task.current_worker_participating ?? false) &&
+      regularCrewSize >= 2 &&
+      regularCrewSize <= 3 &&
+      (task.active_participant_count ?? 0) >= regularCrewSize;
     const taskNameKey = buildTaskNameKey(task, workItem.id);
     const isTaskNameExpanded = expandedTaskNames.has(taskNameKey);
     return (
@@ -1193,12 +1292,17 @@ const StationWorkspace: React.FC = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!isCompleted &&
+              !hideCrewButtonForPanelFullTeam &&
               (regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
                 <button
-                  onClick={() => handleCrewOpen(task, workItem)}
+                  onClick={() =>
+                    quickRegularCrewStart
+                      ? handleStart(task, workItem, quickRegularCrewStart.workerIds)
+                      : handleCrewOpen(task, workItem)
+                  }
                   className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
                 >
-                  <Users className="h-5 w-5" /> Equipo
+                  <Users className="h-5 w-5" /> {quickRegularCrewStart?.label ?? 'Equipo'}
                 </button>
               )}
             {task.status === 'InProgress' &&
@@ -1324,12 +1428,14 @@ const StationWorkspace: React.FC = () => {
           statusStyles[rework.status] ?? 'border-gray-200 bg-white'
         )}
       >
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-semibold text-gray-900">Rework QC</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                {formatReworkDisplayTitle(rework)}
+              </h3>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
-                Rework
+                Retrabajo
               </span>
               <span
                 className={clsx(
@@ -1345,9 +1451,6 @@ const StationWorkspace: React.FC = () => {
                 </span>
               )}
             </div>
-            {rework.check_name && (
-              <p className="mt-1 text-xs text-gray-500">Check: {rework.check_name}</p>
-            )}
             <p className="mt-2 text-sm text-gray-700">{rework.description}</p>
             {rework.failure_modes.length > 0 && (
               <p className="mt-2 text-xs text-gray-600">
@@ -1356,7 +1459,7 @@ const StationWorkspace: React.FC = () => {
               </p>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto md:flex-nowrap md:self-start md:pl-4">
             <button
               onClick={() => openReworkDetails(rework)}
               className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
@@ -1436,6 +1539,8 @@ const StationWorkspace: React.FC = () => {
     setSelectedTask(null);
     setSelectedTaskWorkItem(null);
     setSelectedRework(null);
+    setSelectedReworkImageUri(null);
+    setReworkImageZoom(1);
     setStartConfirmContext(null);
     setStartConfirmSeconds(0);
     setReasonText('');
@@ -1473,7 +1578,23 @@ const StationWorkspace: React.FC = () => {
 
   const openReworkDetails = (rework: StationQCReworkTask) => {
     setSelectedRework(rework);
+    setSelectedReworkImageUri(null);
+    setReworkImageZoom(1);
     setActiveModal('rework_details');
+  };
+
+  const openReworkImage = (uri: string) => {
+    setSelectedReworkImageUri(uri);
+    setReworkImageZoom(1);
+  };
+
+  const closeReworkImage = () => {
+    setSelectedReworkImageUri(null);
+    setReworkImageZoom(1);
+  };
+
+  const changeReworkImageZoom = (delta: number) => {
+    setReworkImageZoom((prev) => Math.min(4, Math.max(1, Number((prev + delta).toFixed(2)))));
   };
 
   const handleContextModeSelect = (mode: StationPickerMode, context: StationContext | null) => {
@@ -1811,14 +1932,7 @@ const StationWorkspace: React.FC = () => {
       return;
     }
     openModal('crew', task, workItem);
-    if (crewWorkers.length === 0) {
-      try {
-        const data = await apiRequest<Worker[]>('/api/workers');
-        setCrewWorkers(data.filter((item) => item.active));
-      } catch {
-        setCrewWorkers([]);
-      }
-    }
+    await ensureCrewWorkersLoaded();
     const baseSelection = new Set([worker?.id, ...regularCrew].filter(Boolean));
     setCrewSelection(Array.from(baseSelection) as number[]);
   };
@@ -2841,7 +2955,7 @@ const StationWorkspace: React.FC = () => {
             <button onClick={closeModal} className="absolute right-4 top-4 text-gray-400">
               <X className="h-5 w-5" />
             </button>
-            <h3 className="text-lg font-semibold text-gray-900">Detalle de rework QC</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Detalle de retrabajo</h3>
             <p className="mt-1 text-sm text-gray-500">
               Modulo {selectedRework.module_number}
               {selectedRework.panel_code ? ` • ${selectedRework.panel_code}` : ''}
@@ -2850,7 +2964,7 @@ const StationWorkspace: React.FC = () => {
               <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-600">
-                    Rework
+                    Retrabajo
                   </span>
                   <span
                     className={clsx(
@@ -2866,11 +2980,9 @@ const StationWorkspace: React.FC = () => {
                     </span>
                   )}
                 </div>
-                {selectedRework.check_name && (
-                  <p className="mt-2 text-xs text-gray-500">
-                    Check: {selectedRework.check_name}
-                  </p>
-                )}
+                <p className="mt-2 text-sm font-semibold text-gray-900">
+                  {formatReworkDisplayTitle(selectedRework)}
+                </p>
                 <p className="mt-2 text-sm text-gray-700">{selectedRework.description}</p>
               </div>
               {selectedRework.failure_modes.length > 0 && (
@@ -2892,12 +3004,22 @@ const StationWorkspace: React.FC = () => {
                 {selectedRework.evidence_uris.length > 0 ? (
                   <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
                     {selectedRework.evidence_uris.map((uri) => (
-                      <img
+                      <button
                         key={uri}
-                        src={`${API_BASE_URL}${uri}`}
-                        alt="Registro Calidad"
-                        className="h-28 w-full rounded-xl border border-gray-200 object-cover"
-                      />
+                        type="button"
+                        onClick={() => openReworkImage(uri)}
+                        className="group relative overflow-hidden rounded-xl border border-gray-200 text-left"
+                        title="Abrir imagen"
+                      >
+                        <img
+                          src={`${API_BASE_URL}${uri}`}
+                          alt="Registro Calidad"
+                          className="h-28 w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                        />
+                        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-900/65 to-transparent px-2 py-1 text-[11px] font-semibold text-white">
+                          Click para ampliar
+                        </span>
+                      </button>
                     ))}
                   </div>
                 ) : (
@@ -2912,6 +3034,64 @@ const StationWorkspace: React.FC = () => {
               >
                 Cerrar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedReworkImageUri && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Cerrar visor de imagen"
+            className="absolute inset-0 bg-gray-950/85"
+            onClick={closeReworkImage}
+          />
+          <div className="relative z-10 w-full max-w-6xl rounded-2xl border border-white/15 bg-gray-900/95 p-3 shadow-2xl">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-300">
+                Evidencia de calidad
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => changeReworkImageZoom(-0.25)}
+                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={reworkImageZoom <= 1}
+                >
+                  -
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReworkImageZoom(1)}
+                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
+                >
+                  {Math.round(reworkImageZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeReworkImageZoom(0.25)}
+                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={reworkImageZoom >= 4}
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  onClick={closeReworkImage}
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
+                >
+                  <X className="h-4 w-4" /> Cerrar
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[75vh] overflow-auto rounded-xl border border-white/10 bg-black/40 p-2">
+              <img
+                src={`${API_BASE_URL}${selectedReworkImageUri}`}
+                alt="Evidencia de calidad ampliada"
+                className="mx-auto block h-auto max-w-none rounded-lg"
+                style={{ width: `${reworkImageZoom * 100}%` }}
+              />
             </div>
           </div>
         </div>

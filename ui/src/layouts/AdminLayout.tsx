@@ -53,16 +53,16 @@ const AdminLayout: React.FC = () => {
     {
       title: 'Planeacion y Produccion',
       items: [
-        { name: 'Estado (pendiente)', path: '/admin/line-status', icon: Home },
+        { name: 'Estado (pendiente)', path: '/admin/line-status', icon: Home, sysadminOnly: true },
         { name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers },
-      ],
+      ].filter((item) => !item.sysadminOnly || isSysadmin),
     },
     {
       title: 'Definicion de Producto',
       items: [
         { name: 'Casa/Panel/Módulo', path: '/admin/house-config', icon: Home },
-        { name: 'Parametros', path: '/admin/house-params', icon: Settings },
-      ],
+        { name: 'Parametros', path: '/admin/house-params', icon: Settings, sysadminOnly: true },
+      ].filter((item) => !item.sysadminOnly || isSysadmin),
     },
     {
       title: 'Configuracion',

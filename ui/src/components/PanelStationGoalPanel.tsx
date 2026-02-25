@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Target } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Info, Target } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PANEL_GOAL_STORAGE_KEY = 'panel_daily_goal';
@@ -9,7 +9,12 @@ const SHIFT_END = { hours: 17, minutes: 0 };
 type PanelsPassedSummary = {
   plan_id?: number | null;
   panel_definition_id?: number | null;
+  panel_code?: string | null;
+  panel_name?: string | null;
+  house_identifier?: string | null;
+  module_number?: number | null;
   satisfied_at?: string | null;
+  completed_at?: string | null;
 };
 
 type StationPanelsPassedResponse = {
@@ -84,6 +89,9 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   const [passedPanels, setPassedPanels] = useState<PanelsPassedSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [detailsPinnedOpen, setDetailsPinnedOpen] = useState(false);
+  const [detailsHoverOpen, setDetailsHoverOpen] = useState(false);
+  const detailsPopoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -136,6 +144,30 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
     };
   }, [stationId, todayToken]);
 
+  useEffect(() => {
+    setDetailsPinnedOpen(false);
+    setDetailsHoverOpen(false);
+  }, [stationId, todayToken]);
+
+  useEffect(() => {
+    if (!detailsPinnedOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!detailsPopoverRef.current) {
+        return;
+      }
+      if (detailsPopoverRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setDetailsPinnedOpen(false);
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [detailsPinnedOpen]);
+
   const goalValue = useMemo(() => {
     const parsed = Number.parseInt(goalDraft, 10);
     return Number.isFinite(parsed) ? Math.max(parsed, 0) : 0;
@@ -143,6 +175,22 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
   const progress = goalValue > 0 ? Math.min(passedCount / goalValue, 1) : 0;
   const remaining = goalValue > 0 ? Math.max(goalValue - passedCount, 0) : 0;
   const overage = goalValue > 0 && passedCount > goalValue ? passedCount - goalValue : 0;
+  const sortedPassedPanels = useMemo(() => {
+    return [...passedPanels].sort((a, b) => {
+      const timeA = a.satisfied_at ?? a.completed_at ?? '';
+      const timeB = b.satisfied_at ?? b.completed_at ?? '';
+      if (timeA && timeB && timeA !== timeB) {
+        return timeA.localeCompare(timeB);
+      }
+      const codeA = (a.panel_name ?? a.panel_code ?? '').trim();
+      const codeB = (b.panel_name ?? b.panel_code ?? '').trim();
+      if (codeA !== codeB) {
+        return codeA.localeCompare(codeB);
+      }
+      return Number(a.panel_definition_id ?? 0) - Number(b.panel_definition_id ?? 0);
+    });
+  }, [passedPanels]);
+  const detailsOpen = detailsPinnedOpen || detailsHoverOpen;
 
   const chart = useMemo(() => {
     const width = 800;
@@ -261,7 +309,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
       <div className="mb-8">
         <h3 className="text-xl font-bold flex items-center mb-2">
           <Target className="w-6 h-6 mr-2 text-blue-400" />
-          Meta diaria de paneles
+          Meta diaria
         </h3>
         <p className="text-slate-400">
           {stationLabel} · Hoy {todayToken}
@@ -270,15 +318,90 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
 
       <div className="bg-slate-700 rounded-2xl shadow-lg p-6">
         <div className="flex items-start justify-between gap-6">
-          <div>
+          <div className="relative" ref={detailsPopoverRef}>
             <p className="text-sm uppercase tracking-wide text-slate-300">
-              Paneles pasados hoy
+              Paneles terminados hoy
             </p>
-            {loading ? (
-              <div className="mt-3 h-10 w-24 rounded-full bg-slate-600/70 animate-pulse" />
-            ) : (
-              <p className="mt-2 text-4xl font-semibold text-white">{passedCount}</p>
-            )}
+            <div
+              className="mt-2 flex items-center gap-3"
+              onMouseEnter={() => setDetailsHoverOpen(true)}
+              onMouseLeave={() => setDetailsHoverOpen(false)}
+            >
+              {loading ? (
+                <div className="h-10 w-24 rounded-full bg-slate-600/70 animate-pulse" />
+              ) : (
+                <p className="text-4xl font-semibold text-white">{passedCount}</p>
+              )}
+              <button
+                type="button"
+                className="inline-flex items-center justify-center text-slate-300 transition hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-400/70 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Ver detalle de paneles producidos"
+                aria-expanded={detailsOpen}
+                aria-haspopup="dialog"
+                onClick={() => setDetailsPinnedOpen((prev) => !prev)}
+                disabled={loading}
+              >
+                <Info className="h-4 w-4" />
+              </button>
+
+              {detailsOpen && (
+                <div className="absolute left-0 top-full z-20 mt-3 w-[28rem] max-w-[calc(100vw-10rem)] rounded-xl border border-slate-500/70 bg-slate-900/95 p-3 shadow-2xl backdrop-blur">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">
+                      Paneles producidos
+                    </p>
+                    <span className="text-xs text-slate-400">
+                      {sortedPassedPanels.length > 0 ? sortedPassedPanels.length : passedCount}
+                    </span>
+                  </div>
+
+                  {sortedPassedPanels.length === 0 ? (
+                    <p className="text-sm text-slate-300">
+                      {passedCount > 0
+                        ? 'No hay detalle de paneles disponible para hoy.'
+                        : 'Aun no hay paneles registrados hoy.'}
+                    </p>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-700/80">
+                      <div className="grid grid-cols-[2.2rem_minmax(0,1fr)_7.5rem_6rem] gap-x-3 bg-slate-800/80 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-300">
+                        <span>#</span>
+                        <span>Panel</span>
+                        <span>Casa</span>
+                        <span>Modulo</span>
+                      </div>
+                      <div className="divide-y divide-slate-700/70">
+                        {sortedPassedPanels.map((panel, index) => {
+                          const panelLabel =
+                            (panel.panel_name ?? panel.panel_code)?.trim() ||
+                            (panel.panel_definition_id != null
+                              ? `Panel ${panel.panel_definition_id}`
+                              : 'Panel');
+                          const houseLabel = panel.house_identifier?.trim() || '-';
+                          const moduleLabel =
+                            panel.module_number != null ? `MD${panel.module_number}` : '-';
+
+                          return (
+                            <div
+                              key={`${panel.plan_id ?? 'plan'}-${panel.panel_definition_id ?? panel.panel_code ?? index}-${panel.satisfied_at ?? panel.completed_at ?? index}`}
+                              className="grid grid-cols-[2.2rem_minmax(0,1fr)_7.5rem_6rem] gap-x-3 px-3 py-2 text-sm text-slate-100"
+                            >
+                              <span className="text-slate-400">{index + 1}</span>
+                              <span className="truncate" title={panelLabel}>
+                                {panelLabel}
+                              </span>
+                              <span className="truncate text-slate-300" title={houseLabel}>
+                                {houseLabel}
+                              </span>
+                              <span className="truncate text-slate-300">{moduleLabel}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div className="text-right">
             <label

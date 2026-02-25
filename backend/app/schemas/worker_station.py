@@ -25,6 +25,7 @@ class StationTask(BaseModel):
     completed_at: datetime | None = None
     notes: str | None = None
     current_worker_participating: bool = False
+    active_participant_count: int = 0
     backlog: bool = False
 
 
