@@ -46,6 +46,13 @@ class Settings:
         os.getenv("BACKUP_SCHEDULER_POLL_SECONDS", "60")
     )
     sys_admin_password: str | None = os.getenv("SYS_ADMIN_PASSWORD")
+    camera_rtsp_username: str = os.getenv("CAMERA_RTSP_USERNAME", "admin")
+    camera_rtsp_password: str = os.getenv("CAMERA_RTSP_PASSWORD", "Geoforce.2030.$")
+    camera_rtsp_port: int = int(os.getenv("CAMERA_RTSP_PORT", "554"))
+    camera_rtsp_channel: int = int(os.getenv("CAMERA_RTSP_CHANNEL", "1"))
+    camera_rtsp_subtype: int = int(os.getenv("CAMERA_RTSP_SUBTYPE", "0"))
+    camera_ffmpeg_bin: str = os.getenv("CAMERA_FFMPEG_BIN", "ffmpeg")
+    camera_mjpeg_fps: int = int(os.getenv("CAMERA_MJPEG_FPS", "5"))
 
 
 settings = Settings()

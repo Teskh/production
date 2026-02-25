@@ -400,6 +400,30 @@ def station_snapshot(
                 or required_map[task.id].intersection(worker_skill_ids)
             ]
 
+    if forced_task_definitions_by_id and _worker is not None:
+        forced_requirement_rows = list(
+            db.execute(
+                select(
+                    TaskSkillRequirement.task_definition_id,
+                    TaskSkillRequirement.skill_id,
+                ).where(
+                    TaskSkillRequirement.task_definition_id.in_(
+                        list(forced_task_definitions_by_id.keys())
+                    )
+                )
+            ).all()
+        )
+        if forced_requirement_rows:
+            forced_required_map: dict[int, set[int]] = {}
+            for row in forced_requirement_rows:
+                forced_required_map.setdefault(row.task_definition_id, set()).add(row.skill_id)
+            forced_task_definitions_by_id = {
+                task_id: task
+                for task_id, task in forced_task_definitions_by_id.items()
+                if task_id not in forced_required_map
+                or forced_required_map[task_id].intersection(worker_skill_ids)
+            }
+
     task_definition_by_id: dict[int, TaskDefinition] = {
         task.id: task for task in base_task_definitions
     }

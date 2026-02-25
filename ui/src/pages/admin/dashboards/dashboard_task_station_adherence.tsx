@@ -62,6 +62,21 @@ type AdherenceResponse = {
   rows: AdherenceRow[];
 };
 
+type AdherenceViewTab = 'rows' | 'tasks';
+
+type TaskAdherenceSummaryRow = {
+  task_definition_id: number;
+  task_name: string;
+  scope: TaskScope;
+  total_rows: number;
+  kpi_rows: number;
+  matched_rows: number;
+  deviation_rows: number;
+  unresolved_rows: number;
+  adherence_rate: number | null;
+  deviation_rate: number | null;
+};
+
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: 'include',
@@ -108,6 +123,7 @@ const DashboardTaskStationAdherence: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState<AdherenceResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<AdherenceViewTab>('rows');
 
   useEffect(() => {
     setHeader({
@@ -262,6 +278,63 @@ const DashboardTaskStationAdherence: React.FC = () => {
       adherence_rate: kpiRows > 0 ? (matchedRows / kpiRows) * 100 : null,
     };
   }, [data, filteredRows, sequenceBehaviorFilter]);
+
+  const taskSummaryRows = useMemo<TaskAdherenceSummaryRow[]>(() => {
+    const grouped = new Map<number, Omit<TaskAdherenceSummaryRow, 'adherence_rate' | 'deviation_rate'>>();
+
+    filteredRows.forEach((row) => {
+      const existing = grouped.get(row.task_definition_id);
+      const entry =
+        existing ??
+        {
+          task_definition_id: row.task_definition_id,
+          task_name: row.task_name?.trim() || `Tarea ${row.task_definition_id}`,
+          scope: row.scope,
+          total_rows: 0,
+          kpi_rows: 0,
+          matched_rows: 0,
+          deviation_rows: 0,
+          unresolved_rows: 0,
+        };
+
+      entry.total_rows += 1;
+      if (row.included_in_kpi) {
+        entry.kpi_rows += 1;
+        if (row.is_deviation === true) {
+          entry.deviation_rows += 1;
+        } else if (row.is_deviation === false) {
+          entry.matched_rows += 1;
+        } else {
+          entry.unresolved_rows += 1;
+        }
+      }
+
+      if (!existing) {
+        grouped.set(row.task_definition_id, entry);
+      }
+    });
+
+    return Array.from(grouped.values())
+      .map((entry) => ({
+        ...entry,
+        adherence_rate: entry.kpi_rows > 0 ? (entry.matched_rows / entry.kpi_rows) * 100 : null,
+        deviation_rate: entry.kpi_rows > 0 ? (entry.deviation_rows / entry.kpi_rows) * 100 : null,
+      }))
+      .sort((a, b) => {
+        if (b.deviation_rows !== a.deviation_rows) {
+          return b.deviation_rows - a.deviation_rows;
+        }
+        const bDeviationRate = b.deviation_rate ?? -1;
+        const aDeviationRate = a.deviation_rate ?? -1;
+        if (bDeviationRate !== aDeviationRate) {
+          return bDeviationRate - aDeviationRate;
+        }
+        if (b.kpi_rows !== a.kpi_rows) {
+          return b.kpi_rows - a.kpi_rows;
+        }
+        return a.task_name.localeCompare(b.task_name);
+      });
+  }, [filteredRows]);
 
   useEffect(() => {
     if (!taskDefinitionId) {
@@ -452,10 +525,31 @@ const DashboardTaskStationAdherence: React.FC = () => {
         {error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : null}
-        {!error && data && filteredRows.length === 0 ? (
+        {!error && data ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {[
+              { key: 'rows' as const, label: 'Detalle' },
+              { key: 'tasks' as const, label: 'Por tarea (mas desviaciones)' },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={
+                  activeTab === tab.key
+                    ? 'rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white'
+                    : 'rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]'
+                }
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {!error && data && (activeTab === 'rows' ? filteredRows.length === 0 : taskSummaryRows.length === 0) ? (
           <p className="text-sm text-[var(--ink-muted)]">No hay registros para los filtros seleccionados.</p>
         ) : null}
-        {!error && data && filteredRows.length > 0 ? (
+        {!error && data && activeTab === 'rows' && filteredRows.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
@@ -500,6 +594,53 @@ const DashboardTaskStationAdherence: React.FC = () => {
                     </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {!error && data && activeTab === 'tasks' && taskSummaryRows.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-black/10 text-left text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">
+                  <th className="px-2 py-2">Tarea</th>
+                  <th className="px-2 py-2">Alcance</th>
+                  <th className="px-2 py-2 text-right">Total</th>
+                  <th className="px-2 py-2 text-right">KPI</th>
+                  <th className="px-2 py-2 text-right">Desviaciones</th>
+                  <th className="px-2 py-2 text-right">Coinciden</th>
+                  <th className="px-2 py-2 text-right">Sin clasificar</th>
+                  <th className="px-2 py-2 text-right">% desvio KPI</th>
+                  <th className="px-2 py-2 text-right">Adherencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {taskSummaryRows.map((row) => (
+                  <tr
+                    key={row.task_definition_id}
+                    className="border-b border-black/5 text-[var(--ink)]"
+                  >
+                    <td className="px-2 py-2">{row.task_name}</td>
+                    <td className="px-2 py-2 uppercase tracking-[0.12em] text-[var(--ink-muted)]">
+                      {row.scope}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{row.total_rows}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{row.kpi_rows}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-amber-700">
+                      {row.deviation_rows}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums text-emerald-700">
+                      {row.matched_rows}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{row.unresolved_rows}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">
+                      {row.deviation_rate != null ? `${row.deviation_rate.toFixed(1)}%` : '-'}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">
+                      {row.adherence_rate != null ? `${row.adherence_rate.toFixed(1)}%` : '-'}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

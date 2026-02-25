@@ -4,7 +4,6 @@ import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import DashboardShiftEstimation from './dashboard_shift_estimation';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
-const CAMERA_FEED_BASE_URL = import.meta.env.VITE_CAMERA_FEED_BASE_URL ?? 'http://127.0.0.1:5250';
 
 type StationRole = 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
 type StationLineType = '1' | '2' | '3';
@@ -350,8 +349,8 @@ const Stations: React.FC = () => {
 
   const cameraStreamUrl = useMemo(
     () =>
-      cameraModalStation?.camera_feed_ip
-        ? `${CAMERA_FEED_BASE_URL}/live.mjpeg?ip=${encodeURIComponent(cameraModalStation.camera_feed_ip)}`
+      cameraModalStation?.id
+        ? `${API_BASE_URL}/api/camera-feed/live.mjpeg?station_id=${encodeURIComponent(String(cameraModalStation.id))}`
         : null,
     [cameraModalStation]
   );
