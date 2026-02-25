@@ -75,6 +75,17 @@ const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'
 const formatWorkerFullName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string =>
   `${worker.first_name} ${worker.last_name}`.trim();
 
+const formatWorkerDisplayNameFromFullName = (fullName: string): string => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return parts[0] ?? '';
+  }
+  if (parts.length === 2) {
+    return parts.join(' ');
+  }
+  return `${parts[0]} ${parts[parts.length - 2]}`;
+};
+
 const isModuleMoveTask = (task: StationTask): boolean =>
   task.advance_trigger && task.scope.toLowerCase() === 'module';
 
@@ -671,7 +682,7 @@ const StationWorkspace: React.FC = () => {
     if (task.worker_allowed ?? true) {
       return '';
     }
-    const names = task.allowed_worker_names ?? [];
+    const names = (task.allowed_worker_names ?? []).map(formatWorkerDisplayNameFromFullName);
     if (names.length === 0) {
       return 'Restringido a trabajadores asignados.';
     }
