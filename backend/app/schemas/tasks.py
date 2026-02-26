@@ -127,6 +127,11 @@ class TaskInstanceRead(BaseModel):
 
 class WorkerActiveTaskRead(BaseModel):
     task_instance_id: int
+    task_definition_id: int
+    task_name: str
+    scope: TaskScope
+    concurrent_allowed: bool
+    advance_trigger: bool
     station_id: int
     current_station_id: int | None = None
     work_unit_id: int
@@ -135,3 +140,4 @@ class WorkerActiveTaskRead(BaseModel):
     panel_code: str | None = None
     status: TaskStatus
     started_at: datetime | None = None
+    notes: str | None = None

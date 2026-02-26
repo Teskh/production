@@ -437,6 +437,13 @@ def list_active_tasks(
             .where(PanelUnit.id.in_(panel_unit_ids))
         ).scalars()
     }
+    task_definition_ids = {instance.task_definition_id for instance in instances}
+    task_definitions = {
+        task_def.id: task_def
+        for task_def in db.execute(
+            select(TaskDefinition).where(TaskDefinition.id.in_(task_definition_ids))
+        ).scalars()
+    }
     payloads: list[WorkerActiveTaskRead] = []
     for instance in instances:
         panel_unit = (
@@ -445,12 +452,18 @@ def list_active_tasks(
             else None
         )
         work_unit = work_units.get(instance.work_unit_id)
+        task_def = task_definitions.get(instance.task_definition_id)
         current_station_id = panel_unit.current_station_id if panel_unit else None
         if current_station_id is None and work_unit:
             current_station_id = work_unit.current_station_id
         payloads.append(
             WorkerActiveTaskRead(
                 task_instance_id=instance.id,
+                task_definition_id=instance.task_definition_id,
+                task_name=task_def.name if task_def else f"Tarea {instance.task_definition_id}",
+                scope=instance.scope,
+                concurrent_allowed=task_def.concurrent_allowed if task_def else False,
+                advance_trigger=task_def.advance_trigger if task_def else False,
                 station_id=instance.station_id,
                 current_station_id=current_station_id,
                 work_unit_id=instance.work_unit_id,
@@ -463,6 +476,7 @@ def list_active_tasks(
                 ),
                 status=instance.status,
                 started_at=instance.started_at,
+                notes=instance.notes,
             )
         )
     return payloads

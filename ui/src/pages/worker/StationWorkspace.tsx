@@ -204,6 +204,11 @@ type TaskRegularCrewResponse = {
 
 type WorkerActiveTask = {
   task_instance_id: number;
+  task_definition_id: number;
+  task_name: string;
+  scope: string;
+  concurrent_allowed: boolean;
+  advance_trigger: boolean;
   station_id: number;
   current_station_id: number | null;
   work_unit_id: number;
@@ -212,6 +217,7 @@ type WorkerActiveTask = {
   panel_code: string | null;
   status: string;
   started_at: string | null;
+  notes: string | null;
 };
 
 type StartConfirmContext = {
@@ -356,7 +362,7 @@ const buildAutoFocusNotice = (station: Station | null, task: WorkerActiveTask): 
   const stationLabel = station ? formatStationLabel(station) : 'la estacion de tu tarea';
   const moduleLabel = task.module_number !== null ? ` Modulo ${task.module_number}` : '';
   const panelLabel = task.panel_code ? ` Panel ${task.panel_code}` : '';
-  return `Redirigido automaticamente a ${stationLabel}${moduleLabel}${panelLabel} porque tiene una tarea a medio andar`;
+  return `Tienes una tarea activa en ${stationLabel}${moduleLabel}${panelLabel}.`;
 };
 
 const StationWorkspace: React.FC = () => {
@@ -378,6 +384,7 @@ const StationWorkspace: React.FC = () => {
   });
   const [autoFocusTarget, setAutoFocusTarget] = useState<WorkerActiveTask | null>(null);
   const [autoFocusNotice, setAutoFocusNotice] = useState<string | null>(null);
+  const [showAutoFocusWarningModal, setShowAutoFocusWarningModal] = useState(false);
   const [activeModal, setActiveModal] = useState<
     | 'pause'
     | 'skip'
@@ -410,7 +417,6 @@ const StationWorkspace: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const snapshotRequestIdRef = useRef(0);
-  const autoFocusAppliedRef = useRef(false);
   const loadTimerStartRef = useRef(performance.now());
   const loadTimerReportedRef = useRef(false);
   const crewWorkersLoadingRef = useRef(false);
@@ -430,6 +436,58 @@ const StationWorkspace: React.FC = () => {
     () => snapshot?.work_items.find((item) => item.id === selectedWorkItemId) ?? null,
     [snapshot, selectedWorkItemId]
   );
+
+  const autoFocusTargetStationId = autoFocusTarget ? resolveAutoFocusStationId(autoFocusTarget) : null;
+  const autoFocusTargetStation = useMemo(
+    () => stations.find((station) => station.id === autoFocusTargetStationId) ?? null,
+    [autoFocusTargetStationId, stations]
+  );
+  const activeTaskElsewhere =
+    selectedStationId !== null &&
+    autoFocusTarget !== null &&
+    autoFocusTargetStationId !== null &&
+    selectedStationId !== autoFocusTargetStationId;
+
+  const activeTaskProxy = useMemo<StationTask | null>(() => {
+    if (!autoFocusTarget) {
+      return null;
+    }
+    return {
+      task_definition_id: autoFocusTarget.task_definition_id,
+      task_instance_id: autoFocusTarget.task_instance_id,
+      name: autoFocusTarget.task_name,
+      scope: autoFocusTarget.scope,
+      station_sequence_order: null,
+      status: autoFocusTarget.status,
+      skippable: false,
+      concurrent_allowed: autoFocusTarget.concurrent_allowed,
+      advance_trigger: autoFocusTarget.advance_trigger,
+      dependencies_satisfied: true,
+      worker_allowed: true,
+      started_at: autoFocusTarget.started_at,
+      completed_at: null,
+      notes: autoFocusTarget.notes,
+      current_worker_participating: true,
+      active_participant_count: 1,
+    };
+  }, [autoFocusTarget]);
+
+  const autoFocusNoticeDetails = useMemo(() => {
+    if (!autoFocusNotice || !autoFocusTarget) {
+      return null;
+    }
+    return {
+      stationLabel: autoFocusTargetStation ? formatStationLabel(autoFocusTargetStation) : null,
+      stationMeta: autoFocusTargetStation
+        ? `${formatStationRoleLabel(autoFocusTargetStation.role)}${
+            autoFocusTargetStation.line_type ? ` - Linea ${autoFocusTargetStation.line_type}` : ''
+          }`
+        : null,
+      moduleLabel:
+        autoFocusTarget.module_number !== null ? `Modulo ${autoFocusTarget.module_number}` : null,
+      panelLabel: autoFocusTarget.panel_code ? `Panel ${autoFocusTarget.panel_code}` : null,
+    };
+  }, [autoFocusNotice, autoFocusTarget, autoFocusTargetStation]);
 
   const isPanelStation = selectedStation?.role === 'Panels';
 
@@ -767,6 +825,15 @@ const StationWorkspace: React.FC = () => {
     await loadSnapshot(selectedStationId);
   }, [loadSnapshot, selectedStationId]);
 
+  const refreshActiveTaskTarget = useCallback(async () => {
+    try {
+      const tasks = await apiRequest<WorkerActiveTask[]>('/api/worker-tasks/active');
+      setAutoFocusTarget(pickAutoFocusTarget(tasks));
+    } catch {
+      setAutoFocusTarget(null);
+    }
+  }, []);
+
   useEffect(() => {
     const bootstrap = async () => {
       setLoading(true);
@@ -932,52 +999,35 @@ const StationWorkspace: React.FC = () => {
     if (!worker || loading) {
       return;
     }
-    let active = true;
-    const loadActiveTasks = async () => {
-      try {
-        const tasks = await apiRequest<WorkerActiveTask[]>('/api/worker-tasks/active');
-        if (!active) {
-          return;
-        }
-        setAutoFocusTarget(pickAutoFocusTarget(tasks));
-      } catch {
-        if (!active) {
-          return;
-        }
-        setAutoFocusTarget(null);
-      }
-    };
-    loadActiveTasks();
-    return () => {
-      active = false;
-    };
-  }, [loading, worker]);
+    void refreshActiveTaskTarget();
+  }, [loading, refreshActiveTaskTarget, worker]);
 
   useEffect(() => {
-    if (loading || !autoFocusTarget || autoFocusAppliedRef.current) {
+    if (loading || !autoFocusTarget || !selectedStationId) {
       return;
     }
     const targetStationId = resolveAutoFocusStationId(autoFocusTarget);
-    if (selectedStationId !== targetStationId) {
-      const prevContext = localStorage.getItem(STATION_CONTEXT_STORAGE_KEY);
-      if (prevContext && !localStorage.getItem(AUTOFOCUS_PREV_CONTEXT_KEY)) {
-        localStorage.setItem(AUTOFOCUS_PREV_CONTEXT_KEY, prevContext);
-      }
-      const context: StationContext = {
-        kind: 'station',
-        stationId: targetStationId,
-      };
-      setStationContext(context);
-      persistStationContext(context);
-      persistSpecificStationId(targetStationId);
-      setSelectedStationId(targetStationId);
-      setSelectedWorkItemId(null);
-      setShowStationPicker(false);
-      const station = stations.find((item) => item.id === targetStationId) ?? null;
-      setAutoFocusNotice(buildAutoFocusNotice(station, autoFocusTarget));
+    if (selectedStationId === targetStationId) {
+      setShowAutoFocusWarningModal(false);
+      setAutoFocusNotice(null);
+      return;
     }
-    autoFocusAppliedRef.current = true;
-  }, [autoFocusTarget, loading, selectedStationId, stations]);
+    const station = stations.find((item) => item.id === targetStationId) ?? null;
+    setAutoFocusNotice(buildAutoFocusNotice(station, autoFocusTarget));
+    if (activeModal === 'pause' || activeModal === 'comments') {
+      setShowAutoFocusWarningModal(false);
+      return;
+    }
+    setShowAutoFocusWarningModal(true);
+  }, [activeModal, autoFocusTarget, loading, selectedStationId, stations]);
+
+  useEffect(() => {
+    if (autoFocusTarget) {
+      return;
+    }
+    setShowAutoFocusWarningModal(false);
+    setAutoFocusNotice(null);
+  }, [autoFocusTarget]);
 
   useEffect(() => {
     if (!autoFocusTarget || !snapshot) {
@@ -1534,15 +1584,23 @@ const StationWorkspace: React.FC = () => {
   const openModal = (
     modal: 'pause' | 'skip' | 'comments' | 'crew',
     task: StationTask,
-    workItem: StationWorkItem
+    workItem?: StationWorkItem | null
   ) => {
     setSelectedTask(task);
-    setSelectedTaskWorkItem(workItem);
+    setSelectedTaskWorkItem(workItem ?? null);
     setReasonText('');
     setReasonError(null);
     setCommentDraft(modal === 'comments' ? task.notes ?? '' : '');
     setCommentError(null);
     setActiveModal(modal);
+  };
+
+  const openActiveTaskCommandModal = (modal: 'pause' | 'comments') => {
+    if (!activeTaskProxy) {
+      return;
+    }
+    setShowAutoFocusWarningModal(false);
+    openModal(modal, activeTaskProxy, null);
   };
 
   const closeModal = () => {
@@ -1617,6 +1675,8 @@ const StationWorkspace: React.FC = () => {
     persistStationContext(context);
     setSelectedStationId(null);
     setSelectedWorkItemId(null);
+    setAutoFocusNotice(null);
+    setShowAutoFocusWarningModal(false);
     persistSpecificStationId(null);
     setShowContextPicker(false);
     setShowStationPicker(true);
@@ -1630,6 +1690,7 @@ const StationWorkspace: React.FC = () => {
     setSelectedStationId(stationId);
     setSelectedWorkItemId(null);
     setAutoFocusNotice(null);
+    setShowAutoFocusWarningModal(false);
     persistSpecificStationId(stationId);
     setShowContextPicker(false);
     setShowStationPicker(false);
@@ -1639,6 +1700,7 @@ const StationWorkspace: React.FC = () => {
     setSelectedStationId(stationId);
     setSelectedWorkItemId(null);
     setAutoFocusNotice(null);
+    setShowAutoFocusWarningModal(false);
     persistSpecificStationId(stationId);
     setShowStationPicker(false);
   };
@@ -1688,6 +1750,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo iniciar la tarea.';
       setError(message);
@@ -1712,6 +1775,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
       closeModal();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo pausar la tarea.';
@@ -1749,6 +1813,7 @@ const StationWorkspace: React.FC = () => {
         body: JSON.stringify({ task_instance_id: task.task_instance_id }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo reanudar la tarea.';
       setError(message);
@@ -1782,6 +1847,7 @@ const StationWorkspace: React.FC = () => {
         body: JSON.stringify({ task_instance_id: task.task_instance_id }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo unir a la tarea.';
       setError(message);
@@ -1812,6 +1878,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo completar la tarea.';
       setError(message);
@@ -1899,6 +1966,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
       closeModal();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo omitir la tarea.';
@@ -1927,6 +1995,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo guardar la nota.';
       setCommentError(message);
@@ -2174,12 +2243,6 @@ const StationWorkspace: React.FC = () => {
       {error && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
-        </div>
-      )}
-
-      {autoFocusNotice && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-          {autoFocusNotice}
         </div>
       )}
 
@@ -3224,6 +3287,123 @@ const StationWorkspace: React.FC = () => {
                 <div className="text-sm text-gray-500">No hay otras tareas disponibles.</div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {autoFocusNotice && activeTaskElsewhere && activeTaskProxy && showAutoFocusWarningModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/70" />
+          <div className="relative w-full max-w-lg rounded-2xl border-2 border-amber-300 bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="rounded-xl bg-amber-100 p-3 text-amber-700">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">
+                  Atencion
+                </p>
+                <h3 className="mt-1 text-xl font-semibold text-gray-900">
+                  Tarea activa en otra estacion
+                </h3>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+              <p className="text-base font-semibold text-amber-950">{autoFocusNotice}</p>
+              <p className="mt-2 text-sm text-amber-900/80">
+                Resuelve esta tarea (pausar, terminar o agregar nota) y luego sigue en tu estacion
+                actual.
+              </p>
+              <p className="mt-2 text-sm font-semibold text-amber-900">
+                No puedes continuar en esta estacion hasta pausar o terminar esa tarea.
+              </p>
+            </div>
+            {autoFocusNoticeDetails && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {autoFocusNoticeDetails.stationLabel && (
+                  <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-800">
+                    {autoFocusNoticeDetails.stationLabel}
+                  </span>
+                )}
+                {autoFocusNoticeDetails.stationMeta && (
+                  <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
+                    {autoFocusNoticeDetails.stationMeta}
+                  </span>
+                )}
+                {autoFocusNoticeDetails.moduleLabel && (
+                  <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
+                    {autoFocusNoticeDetails.moduleLabel}
+                  </span>
+                )}
+                {autoFocusNoticeDetails.panelLabel && (
+                  <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
+                    {autoFocusNoticeDetails.panelLabel}
+                  </span>
+                )}
+              </div>
+            )}
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+                    Tarea activa
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-gray-900">
+                    {activeTaskProxy.name}
+                  </p>
+                </div>
+                <div className="shrink-0">{statusBadge(activeTaskProxy.status)}</div>
+              </div>
+              {activeTaskProxy.notes && (
+                <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600">
+                  <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
+                  <span className="truncate">{activeTaskProxy.notes}</span>
+                </div>
+              )}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  onClick={() => openActiveTaskCommandModal('comments')}
+                  disabled={submitting}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <MessageSquare className="h-4 w-4" /> Nota
+                </button>
+                {activeTaskProxy.status === 'InProgress' && (
+                  <button
+                    onClick={() => openActiveTaskCommandModal('pause')}
+                    disabled={submitting}
+                    className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Pause className="h-4 w-4" /> Pausa
+                  </button>
+                )}
+                {activeTaskProxy.status === 'Paused' && (
+                  <button
+                    onClick={() => handleResume(activeTaskProxy)}
+                    disabled={submitting}
+                    className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Play className="h-4 w-4" /> Reanudar
+                  </button>
+                )}
+                {(activeTaskProxy.status === 'InProgress' || activeTaskProxy.status === 'Paused') && (
+                  <button
+                    onClick={() => handleComplete(activeTaskProxy)}
+                    disabled={submitting}
+                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <CheckSquare className="h-4 w-4" />{' '}
+                    {activeTaskProxy.advance_trigger ? 'Terminar y avanzar' : 'Terminar'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {selectedStation && (
+              <p className="mt-4 text-xs text-gray-500">
+                Seguiras trabajando en <span className="font-semibold">{selectedStation.name}</span>{' '}
+                despues de pausar o terminar la tarea activa.
+              </p>
+            )}
           </div>
         </div>
       )}
