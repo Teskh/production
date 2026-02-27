@@ -320,6 +320,7 @@ const QCChecks: React.FC = () => {
     'definition' | 'failure_modes' | 'triggers' | 'references' | 'applicability'
   >('definition');
   const [checkSearch, setCheckSearch] = useState('');
+  const [showInactiveChecks, setShowInactiveChecks] = useState(false);
   const [checkStatus, setCheckStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -453,7 +454,8 @@ const QCChecks: React.FC = () => {
         setHouseTypes(sortByName(houseTypeData));
         setHouseSubTypes(subtypeResponses.flat());
         setPanelDefinitions(panelData);
-        setSelectedCheckId(sortedChecks[0]?.id ?? null);
+        const firstActiveCheck = sortedChecks.find((check) => check.active) ?? null;
+        setSelectedCheckId(firstActiveCheck?.id ?? null);
       } catch (error) {
         if (active) {
           const message =
@@ -489,17 +491,32 @@ const QCChecks: React.FC = () => {
 
   const filteredChecks = useMemo(() => {
     const query = normalizeSearch(checkSearch.trim());
-    if (!query) {
-      return checks;
-    }
     return checks.filter((check) => {
+      if (!showInactiveChecks && !check.active) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
       const categoryName = check.category_id
         ? categoryNameById.get(check.category_id) ?? ''
         : '';
       const haystack = normalizeSearch(`${check.name} ${check.kind} ${categoryName}`);
       return haystack.includes(query);
     });
-  }, [checkSearch, checks, categoryNameById]);
+  }, [checkSearch, checks, categoryNameById, showInactiveChecks]);
+
+  useEffect(() => {
+    if (showInactiveChecks || selectedCheckId === null) {
+      return;
+    }
+    const selected = checks.find((check) => check.id === selectedCheckId);
+    if (selected && selected.active) {
+      return;
+    }
+    const firstActiveCheck = checks.find((check) => check.active) ?? null;
+    setSelectedCheckId(firstActiveCheck?.id ?? null);
+  }, [showInactiveChecks, selectedCheckId, checks]);
 
   const checksByCategoryId = useMemo(() => {
     const map = new Map<number, QCCheckDefinition[]>();
@@ -1616,16 +1633,26 @@ const QCChecks: React.FC = () => {
               <h2 className="text-sm font-semibold text-gray-900">Biblioteca de checks</h2>
               <p className="text-xs text-gray-500">{summaryLabel}</p>
             </div>
-            <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
-              <input
-                type="search"
-                placeholder="Buscar..."
-                className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                value={checkSearch}
-                onChange={(event) => setCheckSearch(event.target.value)}
-              />
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="search"
+                  placeholder="Buscar..."
+                  className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  value={checkSearch}
+                  onChange={(event) => setCheckSearch(event.target.value)}
+                />
+              </label>
+              <label className="inline-flex select-none items-center gap-2 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={showInactiveChecks}
+                  onChange={(event) => setShowInactiveChecks(event.target.checked)}
+                />
+                Mostrar inactivos
+              </label>
+            </div>
           </div>
 
           <div className="border-b border-gray-100 px-4 py-3 bg-gray-50/30">

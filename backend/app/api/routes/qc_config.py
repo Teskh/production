@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin, get_db
@@ -189,6 +190,42 @@ def _normalize_panel_groups(groups: list[str]) -> list[str]:
         if trimmed:
             normalized.append(trimmed)
     return _unique_list(normalized)
+
+
+def _sync_house_type_links(rule: QCApplicability, house_type_ids: list[int]) -> None:
+    existing_by_id = {link.house_type_id: link for link in rule.house_type_links}
+    updated_links: list[QCApplicabilityHouseType] = []
+    for house_type_id in house_type_ids:
+        existing = existing_by_id.get(house_type_id)
+        if existing:
+            updated_links.append(existing)
+        else:
+            updated_links.append(QCApplicabilityHouseType(house_type_id=house_type_id))
+    rule.house_type_links = updated_links
+
+
+def _sync_sub_type_links(rule: QCApplicability, sub_type_ids: list[int]) -> None:
+    existing_by_id = {link.sub_type_id: link for link in rule.sub_type_links}
+    updated_links: list[QCApplicabilitySubType] = []
+    for sub_type_id in sub_type_ids:
+        existing = existing_by_id.get(sub_type_id)
+        if existing:
+            updated_links.append(existing)
+        else:
+            updated_links.append(QCApplicabilitySubType(sub_type_id=sub_type_id))
+    rule.sub_type_links = updated_links
+
+
+def _sync_panel_group_links(rule: QCApplicability, panel_groups: list[str]) -> None:
+    existing_by_group = {link.panel_group: link for link in rule.panel_group_links}
+    updated_links: list[QCApplicabilityPanelGroup] = []
+    for panel_group in panel_groups:
+        existing = existing_by_group.get(panel_group)
+        if existing:
+            updated_links.append(existing)
+        else:
+            updated_links.append(QCApplicabilityPanelGroup(panel_group=panel_group))
+    rule.panel_group_links = updated_links
 
 
 @router.get("/categories", response_model=list[QCCheckCategoryRead])
@@ -468,23 +505,21 @@ def update_applicability(
 
     for key, value in updates.items():
         if key == "house_type_ids":
-            rule.house_type_links = [
-                QCApplicabilityHouseType(house_type_id=house_type_id)
-                for house_type_id in value
-            ]
+            _sync_house_type_links(rule, value)
         elif key == "sub_type_ids":
-            rule.sub_type_links = [
-                QCApplicabilitySubType(sub_type_id=sub_type_id)
-                for sub_type_id in value
-            ]
+            _sync_sub_type_links(rule, value)
         elif key == "panel_groups":
-            rule.panel_group_links = [
-                QCApplicabilityPanelGroup(panel_group=panel_group)
-                for panel_group in value
-            ]
+            _sync_panel_group_links(rule, value)
         else:
             setattr(rule, key, value)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="QC applicability update conflicts with existing scope values",
+        ) from exc
     db.refresh(rule)
     return rule
 

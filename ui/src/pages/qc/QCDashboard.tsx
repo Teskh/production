@@ -1,12 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, ClipboardPlus, LayoutGrid, Wrench, X } from 'lucide-react';
+import { ChevronDown, ClipboardCheck, ClipboardPlus, LayoutGrid, Wrench, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutContext';
 
 const REFRESH_INTERVAL_MS = 20000;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
+const OPEN_CHECK_STATION_FILTER_STORAGE_KEY = 'qcDashboardOpenCheckStationFilter';
 
 type QCCheckOrigin = 'triggered' | 'manual';
 type QCCheckStatus = 'Open' | 'Closed';
@@ -129,6 +130,42 @@ const toTimestamp = (value: string): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const normalizeAssemblyStationName = (station: StationSummary): string => {
+  const trimmed = station.name.trim();
+  if (!station.line_type) {
+    return trimmed;
+  }
+  const escapedLineType = station.line_type.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^(Linea|Line)\\s*${escapedLineType}\\s*-\\s*`, 'i');
+  const normalized = trimmed.replace(pattern, '').trim();
+  return normalized || trimmed;
+};
+
+const parseStoredStationFilter = (): number[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const raw = localStorage.getItem(OPEN_CHECK_STATION_FILTER_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return Array.from(
+      new Set(
+        parsed
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value > 0)
+      )
+    );
+  } catch {
+    return [];
+  }
+};
+
 const QCDashboard: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -147,6 +184,11 @@ const QCDashboard: React.FC = () => {
     stationName: string;
     checks: QCCheckInstanceSummary[];
   } | null>(null);
+  const [selectedStationFilterIds, setSelectedStationFilterIds] = useState<number[]>(() =>
+    parseStoredStationFilter()
+  );
+  const [stationFilterOpen, setStationFilterOpen] = useState(false);
+  const stationFilterRef = useRef<HTMLDivElement | null>(null);
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
   const canExecuteChecks = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
@@ -246,10 +288,76 @@ const QCDashboard: React.FC = () => {
   }, [setStatus]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        OPEN_CHECK_STATION_FILTER_STORAGE_KEY,
+        JSON.stringify(selectedStationFilterIds)
+      );
+    } catch {
+      // Ignore localStorage write errors.
+    }
+  }, [selectedStationFilterIds]);
+
+  useEffect(() => {
+    if (!stations.length) {
+      return;
+    }
+    const validStationIds = new Set(stations.map((station) => station.id));
+    setSelectedStationFilterIds((current) => {
+      const next = current.filter((stationId) => validStationIds.has(stationId));
+      return next.length === current.length ? current : next;
+    });
+  }, [stations]);
+
+  useEffect(() => {
+    if (!stationFilterOpen) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!stationFilterRef.current) {
+        return;
+      }
+      if (stationFilterRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setStationFilterOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setStationFilterOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [stationFilterOpen]);
+
+  useEffect(() => {
+    setStationSelection(null);
+  }, [selectedStationFilterIds]);
+
+  useEffect(() => {
     setStatus((current) => ({ ...current, lastUpdated }));
   }, [lastUpdated, setStatus]);
 
   const pendingChecks = useMemo(() => dashboard.pending_checks, [dashboard.pending_checks]);
+  const selectedStationFilterSet = useMemo(
+    () => new Set(selectedStationFilterIds),
+    [selectedStationFilterIds]
+  );
+  const hasStationFilter = selectedStationFilterIds.length > 0;
+  const filteredPendingChecks = useMemo(() => {
+    if (!hasStationFilter) {
+      return pendingChecks;
+    }
+    return pendingChecks.filter((check) => {
+      const stationId = resolveStationId(check.station_id, check.current_station_id);
+      return stationId !== null && selectedStationFilterSet.has(stationId);
+    });
+  }, [pendingChecks, hasStationFilter, selectedStationFilterSet]);
   const reworkTasks = useMemo(() => dashboard.rework_tasks, [dashboard.rework_tasks]);
   const activeReworkTasks = useMemo(
     () => reworkTasks.filter((task) => task.current_station_id !== null),
@@ -269,7 +377,7 @@ const QCDashboard: React.FC = () => {
       activity.set(stationId, next);
       return next;
     };
-    pendingChecks.forEach((check) => {
+    filteredPendingChecks.forEach((check) => {
       const stationId = resolveStationId(check.station_id, check.current_station_id);
       if (stationId === null) {
         return;
@@ -288,7 +396,7 @@ const QCDashboard: React.FC = () => {
       entry.reworks.sort((a, b) => toTimestamp(b.created_at) - toTimestamp(a.created_at));
     });
     return activity;
-  }, [pendingChecks, activeReworkTasks]);
+  }, [filteredPendingChecks, activeReworkTasks]);
   const stationGroups = useMemo(() => {
     const panels: StationSummary[] = [];
     const lines: Record<'1' | '2' | '3', StationSummary[]> = {
@@ -325,6 +433,118 @@ const QCDashboard: React.FC = () => {
       { id: 'line-3', title: 'Linea 3', stations: lines['3'] },
     ];
   }, [stations]);
+  const filterStationGroups = useMemo(() => {
+    type FilterOption = {
+      id: string;
+      label: string;
+      subtitle: string | null;
+      stationIds: number[];
+    };
+    type FilterGroup = {
+      id: string;
+      title: string;
+      options: FilterOption[];
+    };
+
+    const panelOptions = stations
+      .filter((station) => station.role === 'Panels')
+      .sort((a, b) => {
+        const left = a.sequence_order ?? Number.POSITIVE_INFINITY;
+        const right = b.sequence_order ?? Number.POSITIVE_INFINITY;
+        if (left !== right) {
+          return left - right;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .map((station) => ({
+        id: `panel-station-${station.id}`,
+        label: station.name,
+        subtitle: null,
+        stationIds: [station.id],
+      }));
+
+    const assemblyBySequence = new Map<number, StationSummary[]>();
+    stations.forEach((station) => {
+      if (station.role !== 'Assembly' || station.sequence_order === null) {
+        return;
+      }
+      const current = assemblyBySequence.get(station.sequence_order) ?? [];
+      current.push(station);
+      assemblyBySequence.set(station.sequence_order, current);
+    });
+    const assemblyOptions = Array.from(assemblyBySequence.entries())
+      .sort(([left], [right]) => left - right)
+      .map(([sequenceOrder, sequenceStations]) => {
+        const uniqueNames = Array.from(
+          new Set(sequenceStations.map((station) => normalizeAssemblyStationName(station)))
+        );
+        const label = uniqueNames[0] ?? `Secuencia ${sequenceOrder}`;
+        return {
+          id: `assembly-sequence-${sequenceOrder}`,
+          label,
+          subtitle: `Secuencia ${sequenceOrder}`,
+          stationIds: sequenceStations.map((station) => station.id),
+        };
+      });
+
+    const groups: FilterGroup[] = [];
+    if (panelOptions.length) {
+      groups.push({ id: 'panels', title: 'Paneles', options: panelOptions });
+    }
+    if (assemblyOptions.length) {
+      groups.push({
+        id: 'assembly-sequences',
+        title: 'Armado y terminaciones',
+        options: assemblyOptions,
+      });
+    }
+    return groups;
+  }, [stations]);
+  const filterStationOptions = useMemo(
+    () => filterStationGroups.flatMap((group) => group.options),
+    [filterStationGroups]
+  );
+  const selectedFilterOptionLabels = useMemo(() => {
+    if (!selectedStationFilterIds.length) {
+      return [];
+    }
+    return filterStationOptions
+      .filter((option) => option.stationIds.every((stationId) => selectedStationFilterSet.has(stationId)))
+      .map((option) => option.label);
+  }, [filterStationOptions, selectedStationFilterSet, selectedStationFilterIds.length]);
+  const stationFilterSummary = useMemo(() => {
+    if (!selectedFilterOptionLabels.length) {
+      return 'Todas las estaciones';
+    }
+    if (selectedFilterOptionLabels.length <= 2) {
+      return selectedFilterOptionLabels.join(', ');
+    }
+    return `${selectedFilterOptionLabels.length} grupos`;
+  }, [selectedFilterOptionLabels]);
+  useEffect(() => {
+    if (!selectedStationFilterIds.length || !filterStationOptions.length) {
+      return;
+    }
+    setSelectedStationFilterIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      filterStationOptions.forEach((option) => {
+        const selectedCount = option.stationIds.reduce(
+          (count, stationId) => (next.has(stationId) ? count + 1 : count),
+          0
+        );
+        if (selectedCount > 0 && selectedCount < option.stationIds.length) {
+          option.stationIds.forEach((stationId) => next.add(stationId));
+          changed = true;
+        }
+      });
+      return changed ? Array.from(next) : current;
+    });
+  }, [filterStationOptions, selectedStationFilterIds]);
+  const hasFilterStationOptions = useMemo(
+    () => filterStationGroups.some((group) => group.options.length > 0),
+    [filterStationGroups]
+  );
   const baseCardClass =
     'group rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md';
   const disabledCardClass = clsx(baseCardClass, 'pointer-events-none opacity-70');
@@ -334,6 +554,23 @@ const QCDashboard: React.FC = () => {
     ? 'Inicia sesion para ver inspecciones pendientes y re-trabajos.'
     : null;
   const hasStations = stations.length > 0;
+  const isFilterOptionSelected = (stationIds: number[]) =>
+    stationIds.every((stationId) => selectedStationFilterSet.has(stationId));
+  const toggleStationFilterOption = (stationIds: number[]) => {
+    setSelectedStationFilterIds((current) => {
+      const next = new Set(current);
+      const allSelected = stationIds.every((stationId) => next.has(stationId));
+      if (allSelected) {
+        stationIds.forEach((stationId) => next.delete(stationId));
+      } else {
+        stationIds.forEach((stationId) => next.add(stationId));
+      }
+      return Array.from(next);
+    });
+  };
+  const clearStationFilter = () => {
+    setSelectedStationFilterIds([]);
+  };
   const getStationSummary = (stationId: number) => {
     const activity = stationActivity.get(stationId);
     if (!activity) {
@@ -435,16 +672,99 @@ const QCDashboard: React.FC = () => {
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
                 Revisiones pendientes
               </p>
               <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                {pendingChecks.length} inspecciones abiertas
+                {filteredPendingChecks.length} inspecciones abiertas
               </h3>
+              <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                {hasStationFilter
+                  ? `Filtro activo: ${stationFilterSummary}`
+                  : 'Mostrando todas las estaciones'}
+              </p>
             </div>
-            <ClipboardCheck className="h-5 w-5 text-[var(--ink-muted)]" />
+            <div className="flex items-center gap-2">
+              <div ref={stationFilterRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setStationFilterOpen((open) => !open)}
+                  className="inline-flex max-w-[13rem] items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-left text-xs text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                  aria-label="Filtrar inspecciones abiertas por estacion"
+                  aria-expanded={stationFilterOpen}
+                >
+                  <span className="truncate">{stationFilterSummary}</span>
+                  <ChevronDown
+                    className={clsx('h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)] transition', {
+                      'rotate-180': stationFilterOpen,
+                    })}
+                  />
+                </button>
+                {stationFilterOpen ? (
+                  <div className="absolute right-0 z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-black/10 bg-white p-3 shadow-xl">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        Filtrar por estacion
+                      </p>
+                      <button
+                        type="button"
+                        onClick={clearStationFilter}
+                        disabled={!selectedStationFilterIds.length}
+                        className="text-xs font-semibold text-[var(--ink)] underline disabled:cursor-not-allowed disabled:text-[var(--ink-muted)]"
+                      >
+                        Ver todas
+                      </button>
+                    </div>
+                    {!hasFilterStationOptions ? (
+                      <p className="mt-3 rounded-xl border border-dashed border-black/10 px-3 py-4 text-xs text-[var(--ink-muted)]">
+                        No hay estaciones disponibles para filtrar.
+                      </p>
+                    ) : (
+                      <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
+                        {filterStationGroups.map((group) =>
+                          group.options.length ? (
+                            <div key={group.id}>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                {group.title}
+                              </p>
+                              <div className="mt-2 space-y-2">
+                                {group.options.map((option) => {
+                                  const checkboxId = `qc-station-filter-${option.id}`;
+                                  return (
+                                    <label
+                                      key={option.id}
+                                      htmlFor={checkboxId}
+                                      className="flex cursor-pointer items-center gap-2 rounded-lg border border-black/5 px-2 py-1.5 text-xs text-[var(--ink)] transition hover:bg-[var(--canvas)]"
+                                    >
+                                      <input
+                                        id={checkboxId}
+                                        type="checkbox"
+                                        checked={isFilterOptionSelected(option.stationIds)}
+                                        onChange={() => toggleStationFilterOption(option.stationIds)}
+                                        className="h-3.5 w-3.5 rounded border-black/20 text-[var(--accent)] focus:ring-[var(--accent)]"
+                                      />
+                                      <span className="truncate">{option.label}</span>
+                                      {option.subtitle ? (
+                                        <span className="ml-auto text-[10px] text-[var(--ink-muted)]">
+                                          {option.subtitle}
+                                        </span>
+                                      ) : null}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+              <ClipboardCheck className="h-5 w-5 text-[var(--ink-muted)]" />
+            </div>
           </div>
           <div className="mt-4 grid gap-3">
             {loading && !pendingChecks.length ? (
@@ -452,12 +772,14 @@ const QCDashboard: React.FC = () => {
                 Cargando revisiones pendientes...
               </div>
             ) : null}
-            {!loading && !pendingChecks.length ? (
+            {!loading && !filteredPendingChecks.length ? (
               <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
-                No hay revisiones abiertas en este momento.
+                {hasStationFilter && pendingChecks.length
+                  ? 'No hay revisiones abiertas para las estaciones seleccionadas.'
+                  : 'No hay revisiones abiertas en este momento.'}
               </div>
             ) : null}
-            {pendingChecks.map((check) => {
+            {filteredPendingChecks.map((check) => {
               const workUnitLabel = buildWorkUnitLabel(
                 check.project_name,
                 check.house_type_name,

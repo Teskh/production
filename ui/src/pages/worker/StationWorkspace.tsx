@@ -110,7 +110,7 @@ const formatStationRoleLabel = (role: Station['role']): string => {
     return 'Paneles';
   }
   if (role === 'Assembly') {
-    return 'Ensamble';
+    return 'Terminaciones';
   }
   if (role === 'AUX') {
     return 'Auxiliares';
@@ -447,6 +447,33 @@ const StationWorkspace: React.FC = () => {
     autoFocusTarget !== null &&
     autoFocusTargetStationId !== null &&
     selectedStationId !== autoFocusTargetStationId;
+  const activeTaskOnAnotherLine = useMemo(() => {
+    if (!selectedStation || !autoFocusTargetStation) {
+      return false;
+    }
+    if (
+      selectedStation.role !== 'Assembly' ||
+      autoFocusTargetStation.role !== 'Assembly'
+    ) {
+      return false;
+    }
+    if (
+      selectedStation.sequence_order === null ||
+      autoFocusTargetStation.sequence_order === null
+    ) {
+      return false;
+    }
+    if (selectedStation.sequence_order !== autoFocusTargetStation.sequence_order) {
+      return false;
+    }
+    if (!selectedStation.line_type || !autoFocusTargetStation.line_type) {
+      return false;
+    }
+    return selectedStation.line_type !== autoFocusTargetStation.line_type;
+  }, [autoFocusTargetStation, selectedStation]);
+  const selectedStationContinueLabel = selectedStation
+    ? formatStationLabel(selectedStation)
+    : null;
 
   const activeTaskProxy = useMemo<StationTask | null>(() => {
     if (!autoFocusTarget) {
@@ -825,6 +852,13 @@ const StationWorkspace: React.FC = () => {
     await loadSnapshot(selectedStationId);
   }, [loadSnapshot, selectedStationId]);
 
+  const updateWorkerSessionStation = useCallback(async (stationId: number) => {
+    await apiRequest('/api/worker-sessions/station', {
+      method: 'PUT',
+      body: JSON.stringify({ station_id: stationId }),
+    });
+  }, []);
+
   const refreshActiveTaskTarget = useCallback(async () => {
     try {
       const tasks = await apiRequest<WorkerActiveTask[]>('/api/worker-tasks/active');
@@ -921,12 +955,9 @@ const StationWorkspace: React.FC = () => {
     if (!selectedStationId) {
       return;
     }
-    apiRequest('/api/worker-sessions/station', {
-      method: 'PUT',
-      body: JSON.stringify({ station_id: selectedStationId }),
-    }).catch(() => undefined);
+    updateWorkerSessionStation(selectedStationId).catch(() => undefined);
     loadSnapshot(selectedStationId);
-  }, [loadSnapshot, selectedStationId]);
+  }, [loadSnapshot, selectedStationId, updateWorkerSessionStation]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -1705,6 +1736,10 @@ const StationWorkspace: React.FC = () => {
     setShowStationPicker(false);
   };
 
+  const handleBackFromActiveTaskWarning = useCallback(() => {
+    navigate(-1);
+  }, [navigate]);
+
   const handleStart = async (
     task: StationTask,
     workItem: StationWorkItem,
@@ -1885,6 +1920,55 @@ const StationWorkspace: React.FC = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleCompleteFromActiveTaskWarning = async (task: StationTask) => {
+    if (!task.task_instance_id) {
+      return;
+    }
+    if (!task.current_worker_participating) {
+      setError('Unete a la tarea antes de terminarla.');
+      return;
+    }
+    if (!autoFocusTargetStationId) {
+      setError('No se pudo identificar la estacion de la tarea activa.');
+      return;
+    }
+    const intendedStationId = selectedStationId;
+    let switchedToTaskStation = false;
+    setSubmitting(true);
+    try {
+      if (intendedStationId !== autoFocusTargetStationId) {
+        await updateWorkerSessionStation(autoFocusTargetStationId);
+        switchedToTaskStation = true;
+      }
+      await apiRequest('/api/worker-tasks/complete', {
+        method: 'POST',
+        body: JSON.stringify({
+          task_instance_id: task.task_instance_id,
+          notes: null,
+        }),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo completar la tarea.';
+      setError(message);
+      return;
+    } finally {
+      if (
+        switchedToTaskStation &&
+        intendedStationId !== null &&
+        intendedStationId !== autoFocusTargetStationId
+      ) {
+        try {
+          await updateWorkerSessionStation(intendedStationId);
+        } catch {
+          // best effort restore; next station interaction will resync
+        }
+      }
+      setSubmitting(false);
+    }
+    await refreshSnapshot();
+    await refreshActiveTaskTarget();
   };
 
   const handleReworkStart = async (rework: StationQCReworkTask) => {
@@ -3293,117 +3377,128 @@ const StationWorkspace: React.FC = () => {
 
       {autoFocusNotice && activeTaskElsewhere && activeTaskProxy && showAutoFocusWarningModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gray-900/70" />
-          <div className="relative w-full max-w-lg rounded-2xl border-2 border-amber-300 bg-white p-6 shadow-2xl">
-            <div className="flex items-start gap-4">
-              <div className="rounded-xl bg-amber-100 p-3 text-amber-700">
-                <AlertTriangle className="h-6 w-6" />
+          <div className="absolute inset-0 bg-gray-900/80 backdrop-blur-sm" />
+          <div className="relative w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <button
+              onClick={handleBackFromActiveTaskWarning}
+              disabled={submitting}
+              aria-label="Volver"
+              title="Volver"
+              className="absolute left-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-white text-gray-700 shadow-sm transition-all hover:bg-amber-50 active:scale-95 disabled:opacity-50"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-5 border-b border-amber-100 bg-amber-50 pl-20 pr-8 py-6">
+              <div className="rounded-2xl bg-amber-100 p-3.5 text-amber-700">
+                <AlertTriangle className="h-8 w-8" />
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">
-                  Atencion
-                </p>
-                <h3 className="mt-1 text-xl font-semibold text-gray-900">
-                  Tarea activa en otra estacion
+              <div>
+                <h3 className="text-2xl font-bold text-gray-900">
+                  {activeTaskOnAnotherLine
+                    ? 'Tarea activa en otra línea'
+                    : 'Tarea activa en otra estación'}
                 </h3>
+                <p className="mt-0.5 text-lg font-medium text-amber-800/80">
+                  Resuelve tu tarea actual antes de continuar.
+                </p>
               </div>
             </div>
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
-              <p className="text-base font-semibold text-amber-950">{autoFocusNotice}</p>
-              <p className="mt-2 text-sm text-amber-900/80">
-                Resuelve esta tarea (pausar, terminar o agregar nota) y luego sigue en tu estacion
-                actual.
-              </p>
-              <p className="mt-2 text-sm font-semibold text-amber-900">
-                No puedes continuar en esta estacion hasta pausar o terminar esa tarea.
-              </p>
-            </div>
-            {autoFocusNoticeDetails && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {autoFocusNoticeDetails.stationLabel && (
-                  <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-800">
-                    {autoFocusNoticeDetails.stationLabel}
-                  </span>
-                )}
-                {autoFocusNoticeDetails.stationMeta && (
-                  <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                    {autoFocusNoticeDetails.stationMeta}
-                  </span>
-                )}
-                {autoFocusNoticeDetails.moduleLabel && (
-                  <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
-                    {autoFocusNoticeDetails.moduleLabel}
-                  </span>
-                )}
-                {autoFocusNoticeDetails.panelLabel && (
-                  <span className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
-                    {autoFocusNoticeDetails.panelLabel}
-                  </span>
+
+            <div className="p-8">
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Estás trabajando en:
+                    </p>
+                    <h4 className="mt-1 text-2xl font-bold text-gray-900 truncate">
+                      {activeTaskProxy.name}
+                    </h4>
+
+                    {autoFocusNoticeDetails && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {autoFocusNoticeDetails.stationLabel && (
+                          <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-bold text-gray-900 shadow-sm">
+                            {autoFocusNoticeDetails.stationLabel}
+                          </span>
+                        )}
+                        {autoFocusNoticeDetails.moduleLabel && (
+                          <span className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 shadow-sm">
+                            {autoFocusNoticeDetails.moduleLabel}
+                          </span>
+                        )}
+                        {autoFocusNoticeDetails.panelLabel && (
+                          <span className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 shadow-sm">
+                            {autoFocusNoticeDetails.panelLabel}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="shrink-0">{statusBadge(activeTaskProxy.status)}</div>
+                </div>
+
+                {activeTaskProxy.notes && (
+                  <div className="mt-4 rounded-xl border border-blue-100 bg-white p-4 text-gray-600 shadow-sm">
+                    <div className="flex items-start gap-3">
+                      <MessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-blue-500" />
+                      <p className="text-base italic leading-relaxed">"{activeTaskProxy.notes}"</p>
+                    </div>
+                  </div>
                 )}
               </div>
-            )}
-            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-                    Tarea activa
-                  </p>
-                  <p className="mt-1 text-base font-semibold text-gray-900">
-                    {activeTaskProxy.name}
-                  </p>
-                </div>
-                <div className="shrink-0">{statusBadge(activeTaskProxy.status)}</div>
-              </div>
-              {activeTaskProxy.notes && (
-                <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600">
-                  <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
-                  <span className="truncate">{activeTaskProxy.notes}</span>
-                </div>
-              )}
-              <div className="mt-4 flex flex-wrap gap-2">
+
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                 <button
                   onClick={() => openActiveTaskCommandModal('comments')}
                   disabled={submitting}
-                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-6 py-4 text-lg font-bold text-gray-700 transition-all hover:bg-gray-50 active:scale-95 disabled:opacity-50"
                 >
-                  <MessageSquare className="h-4 w-4" /> Nota
+                  <MessageSquare className="h-5 w-5" /> Nota
                 </button>
+
                 {activeTaskProxy.status === 'InProgress' && (
                   <button
                     onClick={() => openActiveTaskCommandModal('pause')}
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-6 py-4 text-lg font-bold text-amber-700 transition-all hover:bg-amber-100 active:scale-95 disabled:opacity-50"
                   >
-                    <Pause className="h-4 w-4" /> Pausa
+                    <Pause className="h-5 w-5" /> Pausar
                   </button>
                 )}
+
                 {activeTaskProxy.status === 'Paused' && (
                   <button
                     onClick={() => handleResume(activeTaskProxy)}
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-6 py-4 text-lg font-bold text-blue-700 transition-all hover:bg-blue-100 active:scale-95 disabled:opacity-50"
                   >
-                    <Play className="h-4 w-4" /> Reanudar
+                    <Play className="h-5 w-5" /> Reanudar
                   </button>
                 )}
+
                 {(activeTaskProxy.status === 'InProgress' || activeTaskProxy.status === 'Paused') && (
                   <button
-                    onClick={() => handleComplete(activeTaskProxy)}
+                    onClick={() => handleCompleteFromActiveTaskWarning(activeTaskProxy)}
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-8 py-4 text-lg font-bold text-white shadow-lg shadow-blue-200 transition-all hover:bg-blue-700 hover:shadow-xl active:scale-95 disabled:opacity-50"
                   >
-                    <CheckSquare className="h-4 w-4" />{' '}
+                    <CheckSquare className="h-6 w-6" />
                     {activeTaskProxy.advance_trigger ? 'Terminar y avanzar' : 'Terminar'}
                   </button>
                 )}
               </div>
+
+              {selectedStationContinueLabel && (
+                <div className="mt-6 border-t border-gray-100 pt-6">
+                  <p className="text-center text-sm text-gray-500">
+                    Para continuar a{' '}
+                    <span className="font-bold text-gray-900">{selectedStationContinueLabel}</span>{' '}
+                    pausa o termina la tarea activa.
+                  </p>
+                </div>
+              )}
             </div>
-            {selectedStation && (
-              <p className="mt-4 text-xs text-gray-500">
-                Seguiras trabajando en <span className="font-semibold">{selectedStation.name}</span>{' '}
-                despues de pausar o terminar la tarea activa.
-              </p>
-            )}
           </div>
         </div>
       )}
