@@ -30,6 +30,14 @@ class StationReportSection(BaseModel):
     workers: list[WorkerReportMetric] = Field(default_factory=list)
 
 
+class WorkerProductiveBracketSummary(BaseModel):
+    range_0_20: int = Field(default=0, ge=0)
+    range_20_40: int = Field(default=0, ge=0)
+    range_40_60: int = Field(default=0, ge=0)
+    range_60_plus: int = Field(default=0, ge=0)
+    scored_workers: int = Field(default=0, ge=0)
+
+
 class StationAssistancePdfRequest(BaseModel):
     report_days: int = Field(ge=1, le=365)
     from_date: str
@@ -39,4 +47,5 @@ class StationAssistancePdfRequest(BaseModel):
     global_productive: float | None = None
     global_expected: float | None = None
     total_workers: int = Field(default=0, ge=0)
+    worker_productive_brackets: WorkerProductiveBracketSummary | None = None
     stations: list[StationReportSection] = Field(default_factory=list)

@@ -13,7 +13,7 @@ import StationWideAssistanceTab from './StationWideAssistanceTab';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 const RANGE_OPTIONS = [7, 14, 30, 60, 90, 120];
-const DEFAULT_RANGE = 30;
+const DEFAULT_RANGE = 7;
 const REGULAR_START_MINUTES = 8 * 60;
 const REGULAR_END_MINUTES = 17 * 60 + 30;
 const LUNCH_START_MINUTES = 13 * 60;

@@ -45,6 +45,7 @@ _NOTE_BLOCK_HEIGHT = 34
 _NOTE_TITLE = "Como leer los indicadores"
 _NOTE_LINE_1 = "Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo."
 _NOTE_LINE_2 = "Uso minimo: grado general de uso del sistema."
+_WORKER_UC_BRACKET_LABELS = ("0-20%", "20-40%", "40-60%", "60+%")
 
 
 def _format_percent(value: float | None) -> str:
@@ -104,6 +105,103 @@ def _hline(pdf: "canvas.Canvas", x1: float, x2: float, y: float) -> None:
     pdf.setStrokeColor(colors.HexColor(_CLR_RULE))
     pdf.setLineWidth(0.5)
     pdf.line(x1, y, x2, y)
+
+
+def _resolve_worker_productive_brackets(
+    payload: StationAssistancePdfRequest,
+) -> tuple[list[tuple[str, int]], int, int]:
+    provided = payload.worker_productive_brackets
+    if provided is not None:
+        rows = [
+            (_WORKER_UC_BRACKET_LABELS[0], int(provided.range_0_20)),
+            (_WORKER_UC_BRACKET_LABELS[1], int(provided.range_20_40)),
+            (_WORKER_UC_BRACKET_LABELS[2], int(provided.range_40_60)),
+            (_WORKER_UC_BRACKET_LABELS[3], int(provided.range_60_plus)),
+        ]
+        scored_workers = int(provided.scored_workers)
+        total_workers = int(payload.total_workers) if payload.total_workers > 0 else scored_workers
+        return rows, scored_workers, total_workers
+
+    range_0_20 = 0
+    range_20_40 = 0
+    range_40_60 = 0
+    range_60_plus = 0
+    scored_workers = 0
+    total_workers = 0
+
+    for station in payload.stations:
+        for worker in station.workers:
+            total_workers += 1
+            ratio = _safe_ratio(worker.productive_ratio)
+            if ratio is None:
+                continue
+            scored_workers += 1
+            if ratio < 0.2:
+                range_0_20 += 1
+            elif ratio < 0.4:
+                range_20_40 += 1
+            elif ratio < 0.6:
+                range_40_60 += 1
+            else:
+                range_60_plus += 1
+
+    if payload.total_workers > total_workers:
+        total_workers = payload.total_workers
+
+    rows = [
+        (_WORKER_UC_BRACKET_LABELS[0], range_0_20),
+        (_WORKER_UC_BRACKET_LABELS[1], range_20_40),
+        (_WORKER_UC_BRACKET_LABELS[2], range_40_60),
+        (_WORKER_UC_BRACKET_LABELS[3], range_60_plus),
+    ]
+    return rows, scored_workers, total_workers
+
+
+def _draw_worker_productive_bracket_summary(
+    pdf: "canvas.Canvas",
+    *,
+    page_width: float,
+    margin: float,
+    top_y: float,
+    bracket_rows: list[tuple[str, int]],
+    scored_workers: int,
+    total_workers: int,
+) -> float:
+    if not bracket_rows:
+        return top_y
+
+    usable = page_width - margin * 2
+    gap = 8
+    card_h = 34
+    card_w = (usable - gap * (len(bracket_rows) - 1)) / len(bracket_rows)
+    card_y = top_y - 14 - card_h
+
+    pdf.setFillColor(colors.HexColor(_CLR_DARK))
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawString(margin, top_y, "Trabajadores por rango de Uso Correcto")
+
+    score_label = f"Con puntaje de Uso Correcto: {scored_workers}"
+    if total_workers > 0:
+        score_label = f"Con puntaje de Uso Correcto: {scored_workers} de {total_workers}"
+    pdf.setFillColor(colors.HexColor(_CLR_MID))
+    pdf.setFont("Helvetica", 7.5)
+    pdf.drawString(margin, top_y - 10, score_label)
+
+    for idx, (label, count) in enumerate(bracket_rows):
+        x = margin + idx * (card_w + gap)
+        pdf.setStrokeColor(colors.HexColor(_CLR_RULE))
+        pdf.setFillColor(colors.white)
+        pdf.roundRect(x, card_y, card_w, card_h, 3, stroke=1, fill=1)
+
+        pdf.setFillColor(colors.HexColor(_CLR_MID))
+        pdf.setFont("Helvetica", 7)
+        pdf.drawCentredString(x + card_w / 2, card_y + card_h - 10, label)
+
+        pdf.setFillColor(colors.HexColor(_CLR_DARK))
+        pdf.setFont("Helvetica-Bold", 14)
+        pdf.drawCentredString(x + card_w / 2, card_y + 8, str(count))
+
+    return card_y - 14
 
 
 def _draw_indicator_note(pdf: "canvas.Canvas", *, margin: float) -> None:
@@ -378,8 +476,22 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         label="Uso minimo global", value=_format_percent(payload.global_expected),
     )
 
+    # Worker bracket summary on first page when worker detail is enabled.
+    y -= 16
+    if payload.include_workers:
+        bracket_rows, scored_workers, total_workers = _resolve_worker_productive_brackets(payload)
+        y = _draw_worker_productive_bracket_summary(
+            pdf,
+            page_width=page_width,
+            margin=margin,
+            top_y=y,
+            bracket_rows=bracket_rows,
+            scored_workers=scored_workers,
+            total_workers=total_workers,
+        )
+
     # Summary table
-    y -= 26
+    y -= 8
     _draw_station_summary_table(
         pdf, payload.stations,
         page_width=page_width, page_height=page_height, margin=margin, start_y=y,

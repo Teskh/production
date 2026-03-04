@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
-import { buildRangeIndicators, isAbsentNoDataDay } from './assistanceIndicators';
+import { buildDailyIndicators, buildRangeIndicators, isAbsentNoDataDay } from './assistanceIndicators';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
@@ -187,6 +187,30 @@ const toFiniteOrNull = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const createWorkerProductiveBracketSummary = () => ({
+  range_0_20: 0,
+  range_20_40: 0,
+  range_40_60: 0,
+  range_60_plus: 0,
+  scored_workers: 0,
+});
+
+const addProductiveRatioToBracketSummary = (summary, productiveRatio) => {
+  const ratio = toFiniteOrNull(productiveRatio);
+  if (ratio == null) return;
+  const normalized = Math.max(0, Math.min(1, ratio));
+  summary.scored_workers += 1;
+  if (normalized < 0.2) {
+    summary.range_0_20 += 1;
+  } else if (normalized < 0.4) {
+    summary.range_20_40 += 1;
+  } else if (normalized < 0.6) {
+    summary.range_40_60 += 1;
+  } else {
+    summary.range_60_plus += 1;
+  }
+};
+
 const buildPdfPayload = ({
   reportDays,
   fromDate,
@@ -198,6 +222,7 @@ const buildPdfPayload = ({
   let globalProductive = 0;
   let globalExpected = 0;
   let totalWorkers = 0;
+  const workerProductiveBrackets = createWorkerProductiveBracketSummary();
 
   const stations = selectedGroupData.map((groupData) => {
     const summary = groupData.stationSummary || {};
@@ -205,6 +230,12 @@ const buildPdfPayload = ({
     totalWorkers += workerSummaries.length;
 
     workerSummaries.forEach((summaryItem) => {
+      if (includeWorkers) {
+        addProductiveRatioToBracketSummary(
+          workerProductiveBrackets,
+          summaryItem?.rangeIndicators?.totalProductiveRatio
+        );
+      }
       const totals = summaryItem?.rangeIndicators?.totals;
       const presence = Number(totals?.presenceNetSeconds);
       if (!Number.isFinite(presence) || presence <= 0) return;
@@ -251,6 +282,7 @@ const buildPdfPayload = ({
     global_productive: globalPresence > 0 ? globalProductive / globalPresence : null,
     global_expected: globalPresence > 0 ? globalExpected / globalPresence : null,
     total_workers: totalWorkers,
+    worker_productive_brackets: includeWorkers ? workerProductiveBrackets : null,
     stations,
   };
 };
@@ -387,15 +419,167 @@ const isWorkerActive = (worker) => {
   return true;
 };
 
+const parseCompactDebugDateTime = (value) => {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!/^\d{8}(\d{6})?$/.test(raw)) return null;
+  const year = raw.slice(0, 4);
+  const month = raw.slice(4, 6);
+  const day = raw.slice(6, 8);
+  if (raw.length === 8) {
+    return new Date(`${year}-${month}-${day}T00:00:00`);
+  }
+  const hour = raw.slice(8, 10);
+  const minute = raw.slice(10, 12);
+  const second = raw.slice(12, 14);
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+};
+
+const parseDebugDateTime = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const compact = parseCompactDebugDateTime(value);
+  if (compact && !Number.isNaN(compact.getTime())) return compact;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const formatDebugTimeOfDay = (value) => {
+  const parsed = parseDebugDateTime(value);
+  if (!parsed) return '—';
+  const hours = String(parsed.getHours()).padStart(2, '0');
+  const minutes = String(parsed.getMinutes()).padStart(2, '0');
+  const seconds = String(parsed.getSeconds()).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+};
+
+const formatDebugIntervalRange = (interval) =>
+  `${formatDebugTimeOfDay(interval?.start)} - ${formatDebugTimeOfDay(interval?.end)}`;
+
+const formatIdleSource = (source) => {
+  if (source === 'pause') return 'pausa';
+  if (source === 'mixed') return 'mixto (pausa + hueco)';
+  return 'hueco sin tarea';
+};
+
+const formatDebugSecondsValue = (seconds, formatSeconds) => {
+  if (!Number.isFinite(seconds)) return '—';
+  return `${formatSeconds(seconds)} (${Math.round(seconds)} s)`;
+};
+
+const formatDebugRatioValue = (ratio) => {
+  if (!Number.isFinite(ratio)) return '—';
+  return ratio.toFixed(6);
+};
+
+const formatDebugFraction = (numerator, denominator) => {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return '—';
+  return `${Math.round(numerator)} / ${Math.round(denominator)} = ${(numerator / denominator).toFixed(6)}`;
+};
+
+const HoverInfoMetric = ({
+  label,
+  value,
+  colorClass,
+  formulaLines,
+  details,
+  rawLine,
+  extraContent,
+  tooltipClassName,
+}) => (
+  <div className="group relative mt-1 inline-flex items-center gap-1.5">
+    <p className={`text-xl font-semibold ${colorClass || ''}`}>{value}</p>
+    <button
+      type="button"
+      className="inline-flex h-5 min-w-[1.6rem] items-center justify-center rounded-full border border-black/25 bg-white px-1 text-[10px] font-semibold leading-none text-[var(--ink-muted)]"
+      aria-label={`Ver detalle de calculo para ${label}`}
+    >
+      (i)
+    </button>
+    <div
+      role="tooltip"
+      className={`absolute left-0 top-full z-30 mt-2 hidden w-[22rem] max-w-[calc(100vw-3rem)] max-h-[26rem] overflow-y-auto rounded-xl border border-black/10 bg-white p-3 text-[11px] leading-relaxed text-[var(--ink)] shadow-xl group-hover:block group-focus-within:block ${tooltipClassName || ''}`}
+    >
+      <p className="font-semibold text-[var(--ink)]">{label}</p>
+      <div className="mt-1 space-y-0.5">
+        {formulaLines.map((line) => (
+          <p key={line} className="font-mono text-[10px] text-[var(--ink-muted)]">
+            {line}
+          </p>
+        ))}
+      </div>
+      <div className="mt-2 space-y-1">
+        {details.map((detail) => (
+          <p key={detail.label}>
+            <span className="font-medium text-[var(--ink-muted)]">{detail.label}: </span>
+            <span>{detail.value}</span>
+          </p>
+        ))}
+      </div>
+      {rawLine && (
+        <p className="mt-2 font-mono text-[10px] text-[var(--ink-muted)]">{rawLine}</p>
+      )}
+      {extraContent && <div className="mt-2 border-t border-black/10 pt-2">{extraContent}</div>}
+    </div>
+  </div>
+);
+
 const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent, formatSeconds }) => {
   if (!day) return null;
 
-  const indicators = day.indicators;
+  const indicators = useMemo(() => {
+    if (!day?.combinedDay) return day?.indicators;
+    const detailed = buildDailyIndicators(day.combinedDay, { includeBreakdown: true });
+    if (!detailed) return day?.indicators;
+    return detailed;
+  }, [day]);
+  const attendanceEntry = day?.combinedDay?.attendance?.entry;
+  const attendanceExit = day?.combinedDay?.attendance?.exit;
+  const attendanceEntryDate = parseDebugDateTime(attendanceEntry);
+  const attendanceExitDate = parseDebugDateTime(attendanceExit);
+  const clockedSeconds =
+    attendanceEntryDate && attendanceExitDate && attendanceExitDate > attendanceEntryDate
+      ? (attendanceExitDate - attendanceEntryDate) / 1000
+      : null;
+  const fixedStartDiscountSeconds = 30 * 60;
+  const fixedEndDiscountSeconds = 30 * 60;
+  const fixedTotalDiscountSeconds = fixedStartDiscountSeconds + fixedEndDiscountSeconds;
+  const usedWindowBeforeFixedDiscounts =
+    Number.isFinite(indicators?.presenceSeconds)
+      ? indicators.presenceSeconds + fixedTotalDiscountSeconds
+      : null;
+  const debugSeconds = (seconds) => formatDebugSecondsValue(seconds, formatSeconds);
+  const productiveFraction = formatDebugFraction(
+    indicators?.productiveSeconds,
+    indicators?.presenceNetSeconds
+  );
+  const expectedFraction = formatDebugFraction(
+    indicators?.expectedSecondsTotal,
+    indicators?.presenceNetSeconds
+  );
+  const activeUnionSeconds =
+    Number.isFinite(indicators?.presenceNetSeconds) && Number.isFinite(indicators?.idleSeconds)
+      ? Math.max(0, indicators.presenceNetSeconds - indicators.idleSeconds)
+      : null;
+  const idleBreakdown = indicators?.idleBreakdown;
+  const idleIntervals = Array.isArray(idleBreakdown?.idleIntervals) ? idleBreakdown.idleIntervals : [];
+  const pauseUnionIntervals = Array.isArray(idleBreakdown?.pauseUnionIntervals)
+    ? idleBreakdown.pauseUnionIntervals
+    : [];
+  const idleRebuildCheck =
+    Number.isFinite(indicators?.presenceNetSeconds) &&
+    Number.isFinite(indicators?.productiveSeconds) &&
+    Number.isFinite(indicators?.overtimeSeconds)
+      ? Math.max(0, indicators.presenceNetSeconds - indicators.productiveSeconds - indicators.overtimeSeconds)
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-2xl shadow-xl max-w-[95vw] w-full mx-4 max-h-[90vh] overflow-auto"
+        className="bg-white rounded-2xl shadow-xl max-w-[95vw] w-full mx-4 max-h-[96vh] overflow-visible flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-black/5">
@@ -408,20 +592,171 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
           </button>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(96vh-5.25rem)]">
           {indicators && (
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo productivo</p>
-                <p className="mt-1 text-xl font-semibold text-[#16a34a]">{formatPercent(indicators.productiveRatio)}</p>
+                <HoverInfoMetric
+                  label="Tiempo productivo"
+                  value={formatPercent(indicators.productiveRatio)}
+                  colorClass="text-[#16a34a]"
+                  formulaLines={[
+                    'productiveRatio = productiveSeconds / presenceNetSeconds',
+                    'productiveSeconds = presenceNetSeconds - (idleSeconds + overtimeSeconds)',
+                    'presenceSeconds = tiempo_base - 30m(inicio) - 30m(fin)',
+                    'presenceNetSeconds = presenceSeconds - lunchSeconds',
+                  ]}
+                  details={[
+                    { label: 'Entrada fichada', value: formatDebugTimeOfDay(attendanceEntry) },
+                    { label: 'Salida fichada', value: formatDebugTimeOfDay(attendanceExit) },
+                    { label: 'Tiempo fichado (entrada-salida)', value: debugSeconds(clockedSeconds) },
+                    {
+                      label: 'Tiempo base usado (antes descuentos fijos)',
+                      value: debugSeconds(usedWindowBeforeFixedDiscounts),
+                    },
+                    {
+                      label: 'Descuento fijo inicio',
+                      value: debugSeconds(fixedStartDiscountSeconds),
+                    },
+                    { label: 'Descuento fijo fin', value: debugSeconds(fixedEndDiscountSeconds) },
+                    {
+                      label: 'Descuento fijo total',
+                      value: debugSeconds(fixedTotalDiscountSeconds),
+                    },
+                    {
+                      label: 'Tiempo tras descuentos fijos',
+                      value: debugSeconds(indicators.presenceSeconds),
+                    },
+                    { label: 'Almuerzo descontado', value: debugSeconds(indicators.lunchSeconds) },
+                    { label: 'Presencia neta', value: debugSeconds(indicators.presenceNetSeconds) },
+                    { label: 'Tiempo ocioso', value: debugSeconds(indicators.idleSeconds) },
+                    { label: 'Tiempo extra', value: debugSeconds(indicators.overtimeSeconds) },
+                    { label: 'Tiempo productivo', value: debugSeconds(indicators.productiveSeconds) },
+                    { label: 'Fraccion', value: productiveFraction },
+                  ]}
+                  rawLine={`ratio_crudo = ${formatDebugRatioValue(indicators.productiveRatio)}`}
+                />
               </div>
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Cobertura esperada</p>
-                <p className="mt-1 text-xl font-semibold text-[#2563eb]">{formatPercent(indicators.expectedRatio)}</p>
+                <HoverInfoMetric
+                  label="Cobertura esperada"
+                  value={formatPercent(indicators.expectedRatio)}
+                  colorClass="text-[#2563eb]"
+                  formulaLines={[
+                    'expectedRatio = expectedSecondsTotal / presenceNetSeconds',
+                    'expectedSecondsTotal = suma(expected_minutes de tareas) * 60',
+                    'presenceSeconds = tiempo_base - 30m(inicio) - 30m(fin)',
+                    'presenceNetSeconds = presenceSeconds - lunchSeconds',
+                  ]}
+                  details={[
+                    { label: 'Entrada fichada', value: formatDebugTimeOfDay(attendanceEntry) },
+                    { label: 'Salida fichada', value: formatDebugTimeOfDay(attendanceExit) },
+                    { label: 'Tiempo fichado (entrada-salida)', value: debugSeconds(clockedSeconds) },
+                    {
+                      label: 'Tiempo base usado (antes descuentos fijos)',
+                      value: debugSeconds(usedWindowBeforeFixedDiscounts),
+                    },
+                    {
+                      label: 'Descuento fijo total (30m + 30m)',
+                      value: debugSeconds(fixedTotalDiscountSeconds),
+                    },
+                    { label: 'Tiempo tras descuentos fijos', value: debugSeconds(indicators.presenceSeconds) },
+                    { label: 'Almuerzo descontado', value: debugSeconds(indicators.lunchSeconds) },
+                    { label: 'Esperado total', value: debugSeconds(indicators.expectedSecondsTotal) },
+                    { label: 'Presencia neta', value: debugSeconds(indicators.presenceNetSeconds) },
+                    { label: 'Fraccion', value: expectedFraction },
+                  ]}
+                  rawLine={`ratio_crudo = ${formatDebugRatioValue(indicators.expectedRatio)}`}
+                />
               </div>
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo ocioso</p>
-                <p className="mt-1 text-lg font-semibold text-[var(--ink)]">{formatSeconds(indicators.idleSeconds)}</p>
+                <HoverInfoMetric
+                  label="Tiempo ocioso"
+                  value={formatSeconds(indicators.idleSeconds)}
+                  colorClass="text-[var(--ink)] text-lg"
+                  formulaLines={[
+                    'idleSeconds = sum(idleIntervals[].seconds)',
+                    'idleIntervals = presenceWindows - union(activeIntervalsSinAlmuerzo)',
+                    'cada idleInterval: pauseSeconds + gapSeconds = intervalSeconds',
+                  ]}
+                  details={[
+                    { label: 'Entrada fichada', value: formatDebugTimeOfDay(attendanceEntry) },
+                    { label: 'Salida fichada', value: formatDebugTimeOfDay(attendanceExit) },
+                    { label: 'Tiempo tras descuentos fijos', value: debugSeconds(indicators.presenceSeconds) },
+                    { label: 'Almuerzo descontado', value: debugSeconds(indicators.lunchSeconds) },
+                    { label: 'Presencia neta', value: debugSeconds(indicators.presenceNetSeconds) },
+                    {
+                      label: 'Tiempo activo union (sin almuerzo)',
+                      value: debugSeconds(activeUnionSeconds),
+                    },
+                    {
+                      label: 'Aporte a ocioso por pausas',
+                      value: debugSeconds(idleBreakdown?.idleFromPausesSeconds),
+                    },
+                    {
+                      label: 'Aporte a ocioso por huecos sin tarea',
+                      value: debugSeconds(idleBreakdown?.idleFromGapSeconds),
+                    },
+                    {
+                      label: 'Suma de intervalos ociosos',
+                      value: debugSeconds(idleBreakdown?.idleSecondsByIntervals),
+                    },
+                    { label: 'Tiempo ocioso (resultado)', value: debugSeconds(indicators.idleSeconds) },
+                    {
+                      label: 'Control recomputado (neta - productivo - extra)',
+                      value: debugSeconds(idleRebuildCheck),
+                    },
+                  ]}
+                  rawLine={`idle_crudo_segundos = ${
+                    Number.isFinite(indicators?.idleSeconds) ? Math.round(indicators.idleSeconds) : '—'
+                  }`}
+                  tooltipClassName="w-[30rem]"
+                  extraContent={
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">
+                          Intervalos ociosos ({idleIntervals.length})
+                        </p>
+                        <div className="mt-1 space-y-1">
+                          {idleIntervals.length ? (
+                            idleIntervals.map((interval, index) => (
+                              <p
+                                key={`idle-${index}-${interval?.start?.getTime?.() || 's'}-${interval?.end?.getTime?.() || 'e'}`}
+                                className="font-mono text-[10px] text-[var(--ink)]"
+                              >
+                                #{index + 1} {formatDebugIntervalRange(interval)} | total {debugSeconds(interval.seconds)} | pausa {debugSeconds(interval.pauseSeconds)} | hueco {debugSeconds(interval.gapSeconds)} | {formatIdleSource(interval.source)}
+                              </p>
+                            ))
+                          ) : (
+                            <p className="text-[10px] text-[var(--ink-muted)]">Sin intervalos ociosos detectados.</p>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">
+                          Pausas detectadas ({pauseUnionIntervals.length})
+                        </p>
+                        <div className="mt-1 space-y-1">
+                          {pauseUnionIntervals.length ? (
+                            pauseUnionIntervals.map((interval, index) => (
+                              <p
+                                key={`pause-${index}-${interval?.start?.getTime?.() || 's'}-${interval?.end?.getTime?.() || 'e'}`}
+                                className="font-mono text-[10px] text-[var(--ink)]"
+                              >
+                                #{index + 1} {formatDebugIntervalRange(interval)} | {debugSeconds(interval.seconds)}
+                              </p>
+                            ))
+                          ) : (
+                            <p className="text-[10px] text-[var(--ink-muted)]">Sin pausas registradas.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  }
+                />
               </div>
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo extra</p>

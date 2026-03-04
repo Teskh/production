@@ -186,6 +186,25 @@ const sumIntervalsSeconds = (intervals) =>
     return acc + span;
   }, 0);
 
+const intervalSeconds = (interval) => {
+  if (!interval?.start || !interval?.end) return 0;
+  const span = (interval.end - interval.start) / 1000;
+  if (!Number.isFinite(span) || span <= 0) return 0;
+  return span;
+};
+
+const overlapSeconds = (left, right) => {
+  if (!left?.start || !left?.end || !right?.start || !right?.end) return 0;
+  const start = left.start > right.start ? left.start : right.start;
+  const end = left.end < right.end ? left.end : right.end;
+  const span = (end - start) / 1000;
+  if (!Number.isFinite(span) || span <= 0) return 0;
+  return span;
+};
+
+const overlapSecondsWithUnion = (interval, unionIntervals) =>
+  unionIntervals.reduce((acc, candidate) => acc + overlapSeconds(interval, candidate), 0);
+
 const subtractInterval = (intervals, cut) => {
   if (!cut?.start || !cut?.end || cut.end <= cut.start) return intervals.slice();
   return intervals.flatMap((interval) => {
@@ -261,7 +280,8 @@ const isAbsentNoDataDay = (day) => {
   return !hasAttendancePunch(day) && !hasActivityLog(day);
 };
 
-const buildDailyIndicators = (day) => {
+const buildDailyIndicators = (day, options = {}) => {
+  const includeBreakdown = options?.includeBreakdown === true;
   if (!day) return null;
   if (isAbsentNoDataDay(day)) return null;
   const dayBounds = buildDayBounds(day);
@@ -289,12 +309,25 @@ const buildDailyIndicators = (day) => {
 
   const tasks = Array.isArray(day.activity?.tasks) ? day.activity.tasks : [];
   const activeIntervals = [];
+  const pauseIntervals = [];
   const overrunIntervals = [];
   let expectedSecondsTotal = 0;
 
   tasks.forEach((task) => {
     const intervals = buildTaskIntervals(task, adjustedStart, adjustedEnd);
     if (!intervals) return;
+    const pausesWithoutLunch = (lunchBreak
+      ? intervals.pauses.flatMap((pause) =>
+          subtractInterval(
+            [{ start: pause.start, end: pause.end }],
+            lunchBreak
+          )
+        )
+      : intervals.pauses.slice()
+    ).filter((interval) => interval?.start && interval?.end && interval.end > interval.start);
+    if (pausesWithoutLunch.length) {
+      pauseIntervals.push(...pausesWithoutLunch);
+    }
     const expectedMinutesValue = Number.isFinite(Number(task.expected_minutes))
       ? Number(task.expected_minutes)
       : null;
@@ -311,13 +344,15 @@ const buildDailyIndicators = (day) => {
     }
   });
 
-  const activeUnionSeconds = sumIntervalsSeconds(mergeIntervals(activeIntervals));
+  const mergedActiveIntervals = mergeIntervals(activeIntervals);
+  const mergedPauseIntervals = mergeIntervals(pauseIntervals);
+  const activeUnionSeconds = sumIntervalsSeconds(mergedActiveIntervals);
   const overtimeSeconds = sumIntervalsSeconds(mergeIntervals(overrunIntervals));
   const idleSeconds = Math.max(0, presenceNetSeconds - activeUnionSeconds);
   const idleOverrunSeconds = idleSeconds + overtimeSeconds;
   const productiveSeconds = Math.max(0, presenceNetSeconds - idleOverrunSeconds);
 
-  return {
+  const result = {
     presenceSeconds,
     presenceNetSeconds,
     lunchSeconds,
@@ -330,6 +365,79 @@ const buildDailyIndicators = (day) => {
     productiveRatio: presenceNetSeconds > 0 ? productiveSeconds / presenceNetSeconds : null,
     expectedRatio: presenceNetSeconds > 0 ? expectedSecondsTotal / presenceNetSeconds : null,
   };
+
+  if (includeBreakdown) {
+    const presenceWindows = lunchBreak
+      ? subtractInterval([{ start: adjustedStart, end: adjustedEnd }], lunchBreak)
+      : [{ start: adjustedStart, end: adjustedEnd }];
+    let idleIntervals = presenceWindows.slice();
+    mergedActiveIntervals.forEach((activeInterval) => {
+      idleIntervals = subtractInterval(idleIntervals, activeInterval);
+    });
+    const idleMergedIntervals = mergeIntervals(idleIntervals);
+    const idleDetailedIntervals = idleMergedIntervals
+      .map((interval) => {
+        const seconds = intervalSeconds(interval);
+        const pauseSeconds = overlapSecondsWithUnion(interval, mergedPauseIntervals);
+        const gapSeconds = Math.max(0, seconds - pauseSeconds);
+        const source =
+          pauseSeconds > 0
+            ? gapSeconds > 0
+              ? 'mixed'
+              : 'pause'
+            : 'gap';
+        return {
+          start: interval.start,
+          end: interval.end,
+          seconds,
+          pauseSeconds,
+          gapSeconds,
+          source,
+        };
+      })
+      .filter((interval) => interval.seconds > 0);
+
+    const idleFromPausesSeconds = idleDetailedIntervals.reduce(
+      (acc, interval) => acc + interval.pauseSeconds,
+      0
+    );
+    const idleFromGapSeconds = idleDetailedIntervals.reduce(
+      (acc, interval) => acc + interval.gapSeconds,
+      0
+    );
+
+    result.idleBreakdown = {
+      adjustedStart,
+      adjustedEnd,
+      lunchBreak: lunchBreak
+        ? { start: lunchBreak.start, end: lunchBreak.end }
+        : null,
+      presenceWindows: presenceWindows.map((interval) => ({
+        start: interval.start,
+        end: interval.end,
+        seconds: intervalSeconds(interval),
+      })),
+      activeUnionIntervals: mergedActiveIntervals.map((interval) => ({
+        start: interval.start,
+        end: interval.end,
+        seconds: intervalSeconds(interval),
+      })),
+      pauseUnionIntervals: mergedPauseIntervals.map((interval) => ({
+        start: interval.start,
+        end: interval.end,
+        seconds: intervalSeconds(interval),
+      })),
+      idleIntervals: idleDetailedIntervals,
+      idleFromPausesSeconds,
+      idleFromGapSeconds,
+      idleSecondsByIntervals: idleDetailedIntervals.reduce(
+        (acc, interval) => acc + interval.seconds,
+        0
+      ),
+    };
+  }
+
+  return result;
 };
 
 const buildRangeIndicators = (combinedDays) => {

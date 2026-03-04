@@ -12,6 +12,7 @@ import {
   Filter,
   Search,
   ShieldCheck,
+  Trash2,
   Wrench,
   X,
 } from 'lucide-react';
@@ -20,6 +21,8 @@ import { formatDateTimeShort } from '../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
+const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
+const QC_DELETE_ROLES = new Set(['Calidad', 'QC']);
 
 type QCExecutionOutcome = 'Pass' | 'Fail' | 'Waive' | 'Skip';
 type QCCheckStatus = 'Open' | 'Closed';
@@ -169,13 +172,44 @@ type QCCheckInstanceDetail = {
   trigger_task: QCTaskInstanceWithWorkersSummary | null;
 };
 
+const parseApiErrorMessage = (text: string): string => {
+  try {
+    const parsed = JSON.parse(text) as { detail?: string };
+    if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+      return parsed.detail;
+    }
+  } catch {
+    // Keep raw text fallback.
+  }
+  return text;
+};
+
 const apiRequest = async <T,>(path: string): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    if (text) throw new Error(parseApiErrorMessage(text));
+    throw new Error(`Solicitud fallida (${response.status})`);
   }
   return (await response.json()) as T;
+};
+
+const apiDeleteRequest = async (path: string): Promise<void> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    if (text) throw new Error(parseApiErrorMessage(text));
+    throw new Error(`Solicitud fallida (${response.status})`);
+  }
+};
+
+const isWithinDeleteWindow = (openedAt: string): boolean => {
+  const openedAtMs = Date.parse(openedAt);
+  if (Number.isNaN(openedAtMs)) return false;
+  return Date.now() - openedAtMs <= CHECK_DELETE_WINDOW_MS;
 };
 
 const resolveMediaUri = (uri: string): string => {
@@ -245,6 +279,7 @@ const QCLibrary: React.FC = () => {
   const [hasMoreUnits, setHasMoreUnits] = useState(false);
   const [unitsError, setUnitsError] = useState<string | null>(null);
   const [isUnauthorized, setIsUnauthorized] = useState(false);
+  const [unitsRefreshToken, setUnitsRefreshToken] = useState(0);
 
   const [adminUsers, setAdminUsers] = useState<AdminUserRead[]>([]);
 
@@ -259,10 +294,15 @@ const QCLibrary: React.FC = () => {
   const [workUnitDetail, setWorkUnitDetail] = useState<QCLibraryWorkUnitDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRefreshToken, setDetailRefreshToken] = useState(0);
 
   const [checkDetail, setCheckDetail] = useState<QCCheckInstanceDetail | null>(null);
   const [loadingCheckDetail, setLoadingCheckDetail] = useState(false);
   const [checkDetailError, setCheckDetailError] = useState<string | null>(null);
+  const [checkRefreshToken, setCheckRefreshToken] = useState(0);
+  const [checkDeleteError, setCheckDeleteError] = useState<string | null>(null);
+  const [deletingCheck, setDeletingCheck] = useState(false);
+  const [deletingEvidenceIds, setDeletingEvidenceIds] = useState<Set<number>>(new Set());
 
   const [mediaViewer, setMediaViewer] = useState<{
     uri: string;
@@ -292,6 +332,9 @@ const QCLibrary: React.FC = () => {
     setSearchParams(next, { replace: true });
     setCheckDetail(null);
     setCheckDetailError(null);
+    setCheckDeleteError(null);
+    setDeletingCheck(false);
+    setDeletingEvidenceIds(new Set());
   }, [searchParams, setSearchParams]);
 
   const openCheckOverlay = (checkId: number) => {
@@ -356,7 +399,7 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [qcSession]);
+  }, [qcSession, unitsRefreshToken]);
 
   const loadMoreUnits = async () => {
     if (!qcSession) return;
@@ -509,17 +552,21 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [selectedWorkUnitId]);
+  }, [detailRefreshToken, selectedWorkUnitId]);
 
   useEffect(() => {
     let mounted = true;
     if (!selectedCheckId) {
       setCheckDetail(null);
       setCheckDetailError(null);
+      setCheckDeleteError(null);
+      setDeletingCheck(false);
+      setDeletingEvidenceIds(new Set());
       return () => {
         mounted = false;
       };
     }
+    setCheckDeleteError(null);
     const loadCheck = async () => {
       setLoadingCheckDetail(true);
       try {
@@ -541,7 +588,7 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [selectedCheckId]);
+  }, [checkRefreshToken, selectedCheckId]);
 
   const workUnitById = useMemo(() => {
     const map = new Map<number, QCLibraryWorkUnitSummary>();
@@ -659,6 +706,100 @@ const QCLibrary: React.FC = () => {
       if (selectedWorkUnitId) return closeModuleOverlay();
     };
   }, [closeCheckOverlay, closeModuleOverlay, mediaViewer, selectedCheckId, selectedWorkUnitId]);
+
+  const hasDeleteRole = qcSession ? QC_DELETE_ROLES.has(qcSession.role) : false;
+  const hasFailedExecution =
+    checkDetail?.executions.some((execution) => execution.outcome === 'Fail') ?? false;
+  const hasReworkTask = (checkDetail?.rework_tasks.length ?? 0) > 0;
+  const checkDeleteWindowExpired = checkDetail
+    ? !isWithinDeleteWindow(checkDetail.check_instance.opened_at)
+    : false;
+
+  const checkDeleteBlockedReason = useMemo(() => {
+    if (!checkDetail) return 'No hay check seleccionado.';
+    if (!hasDeleteRole) return 'Solo personal QC puede eliminar checks.';
+    if (checkDeleteWindowExpired) {
+      return 'Solo se pueden eliminar checks dentro de 48 horas desde su apertura.';
+    }
+    if (hasFailedExecution && hasReworkTask) {
+      return 'No se puede eliminar un check fallido con rework asociado.';
+    }
+    return null;
+  }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole, hasFailedExecution, hasReworkTask]);
+
+  const evidenceDeleteBlockedReason = useMemo(() => {
+    if (!checkDetail) return 'No hay check seleccionado.';
+    if (!hasDeleteRole) return 'Solo personal QC puede eliminar evidencia.';
+    if (checkDeleteWindowExpired) {
+      return 'Solo se puede eliminar evidencia dentro de 48 horas desde la apertura del check.';
+    }
+    return null;
+  }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole]);
+
+  const handleDeleteCheck = useCallback(async () => {
+    if (!checkDetail) return;
+    if (checkDeleteBlockedReason) {
+      setCheckDeleteError(checkDeleteBlockedReason);
+      return;
+    }
+    const checkName = checkDetail.check_instance.check_name ?? `Check #${checkDetail.check_instance.id}`;
+    const confirmed = window.confirm(
+      `Eliminar ${checkName}? Esta accion eliminara ejecuciones y evidencias asociadas.`
+    );
+    if (!confirmed) return;
+    setDeletingCheck(true);
+    setCheckDeleteError(null);
+    try {
+      await apiDeleteRequest(`/api/qc/check-instances/${checkDetail.check_instance.id}`);
+      closeCheckOverlay();
+      setUnitsRefreshToken((prev) => prev + 1);
+      setDetailRefreshToken((prev) => prev + 1);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la inspeccion.';
+      setCheckDeleteError(message);
+    } finally {
+      setDeletingCheck(false);
+    }
+  }, [checkDeleteBlockedReason, checkDetail, closeCheckOverlay]);
+
+  const handleDeleteEvidence = useCallback(
+    async (item: QCEvidenceSummary) => {
+      if (evidenceDeleteBlockedReason) {
+        setCheckDeleteError(evidenceDeleteBlockedReason);
+        return;
+      }
+      const confirmed = window.confirm(
+        `Eliminar evidencia #${item.id}? Esta accion elimina el registro y el archivo.`
+      );
+      if (!confirmed) return;
+
+      setDeletingEvidenceIds((prev) => {
+        const next = new Set(prev);
+        next.add(item.id);
+        return next;
+      });
+      setCheckDeleteError(null);
+      try {
+        await apiDeleteRequest(`/api/qc/evidence/${item.id}`);
+        const targetUri = resolveMediaUri(item.uri);
+        setMediaViewer((prev) => (prev?.uri === targetUri ? null : prev));
+        setCheckRefreshToken((prev) => prev + 1);
+        setDetailRefreshToken((prev) => prev + 1);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'No se pudo eliminar la evidencia.';
+        setCheckDeleteError(message);
+      } finally {
+        setDeletingEvidenceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(item.id);
+          return next;
+        });
+      }
+    },
+    [evidenceDeleteBlockedReason]
+  );
 
   if (isUnauthorized) {
     return (
@@ -1143,6 +1284,11 @@ const QCLibrary: React.FC = () => {
                   {checkDetailError}
                 </div>
               ) : null}
+              {checkDeleteError ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+                  {checkDeleteError}
+                </div>
+              ) : null}
 
               {!loadingCheckDetail && checkDetail ? (
                 <div className="space-y-6">
@@ -1186,7 +1332,22 @@ const QCLibrary: React.FC = () => {
                           <ShieldCheck className="h-4 w-4" />
                           Abrir ejecucion
                         </Link>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteCheck()}
+                          disabled={Boolean(checkDeleteBlockedReason) || deletingCheck}
+                          className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          {deletingCheck ? 'Eliminando...' : 'Eliminar check'}
+                        </button>
                       </div>
+                      {checkDeleteBlockedReason ? (
+                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{checkDeleteBlockedReason}</div>
+                      ) : null}
+                      {evidenceDeleteBlockedReason && !checkDeleteBlockedReason ? (
+                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{evidenceDeleteBlockedReason}</div>
+                      ) : null}
                     </div>
                   </section>
 
@@ -1268,37 +1429,71 @@ const QCLibrary: React.FC = () => {
                                 <div className="mb-2 text-xs font-semibold text-[var(--ink)]">
                                   Evidencia ({evidence.length})
                                 </div>
+                                {evidenceDeleteBlockedReason ? (
+                                  <div className="mb-2 text-xs text-[var(--ink-muted)]">
+                                    {evidenceDeleteBlockedReason}
+                                  </div>
+                                ) : null}
                                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                                  {evidence.map((item) => (
-                                    <button
-                                      key={item.id}
-                                      type="button"
-                                      onClick={() =>
-                                        setMediaViewer({
-                                          uri: resolveMediaUri(item.uri),
-                                          mimeType: item.mime_type,
-                                          title: `Evidencia #${item.id}`,
-                                        })
-                                      }
-                                      className="group relative overflow-hidden rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)]"
-                                    >
-                                      {item.mime_type?.startsWith('image/') ? (
-                                        <img
-                                          src={resolveMediaUri(item.uri)}
-                                          alt={`Evidencia ${item.id}`}
-                                          className="h-28 w-full object-cover transition group-hover:scale-[1.02]"
-                                          loading="lazy"
-                                        />
-                                      ) : (
-                                        <div className="flex h-28 w-full items-center justify-center text-[var(--ink-muted)]">
-                                          <FileImage className="h-6 w-6" />
+                                  {evidence.map((item) => {
+                                    const isDeletingEvidence = deletingEvidenceIds.has(item.id);
+                                    return (
+                                      <div
+                                        key={item.id}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() =>
+                                          setMediaViewer({
+                                            uri: resolveMediaUri(item.uri),
+                                            mimeType: item.mime_type,
+                                            title: `Evidencia #${item.id}`,
+                                          })
+                                        }
+                                        onKeyDown={(event) => {
+                                          if (event.key === 'Enter' || event.key === ' ') {
+                                            event.preventDefault();
+                                            setMediaViewer({
+                                              uri: resolveMediaUri(item.uri),
+                                              mimeType: item.mime_type,
+                                              title: `Evidencia #${item.id}`,
+                                            });
+                                          }
+                                        }}
+                                        className="group relative overflow-hidden rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                                      >
+                                        {item.mime_type?.startsWith('image/') ? (
+                                          <img
+                                            src={resolveMediaUri(item.uri)}
+                                            alt={`Evidencia ${item.id}`}
+                                            className="h-28 w-full object-cover transition group-hover:scale-[1.02]"
+                                            loading="lazy"
+                                          />
+                                        ) : (
+                                          <div className="flex h-28 w-full items-center justify-center text-[var(--ink-muted)]">
+                                            <FileImage className="h-6 w-6" />
+                                          </div>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            void handleDeleteEvidence(item);
+                                          }}
+                                          disabled={Boolean(evidenceDeleteBlockedReason) || isDeletingEvidence}
+                                          className="absolute right-2 top-2 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white/90 p-1 text-rose-700 shadow-sm transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                          aria-label={`Eliminar evidencia ${item.id}`}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                        <div className="absolute inset-x-0 bottom-0 bg-black/40 px-2 py-1 text-[10px] text-white">
+                                          {isDeletingEvidence
+                                            ? 'Eliminando...'
+                                            : formatDateTimeShort(item.captured_at)}
                                         </div>
-                                      )}
-                                      <div className="absolute inset-x-0 bottom-0 bg-black/40 px-2 py-1 text-[10px] text-white">
-                                        {formatDateTimeShort(item.captured_at)}
                                       </div>
-                                    </button>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ) : null}

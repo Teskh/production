@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import case, exists, func, or_, select, text
+from sqlalchemy import case, delete, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -78,6 +79,7 @@ router = APIRouter()
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 QC_EVIDENCE_DIR = MEDIA_GALLERY_DIR / "qc_evidence"
 QC_ROLE_VALUES = {"Calidad", "QC"}
+QC_DELETE_WINDOW = timedelta(hours=48)
 
 
 def _require_qc_admin(admin: AdminUser) -> AdminUser:
@@ -86,6 +88,32 @@ def _require_qc_admin(admin: AdminUser) -> AdminUser:
             status_code=status.HTTP_403_FORBIDDEN, detail="QC role required"
         )
     return admin
+
+
+def _ensure_aware_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _enforce_check_within_delete_window(instance: QCCheckInstance) -> None:
+    opened_at = _ensure_aware_utc(instance.opened_at)
+    age = utc_now() - opened_at
+    if age > QC_DELETE_WINDOW:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="QC checks can only be deleted within 48 hours of opening",
+        )
+
+
+def _delete_media_file(storage_key: str) -> None:
+    file_path = MEDIA_GALLERY_DIR / storage_key
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except OSError:
+        # DB cleanup is authoritative; stale files can be cleaned manually.
+        return
 
 
 def _resolve_current_station(
@@ -248,6 +276,109 @@ def _build_rework_summary(
         panel_code=panel_code,
         created_at=rework.created_at,
     )
+
+
+def _check_has_fail_with_rework(db: Session, check_instance_id: int) -> bool:
+    has_fail_execution = (
+        db.execute(
+            select(QCExecution.id)
+            .where(QCExecution.check_instance_id == check_instance_id)
+            .where(QCExecution.outcome == QCExecutionOutcome.FAIL)
+            .limit(1)
+        )
+        .scalars()
+        .first()
+        is not None
+    )
+    if not has_fail_execution:
+        return False
+    has_rework = (
+        db.execute(
+            select(QCReworkTask.id)
+            .where(QCReworkTask.check_instance_id == check_instance_id)
+            .limit(1)
+        )
+        .scalars()
+        .first()
+        is not None
+    )
+    return has_rework
+
+
+def _delete_evidence_rows(db: Session, evidence_ids: list[int]) -> None:
+    if not evidence_ids:
+        return
+
+    media_ids = list(
+        db.execute(
+            select(QCEvidence.media_asset_id).where(QCEvidence.id.in_(evidence_ids))
+        ).scalars()
+    )
+    db.execute(delete(QCEvidence).where(QCEvidence.id.in_(evidence_ids)))
+
+    unique_media_ids = sorted(set(media_ids))
+    if not unique_media_ids:
+        return
+
+    orphan_media_rows = list(
+        db.execute(
+            select(MediaAsset.id, MediaAsset.storage_key)
+            .where(MediaAsset.id.in_(unique_media_ids))
+            .where(~exists().where(QCEvidence.media_asset_id == MediaAsset.id))
+        )
+    )
+    orphan_media_ids = [media_id for media_id, _ in orphan_media_rows]
+    if orphan_media_ids:
+        db.execute(delete(MediaAsset).where(MediaAsset.id.in_(orphan_media_ids)))
+    for _, storage_key in orphan_media_rows:
+        _delete_media_file(storage_key)
+
+
+def _delete_check_related_rows(db: Session, check_instance_id: int) -> None:
+    execution_ids = list(
+        db.execute(
+            select(QCExecution.id).where(QCExecution.check_instance_id == check_instance_id)
+        ).scalars()
+    )
+    if execution_ids:
+        evidence_ids = list(
+            db.execute(
+                select(QCEvidence.id).where(QCEvidence.execution_id.in_(execution_ids))
+            ).scalars()
+        )
+        _delete_evidence_rows(db, evidence_ids)
+        db.execute(
+            delete(QCExecutionFailureMode).where(
+                QCExecutionFailureMode.execution_id.in_(execution_ids)
+            )
+        )
+        db.execute(delete(QCExecution).where(QCExecution.id.in_(execution_ids)))
+
+    rework_ids = list(
+        db.execute(
+            select(QCReworkTask.id).where(QCReworkTask.check_instance_id == check_instance_id)
+        ).scalars()
+    )
+    if rework_ids:
+        task_instance_ids = list(
+            db.execute(
+                select(TaskInstance.id).where(TaskInstance.rework_task_id.in_(rework_ids))
+            ).scalars()
+        )
+        if task_instance_ids:
+            db.execute(
+                delete(TaskParticipation).where(
+                    TaskParticipation.task_instance_id.in_(task_instance_ids)
+                )
+            )
+            db.execute(
+                delete(TaskPause).where(TaskPause.task_instance_id.in_(task_instance_ids))
+            )
+            db.execute(delete(TaskInstance).where(TaskInstance.id.in_(task_instance_ids)))
+        db.execute(delete(QCNotification).where(QCNotification.rework_task_id.in_(rework_ids)))
+        db.execute(delete(QCReworkTask).where(QCReworkTask.id.in_(rework_ids)))
+
+    db.execute(delete(QCCheckInstance).where(QCCheckInstance.id == check_instance_id))
 
 
 @router.get("/dashboard", response_model=QCDashboardResponse)
@@ -899,6 +1030,28 @@ def create_manual_check(
     )
 
 
+@router.delete("/check-instances/{check_instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_check_instance(
+    check_instance_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    _require_qc_admin(admin)
+    instance = db.get(QCCheckInstance, check_instance_id)
+    if not instance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
+
+    _enforce_check_within_delete_window(instance)
+    if _check_has_fail_with_rework(db, instance.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete failed QC checks that have rework tasks",
+        )
+
+    _delete_check_related_rows(db, instance.id)
+    db.commit()
+
+
 @router.post("/executions/{execution_id}/evidence", response_model=QCEvidenceSummary)
 def upload_execution_evidence(
     execution_id: int,
@@ -948,6 +1101,30 @@ def upload_execution_evidence(
         mime_type=media.mime_type,
         captured_at=evidence.captured_at,
     )
+
+
+@router.delete("/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_execution_evidence(
+    evidence_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    _require_qc_admin(admin)
+    evidence = db.get(QCEvidence, evidence_id)
+    if not evidence:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC evidence not found")
+
+    execution = db.get(QCExecution, evidence.execution_id)
+    if not execution:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC execution not found")
+
+    instance = db.get(QCCheckInstance, execution.check_instance_id)
+    if not instance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
+
+    _enforce_check_within_delete_window(instance)
+    _delete_evidence_rows(db, [evidence.id])
+    db.commit()
 
 
 @router.get("/notifications", response_model=list[QCNotificationSummary])
