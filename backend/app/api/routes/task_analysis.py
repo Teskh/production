@@ -166,6 +166,7 @@ def _intervals_total_minutes(intervals: list[tuple[datetime, datetime]]) -> floa
 
 def _mask_intervals(
     station_id: int | None,
+    station_role: StationRole | None,
     sequence_order: int | None,
     intervals: list[tuple[datetime, datetime]],
     shift_masks: ShiftMaskResolver,
@@ -177,6 +178,7 @@ def _mask_intervals(
             start_dt,
             end_dt,
             sequence_order=sequence_order,
+            station_role=station_role,
         )
         if segments is None:
             return None
@@ -264,12 +266,14 @@ def _build_task_timeline_segments(
 
 def _masked_intervals_total_minutes(
     station_id: int | None,
+    station_role: StationRole | None,
     sequence_order: int | None,
     intervals: list[tuple[datetime, datetime]],
     shift_masks: ShiftMaskResolver,
 ) -> float | None:
     masked_segments = _mask_intervals(
         station_id,
+        station_role,
         sequence_order,
         intervals,
         shift_masks,
@@ -283,6 +287,7 @@ def _duration_minutes(
     instance: TaskInstance,
     pause_map: dict[int, list[TaskPause]],
     shift_masks: ShiftMaskResolver,
+    station_role: StationRole | None,
     station_sequence_order: int | None,
 ) -> float | None:
     if not instance.started_at or not instance.completed_at:
@@ -291,6 +296,7 @@ def _duration_minutes(
     raw_minutes = _intervals_total_minutes(active_intervals)
     masked_minutes = _masked_intervals_total_minutes(
         instance.station_id,
+        station_role,
         station_sequence_order,
         active_intervals,
         shift_masks,
@@ -353,6 +359,7 @@ def _build_task_pause_details(
     pauses: list[TaskPause],
     completed_at: datetime | None,
     station_id: int | None,
+    station_role: StationRole | None,
     station_sequence_order: int | None,
     shift_masks: ShiftMaskResolver,
 ) -> tuple[float | None, list[TaskAnalysisTaskPause]]:
@@ -375,6 +382,7 @@ def _build_task_pause_details(
                     paused_at,
                     end_time,
                     sequence_order=station_sequence_order,
+                    station_role=station_role,
                 )
                 duration_minutes = round(
                     raw_minutes if masked_minutes is None else masked_minutes,
@@ -728,7 +736,7 @@ def get_task_analysis(
         int, dict[date, tuple[datetime, datetime] | None]
     ] = {}
     combined_masks_by_sequence_day: dict[
-        int, dict[date, tuple[datetime, datetime] | None]
+        tuple[StationRole, int], dict[date, tuple[datetime, datetime] | None]
     ] = {}
     for role in set(station_ids_by_role.keys()) | set(sequence_orders_by_role.keys()):
         role_masks = ShiftMaskResolver.load(
@@ -817,11 +825,13 @@ def get_task_analysis(
     task_entries: list[dict[str, object]] = []
     if scope == TaskScope.PANEL:
         for instance, task_def, panel_unit, work_unit, work_order in rows:
+            station_role = station_role_by_id.get(instance.station_id)
             station_sequence_order = station_sequence_by_id.get(instance.station_id)
             duration = _duration_minutes(
                 instance,
                 pause_map,
                 shift_masks,
+                station_role,
                 station_sequence_order,
             )
             if duration is None or duration <= 0:
@@ -843,11 +853,13 @@ def get_task_analysis(
             )
     else:
         for instance, task_def, work_unit, work_order in rows:
+            station_role = station_role_by_id.get(instance.station_id)
             station_sequence_order = station_sequence_by_id.get(instance.station_id)
             duration = _duration_minutes(
                 instance,
                 pause_map,
                 shift_masks,
+                station_role,
                 station_sequence_order,
             )
             if duration is None or duration <= 0:
@@ -942,6 +954,7 @@ def get_task_analysis(
             group["task_counts"][task_def.id] = int(group["task_counts"].get(task_def.id, 0)) + 1
             active_intervals = _active_intervals(instance, pause_map)
             group["raw_active_intervals"].extend(active_intervals)
+            station_role = station_role_by_id.get(instance.station_id)
             station_sequence_order = station_sequence_by_id.get(instance.station_id)
             pause_intervals = _pause_intervals(
                 pause_map.get(instance.id, []),
@@ -949,6 +962,7 @@ def get_task_analysis(
             )
             masked_active_intervals = _mask_intervals(
                 instance.station_id,
+                station_role,
                 station_sequence_order,
                 active_intervals,
                 shift_masks,
@@ -959,6 +973,7 @@ def get_task_analysis(
                 group["masked_active_intervals"].extend(masked_active_intervals)
             masked_pause_intervals = _mask_intervals(
                 instance.station_id,
+                station_role,
                 station_sequence_order,
                 pause_intervals,
                 shift_masks,
@@ -967,6 +982,7 @@ def get_task_analysis(
                 pause_map.get(instance.id, []),
                 instance.completed_at,
                 instance.station_id,
+                station_role,
                 station_sequence_order,
                 shift_masks,
             )
@@ -1142,18 +1158,21 @@ def get_task_analysis(
         expected = entry["expected"]
         if expected is not None:
             expected_refs.append(float(expected))
+        station_role = station_role_by_id.get(instance.station_id)
         station_sequence_order = station_sequence_by_id.get(instance.station_id)
         pauses = pause_map.get(instance.id, [])
         active_intervals = _active_intervals(instance, pause_map)
         pause_intervals = _pause_intervals(pauses, instance.completed_at)
         masked_active_intervals = _mask_intervals(
             instance.station_id,
+            station_role,
             station_sequence_order,
             active_intervals,
             shift_masks,
         )
         masked_pause_intervals = _mask_intervals(
             instance.station_id,
+            station_role,
             station_sequence_order,
             pause_intervals,
             shift_masks,
@@ -1164,6 +1183,7 @@ def get_task_analysis(
             pauses,
             instance.completed_at,
             instance.station_id,
+            station_role,
             station_sequence_order,
             shift_masks,
         )

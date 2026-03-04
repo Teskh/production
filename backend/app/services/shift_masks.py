@@ -13,7 +13,9 @@ from app.models.shift_estimates import ShiftEstimate
 @dataclass
 class ShiftMaskResolver:
     masks_by_station_day: dict[int, dict[date, tuple[datetime, datetime] | None]]
-    masks_by_sequence_day: dict[int, dict[date, tuple[datetime, datetime] | None]]
+    masks_by_sequence_day: dict[
+        tuple[StationRole, int], dict[date, tuple[datetime, datetime] | None]
+    ]
 
     @classmethod
     def load(
@@ -61,7 +63,9 @@ class ShiftMaskResolver:
         )
 
         masks_by_station_day: dict[int, dict[date, tuple[datetime, datetime] | None]] = {}
-        masks_by_sequence_day: dict[int, dict[date, tuple[datetime, datetime] | None]] = {}
+        masks_by_sequence_day: dict[
+            tuple[StationRole, int], dict[date, tuple[datetime, datetime] | None]
+        ] = {}
         for row in rows:
             mask: tuple[datetime, datetime] | None = None
             if (
@@ -73,7 +77,8 @@ class ShiftMaskResolver:
             if row.station_id is not None:
                 masks_by_station_day.setdefault(row.station_id, {})[row.date] = mask
             if row.sequence_order is not None:
-                masks_by_sequence_day.setdefault(row.sequence_order, {})[row.date] = mask
+                key = (row.station_role, row.sequence_order)
+                masks_by_sequence_day.setdefault(key, {})[row.date] = mask
 
         return cls(
             masks_by_station_day=masks_by_station_day,
@@ -87,12 +92,14 @@ class ShiftMaskResolver:
         end_dt: datetime | None,
         *,
         sequence_order: int | None = None,
+        station_role: StationRole | None = None,
     ) -> float | None:
         segments = self.masked_segments(
             station_id,
             start_dt,
             end_dt,
             sequence_order=sequence_order,
+            station_role=station_role,
         )
         if segments is None:
             return None
@@ -108,6 +115,7 @@ class ShiftMaskResolver:
         end_dt: datetime | None,
         *,
         sequence_order: int | None = None,
+        station_role: StationRole | None = None,
     ) -> list[tuple[datetime, datetime]] | None:
         if start_dt is None or end_dt is None or end_dt <= start_dt:
             return None
@@ -115,8 +123,8 @@ class ShiftMaskResolver:
         day_map = (
             self.masks_by_station_day.get(station_id) if station_id is not None else None
         )
-        if day_map is None and sequence_order is not None:
-            day_map = self.masks_by_sequence_day.get(sequence_order)
+        if day_map is None and sequence_order is not None and station_role is not None:
+            day_map = self.masks_by_sequence_day.get((station_role, sequence_order))
         if not day_map:
             return None
 
