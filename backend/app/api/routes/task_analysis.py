@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.enums import TaskScope, TaskStatus
+from app.api.routes.shift_estimates import ALGORITHM_VERSION
+from app.models.enums import StationRole, TaskScope, TaskStatus
 from app.models.house import PanelDefinition
 from app.models.stations import Station
 from app.models.tasks import (
@@ -26,8 +27,10 @@ from app.schemas.analytics import (
     TaskAnalysisResponse,
     TaskAnalysisStats,
     TaskAnalysisTaskBreakdown,
+    TaskAnalysisTimelineSegment,
     TaskAnalysisWorkerOption,
 )
+from app.services.shift_masks import ShiftMaskResolver
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -103,6 +106,23 @@ def _merge_intervals(
     return merged
 
 
+def _pause_intervals(
+    pauses: list[TaskPause], completed_at: datetime | None
+) -> list[tuple[datetime, datetime]]:
+    if completed_at is None:
+        return []
+    intervals: list[tuple[datetime, datetime]] = []
+    for pause in pauses:
+        paused_at = pause.paused_at
+        if paused_at is None:
+            continue
+        resumed_at = pause.resumed_at or completed_at
+        if resumed_at < paused_at:
+            continue
+        intervals.append((paused_at, resumed_at))
+    return intervals
+
+
 def _active_intervals(
     instance: TaskInstance, pause_map: dict[int, list[TaskPause]]
 ) -> list[tuple[datetime, datetime]]:
@@ -113,15 +133,10 @@ def _active_intervals(
     if completed_at == started_at:
         return []
 
-    raw_pauses = pause_map.get(instance.id, [])
     clipped_pauses: list[tuple[datetime, datetime]] = []
-    for pause in raw_pauses:
-        paused_at = pause.paused_at
-        resumed_at = pause.resumed_at or completed_at
-        if not paused_at:
-            continue
-        if resumed_at < paused_at:
-            continue
+    for paused_at, resumed_at in _pause_intervals(
+        pause_map.get(instance.id, []), completed_at
+    ):
         pause_start = max(paused_at, started_at)
         pause_end = min(resumed_at, completed_at)
         if pause_end <= pause_start:
@@ -149,11 +164,140 @@ def _intervals_total_minutes(intervals: list[tuple[datetime, datetime]]) -> floa
     return sum((end - start).total_seconds() / 60 for start, end in intervals)
 
 
-def _duration_minutes(instance: TaskInstance, pause_map: dict[int, list[TaskPause]]) -> float | None:
+def _mask_intervals(
+    station_id: int | None,
+    sequence_order: int | None,
+    intervals: list[tuple[datetime, datetime]],
+    shift_masks: ShiftMaskResolver,
+) -> list[tuple[datetime, datetime]] | None:
+    masked_segments: list[tuple[datetime, datetime]] = []
+    for start_dt, end_dt in intervals:
+        segments = shift_masks.masked_segments(
+            station_id,
+            start_dt,
+            end_dt,
+            sequence_order=sequence_order,
+        )
+        if segments is None:
+            return None
+        masked_segments.extend(segments)
+    return _merge_intervals(masked_segments)
+
+
+def _subtract_intervals(
+    base_intervals: list[tuple[datetime, datetime]],
+    covered_intervals: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    if not base_intervals:
+        return []
+    if not covered_intervals:
+        return _merge_intervals(base_intervals)
+
+    base = _merge_intervals(base_intervals)
+    covered = _merge_intervals(covered_intervals)
+    result: list[tuple[datetime, datetime]] = []
+
+    for base_start, base_end in base:
+        cursor = base_start
+        for covered_start, covered_end in covered:
+            if covered_end <= cursor:
+                continue
+            if covered_start >= base_end:
+                break
+            overlap_start = max(cursor, covered_start)
+            overlap_end = min(base_end, covered_end)
+            if overlap_start > cursor:
+                result.append((cursor, overlap_start))
+            if overlap_end > cursor:
+                cursor = overlap_end
+            if cursor >= base_end:
+                break
+        if cursor < base_end:
+            result.append((cursor, base_end))
+    return result
+
+
+def _build_task_timeline_segments(
+    task_definition_id: int | None,
+    task_name: str | None,
+    active_intervals: list[tuple[datetime, datetime]],
+    pause_intervals: list[tuple[datetime, datetime]],
+    masked_active_intervals: list[tuple[datetime, datetime]] | None,
+    masked_pause_intervals: list[tuple[datetime, datetime]] | None,
+) -> list[TaskAnalysisTimelineSegment]:
+    payload: list[TaskAnalysisTimelineSegment] = []
+
+    def _append(
+        segment_type: str,
+        intervals: list[tuple[datetime, datetime]],
+    ) -> None:
+        for start_dt, end_dt in intervals:
+            duration = (end_dt - start_dt).total_seconds() / 60
+            if duration <= 0:
+                continue
+            payload.append(
+                TaskAnalysisTimelineSegment(
+                    segment_type=segment_type,
+                    started_at=start_dt,
+                    ended_at=end_dt,
+                    duration_minutes=round(duration, 2),
+                    task_definition_id=task_definition_id,
+                    task_name=task_name,
+                )
+            )
+
+    if masked_active_intervals is None:
+        _append("active", active_intervals)
+    else:
+        _append("active", masked_active_intervals)
+        _append("masked_active", _subtract_intervals(active_intervals, masked_active_intervals))
+
+    if masked_pause_intervals is None:
+        _append("paused", pause_intervals)
+    else:
+        _append("paused", masked_pause_intervals)
+        _append("masked_paused", _subtract_intervals(pause_intervals, masked_pause_intervals))
+
+    payload.sort(key=lambda segment: segment.started_at or datetime.min)
+    return payload
+
+
+def _masked_intervals_total_minutes(
+    station_id: int | None,
+    sequence_order: int | None,
+    intervals: list[tuple[datetime, datetime]],
+    shift_masks: ShiftMaskResolver,
+) -> float | None:
+    masked_segments = _mask_intervals(
+        station_id,
+        sequence_order,
+        intervals,
+        shift_masks,
+    )
+    if masked_segments is None:
+        return None
+    return _intervals_total_minutes(masked_segments)
+
+
+def _duration_minutes(
+    instance: TaskInstance,
+    pause_map: dict[int, list[TaskPause]],
+    shift_masks: ShiftMaskResolver,
+    station_sequence_order: int | None,
+) -> float | None:
     if not instance.started_at or not instance.completed_at:
         return None
-    active_minutes = _intervals_total_minutes(_active_intervals(instance, pause_map))
-    return round(max(active_minutes, 0.0), 2)
+    active_intervals = _active_intervals(instance, pause_map)
+    raw_minutes = _intervals_total_minutes(active_intervals)
+    masked_minutes = _masked_intervals_total_minutes(
+        instance.station_id,
+        station_sequence_order,
+        active_intervals,
+        shift_masks,
+    )
+    if masked_minutes is None:
+        return round(max(raw_minutes, 0.0), 2)
+    return round(max(masked_minutes, 0.0), 2)
 
 
 def _average(values: list[float]) -> float | None:
@@ -206,7 +350,11 @@ def _resolve_module_expected(
 
 
 def _build_task_pause_details(
-    pauses: list[TaskPause], completed_at: datetime | None
+    pauses: list[TaskPause],
+    completed_at: datetime | None,
+    station_id: int | None,
+    station_sequence_order: int | None,
+    shift_masks: ShiftMaskResolver,
 ) -> tuple[float | None, list[TaskAnalysisTaskPause]]:
     if not pauses:
         return None, []
@@ -221,8 +369,15 @@ def _build_task_pause_details(
         if paused_at:
             end_time = resumed_at or completed_at
             if end_time is not None and end_time >= paused_at:
+                raw_minutes = (end_time - paused_at).total_seconds() / 60
+                masked_minutes = shift_masks.masked_minutes(
+                    station_id,
+                    paused_at,
+                    end_time,
+                    sequence_order=station_sequence_order,
+                )
                 duration_minutes = round(
-                    (end_time - paused_at).total_seconds() / 60,
+                    raw_minutes if masked_minutes is None else masked_minutes,
                     2,
                 )
                 total_minutes += duration_minutes
@@ -237,6 +392,36 @@ def _build_task_pause_details(
         )
 
     return (round(total_minutes, 2) if has_any_duration else None, pause_details)
+
+
+def _mask_query_bounds(
+    instances: list[TaskInstance],
+    pause_map: dict[int, list[TaskPause]],
+) -> tuple[date | None, date | None]:
+    min_dt: datetime | None = None
+    max_dt: datetime | None = None
+
+    def _push(value: datetime | None) -> None:
+        nonlocal min_dt, max_dt
+        if value is None:
+            return
+        if min_dt is None or value < min_dt:
+            min_dt = value
+        if max_dt is None or value > max_dt:
+            max_dt = value
+
+    for instance in instances:
+        _push(instance.started_at)
+        _push(instance.completed_at)
+        for pause_start, pause_end in _pause_intervals(
+            pause_map.get(instance.id, []), instance.completed_at
+        ):
+            _push(pause_start)
+            _push(pause_end)
+
+    if min_dt is None or max_dt is None:
+        return None, None
+    return min_dt.date(), max_dt.date()
 
 
 @router.get("/workers", response_model=list[TaskAnalysisWorkerOption])
@@ -512,6 +697,56 @@ def get_task_analysis(
     for pause in pause_rows:
         pause_map.setdefault(pause.task_instance_id, []).append(pause)
 
+    instances = [row[0] for row in rows]
+    mask_start_date, mask_end_date = _mask_query_bounds(instances, pause_map)
+    station_ids = {
+        instance.station_id
+        for instance in instances
+        if instance.station_id is not None
+    }
+    station_role_by_id: dict[int, StationRole] = {}
+    station_sequence_by_id: dict[int, int | None] = {}
+    if station_ids:
+        for station in db.execute(
+            select(Station).where(Station.id.in_(station_ids))
+        ).scalars():
+            station_role_by_id[station.id] = station.role
+            station_sequence_by_id[station.id] = station.sequence_order
+
+    station_ids_by_role: dict[StationRole, set[int]] = {}
+    sequence_orders_by_role: dict[StationRole, set[int]] = {}
+    for station_id_value in station_ids:
+        role = station_role_by_id.get(station_id_value)
+        if role is None:
+            continue
+        station_ids_by_role.setdefault(role, set()).add(station_id_value)
+        sequence_order = station_sequence_by_id.get(station_id_value)
+        if sequence_order is not None:
+            sequence_orders_by_role.setdefault(role, set()).add(sequence_order)
+
+    combined_masks_by_station_day: dict[
+        int, dict[date, tuple[datetime, datetime] | None]
+    ] = {}
+    combined_masks_by_sequence_day: dict[
+        int, dict[date, tuple[datetime, datetime] | None]
+    ] = {}
+    for role in set(station_ids_by_role.keys()) | set(sequence_orders_by_role.keys()):
+        role_masks = ShiftMaskResolver.load(
+            db,
+            station_role=role,
+            station_ids=station_ids_by_role.get(role, set()),
+            sequence_orders=sequence_orders_by_role.get(role, set()),
+            start_date=mask_start_date,
+            end_date=mask_end_date,
+            algorithm_version=ALGORITHM_VERSION,
+        )
+        combined_masks_by_station_day.update(role_masks.masks_by_station_day)
+        combined_masks_by_sequence_day.update(role_masks.masks_by_sequence_day)
+    shift_masks = ShiftMaskResolver(
+        masks_by_station_day=combined_masks_by_station_day,
+        masks_by_sequence_day=combined_masks_by_sequence_day,
+    )
+
     scope_tasks: list[TaskDefinition] = []
     applicability_map: dict[int, list[TaskApplicability]] = {}
     if task_definition_id is None:
@@ -582,8 +817,14 @@ def get_task_analysis(
     task_entries: list[dict[str, object]] = []
     if scope == TaskScope.PANEL:
         for instance, task_def, panel_unit, work_unit, work_order in rows:
-            duration = _duration_minutes(instance, pause_map)
-            if duration is None:
+            station_sequence_order = station_sequence_by_id.get(instance.station_id)
+            duration = _duration_minutes(
+                instance,
+                pause_map,
+                shift_masks,
+                station_sequence_order,
+            )
+            if duration is None or duration <= 0:
                 continue
             expected = expected_map.get(task_def.id)
             worker_names = worker_name_map.get(instance.id, [])
@@ -602,8 +843,14 @@ def get_task_analysis(
             )
     else:
         for instance, task_def, work_unit, work_order in rows:
-            duration = _duration_minutes(instance, pause_map)
-            if duration is None:
+            station_sequence_order = station_sequence_by_id.get(instance.station_id)
+            duration = _duration_minutes(
+                instance,
+                pause_map,
+                shift_masks,
+                station_sequence_order,
+            )
+            if duration is None or duration <= 0:
                 continue
             expected = _resolve_module_expected(
                 module_duration_map.get(task_def.id, []),
@@ -663,7 +910,9 @@ def get_task_analysis(
                     "work_order": work_order,
                     "work_unit": work_unit,
                     "workers": set(),
-                    "active_intervals": [],
+                    "raw_active_intervals": [],
+                    "masked_active_intervals": [],
+                    "mask_fallback": False,
                     "executed_task_ids": set(),
                     "task_counts": {},
                     "breakdown": [],
@@ -691,21 +940,59 @@ def get_task_analysis(
                 continue
             group["executed_task_ids"].add(task_def.id)
             group["task_counts"][task_def.id] = int(group["task_counts"].get(task_def.id, 0)) + 1
-            group["active_intervals"].extend(_active_intervals(instance, pause_map))
+            active_intervals = _active_intervals(instance, pause_map)
+            group["raw_active_intervals"].extend(active_intervals)
+            station_sequence_order = station_sequence_by_id.get(instance.station_id)
+            pause_intervals = _pause_intervals(
+                pause_map.get(instance.id, []),
+                instance.completed_at,
+            )
+            masked_active_intervals = _mask_intervals(
+                instance.station_id,
+                station_sequence_order,
+                active_intervals,
+                shift_masks,
+            )
+            if masked_active_intervals is None:
+                group["mask_fallback"] = True
+            else:
+                group["masked_active_intervals"].extend(masked_active_intervals)
+            masked_pause_intervals = _mask_intervals(
+                instance.station_id,
+                station_sequence_order,
+                pause_intervals,
+                shift_masks,
+            )
             pause_minutes, pause_details = _build_task_pause_details(
                 pause_map.get(instance.id, []),
                 instance.completed_at,
+                instance.station_id,
+                station_sequence_order,
+                shift_masks,
+            )
+            raw_duration = round(_intervals_total_minutes(active_intervals), 2)
+            masked_out_minutes = round(max(raw_duration - duration, 0.0), 2)
+            timeline_segments = _build_task_timeline_segments(
+                task_def.id,
+                task_def.name,
+                active_intervals,
+                pause_intervals,
+                masked_active_intervals,
+                masked_pause_intervals,
             )
             breakdown = TaskAnalysisTaskBreakdown(
                 task_definition_id=task_def.id,
                 task_name=task_def.name,
                 duration_minutes=duration,
+                raw_duration_minutes=raw_duration,
+                masked_out_minutes=masked_out_minutes,
                 expected_minutes=entry["expected"],
                 started_at=instance.started_at,
                 completed_at=completed_at,
                 worker_name=worker_label,
                 pause_minutes=pause_minutes,
                 pauses=pause_details,
+                timeline_segments=timeline_segments,
             )
             group["breakdown"].append(breakdown)
 
@@ -798,8 +1085,13 @@ def get_task_analysis(
                 strict_excluded_count += 1
                 continue
 
-            merged_intervals = _merge_intervals(group["active_intervals"])
+            raw_intervals = _merge_intervals(group["raw_active_intervals"])
+            masked_intervals = _merge_intervals(group["masked_active_intervals"])
+            merged_intervals = raw_intervals if group["mask_fallback"] else masked_intervals
             duration = round(_intervals_total_minutes(merged_intervals), 2)
+            if duration <= 0:
+                strict_excluded_count += 1
+                continue
             durations.append(duration)
             expected_minutes = round(sum(required_expected.values()), 2)
             expected_refs.append(expected_minutes)
@@ -838,6 +1130,8 @@ def get_task_analysis(
         task_def = entry["task_def"]
         work_unit = entry["work_unit"]
         work_order = entry["work_order"]
+        if not isinstance(instance, TaskInstance):
+            continue
         if not isinstance(work_unit, WorkUnit) or not isinstance(
             work_order, WorkOrder
         ):
@@ -848,6 +1142,53 @@ def get_task_analysis(
         expected = entry["expected"]
         if expected is not None:
             expected_refs.append(float(expected))
+        station_sequence_order = station_sequence_by_id.get(instance.station_id)
+        pauses = pause_map.get(instance.id, [])
+        active_intervals = _active_intervals(instance, pause_map)
+        pause_intervals = _pause_intervals(pauses, instance.completed_at)
+        masked_active_intervals = _mask_intervals(
+            instance.station_id,
+            station_sequence_order,
+            active_intervals,
+            shift_masks,
+        )
+        masked_pause_intervals = _mask_intervals(
+            instance.station_id,
+            station_sequence_order,
+            pause_intervals,
+            shift_masks,
+        )
+        raw_duration = round(_intervals_total_minutes(active_intervals), 2)
+        masked_out_minutes = round(max(raw_duration - duration, 0.0), 2)
+        pause_minutes, pause_details = _build_task_pause_details(
+            pauses,
+            instance.completed_at,
+            instance.station_id,
+            station_sequence_order,
+            shift_masks,
+        )
+        timeline_segments = _build_task_timeline_segments(
+            task_def.id,
+            task_def.name,
+            active_intervals,
+            pause_intervals,
+            masked_active_intervals,
+            masked_pause_intervals,
+        )
+        breakdown = TaskAnalysisTaskBreakdown(
+            task_definition_id=task_def.id,
+            task_name=task_def.name,
+            duration_minutes=duration,
+            raw_duration_minutes=raw_duration,
+            masked_out_minutes=masked_out_minutes,
+            expected_minutes=expected,
+            started_at=instance.started_at,
+            completed_at=instance.completed_at,
+            worker_name=entry["worker_label"],
+            pause_minutes=pause_minutes,
+            pauses=pause_details,
+            timeline_segments=timeline_segments,
+        )
         data_points.append(
             TaskAnalysisDataPoint(
                 plan_id=work_unit.id,
@@ -859,6 +1200,7 @@ def get_task_analysis(
                 expected_minutes=expected,
                 completed_at=instance.completed_at,
                 worker_name=entry["worker_label"],
+                task_breakdown=[breakdown],
             )
         )
 

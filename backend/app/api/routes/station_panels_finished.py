@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.api.routes.shift_estimates import ALGORITHM_VERSION
 from app.models.admin import PauseReason
 from app.models.enums import (
     PanelUnitStatus,
@@ -38,6 +39,7 @@ from app.schemas.analytics import (
     StationPanelsFinishedTask,
     StationPanelsFinishedWorkerEntry,
 )
+from app.services.shift_masks import ShiftMaskResolver
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -196,8 +198,50 @@ def _build_panel_expected_map(
     return expected_map
 
 
+def _pause_intervals(
+    pauses: list[TaskPause],
+    completed_at: datetime | None,
+) -> list[tuple[datetime, datetime]]:
+    if completed_at is None:
+        return []
+    intervals: list[tuple[datetime, datetime]] = []
+    for pause in pauses:
+        if pause.paused_at is None:
+            continue
+        end_time = pause.resumed_at or completed_at
+        if end_time < pause.paused_at:
+            continue
+        intervals.append((pause.paused_at, end_time))
+    return intervals
+
+
+def _pause_minutes_raw(pauses: list[TaskPause], completed_at: datetime | None) -> float:
+    total = 0.0
+    for pause_start, pause_end in _pause_intervals(pauses, completed_at):
+        total += (pause_end - pause_start).total_seconds() / 60
+    return total
+
+
+def _pause_minutes_masked(
+    pauses: list[TaskPause],
+    completed_at: datetime | None,
+    station_id: int | None,
+    shift_masks: ShiftMaskResolver,
+) -> float | None:
+    total = 0.0
+    for pause_start, pause_end in _pause_intervals(pauses, completed_at):
+        masked = shift_masks.masked_minutes(station_id, pause_start, pause_end)
+        if masked is None:
+            return None
+        total += masked
+    return total
+
+
 def _pause_duration_seconds(
-    pause: TaskPause, completed_at: datetime | None
+    pause: TaskPause,
+    completed_at: datetime | None,
+    station_id: int | None,
+    shift_masks: ShiftMaskResolver,
 ) -> float | None:
     if pause.paused_at is None:
         return None
@@ -206,27 +250,94 @@ def _pause_duration_seconds(
         return None
     if end_time < pause.paused_at:
         return None
-    return (end_time - pause.paused_at).total_seconds()
+    raw_seconds = (end_time - pause.paused_at).total_seconds()
+    masked_minutes = shift_masks.masked_minutes(station_id, pause.paused_at, end_time)
+    if masked_minutes is None:
+        return raw_seconds
+    return masked_minutes * 60.0
 
 
-def _pause_minutes(pauses: list[TaskPause], completed_at: datetime | None) -> float:
-    total = 0.0
-    for pause in pauses:
-        duration = _pause_duration_seconds(pause, completed_at)
-        if duration is None:
-            continue
-        total += duration / 60
-    return total
+def _pause_minutes(
+    pauses: list[TaskPause],
+    completed_at: datetime | None,
+    station_id: int | None,
+    shift_masks: ShiftMaskResolver,
+) -> float:
+    raw_total = _pause_minutes_raw(pauses, completed_at)
+    masked_total = _pause_minutes_masked(pauses, completed_at, station_id, shift_masks)
+    return raw_total if masked_total is None else masked_total
 
 
 def _duration_minutes(
-    instance: TaskInstance, pause_map: dict[int, list[TaskPause]]
+    instance: TaskInstance,
+    pause_map: dict[int, list[TaskPause]],
+    shift_masks: ShiftMaskResolver,
 ) -> float | None:
     if not instance.started_at or not instance.completed_at:
         return None
-    base_minutes = (instance.completed_at - instance.started_at).total_seconds() / 60
-    pause_minutes = _pause_minutes(pause_map.get(instance.id, []), instance.completed_at)
-    return max(base_minutes - pause_minutes, 0.0)
+    pauses = pause_map.get(instance.id, [])
+    base_raw_minutes = (instance.completed_at - instance.started_at).total_seconds() / 60
+    pause_raw_minutes = _pause_minutes_raw(pauses, instance.completed_at)
+    raw_duration = max(base_raw_minutes - pause_raw_minutes, 0.0)
+
+    masked_base = shift_masks.masked_minutes(
+        instance.station_id, instance.started_at, instance.completed_at
+    )
+    if masked_base is None:
+        return round(raw_duration, 2)
+
+    masked_pause = _pause_minutes_masked(
+        pauses,
+        instance.completed_at,
+        instance.station_id,
+        shift_masks,
+    )
+    if masked_pause is None:
+        return round(raw_duration, 2)
+
+    return round(max(masked_base - masked_pause, 0.0), 2)
+
+
+def _mask_query_bounds(
+    rows: list[
+        tuple[
+            TaskInstance,
+            TaskDefinition,
+            PanelUnit,
+            PanelDefinition,
+            WorkUnit,
+            WorkOrder,
+            HouseType,
+            HouseSubType | None,
+        ]
+    ],
+    pause_map: dict[int, list[TaskPause]],
+) -> tuple[date | None, date | None]:
+    min_dt: datetime | None = None
+    max_dt: datetime | None = None
+
+    def _push(value: datetime | None) -> None:
+        nonlocal min_dt, max_dt
+        if value is None:
+            return
+        if min_dt is None or value < min_dt:
+            min_dt = value
+        if max_dt is None or value > max_dt:
+            max_dt = value
+
+    for instance, *_rest in rows:
+        _push(instance.started_at)
+        _push(instance.completed_at)
+        for pause_start, pause_end in _pause_intervals(
+            pause_map.get(instance.id, []),
+            instance.completed_at,
+        ):
+            _push(pause_start)
+            _push(pause_end)
+
+    if min_dt is None or max_dt is None:
+        return None, None
+    return min_dt.date(), max_dt.date()
 
 
 @router.get("/", response_model=StationPanelsFinishedResponse)
@@ -396,6 +507,20 @@ def get_station_panels_finished(
             (pause, reason.name if reason else pause.reason_text)
         )
 
+    mask_start_date, mask_end_date = _mask_query_bounds(task_rows, pause_map)
+    shift_masks = ShiftMaskResolver.load(
+        db,
+        station_role=StationRole.PANELS,
+        station_ids={
+            instance.station_id
+            for instance, *_rest in task_rows
+            if instance.station_id is not None
+        },
+        start_date=mask_start_date,
+        end_date=mask_end_date,
+        algorithm_version=ALGORITHM_VERSION,
+    )
+
     panel_builds: dict[int, dict[str, object]] = {}
 
     def get_panel_build(
@@ -457,13 +582,21 @@ def get_station_panels_finished(
                     paused_at=pause.paused_at,
                     resumed_at=pause.resumed_at,
                     duration_seconds=_pause_duration_seconds(
-                        pause, instance.completed_at
+                        pause,
+                        instance.completed_at,
+                        instance.station_id,
+                        shift_masks,
                     ),
                     reason=reason,
                 )
             )
-        pause_minutes = _pause_minutes(pauses, instance.completed_at)
-        duration_minutes = _duration_minutes(instance, pause_map)
+        pause_minutes = _pause_minutes(
+            pauses,
+            instance.completed_at,
+            instance.station_id,
+            shift_masks,
+        )
+        duration_minutes = _duration_minutes(instance, pause_map, shift_masks)
 
         worker_entries: list[StationPanelsFinishedWorkerEntry] = []
         for worker in worker_map.get(instance.id, []):

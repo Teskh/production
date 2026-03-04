@@ -73,3 +73,16 @@ class ShiftEstimateComputeResponse(BaseModel):
     skipped_existing: int
     excluded_days: int
     worker_errors: int
+
+
+class ShiftEstimateSchedulerSettings(BaseModel):
+    enabled: bool = False
+    run_hour: int = Field(default=23, ge=0, le=23)
+    run_minute: int = Field(default=0, ge=0, le=59)
+    last_run_at: datetime | None = None
+
+
+class ShiftEstimateSchedulerSettingsUpdate(BaseModel):
+    enabled: bool | None = None
+    run_hour: int | None = Field(default=None, ge=0, le=23)
+    run_minute: int | None = Field(default=None, ge=0, le=59)

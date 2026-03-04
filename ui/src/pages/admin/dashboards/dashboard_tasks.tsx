@@ -66,10 +66,21 @@ type Station = {
   role?: 'Panels' | 'Magazine' | 'Assembly' | 'AUX' | string | null;
 };
 
+type TaskTimelineSegment = {
+  segment_type?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  duration_minutes?: number | null;
+  task_definition_id?: number | null;
+  task_name?: string | null;
+};
+
 type TaskBreakdownRow = {
   task_definition_id?: number | null;
   task_name?: string | null;
   duration_minutes?: number | null;
+  raw_duration_minutes?: number | null;
+  masked_out_minutes?: number | null;
   expected_minutes?: number | null;
   started_at?: string | null;
   completed_at?: string | null;
@@ -82,6 +93,7 @@ type TaskBreakdownRow = {
     duration_seconds?: number | null;
     reason?: string | null;
   }[] | null;
+  timeline_segments?: TaskTimelineSegment[] | null;
 };
 
 type DataTableSortKey = 'plan' | 'duration' | 'expected' | 'ratio' | 'completed' | 'worker';
@@ -108,6 +120,34 @@ type AnalysisPoint = {
   completed_at?: string | null;
   worker_name?: string | null;
   task_breakdown?: TaskBreakdownRow[] | null;
+};
+
+type TimelineSegmentKind = 'active' | 'paused' | 'masked_active' | 'masked_paused';
+
+type DurationTimelineSegment = {
+  kind: TimelineSegmentKind;
+  started_ms: number;
+  ended_ms: number;
+  duration_minutes: number;
+};
+
+type DurationTimelineLane = {
+  label: string;
+  segments: DurationTimelineSegment[];
+};
+
+type DurationTimelinePreview = {
+  key: string;
+  title: string;
+  started_ms: number;
+  ended_ms: number;
+  estimated_minutes: number;
+  raw_minutes: number | null;
+  masked_out_minutes: number;
+  pause_minutes: number;
+  lanes: DurationTimelineLane[];
+  anchor_x: number;
+  anchor_y: number;
 };
 
 type TaskSummaryRow = {
@@ -589,6 +629,266 @@ const normalizePauseMinutes = (pause: {
   return null;
 };
 
+const roundToTwo = (value: number): number => Number(value.toFixed(2));
+
+const mergeIntervalsMs = (intervals: Array<{ start: number; end: number }>) => {
+  if (!intervals.length) return [] as Array<{ start: number; end: number }>;
+  const ordered = [...intervals]
+    .filter((item) => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+    .sort((a, b) => a.start - b.start);
+  if (!ordered.length) return [] as Array<{ start: number; end: number }>;
+  const merged: Array<{ start: number; end: number }> = [ordered[0]];
+  ordered.slice(1).forEach((item) => {
+    const last = merged[merged.length - 1];
+    if (item.start <= last.end) {
+      last.end = Math.max(last.end, item.end);
+    } else {
+      merged.push({ ...item });
+    }
+  });
+  return merged;
+};
+
+const subtractIntervalsMs = (
+  base: Array<{ start: number; end: number }>,
+  covered: Array<{ start: number; end: number }>,
+) => {
+  const baseMerged = mergeIntervalsMs(base);
+  const coveredMerged = mergeIntervalsMs(covered);
+  if (!baseMerged.length) return [] as Array<{ start: number; end: number }>;
+  if (!coveredMerged.length) return baseMerged;
+
+  const result: Array<{ start: number; end: number }> = [];
+  baseMerged.forEach((baseItem) => {
+    let cursor = baseItem.start;
+    coveredMerged.forEach((coveredItem) => {
+      if (coveredItem.end <= cursor) return;
+      if (coveredItem.start >= baseItem.end) return;
+      const overlapStart = Math.max(cursor, coveredItem.start);
+      const overlapEnd = Math.min(baseItem.end, coveredItem.end);
+      if (overlapStart > cursor) {
+        result.push({ start: cursor, end: overlapStart });
+      }
+      if (overlapEnd > cursor) {
+        cursor = overlapEnd;
+      }
+    });
+    if (cursor < baseItem.end) {
+      result.push({ start: cursor, end: baseItem.end });
+    }
+  });
+  return result;
+};
+
+const normalizeTimelineSegmentKind = (value: string | null | undefined): TimelineSegmentKind => {
+  if (value === 'paused') return 'paused';
+  if (value === 'masked_active') return 'masked_active';
+  if (value === 'masked_paused') return 'masked_paused';
+  return 'active';
+};
+
+const buildTaskFallbackTimelineSegments = (task: TaskBreakdownRow): DurationTimelineSegment[] => {
+  const startMs = parseServerTimestamp(task.started_at ?? null);
+  const endMs = parseServerTimestamp(task.completed_at ?? null);
+  if (startMs == null || endMs == null || endMs <= startMs) return [];
+
+  const rawPauseIntervals = (Array.isArray(task.pauses) ? task.pauses : [])
+    .map((pause) => ({
+      start: parseServerTimestamp(pause.paused_at ?? null),
+      end: parseServerTimestamp(pause.resumed_at ?? null),
+    }))
+    .filter((item) => item.start != null && item.end != null)
+    .map((item) => ({
+      start: Math.max(item.start as number, startMs),
+      end: Math.min(item.end as number, endMs),
+    }))
+    .filter((item) => item.end > item.start);
+  const pauseIntervals = mergeIntervalsMs(rawPauseIntervals);
+  const activeIntervals = subtractIntervalsMs([{ start: startMs, end: endMs }], pauseIntervals);
+
+  const payload: DurationTimelineSegment[] = [];
+  activeIntervals.forEach((item) => {
+    payload.push({
+      kind: 'active',
+      started_ms: item.start,
+      ended_ms: item.end,
+      duration_minutes: roundToTwo((item.end - item.start) / 60000),
+    });
+  });
+  pauseIntervals.forEach((item) => {
+    payload.push({
+      kind: 'paused',
+      started_ms: item.start,
+      ended_ms: item.end,
+      duration_minutes: roundToTwo((item.end - item.start) / 60000),
+    });
+  });
+  payload.sort((a, b) => a.started_ms - b.started_ms);
+  return payload;
+};
+
+const parseTaskTimelineSegments = (task: TaskBreakdownRow): DurationTimelineSegment[] => {
+  const rawSegments = Array.isArray(task.timeline_segments) ? task.timeline_segments : [];
+  if (rawSegments.length) {
+    const payload: DurationTimelineSegment[] = rawSegments
+      .map((segment) => {
+        const startedMs = parseServerTimestamp(segment.started_at ?? null);
+        const endedMs = parseServerTimestamp(segment.ended_at ?? null);
+        if (startedMs == null || endedMs == null || endedMs <= startedMs) return null;
+        const rawMinutes = Number(segment.duration_minutes);
+        const durationMinutes = Number.isFinite(rawMinutes) && rawMinutes >= 0
+          ? rawMinutes
+          : roundToTwo((endedMs - startedMs) / 60000);
+        return {
+          kind: normalizeTimelineSegmentKind(segment.segment_type),
+          started_ms: startedMs,
+          ended_ms: endedMs,
+          duration_minutes: durationMinutes,
+        };
+      })
+      .filter(Boolean) as DurationTimelineSegment[];
+    if (payload.length) {
+      payload.sort((a, b) => a.started_ms - b.started_ms);
+      return payload;
+    }
+  }
+  return buildTaskFallbackTimelineSegments(task);
+};
+
+const buildDurationTimelinePreview = (
+  row: AnalysisPoint,
+  anchorX: number,
+  anchorY: number,
+): DurationTimelinePreview | null => {
+  const estimated = Number(row.duration_minutes);
+  const estimatedMinutes = Number.isFinite(estimated) && estimated >= 0 ? estimated : 0;
+  const taskRows = Array.isArray(row.task_breakdown) ? row.task_breakdown : [];
+
+  const laneMap = new Map<string, DurationTimelineSegment[]>();
+  let rawSum = 0;
+  let rawCount = 0;
+  let maskedOutSum = 0;
+  let maskedOutCount = 0;
+  let pauseSum = 0;
+  let pauseCount = 0;
+
+  taskRows.forEach((task, index) => {
+    const label = typeof task.task_name === 'string' && task.task_name.trim()
+      ? task.task_name.trim()
+      : task.task_definition_id != null
+        ? `Tarea ${task.task_definition_id}`
+        : `Tarea ${index + 1}`;
+    const segments = parseTaskTimelineSegments(task);
+    if (segments.length) {
+      laneMap.set(label, segments);
+    }
+    const rawDuration = Number(task.raw_duration_minutes);
+    if (Number.isFinite(rawDuration) && rawDuration >= 0) {
+      rawSum += rawDuration;
+      rawCount += 1;
+    }
+    const maskedOut = Number(task.masked_out_minutes);
+    if (Number.isFinite(maskedOut) && maskedOut >= 0) {
+      maskedOutSum += maskedOut;
+      maskedOutCount += 1;
+    }
+    const pauseMinutes = Number(task.pause_minutes);
+    if (Number.isFinite(pauseMinutes) && pauseMinutes >= 0) {
+      pauseSum += pauseMinutes;
+      pauseCount += 1;
+    }
+  });
+
+  if (!laneMap.size) {
+    const completedMs = parseServerTimestamp(row.completed_at ?? null);
+    if (completedMs != null && estimatedMinutes > 0) {
+      laneMap.set(
+        row.task_name || 'Muestra',
+        [
+          {
+            kind: 'active',
+            started_ms: completedMs - (estimatedMinutes * 60000),
+            ended_ms: completedMs,
+            duration_minutes: roundToTwo(estimatedMinutes),
+          },
+        ],
+      );
+    }
+  }
+
+  const lanes = Array.from(laneMap.entries())
+    .map(([label, segments]) => ({
+      label,
+      segments: [...segments].sort((a, b) => a.started_ms - b.started_ms),
+    }))
+    .filter((lane) => lane.segments.length);
+  if (!lanes.length) return null;
+
+  const flattened = lanes.flatMap((lane) => lane.segments);
+  const startedMs = Math.min(...flattened.map((segment) => segment.started_ms));
+  const endedMs = Math.max(...flattened.map((segment) => segment.ended_ms));
+  if (!Number.isFinite(startedMs) || !Number.isFinite(endedMs) || endedMs <= startedMs) {
+    return null;
+  }
+
+  const fallbackPauseFromSegments = roundToTwo(
+    flattened
+      .filter((segment) => segment.kind === 'paused' || segment.kind === 'masked_paused')
+      .reduce((sum, segment) => sum + segment.duration_minutes, 0),
+  );
+  const rawMinutes = rawCount ? roundToTwo(rawSum) : null;
+  const maskedOutMinutes = maskedOutCount
+    ? roundToTwo(maskedOutSum)
+    : rawMinutes != null
+      ? roundToTwo(Math.max(rawMinutes - estimatedMinutes, 0))
+      : 0;
+  const pauseMinutes = pauseCount ? roundToTwo(pauseSum) : fallbackPauseFromSegments;
+  const moduleLabel = row.module_number != null ? ` / Modulo ${row.module_number}` : '';
+  const title = `${row.house_identifier || 'Muestra'}${moduleLabel}`;
+  const key = `${row.plan_id ?? 'na'}-${row.task_definition_id ?? 'all'}-${row.completed_at ?? 'na'}`;
+
+  return {
+    key,
+    title,
+    started_ms: startedMs,
+    ended_ms: endedMs,
+    estimated_minutes: roundToTwo(estimatedMinutes),
+    raw_minutes: rawMinutes,
+    masked_out_minutes: maskedOutMinutes,
+    pause_minutes: pauseMinutes,
+    lanes,
+    anchor_x: anchorX,
+    anchor_y: anchorY,
+  };
+};
+
+const TIMELINE_SEGMENT_META: Record<TimelineSegmentKind, { label: string; color: string }> = {
+  active: { label: 'Activo contabilizado', color: '#16a34a' },
+  paused: { label: 'Pausa contabilizada', color: '#f59e0b' },
+  masked_active: { label: 'Activo fuera de turno', color: '#ef4444' },
+  masked_paused: { label: 'Pausa fuear de turno', color: '#b45309' },
+};
+
+const computeDurationTimelineModalStyle = (
+  preview: DurationTimelinePreview,
+): React.CSSProperties => {
+  const margin = 16;
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 720;
+  const width = Math.min(560, Math.max(320, viewportWidth - (margin * 2)));
+  const left = clampNumber(
+    preview.anchor_x - (width / 2),
+    margin,
+    Math.max(margin, viewportWidth - width - margin),
+  );
+  const estimatedHeight = Math.min(Math.max(250, 180 + (preview.lanes.length * 58)), 580);
+  let top = preview.anchor_y;
+  if ((top + estimatedHeight) > (viewportHeight - margin)) {
+    top = Math.max(margin, preview.anchor_y - estimatedHeight - 24);
+  }
+  return { left, top, width };
+};
+
 const buildPanelLabel = (panel: PanelDefinition | null): string => {
   if (!panel) return '-';
   const module = panel.module_sequence_number ? `Modulo ${panel.module_sequence_number}` : 'Modulo';
@@ -1023,6 +1323,8 @@ const DashboardTasks: React.FC = () => {
 
   const [analysisData, setAnalysisData] = useState<TaskAnalysisResponse | null>(null);
   const [showHistogramMethodologyModal, setShowHistogramMethodologyModal] = useState(false);
+  const [durationTimelinePreview, setDurationTimelinePreview] = useState<DurationTimelinePreview | null>(null);
+  const durationTimelineHideTimeoutRef = useRef<number | null>(null);
   const [dataTableSort, setDataTableSort] = useState<{ key: DataTableSortKey; direction: DataTableSortDirection }>({
     key: 'duration',
     direction: 'desc',
@@ -1048,6 +1350,13 @@ const DashboardTasks: React.FC = () => {
       kicker: 'Dashboards',
     });
   }, [setHeader]);
+
+  useEffect(() => () => {
+    if (durationTimelineHideTimeoutRef.current != null) {
+      window.clearTimeout(durationTimelineHideTimeoutRef.current);
+      durationTimelineHideTimeoutRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -2479,6 +2788,35 @@ const DashboardTasks: React.FC = () => {
     ].join('\n');
   };
 
+  const clearDurationTimelineHideTimeout = () => {
+    if (durationTimelineHideTimeoutRef.current != null) {
+      window.clearTimeout(durationTimelineHideTimeoutRef.current);
+      durationTimelineHideTimeoutRef.current = null;
+    }
+  };
+
+  const scheduleDurationTimelineHide = () => {
+    clearDurationTimelineHideTimeout();
+    durationTimelineHideTimeoutRef.current = window.setTimeout(() => {
+      setDurationTimelinePreview(null);
+      durationTimelineHideTimeoutRef.current = null;
+    }, 120);
+  };
+
+  const openDurationTimelinePreview = (
+    row: AnalysisPoint,
+    event: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>,
+  ) => {
+    clearDurationTimelineHideTimeout();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const preview = buildDurationTimelinePreview(
+      row,
+      rect.left + (rect.width / 2),
+      rect.bottom + 8,
+    );
+    setDurationTimelinePreview(preview);
+  };
+
   const compareRowsBySort = (a: AnalysisPoint, b: AnalysisPoint, key: DataTableSortKey): number => {
     const ratioA = (a as AnalysisPoint & { ratio?: number | null }).ratio ?? null;
     const ratioB = (b as AnalysisPoint & { ratio?: number | null }).ratio ?? null;
@@ -2817,7 +3155,19 @@ const DashboardTasks: React.FC = () => {
                   {row.house_identifier || '-'}
                   {row.module_number ? ` / Modulo ${row.module_number}` : ''}
                 </td>
-                <td className="px-3 py-2">{formatMinutesWithUnit(row.duration_minutes)}</td>
+                <td className="px-3 py-2">
+                  <button
+                    type="button"
+                    className="inline-flex cursor-help items-center rounded-sm border-b border-dotted border-black/30 text-left hover:border-black/60 focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.3)]"
+                    onMouseEnter={(event) => openDurationTimelinePreview(row, event)}
+                    onMouseLeave={scheduleDurationTimelineHide}
+                    onFocus={(event) => openDurationTimelinePreview(row, event)}
+                    onBlur={scheduleDurationTimelineHide}
+                    title="Ver linea de tiempo de la duracion"
+                  >
+                    {formatMinutesWithUnit(row.duration_minutes)}
+                  </button>
+                </td>
                 <td className="px-3 py-2">{formatMinutesWithUnit(row.expected_minutes)}</td>
                 <td className="px-3 py-2">{formatRatio((row as AnalysisPoint & { ratio?: number | null }).ratio ?? null)}</td>
                 <td className="px-3 py-2">{formatDateTimeInAppTimezone(row.completed_at)}</td>
@@ -4325,6 +4675,96 @@ const DashboardTasks: React.FC = () => {
             </section>
           )}
         </>
+      )}
+
+      {durationTimelinePreview && (
+        <div
+          className="fixed z-50"
+          style={computeDurationTimelineModalStyle(durationTimelinePreview)}
+          onMouseEnter={clearDurationTimelineHideTimeout}
+          onMouseLeave={scheduleDurationTimelineHide}
+        >
+          <div className="max-h-[78vh] overflow-auto rounded-2xl border border-black/10 bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--ink)]">Timeline de duracion</h3>
+                <p className="text-xs text-[var(--ink-muted)]">{durationTimelinePreview.title}</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-black/10 px-2 py-1 text-[11px] font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                onClick={() => setDurationTimelinePreview(null)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-3 grid gap-2 text-xs text-[var(--ink)] md:grid-cols-2">
+              <p><strong>Inicio:</strong> {formatUtcMillisInAppTimezone(durationTimelinePreview.started_ms)}</p>
+              <p><strong>Fin:</strong> {formatUtcMillisInAppTimezone(durationTimelinePreview.ended_ms)}</p>
+              <p><strong>Duracion estimada:</strong> {formatMinutesWithUnit(durationTimelinePreview.estimated_minutes)}</p>
+              <p><strong>Fuera de turno:</strong> {formatMinutesWithUnit(durationTimelinePreview.masked_out_minutes)}</p>
+              <p><strong>Pausas contabilizadas:</strong> {formatMinutesWithUnit(durationTimelinePreview.pause_minutes)}</p>
+              <p><strong>Duracion cruda:</strong> {formatMinutesWithUnit(durationTimelinePreview.raw_minutes)}</p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {durationTimelinePreview.lanes.map((lane) => {
+                const spanMs = Math.max(durationTimelinePreview.ended_ms - durationTimelinePreview.started_ms, 1);
+                const laneMinutes = lane.segments.reduce((sum, item) => sum + item.duration_minutes, 0);
+                return (
+                  <div key={`${durationTimelinePreview.key}-${lane.label}`} className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-[var(--ink-muted)]">
+                      <span className="font-semibold text-[var(--ink)]">{lane.label}</span>
+                      <span>{formatMinutesWithUnit(roundToTwo(laneMinutes))}</span>
+                    </div>
+                    <div className="relative h-7 overflow-hidden rounded-md border border-black/10 bg-slate-50">
+                      {lane.segments.map((segment, index) => {
+                        const left = ((segment.started_ms - durationTimelinePreview.started_ms) / spanMs) * 100;
+                        const width = Math.max(((segment.ended_ms - segment.started_ms) / spanMs) * 100, 0.6);
+                        const meta = TIMELINE_SEGMENT_META[segment.kind];
+                        const tooltip = [
+                          meta.label,
+                          `${formatUtcMillisInAppTimezone(segment.started_ms)} -> ${formatUtcMillisInAppTimezone(segment.ended_ms)}`,
+                          `Duracion: ${formatMinutesWithUnit(segment.duration_minutes)}`,
+                        ].join('\n');
+                        return (
+                          <div
+                            key={`${lane.label}-${segment.kind}-${segment.started_ms}-${index}`}
+                            className="absolute top-0 h-full"
+                            style={{
+                              left: `${left}%`,
+                              width: `${width}%`,
+                              backgroundColor: meta.color,
+                              opacity: segment.kind.startsWith('masked_') ? 0.75 : 0.95,
+                            }}
+                            title={tooltip}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between text-[11px] text-[var(--ink-muted)]">
+                <span>{formatUtcMillisInAppTimezone(durationTimelinePreview.started_ms)}</span>
+                <span>{formatUtcMillisInAppTimezone(durationTimelinePreview.ended_ms)}</span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] text-[var(--ink-muted)]">
+              {(Object.keys(TIMELINE_SEGMENT_META) as TimelineSegmentKind[]).map((kind) => (
+                <span key={kind} className="inline-flex items-center gap-1">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-sm"
+                    style={{ backgroundColor: TIMELINE_SEGMENT_META[kind].color }}
+                  />
+                  {TIMELINE_SEGMENT_META[kind].label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {showHistogramMethodologyModal && (

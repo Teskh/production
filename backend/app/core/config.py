@@ -45,6 +45,18 @@ class Settings:
     backup_scheduler_poll_seconds: int = int(
         os.getenv("BACKUP_SCHEDULER_POLL_SECONDS", "60")
     )
+    shift_estimate_scheduler_enabled: bool = (
+        os.getenv("SHIFT_ESTIMATE_SCHEDULER_ENABLED", "true").lower() == "true"
+    )
+    shift_estimate_scheduler_poll_seconds: int = int(
+        os.getenv("SHIFT_ESTIMATE_SCHEDULER_POLL_SECONDS", "60")
+    )
+    shift_estimate_scheduler_settings_path: Path = Path(
+        os.getenv(
+            "SHIFT_ESTIMATE_SCHEDULER_SETTINGS_PATH",
+            str(BASE_DIR / "runtime" / "shift_estimate_scheduler_settings.json"),
+        )
+    )
     sys_admin_password: str | None = os.getenv("SYS_ADMIN_PASSWORD")
     camera_rtsp_username: str = os.getenv("CAMERA_RTSP_USERNAME", "admin")
     camera_rtsp_password: str = os.getenv("CAMERA_RTSP_PASSWORD", "Geoforce.2030.$")

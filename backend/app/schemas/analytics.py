@@ -3,16 +3,28 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class TaskAnalysisTimelineSegment(BaseModel):
+    segment_type: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    duration_minutes: float | None = None
+    task_definition_id: int | None = None
+    task_name: str | None = None
+
+
 class TaskAnalysisTaskBreakdown(BaseModel):
     task_definition_id: int | None = None
     task_name: str | None = None
     duration_minutes: float | None = None
+    raw_duration_minutes: float | None = None
+    masked_out_minutes: float | None = None
     expected_minutes: float | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     worker_name: str | None = None
     pause_minutes: float | None = None
     pauses: list["TaskAnalysisTaskPause"] | None = None
+    timeline_segments: list[TaskAnalysisTimelineSegment] | None = None
 
 
 class TaskAnalysisTaskPause(BaseModel):

@@ -124,11 +124,25 @@ type ComputeResponse = {
   worker_errors: number;
 };
 
+type ShiftEstimateSchedulerSettings = {
+  enabled: boolean;
+  run_hour: number;
+  run_minute: number;
+  last_run_at: string | null;
+};
+
 const formatDateLabel = (value: string) => {
   if (!value) return '-';
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString();
+};
+
+const formatDateTimeLabel = (value?: string | null) => {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 };
 
 const parseDateTime = (value?: string | null) => {
@@ -211,9 +225,14 @@ const DashboardShiftEstimation: React.FC = () => {
   const [loadingDay, setLoadingDay] = useState(false);
   const [loadingCoverage, setLoadingCoverage] = useState(false);
   const [loadingCompute, setLoadingCompute] = useState(false);
+  const [schedulerSettings, setSchedulerSettings] = useState<ShiftEstimateSchedulerSettings | null>(null);
+  const [schedulerDraft, setSchedulerDraft] = useState<ShiftEstimateSchedulerSettings | null>(null);
+  const [loadingScheduler, setLoadingScheduler] = useState(false);
+  const [savingScheduler, setSavingScheduler] = useState(false);
   const [error, setError] = useState('');
   const [coverageError, setCoverageError] = useState('');
   const [computeMessage, setComputeMessage] = useState('');
+  const [schedulerMessage, setSchedulerMessage] = useState('');
 
   useEffect(() => {
     autoComputeRef.current = null;
@@ -236,6 +255,35 @@ const DashboardShiftEstimation: React.FC = () => {
       .finally(() => {
         if (!active) return;
         setLoadingBase(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingScheduler(true);
+    setSchedulerMessage('');
+    apiRequest<ShiftEstimateSchedulerSettings>('/api/shift-estimates/settings')
+      .then((settingsData) => {
+        if (!active) return;
+        setSchedulerSettings(settingsData);
+        setSchedulerDraft(settingsData);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSchedulerSettings(null);
+        setSchedulerDraft(null);
+        setSchedulerMessage(
+          err instanceof Error
+            ? err.message
+            : 'Error cargando configuracion de calculo automatico.'
+        );
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoadingScheduler(false);
       });
     return () => {
       active = false;
@@ -306,6 +354,34 @@ const DashboardShiftEstimation: React.FC = () => {
     },
     []
   );
+
+  const saveSchedulerSettings = useCallback(async () => {
+    if (!schedulerDraft) return;
+    setSavingScheduler(true);
+    setSchedulerMessage('');
+    try {
+      const updated = await apiRequest<ShiftEstimateSchedulerSettings>(
+        '/api/shift-estimates/settings',
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled: schedulerDraft.enabled,
+          }),
+        }
+      );
+      setSchedulerSettings(updated);
+      setSchedulerDraft(updated);
+      setSchedulerMessage('Programacion automatica actualizada.');
+    } catch (err) {
+      setSchedulerMessage(
+        err instanceof Error
+          ? err.message
+          : 'No se pudo actualizar la programacion automatica.'
+      );
+    } finally {
+      setSavingScheduler(false);
+    }
+  }, [schedulerDraft]);
 
   const loadDay = useCallback(async () => {
     if (!selectedDate) return;
@@ -409,6 +485,20 @@ const DashboardShiftEstimation: React.FC = () => {
   const shiftStartLabel = buildShiftStartLabel();
   const dateMax = yesterdayStr();
   const dayStatusLabel = daySummary ? coverageStyles[daySummary.status].label : '...';
+  const schedulerPreview = schedulerDraft ?? schedulerSettings;
+  const schedulerTimeLabel = schedulerPreview
+    ? `${pad(schedulerPreview.run_hour)}:${pad(schedulerPreview.run_minute)}`
+    : '23:00';
+  const schedulerLastRunLabel = formatDateTimeLabel(schedulerSettings?.last_run_at);
+  const schedulerNextRunLabel = useMemo(() => {
+    if (!schedulerPreview?.enabled) return 'Automatizacion en pausa';
+    const next = new Date();
+    next.setHours(schedulerPreview.run_hour, schedulerPreview.run_minute, 0, 0);
+    if (next <= new Date()) {
+      next.setDate(next.getDate() + 1);
+    }
+    return next.toLocaleString();
+  }, [schedulerPreview]);
 
   return (
     <div className="space-y-6">
@@ -587,6 +677,72 @@ const DashboardShiftEstimation: React.FC = () => {
           </div>
           <div className="text-xs text-[var(--ink-muted)]">
             {computeMessage || 'Calcula solo dias anteriores a hoy.'}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-black/5 bg-white/90 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Programacion automatica
+              </p>
+              <p className="mt-1 text-sm text-[var(--ink-muted)]">
+                Ejecuta el calculo diario a las {schedulerTimeLabel} para estimar turnos del dia.
+              </p>
+            </div>
+            <label className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink)]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--accent)]"
+                checked={schedulerDraft?.enabled ?? false}
+                onChange={(event) =>
+                  setSchedulerDraft((prev) =>
+                    prev ? { ...prev, enabled: event.target.checked } : prev
+                  )
+                }
+                disabled={loadingScheduler || !schedulerDraft}
+              />
+              Habilitar calculo diario
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-black/5 bg-white px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Hora programada
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--ink)]">{schedulerTimeLabel}</p>
+            </div>
+            <div className="rounded-xl border border-black/5 bg-white px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Proxima ejecucion
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--ink)]">{schedulerNextRunLabel}</p>
+            </div>
+            <div className="rounded-xl border border-black/5 bg-white px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Ultima ejecucion
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--ink)]">{schedulerLastRunLabel}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={saveSchedulerSettings}
+              disabled={loadingScheduler || savingScheduler || !schedulerDraft}
+              className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)] transition hover:border-black/20 disabled:opacity-60"
+            >
+              <RefreshCcw className={`h-4 w-4 ${savingScheduler ? 'animate-spin' : ''}`} />
+              Guardar programacion
+            </button>
+            <span className="text-xs text-[var(--ink-muted)]">
+              {schedulerMessage ||
+                (loadingScheduler
+                  ? 'Cargando programacion automatica...'
+                  : 'Horario diario fijo: 23:00.')}
+            </span>
           </div>
         </div>
 

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.api.routes.shift_estimates import ALGORITHM_VERSION
 from app.models.admin import PauseReason
 from app.models.enums import StationRole, TaskScope
 from app.models.stations import Station
 from app.models.tasks import TaskInstance, TaskPause
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.schemas.analytics import PauseSummaryReason, PauseSummaryResponse
+from app.services.shift_masks import ShiftMaskResolver
 
 router = APIRouter()
 
@@ -36,7 +38,9 @@ def _parse_datetime(value: str | None, field: str, end_of_day: bool = False) -> 
     return dt
 
 
-def _pause_duration_minutes(pause: TaskPause, completed_at: datetime | None) -> float | None:
+def _pause_interval(
+    pause: TaskPause, completed_at: datetime | None
+) -> tuple[datetime, datetime] | None:
     if pause.paused_at is None:
         return None
     end_time = pause.resumed_at or completed_at
@@ -44,7 +48,43 @@ def _pause_duration_minutes(pause: TaskPause, completed_at: datetime | None) -> 
         return None
     if end_time < pause.paused_at:
         return None
-    return (end_time - pause.paused_at).total_seconds() / 60
+    return (pause.paused_at, end_time)
+
+
+def _pause_duration_minutes(pause: TaskPause, completed_at: datetime | None) -> float | None:
+    interval = _pause_interval(pause, completed_at)
+    if interval is None:
+        return None
+    pause_start, pause_end = interval
+    return (pause_end - pause_start).total_seconds() / 60
+
+
+def _mask_query_bounds(
+    rows: list[tuple[TaskPause, TaskInstance, PauseReason | None]],
+) -> tuple[date | None, date | None]:
+    min_dt: datetime | None = None
+    max_dt: datetime | None = None
+
+    def _push(value: datetime | None) -> None:
+        nonlocal min_dt, max_dt
+        if value is None:
+            return
+        if min_dt is None or value < min_dt:
+            min_dt = value
+        if max_dt is None or value > max_dt:
+            max_dt = value
+
+    for pause, instance, _reason in rows:
+        interval = _pause_interval(pause, instance.completed_at)
+        if interval is None:
+            continue
+        pause_start, pause_end = interval
+        _push(pause_start)
+        _push(pause_end)
+
+    if min_dt is None or max_dt is None:
+        return None, None
+    return min_dt.date(), max_dt.date()
 
 
 @router.get("/", response_model=PauseSummaryResponse)
@@ -88,13 +128,36 @@ def get_pause_summary(
             pause_reasons=[],
         )
 
+    mask_start_date, mask_end_date = _mask_query_bounds(rows)
+    shift_masks = ShiftMaskResolver.load(
+        db,
+        station_role=StationRole.PANELS,
+        station_ids={
+            instance.station_id
+            for _pause, instance, _reason in rows
+            if instance.station_id is not None
+        },
+        start_date=mask_start_date,
+        end_date=mask_end_date,
+        algorithm_version=ALGORITHM_VERSION,
+    )
+
     totals_by_reason: dict[str, dict[str, float | int]] = {}
     total_minutes = 0.0
 
     for pause, instance, reason in rows:
-        duration = _pause_duration_minutes(pause, instance.completed_at)
-        if duration is None:
+        raw_duration = _pause_duration_minutes(pause, instance.completed_at)
+        interval = _pause_interval(pause, instance.completed_at)
+        if raw_duration is None or interval is None:
             continue
+        pause_start, pause_end = interval
+        masked_duration = shift_masks.masked_minutes(
+            instance.station_id, pause_start, pause_end
+        )
+        duration = raw_duration if masked_duration is None else masked_duration
+        if duration <= 0:
+            continue
+
         label = None
         if reason and reason.name:
             label = reason.name

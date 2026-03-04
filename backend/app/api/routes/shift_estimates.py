@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_admin, get_db
 from app.api.routes.geovictoria import _post_geovictoria
+from app.models.admin import AdminUser
 from app.models.enums import StationRole
 from app.models.shift_estimate_worker_presence import ShiftEstimateWorkerPresence
 from app.models.shift_estimates import ShiftEstimate
@@ -24,8 +25,11 @@ from app.schemas.shift_estimates import (
     ShiftEstimateCoverageDay,
     ShiftEstimateDay,
     ShiftEstimateRead,
+    ShiftEstimateSchedulerSettings,
+    ShiftEstimateSchedulerSettingsUpdate,
     ShiftEstimateWorkerPresenceRead,
 )
+from app.services import shift_estimate_scheduler as shift_estimate_scheduler_service
 
 
 SHIFT_START_HOUR = 8
@@ -424,6 +428,8 @@ def _compute_range(
     db: Session,
     start_date: date,
     end_date: date,
+    *,
+    include_today: bool = False,
 ) -> ShiftEstimateComputeResponse:
     if start_date > end_date:
         raise HTTPException(
@@ -436,7 +442,7 @@ def _compute_range(
             detail=f"Range cannot exceed {MAX_RANGE_DAYS} days",
         )
 
-    final_end = min(end_date, _yesterday())
+    final_end = min(end_date, _today() if include_today else _yesterday())
     if start_date > final_end:
         return ShiftEstimateComputeResponse(
             from_date=start_date,
@@ -650,6 +656,40 @@ def _compute_range(
     )
 
 
+def compute_shift_estimate_range(
+    db: Session,
+    from_date: date,
+    to_date: date,
+    *,
+    include_today: bool = False,
+) -> ShiftEstimateComputeResponse:
+    return _compute_range(
+        db,
+        from_date,
+        to_date,
+        include_today=include_today,
+    )
+
+
+@router.get("/settings", response_model=ShiftEstimateSchedulerSettings)
+def get_shift_estimate_scheduler_settings(
+    _admin: AdminUser = Depends(get_current_admin),
+) -> dict:
+    return shift_estimate_scheduler_service.load_settings()
+
+
+@router.put("/settings", response_model=ShiftEstimateSchedulerSettings)
+def update_shift_estimate_scheduler_settings(
+    payload: ShiftEstimateSchedulerSettingsUpdate,
+    _admin: AdminUser = Depends(get_current_admin),
+) -> dict:
+    update = payload.model_dump(exclude_unset=True)
+    try:
+        return shift_estimate_scheduler_service.update_settings(update)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.get("", response_model=ShiftEstimateDay)
 def get_shift_estimates_for_day(
     date_value: date = Query(..., alias="date"),
@@ -761,4 +801,4 @@ def compute_shift_estimates(
     payload: ShiftEstimateComputeRequest,
     db: Session = Depends(get_db),
 ) -> ShiftEstimateComputeResponse:
-    return _compute_range(db, payload.from_date, payload.to_date)
+    return compute_shift_estimate_range(db, payload.from_date, payload.to_date)

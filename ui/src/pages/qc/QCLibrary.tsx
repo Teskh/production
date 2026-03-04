@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   Clock,
@@ -1021,220 +1022,206 @@ const QCLibrary: React.FC = () => {
               ) : null}
 
               {!loadingDetail && workUnitDetail ? (
-                <div className="space-y-6 px-6 py-6">
-                  <section className="grid gap-4 md:grid-cols-3">
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                        Checks abiertos
-                      </p>
-                      <p className="mt-3 text-2xl font-semibold text-[var(--ink)]">
-                        {selectedWorkUnitSummary?.open_checks ?? 0}
-                      </p>
+                <div className="grid lg:grid-cols-3 gap-8 px-6 py-6 items-start">
+                  {/* LÍNEA DE TIEMPO (HISTORIAL) */}
+                  <div className="lg:col-span-2 space-y-6">
+                    <div className="flex items-center gap-2 border-b border-black/5 pb-3">
+                      <Clock className="h-5 w-5 text-[var(--ink-muted)]" />
+                      <h4 className="text-lg font-display font-semibold text-[var(--ink)]">Historial de Vida</h4>
                     </div>
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                        Rework abierto
-                      </p>
-                      <p className="mt-3 text-2xl font-semibold text-[var(--ink)]">
-                        {selectedWorkUnitSummary?.open_rework ?? 0}
-                      </p>
-                    </div>
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                        Ultimo resultado
-                      </p>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {selectedWorkUnitSummary?.last_outcome ? (
-                          <span
-                            className={clsx(
-                              'inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold',
-                              classForOutcome(selectedWorkUnitSummary.last_outcome)
-                            )}
-                          >
-                            {outcomeLabel[selectedWorkUnitSummary.last_outcome]}
-                          </span>
-                        ) : (
-                          <span className="text-sm text-[var(--ink-muted)]">-</span>
-                        )}
-                        {selectedWorkUnitSummary?.last_outcome_at ? (
-                          <span className="text-sm text-[var(--ink-muted)]">
-                            {formatDateTimeShort(selectedWorkUnitSummary.last_outcome_at)}
-                          </span>
-                        ) : null}
+                    
+                    {!timeline.length ? (
+                      <div className="text-sm text-[var(--ink-muted)] py-4">
+                        No hay eventos QC para este modulo.
                       </div>
-                    </div>
-                  </section>
+                    ) : (
+                      <div className="space-y-0">
+                        {timeline.map((event, i) => {
+                          const isLast = i === timeline.length - 1;
+                          const isRework = event.kind === 'rework';
+                          const isExec = event.kind === 'execution';
+                          const isPass = isExec && event.outcome === 'Pass';
+                          const isFail = isExec && event.outcome === 'Fail';
+                          const isClosed = event.kind === 'check-opened' && event.title.startsWith('Cierre:');
 
-                  <section className="rounded-3xl border border-black/10 bg-white shadow-sm">
-                    <div className="border-b border-black/5 px-5 py-4">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
-                        <Clock className="h-4 w-4 text-[var(--ink-muted)]" />
-                        Timeline QC
-                      </div>
-                    </div>
-                    <div className="divide-y divide-black/5">
-                      {!timeline.length ? (
-                        <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">
-                          No hay eventos QC para este modulo.
-                        </div>
-                      ) : null}
-                      {timeline.map((event) => (
-                        <button
-                          key={event.id}
-                          type="button"
-                          onClick={() => (event.checkId ? openCheckOverlay(event.checkId) : null)}
-                          className="flex w-full items-start gap-4 px-5 py-4 text-left hover:bg-white"
-                        >
-                          <div
-                            className={clsx(
-                              'mt-0.5 flex h-9 w-9 items-center justify-center rounded-2xl border',
-                              event.kind === 'rework'
-                                ? 'border-amber-200 bg-amber-50 text-amber-800'
-                                : event.kind === 'execution'
-                                ? classForOutcome(event.outcome)
-                                : 'border-sky-200 bg-sky-50 text-sky-800'
-                            )}
-                          >
-                            {event.kind === 'rework' ? (
-                              <Wrench className="h-4 w-4" />
-                            ) : event.kind === 'execution' ? (
-                              event.outcome === 'Pass' ? (
-                                <CheckCircle2 className="h-4 w-4" />
-                              ) : event.outcome === 'Fail' ? (
-                                <AlertTriangle className="h-4 w-4" />
-                              ) : (
-                                <CircleDot className="h-4 w-4" />
-                              )
-                            ) : (
-                              <CircleDot className="h-4 w-4" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-[var(--ink)]">
-                                  {event.title}
-                                </div>
-                                <div className="mt-1 text-xs text-[var(--ink-muted)]">
-                                  {event.subtitle}
-                                </div>
-                              </div>
-                              <div className="text-xs text-[var(--ink-muted)]">
-                                {event.ts ? formatDateTimeShort(event.ts) : '-'}
-                              </div>
-                            </div>
-                          </div>
-                          <ChevronRight className="mt-2 h-4 w-4 text-[var(--ink-muted)]" />
-                        </button>
-                      ))}
-                    </div>
-                  </section>
+                          let iconBg = 'border-sky-200 bg-sky-50 text-sky-800';
+                          if (isRework) iconBg = 'border-amber-200 bg-amber-50 text-amber-800';
+                          else if (isPass || isClosed) iconBg = 'border-emerald-200 bg-emerald-50 text-emerald-800';
+                          else if (isFail) iconBg = 'border-rose-200 bg-rose-50 text-rose-800';
+                          else if (isExec) iconBg = 'border-slate-200 bg-slate-50 text-slate-800';
 
-                  <section className="grid gap-6 lg:grid-cols-2">
-                    <div className="rounded-3xl border border-black/10 bg-white shadow-sm">
-                      <div className="border-b border-black/5 px-5 py-4">
-                        <div className="text-sm font-semibold text-[var(--ink)]">Checks por panel</div>
-                      </div>
-                      <div className="divide-y divide-black/5">
-                        {!groupedChecks.byPanel.length ? (
-                          <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">
-                            No hay checks asociados a paneles para este modulo.
-                          </div>
-                        ) : null}
-                        {groupedChecks.byPanel.map(([panelCode, checks]) => (
-                          <div key={panelCode} className="px-5 py-4">
-                            <div className="mb-3 text-sm font-semibold text-[var(--ink)]">
-                              Panel {panelCode}
-                            </div>
-                            <div className="space-y-2">
-                              {checks.map((check) => (
-                                <button
-                                  key={check.id}
-                                  type="button"
-                                  onClick={() => openCheckOverlay(check.id)}
-                                  className="flex w-full items-center justify-between gap-3 rounded-2xl border border-black/10 bg-white px-4 py-3 text-left hover:bg-[rgba(15,27,45,0.02)]"
+                          let cardBg = 'border-black/10 bg-white hover:border-black/20';
+                          if (isFail) cardBg = 'border-rose-200 bg-rose-50/40 hover:border-rose-300';
+                          else if (isPass) cardBg = 'border-emerald-200 bg-emerald-50/40 hover:border-emerald-300';
+                          else if (isRework) cardBg = 'border-amber-200 bg-amber-50/40 hover:border-amber-300';
+
+                          return (
+                            <div key={event.id} className="relative flex gap-4 md:gap-6">
+                              <div className="relative flex flex-col items-center">
+                                <div className={clsx("z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-4 border-white shadow-sm", iconBg)}>
+                                  {isRework ? <Wrench className="h-4 w-4" /> : 
+                                   isPass || isClosed ? <CheckCircle2 className="h-4 w-4" /> : 
+                                   isFail ? <AlertTriangle className="h-4 w-4" /> : 
+                                   <CircleDot className="h-4 w-4" />}
+                                </div>
+                                {!isLast && <div className="absolute top-10 bottom-[-1rem] w-0.5 bg-black/10" />}
+                              </div>
+                              <div className="flex-1 pb-6 min-w-0">
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => event.checkId ? openCheckOverlay(event.checkId) : null}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      if (event.checkId) openCheckOverlay(event.checkId);
+                                    }
+                                  }}
+                                  className={clsx("rounded-2xl border p-4 shadow-sm transition group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 text-left w-full block", cardBg)}
                                 >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-sm font-semibold text-[var(--ink)]">
-                                      {check.check_name ?? `Check #${check.id}`}
+                                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[var(--ink)] text-base break-words">
+                                        {event.title}
+                                      </div>
+                                      <div className="mt-1 text-sm text-[var(--ink-muted)] leading-relaxed break-words">
+                                        {event.subtitle}
+                                      </div>
                                     </div>
-                                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
-                                      {manualSubtypeLabel(check) ? (
-                                        <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
-                                          {manualSubtypeLabel(check)}
-                                        </span>
-                                      ) : null}
-                                      <span className={clsx('rounded-full border px-2 py-0.5', classForCheckStatus(check.status))}>
-                                        {checkStatusLabel[check.status]}
-                                      </span>
-                                      <span>
-                                        {formatDateTimeShort(check.opened_at)}
-                                        {check.closed_at ? ` → ${formatDateTimeShort(check.closed_at)}` : ''}
-                                      </span>
+                                    <div className="flex items-center sm:flex-col sm:items-end gap-2 shrink-0">
+                                      <div className="text-xs font-medium text-[var(--ink-muted)] bg-white/60 border border-black/5 px-2 py-1 rounded-lg">
+                                        {event.ts ? formatDateTimeShort(event.ts) : '-'}
+                                      </div>
+                                      <ChevronRight className="h-4 w-4 text-black/20 group-hover:text-black/40 transition-colors hidden sm:block mt-1" />
                                     </div>
                                   </div>
-                                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink)]">
-                                    <Eye className="h-4 w-4 text-[var(--ink-muted)]" />
-                                    Ver
-                                  </span>
-                                </button>
-                              ))}
+                                </div>
+                              </div>
                             </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* RESUMEN Y CHECKS */}
+                  <div className="lg:col-span-1 space-y-8">
+                    {/* STATS */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4 flex flex-col items-center justify-center text-center">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold">Checks Abiertos</p>
+                        <p className="mt-2 text-3xl font-display font-semibold text-[var(--ink)]">
+                          {selectedWorkUnitSummary?.open_checks ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4 flex flex-col items-center justify-center text-center">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold">Rework Abierto</p>
+                        <p className="mt-2 text-3xl font-display font-semibold text-[var(--ink)]">
+                          {selectedWorkUnitSummary?.open_rework ?? 0}
+                        </p>
+                      </div>
+                      <div className="col-span-2 rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold mb-3">Último Resultado</p>
+                        {selectedWorkUnitSummary?.last_outcome ? (
+                          <div className="flex items-center gap-3">
+                            <span className={clsx('inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold', classForOutcome(selectedWorkUnitSummary.last_outcome))}>
+                              {outcomeLabel[selectedWorkUnitSummary.last_outcome]}
+                            </span>
+                            {selectedWorkUnitSummary?.last_outcome_at && (
+                              <span className="text-xs font-medium text-[var(--ink-muted)]">
+                                {formatDateTimeShort(selectedWorkUnitSummary.last_outcome_at)}
+                              </span>
+                            )}
                           </div>
-                        ))}
+                        ) : (
+                          <span className="text-sm text-[var(--ink-muted)]">Ninguno</span>
+                        )}
                       </div>
                     </div>
 
-                    <div className="rounded-3xl border border-black/10 bg-white shadow-sm">
-                      <div className="border-b border-black/5 px-5 py-4">
-                        <div className="text-sm font-semibold text-[var(--ink)]">Checks de modulo</div>
-                      </div>
-                      <div className="px-5 py-4">
-                        {!groupedChecks.moduleChecks.length && !groupedChecks.auxChecks.length ? (
-                          <div className="text-sm text-[var(--ink-muted)]">
-                            No hay checks de modulo/aux para este modulo.
-                          </div>
-                        ) : null}
+                    {/* CHECKS POR PANEL */}
+                    <div>
+                      <h4 className="text-xs font-bold text-[var(--ink-muted)] mb-3 uppercase tracking-[0.15em] border-b border-black/5 pb-2">Índice de Paneles</h4>
+                      {!groupedChecks.byPanel.length ? (
+                        <div className="text-sm text-[var(--ink-muted)] rounded-2xl border border-black/10 p-4 bg-white/50">
+                          No hay checks asociados a paneles.
+                        </div>
+                      ) : (
                         <div className="space-y-2">
+                          {groupedChecks.byPanel.map(([panelCode, checks]) => (
+                            <details key={panelCode} className="group rounded-2xl border border-black/10 bg-white overflow-hidden shadow-sm transition-all">
+                              <summary className="flex cursor-pointer items-center justify-between bg-white px-4 py-3 text-sm font-semibold outline-none hover:bg-[rgba(15,27,45,0.02)] transition-colors select-none group-open:border-b group-open:border-black/5 group-open:bg-[rgba(15,27,45,0.02)]">
+                                Panel {panelCode}
+                                <div className="flex items-center gap-3">
+                                  <span className="text-[10px] font-bold text-[var(--ink-muted)] bg-white px-2 py-0.5 rounded-full border border-black/10 shadow-sm">{checks.length} checks</span>
+                                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180 text-[var(--ink-muted)]" />
+                                </div>
+                              </summary>
+                              <div className="p-2 space-y-1 bg-white/50">
+                                {checks.map((check) => (
+                                  <button
+                                    key={check.id}
+                                    type="button"
+                                    onClick={() => openCheckOverlay(check.id)}
+                                    className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate text-sm font-medium text-[var(--ink)]">
+                                        {check.check_name ?? `Check #${check.id}`}
+                                      </div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-[var(--ink-muted)]">
+                                        <span className={clsx('rounded-full border px-1.5 py-0.5', classForCheckStatus(check.status))}>
+                                          {checkStatusLabel[check.status]}
+                                        </span>
+                                        <span>{formatDateTimeShort(check.opened_at)}</span>
+                                      </div>
+                                    </div>
+                                    <Eye className="h-4 w-4 text-black/20 shrink-0" />
+                                  </button>
+                                ))}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* CHECKS GENERALES */}
+                    <div>
+                      <h4 className="text-xs font-bold text-[var(--ink-muted)] mb-3 uppercase tracking-[0.15em] border-b border-black/5 pb-2">Checks Generales</h4>
+                      {!groupedChecks.moduleChecks.length && !groupedChecks.auxChecks.length ? (
+                        <div className="text-sm text-[var(--ink-muted)] rounded-2xl border border-black/10 p-4 bg-white/50">
+                          No hay checks de modulo/aux.
+                        </div>
+                      ) : (
+                        <div className="rounded-2xl border border-black/10 bg-white shadow-sm p-2 space-y-1">
                           {[...groupedChecks.moduleChecks, ...groupedChecks.auxChecks].map((check) => (
                             <button
                               key={check.id}
                               type="button"
                               onClick={() => openCheckOverlay(check.id)}
-                              className="flex w-full items-center justify-between gap-3 rounded-2xl border border-black/10 bg-white px-4 py-3 text-left hover:bg-[rgba(15,27,45,0.02)]"
+                              className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
                             >
                               <div className="min-w-0 flex-1">
-                                <div className="truncate text-sm font-semibold text-[var(--ink)]">
+                                <div className="truncate text-sm font-medium text-[var(--ink)]">
                                   {check.check_name ?? `Check #${check.id}`}
                                 </div>
-                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
-                                  <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-[var(--ink-muted)]">
+                                  <span className="rounded-full border border-black/10 bg-[rgba(15,27,45,0.04)] px-1.5 py-0.5">
                                     {scopeLabel[check.scope]}
                                   </span>
-                                  {manualSubtypeLabel(check) ? (
-                                    <span className="rounded-full border border-black/10 bg-white px-2 py-0.5">
-                                      {manualSubtypeLabel(check)}
-                                    </span>
-                                  ) : null}
-                                  <span className={clsx('rounded-full border px-2 py-0.5', classForCheckStatus(check.status))}>
+                                  <span className={clsx('rounded-full border px-1.5 py-0.5', classForCheckStatus(check.status))}>
                                     {checkStatusLabel[check.status]}
-                                  </span>
-                                  <span>
-                                    {formatDateTimeShort(check.opened_at)}
-                                    {check.closed_at ? ` → ${formatDateTimeShort(check.closed_at)}` : ''}
                                   </span>
                                 </div>
                               </div>
-                              <span className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--ink)]">
-                                <Eye className="h-4 w-4 text-[var(--ink-muted)]" />
-                                Ver
-                              </span>
+                              <Eye className="h-4 w-4 text-black/20 shrink-0" />
                             </button>
                           ))}
                         </div>
-                      </div>
+                      )}
                     </div>
-                  </section>
+                  </div>
                 </div>
               ) : null}
             </div>
