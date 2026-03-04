@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_worker, get_current_worker_session, get_db
@@ -27,7 +29,11 @@ from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import TaskWorkerRestriction, Worker, WorkerSession
-from app.schemas.tasks import TaskInstanceRead, WorkerActiveTaskRead
+from app.schemas.tasks import (
+    TaskInstanceRead,
+    WorkerActiveTaskRead,
+    WorkerFrequentTaskRead,
+)
 from app.schemas.worker_station import (
     TaskCompleteRequest,
     TaskJoinRequest,
@@ -480,6 +486,35 @@ def list_active_tasks(
             )
         )
     return payloads
+
+
+@router.get("/frequent", response_model=list[WorkerFrequentTaskRead])
+def list_frequent_tasks(
+    worker: Worker = Depends(get_current_worker), db: Session = Depends(get_db)
+) -> list[WorkerFrequentTaskRead]:
+    cutoff = utc_now() - timedelta(days=7)
+    completion_count = func.count(distinct(TaskInstance.id))
+    rows = db.execute(
+        select(
+            TaskInstance.task_definition_id,
+            completion_count.label("completion_count"),
+        )
+        .join(TaskParticipation, TaskParticipation.task_instance_id == TaskInstance.id)
+        .where(TaskParticipation.worker_id == worker.id)
+        .where(TaskInstance.status == TaskStatus.COMPLETED)
+        .where(TaskInstance.completed_at.is_not(None))
+        .where(TaskInstance.completed_at >= cutoff)
+        .group_by(TaskInstance.task_definition_id)
+        .having(completion_count >= 3)
+        .order_by(completion_count.desc(), TaskInstance.task_definition_id.asc())
+    ).all()
+    return [
+        WorkerFrequentTaskRead(
+            task_definition_id=row.task_definition_id,
+            completions=row.completion_count,
+        )
+        for row in rows
+    ]
 
 
 @router.post("/busy-workers", response_model=WorkerBusyCheckResponse)

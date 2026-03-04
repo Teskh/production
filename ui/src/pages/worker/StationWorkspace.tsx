@@ -220,6 +220,11 @@ type WorkerActiveTask = {
   notes: string | null;
 };
 
+type WorkerFrequentTask = {
+  task_definition_id: number;
+  completions: number;
+};
+
 type StartConfirmContext = {
   task: StationTask;
   workItem: StationWorkItem;
@@ -414,6 +419,9 @@ const StationWorkspace: React.FC = () => {
   const [expandedTaskNames, setExpandedTaskNames] = useState<Set<string>>(() => new Set());
   const [crewQuery, setCrewQuery] = useState('');
   const [regularCrewByTaskId, setRegularCrewByTaskId] = useState<Record<number, number[]>>({});
+  const [frequentTaskDefinitionIds, setFrequentTaskDefinitionIds] = useState<Set<number>>(
+    () => new Set()
+  );
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const snapshotRequestIdRef = useRef(0);
@@ -868,6 +876,17 @@ const StationWorkspace: React.FC = () => {
     }
   }, []);
 
+  const refreshFrequentTaskDefinitions = useCallback(async () => {
+    try {
+      const frequentTasks = await apiRequest<WorkerFrequentTask[]>('/api/worker-tasks/frequent');
+      setFrequentTaskDefinitionIds(
+        new Set(frequentTasks.map((task) => task.task_definition_id))
+      );
+    } catch {
+      setFrequentTaskDefinitionIds(new Set());
+    }
+  }, []);
+
   useEffect(() => {
     const bootstrap = async () => {
       setLoading(true);
@@ -1032,6 +1051,13 @@ const StationWorkspace: React.FC = () => {
     }
     void refreshActiveTaskTarget();
   }, [loading, refreshActiveTaskTarget, worker]);
+
+  useEffect(() => {
+    if (!worker || loading) {
+      return;
+    }
+    void refreshFrequentTaskDefinitions();
+  }, [loading, refreshFrequentTaskDefinitions, worker]);
 
   useEffect(() => {
     if (loading || !autoFocusTarget || !selectedStationId) {
@@ -1218,6 +1244,9 @@ const StationWorkspace: React.FC = () => {
   );
 
   const statusBadge = (status: string) => {
+    if (status === 'NotStarted') {
+      return null;
+    }
     const styles: Record<string, string> = {
       NotStarted: 'bg-gray-100 text-gray-600 border-gray-200',
       InProgress: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -1287,7 +1316,12 @@ const StationWorkspace: React.FC = () => {
     });
   };
 
-  const renderTaskCard = (task: StationTask, workItem: StationWorkItem) => {
+  const renderTaskCard = (
+    task: StationTask,
+    workItem: StationWorkItem,
+    options?: { isFrequent?: boolean }
+  ) => {
+    const isFrequent = options?.isFrequent ?? false;
     const isCompleted = task.status === 'Completed';
     const workerParticipating = task.current_worker_participating ?? false;
     const dependencyBlocked = !isDependenciesSatisfied(task);
@@ -1335,18 +1369,26 @@ const StationWorkspace: React.FC = () => {
       <div
         key={task.task_definition_id}
         className={clsx(
-          'rounded-xl border p-4 transition-all',
+          'rounded-xl border p-5 transition-all',
           isCompleted
-            ? 'border-gray-200 bg-gray-50/70 opacity-70'
+            ? isFrequent
+              ? 'border-blue-200 bg-blue-50/50 opacity-80'
+              : 'border-gray-200 bg-gray-50/70 opacity-70'
             : task.status === 'InProgress'
-            ? 'border-blue-200 bg-blue-50/50'
+            ? isFrequent
+              ? 'border-blue-300 bg-blue-50/70'
+              : 'border-blue-200 bg-blue-50/50'
             : task.status === 'Paused'
-            ? 'border-amber-200 bg-amber-50/50'
+            ? isFrequent
+              ? 'border-blue-200 bg-blue-50/60'
+              : 'border-amber-200 bg-amber-50/50'
+            : isFrequent
+            ? 'border-blue-200 bg-blue-50/50'
             : 'border-gray-200 bg-white'
         )}
       >
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 md:flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
@@ -1354,8 +1396,10 @@ const StationWorkspace: React.FC = () => {
                 title={task.name}
                 aria-expanded={isTaskNameExpanded}
                 className={clsx(
-                  'min-w-0 flex-1 text-left text-lg font-semibold text-gray-900',
-                  isTaskNameExpanded ? 'whitespace-normal break-words' : 'truncate'
+                  'min-w-0 flex-1 break-words text-left text-lg font-semibold text-gray-900',
+                  isTaskNameExpanded
+                    ? 'whitespace-normal'
+                    : 'overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]'
                 )}
               >
                 {task.name}
@@ -1382,7 +1426,7 @@ const StationWorkspace: React.FC = () => {
               </div>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap md:justify-end">
             {!isCompleted &&
               !hideCrewButtonForPanelFullTeam &&
               (regularCrewByTaskId[task.task_definition_id]?.length ?? 0) > 0 && (
@@ -1392,7 +1436,7 @@ const StationWorkspace: React.FC = () => {
                       ? handleStart(task, workItem, quickRegularCrewStart.workerIds)
                       : handleCrewOpen(task, workItem)
                   }
-                  className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:text-gray-700"
+                  className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-500 hover:text-gray-700"
                 >
                   <Users className="h-5 w-5" /> {quickRegularCrewStart?.label ?? 'Equipo'}
                 </button>
@@ -1402,19 +1446,19 @@ const StationWorkspace: React.FC = () => {
                 <>
                   <button
                     onClick={() => openModal('comments', task, workItem)}
-                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-600 hover:bg-gray-50"
                   >
                     <MessageSquare className="h-5 w-5" /> Nota
                   </button>
                   <button
                     onClick={() => openModal('pause', task, workItem)}
-                    className="inline-flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-base font-semibold text-amber-700 hover:bg-amber-100"
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-4 text-base font-semibold text-amber-700 hover:bg-amber-100"
                   >
                     <Pause className="h-5 w-5" /> Pausa
                   </button>
                   <button
                     onClick={() => handleComplete(task)}
-                    className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
+                    className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-4 text-base font-semibold text-white hover:bg-blue-700"
                   >
                     <CheckSquare className="h-5 w-5" /> {completeLabel}
                   </button>
@@ -1425,7 +1469,7 @@ const StationWorkspace: React.FC = () => {
                   disabled={joinBlocked || submitting}
                   title={joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'}
                   className={clsx(
-                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                     joinBlocked
                       ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-blue-600 hover:bg-blue-700'
@@ -1442,7 +1486,7 @@ const StationWorkspace: React.FC = () => {
                     disabled={resumeBlocked || submitting}
                     title={resumeBlocked ? resumeBlockTitle : undefined}
                     className={clsx(
-                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                      'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                       resumeBlocked
                         ? 'bg-gray-400 cursor-not-allowed'
                         : 'bg-blue-600 hover:bg-blue-700'
@@ -1452,7 +1496,7 @@ const StationWorkspace: React.FC = () => {
                   </button>
                   <button
                     onClick={() => handleComplete(task)}
-                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-600 hover:bg-gray-50"
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-600 hover:bg-gray-50"
                   >
                     <CheckSquare className="h-5 w-5" /> {completeLabel}
                   </button>
@@ -1463,7 +1507,7 @@ const StationWorkspace: React.FC = () => {
                   disabled={joinBlocked || submitting}
                   title={joinBlocked ? joinBlockTitle : 'Unete a esta tarea para ayudar.'}
                   className={clsx(
-                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                     joinBlocked
                       ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-blue-600 hover:bg-blue-700'
@@ -1477,7 +1521,7 @@ const StationWorkspace: React.FC = () => {
                 {task.skippable && (
                   <button
                     onClick={() => openModal('skip', task, workItem)}
-                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-3 text-base font-semibold text-gray-500 hover:bg-gray-50"
+                    className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-500 hover:bg-gray-50"
                   >
                     <FastForward className="h-5 w-5" /> Omitir
                   </button>
@@ -1487,7 +1531,7 @@ const StationWorkspace: React.FC = () => {
                   disabled={startBlocked || submitting}
                   title={startBlocked ? startBlockTitle : undefined}
                   className={clsx(
-                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                    'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                     startBlocked
                       ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-gray-900 hover:bg-gray-800'
@@ -1914,6 +1958,7 @@ const StationWorkspace: React.FC = () => {
       });
       await refreshSnapshot();
       await refreshActiveTaskTarget();
+      await refreshFrequentTaskDefinitions();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo completar la tarea.';
       setError(message);
@@ -1969,6 +2014,7 @@ const StationWorkspace: React.FC = () => {
     }
     await refreshSnapshot();
     await refreshActiveTaskTarget();
+    await refreshFrequentTaskDefinitions();
   };
 
   const handleReworkStart = async (rework: StationQCReworkTask) => {
@@ -2257,6 +2303,17 @@ const StationWorkspace: React.FC = () => {
     : '';
   const crewBusyCount =
     selectedTask && !selectedTask.concurrent_allowed ? crewBusyWorkerIds.length : 0;
+  const sortedSelectedStationTasks = selectedWorkItem
+    ? sortTasksForDisplay(selectedWorkItem.tasks)
+    : [];
+  const orderedSelectedStationTasks = [
+    ...sortedSelectedStationTasks.filter((task) =>
+      frequentTaskDefinitionIds.has(task.task_definition_id)
+    ),
+    ...sortedSelectedStationTasks.filter(
+      (task) => !frequentTaskDefinitionIds.has(task.task_definition_id)
+    ),
+  ];
 
   if (loading) {
     return (
@@ -2471,8 +2528,10 @@ const StationWorkspace: React.FC = () => {
                   {selectedWorkItem.tasks.length > 0 && (
                     <div className="space-y-3">
                       {selectedReworkTasks.map((rework) => renderReworkCard(rework))}
-                      {sortTasksForDisplay(selectedWorkItem.tasks).map((task) =>
-                        renderTaskCard(task, selectedWorkItem)
+                      {orderedSelectedStationTasks.map((task) =>
+                        renderTaskCard(task, selectedWorkItem, {
+                          isFrequent: frequentTaskDefinitionIds.has(task.task_definition_id),
+                        })
                       )}
                     </div>
                   )}
@@ -3304,7 +3363,7 @@ const StationWorkspace: React.FC = () => {
                   <div
                     key={task.task_definition_id}
                     className={clsx(
-                      'rounded-xl border border-gray-200 p-4',
+                      'rounded-xl border border-gray-200 p-5',
                       isCompleted && 'bg-gray-50/70 opacity-70'
                     )}
                   >
@@ -3315,8 +3374,10 @@ const StationWorkspace: React.FC = () => {
                         title={task.name}
                         aria-expanded={isTaskNameExpanded}
                         className={clsx(
-                          'min-w-0 flex-1 text-left text-sm font-semibold text-gray-900',
-                          isTaskNameExpanded ? 'whitespace-normal break-words' : 'truncate'
+                          'min-w-0 flex-1 break-words text-left text-sm font-semibold text-gray-900',
+                          isTaskNameExpanded
+                            ? 'whitespace-normal'
+                            : 'overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]'
                         )}
                       >
                         {task.name}
@@ -3336,7 +3397,7 @@ const StationWorkspace: React.FC = () => {
                           disabled={startBlocked || submitting}
                           title={startBlocked ? startBlockTitle : undefined}
                           className={clsx(
-                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                             startBlocked
                               ? 'bg-gray-400 cursor-not-allowed'
                               : 'bg-gray-900 hover:bg-gray-800'
@@ -3351,7 +3412,7 @@ const StationWorkspace: React.FC = () => {
                           disabled={resumeBlocked || submitting}
                           title={resumeBlocked ? resumeBlockTitle : undefined}
                           className={clsx(
-                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-3 text-base font-semibold text-white',
+                            'inline-flex items-center gap-2.5 rounded-lg px-6 py-4 text-base font-semibold text-white',
                             resumeBlocked
                               ? 'bg-gray-400 cursor-not-allowed'
                               : 'bg-blue-600 hover:bg-blue-700'

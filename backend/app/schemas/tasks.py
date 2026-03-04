@@ -141,3 +141,8 @@ class WorkerActiveTaskRead(BaseModel):
     status: TaskStatus
     started_at: datetime | None = None
     notes: str | None = None
+
+
+class WorkerFrequentTaskRead(BaseModel):
+    task_definition_id: int
+    completions: int
