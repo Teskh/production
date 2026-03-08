@@ -20,8 +20,33 @@ router = APIRouter()
 
 
 @router.get("/", response_model=list[TaskDefinitionRead])
-def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinition]:
-    return list(db.execute(select(TaskDefinition).order_by(TaskDefinition.name)).scalars())
+def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinitionRead]:
+    tasks = list(db.execute(select(TaskDefinition).order_by(TaskDefinition.name)).scalars())
+    if not tasks:
+        return []
+
+    task_ids = [task.id for task in tasks]
+    skill_rows = db.execute(
+        select(
+            TaskSkillRequirement.task_definition_id,
+            TaskSkillRequirement.skill_id,
+        )
+        .where(TaskSkillRequirement.task_definition_id.in_(task_ids))
+        .order_by(
+            TaskSkillRequirement.task_definition_id,
+            TaskSkillRequirement.skill_id,
+        )
+    ).all()
+    skill_id_by_task_id: dict[int, int] = {}
+    for task_definition_id, skill_id in skill_rows:
+        skill_id_by_task_id.setdefault(task_definition_id, skill_id)
+
+    return [
+        TaskDefinitionRead.model_validate(task, from_attributes=True).model_copy(
+            update={"skill_id": skill_id_by_task_id.get(task.id)}
+        )
+        for task in tasks
+    ]
 
 
 @router.post("/", response_model=TaskDefinitionRead, status_code=status.HTTP_201_CREATED)

@@ -1,12 +1,14 @@
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 import random
 import time
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
@@ -16,17 +18,29 @@ from app.services import shift_estimate_scheduler as shift_estimate_scheduler_se
 
 app = FastAPI(title="SCP API", version="0.1.0")
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
+UI_DIST_DIR = BASE_DIR.parent / "ui" / "dist"
 MEDIA_GALLERY_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media_gallery", StaticFiles(directory=MEDIA_GALLERY_DIR), name="media_gallery")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:4173",
+        "http://localhost:4174",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:4174",
         "http://10.0.10.236:5173",
+        "http://10.0.10.236:5174",
         "http://10.0.10.236:4173",
+        "http://10.0.10.236:4174",
     ],
-    allow_origin_regex=r"^http://(192\.168|10)\.\d{1,3}\.\d{1,3}\.\d{1,3}:(5173|4173)$",
+    allow_origin_regex=(
+        r"^http://((localhost|127\.0\.0\.1)|(192\.168\.\d{1,3}\.\d{1,3})|"
+        r"(10\.\d{1,3}\.\d{1,3}\.\d{1,3})):(4173|4174|5173|5174)$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,6 +48,18 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_ui_asset(path: str) -> Path | None:
+    dist_root = UI_DIST_DIR.resolve()
+    candidate = (dist_root / path).resolve()
+    try:
+        candidate.relative_to(dist_root)
+    except ValueError:
+        return None
+    if candidate.is_file():
+        return candidate
+    return None
 
 
 @app.middleware("http")
@@ -134,3 +160,33 @@ async def stop_shift_estimate_scheduler() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_ui(full_path: str, request: Request):
+    if not UI_DIST_DIR.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Frontend build not found. Run `pnpm build` in `ui` first.",
+        )
+
+    if full_path.startswith(("api/", "media_gallery/")):
+        if not request.url.path.endswith("/"):
+            query = f"?{request.url.query}" if request.url.query else ""
+            return RedirectResponse(url=f"{request.url.path}/{query}", status_code=307)
+        raise HTTPException(status_code=404)
+
+    if full_path in {"health", "openapi.json"} or full_path.startswith(("docs", "redoc")):
+        raise HTTPException(status_code=404)
+
+    if full_path == "":
+        full_path = "index.html"
+
+    asset = _resolve_ui_asset(full_path)
+    if asset is not None:
+        return FileResponse(asset)
+
+    if Path(full_path).suffix:
+        raise HTTPException(status_code=404)
+
+    return FileResponse(UI_DIST_DIR / "index.html")

@@ -1,12 +1,11 @@
-# starting frontend
-npm run preview -- --host 0.0.0.0 --port 5173
-npm run dev -- --host 0.0.0.0 --port 5173
+# DEV WORKFLOW
+frontend: pnpm run dev -- --host 0.0.0.0 --port 5173
+backend: uvicorn app.main:app --reload --host 0.0.0.0 --port 2340
 
-# for starting backend
-PYTHONPATH=. uvicorn app.main:app --reload --host 0.0.0.0 --port 2340
+# PRODUCTION
+(AFTER FRONTEND: PNPM BUILD)
+SIMPLY FROM BACKEND: uvicorn app.main:app --host 0.0.0.0 --port 5173
 
-# SCRIPT for resetting database
-PYTHONPATH=backend ./venv/bin/python -m app.scripts.reset_db --yes
 
 # migration
 PYTHONPATH=. alembic upgrade head

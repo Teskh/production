@@ -476,6 +476,8 @@ def get_station_panels_finished(
             ).scalars()
         )
         for row in overrides:
+            if row.expected_minutes is None:
+                continue
             expected_maps.setdefault(row.panel_definition_id, {})[
                 row.task_definition_id
             ] = float(row.expected_minutes)

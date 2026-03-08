@@ -32,6 +32,18 @@ def _is_default_applicability_scope(
     )
 
 
+def _validate_task_duration_values(
+    expected_minutes: float | None, expected_headcount: int | None
+) -> None:
+    if expected_minutes is None and expected_headcount is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Task duration rows require expected minutes or expected headcount."
+            ),
+        )
+
+
 @router.get("/applicability", response_model=list[TaskApplicabilityRead])
 def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicability]:
     return list(db.execute(select(TaskApplicability).order_by(TaskApplicability.id)).scalars())
@@ -176,6 +188,9 @@ def create_task_duration(
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(get_current_admin),
 ) -> TaskExpectedDuration:
+    _validate_task_duration_values(
+        payload.expected_minutes, payload.expected_headcount
+    )
     if not db.get(TaskDefinition, payload.task_definition_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Task definition not found"
@@ -248,6 +263,9 @@ def update_task_duration(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Panel definition not found",
             )
+    expected_minutes = updates.get("expected_minutes", row.expected_minutes)
+    expected_headcount = updates.get("expected_headcount", row.expected_headcount)
+    _validate_task_duration_values(expected_minutes, expected_headcount)
     for key, value in updates.items():
         setattr(row, key, value)
     db.commit()

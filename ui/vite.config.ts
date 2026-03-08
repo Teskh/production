@@ -7,13 +7,14 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:2340',
         changeOrigin: true,
       },
       '/media_gallery': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:2340',
         changeOrigin: true,
       },
     },

@@ -230,6 +230,7 @@ def _copy_house_type(
                     row.id,
                 ),
                 expected_minutes=row.expected_minutes,
+                expected_headcount=row.expected_headcount,
             )
         )
 

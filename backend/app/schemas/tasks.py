@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import TaskScope, TaskStatus
 
@@ -35,6 +35,7 @@ class TaskDefinitionUpdate(BaseModel):
 
 class TaskDefinitionRead(TaskDefinitionBase):
     id: int
+    skill_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -87,7 +88,8 @@ class TaskExpectedDurationBase(BaseModel):
     sub_type_id: int | None = None
     module_number: int | None = None
     panel_definition_id: int | None = None
-    expected_minutes: float
+    expected_minutes: float | None = Field(default=None, ge=0)
+    expected_headcount: int | None = Field(default=None, ge=1)
 
 
 class TaskExpectedDurationCreate(TaskExpectedDurationBase):
@@ -100,7 +102,8 @@ class TaskExpectedDurationUpdate(BaseModel):
     sub_type_id: int | None = None
     module_number: int | None = None
     panel_definition_id: int | None = None
-    expected_minutes: float | None = None
+    expected_minutes: float | None = Field(default=None, ge=0)
+    expected_headcount: int | None = Field(default=None, ge=1)
 
 
 class TaskExpectedDurationRead(TaskExpectedDurationBase):

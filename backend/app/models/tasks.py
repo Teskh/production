@@ -76,7 +76,10 @@ class TaskExpectedDuration(Base):
     panel_definition_id: Mapped[int | None] = mapped_column(
         ForeignKey("panel_definitions.id"), nullable=True
     )
-    expected_minutes: Mapped[float] = mapped_column(Numeric(10, 2))
+    expected_minutes: Mapped[float | None] = mapped_column(
+        Numeric(10, 2), nullable=True
+    )
+    expected_headcount: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class TaskInstance(Base):

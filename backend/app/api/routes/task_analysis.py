@@ -346,11 +346,11 @@ def _resolve_module_expected(
         ):
             if house_match is None:
                 house_match = row
-    if module_match is not None:
+    if module_match is not None and module_match.expected_minutes is not None:
         return float(module_match.expected_minutes)
-    if house_match is not None:
+    if house_match is not None and house_match.expected_minutes is not None:
         return float(house_match.expected_minutes)
-    if default_match is not None:
+    if default_match is not None and default_match.expected_minutes is not None:
         return float(default_match.expected_minutes)
     return None
 
@@ -800,6 +800,8 @@ def get_task_analysis(
             ).scalars()
         )
         for row in duration_rows:
+            if row.expected_minutes is None:
+                continue
             expected_map[row.task_definition_id] = float(row.expected_minutes)
     else:
         module_task_ids = (

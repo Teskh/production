@@ -21,6 +21,7 @@ type TaskDefinition = {
   name: string;
   scope: TaskScope;
   default_station_sequence: number | null;
+  skill_id?: number | null;
   active: boolean;
   skippable: boolean;
   concurrent_allowed: boolean;
@@ -185,6 +186,8 @@ const TaskDefs: React.FC = () => {
   const [catalogOpenGroups, setCatalogOpenGroups] = useState<Record<string, boolean>>({});
   const [scopeFilter, setScopeFilter] = useState<TaskScope | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [stationFilter, setStationFilter] = useState('all');
+  const [skillFilter, setSkillFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -415,6 +418,11 @@ const TaskDefs: React.FC = () => {
     [tasks]
   );
 
+  const skillNameById = useMemo(
+    () => new Map(skills.map((skill) => [skill.id, skill.name])),
+    [skills]
+  );
+
   const workerNameById = useMemo(
     () => new Map(workers.map((worker) => [worker.id, formatWorkerName(worker)])),
     [workers]
@@ -433,6 +441,65 @@ const TaskDefs: React.FC = () => {
     return map;
   }, [skillAssignments]);
 
+  const stationFilterKeyByTaskId = useMemo(() => {
+    const map = new Map<number, string>();
+    tasks.forEach((task) => {
+      if (task.scope === 'aux') {
+        const stationId = task.default_station_sequence;
+        map.set(task.id, stationId === null ? 'aux:none' : `aux:${stationId}`);
+        return;
+      }
+      const sequence = task.default_station_sequence;
+      map.set(task.id, sequence === null ? 'seq:none' : `seq:${sequence}`);
+    });
+    return map;
+  }, [tasks]);
+
+  const stationFilterOptions = useMemo(() => {
+    const options = new Map<string, { value: string; label: string; sortKey: string }>();
+    tasks.forEach((task) => {
+      const key = stationFilterKeyByTaskId.get(task.id);
+      if (!key || options.has(key)) {
+        return;
+      }
+      if (key === 'seq:none') {
+        options.set(key, {
+          value: key,
+          label: 'Panel/Modulo · Sin asignar',
+          sortKey: 'zzz-seq-none',
+        });
+        return;
+      }
+      if (key === 'aux:none') {
+        options.set(key, {
+          value: key,
+          label: 'AUX · Sin estacion',
+          sortKey: 'zzz-aux-none',
+        });
+        return;
+      }
+      if (key.startsWith('seq:')) {
+        const sequence = Number(key.slice(4));
+        const stationLabel =
+          catalogSequenceLabelByOrder.get(sequence) ?? `Secuencia ${sequence}`;
+        options.set(key, {
+          value: key,
+          label: `${stationLabel} (Sec ${sequence})`,
+          sortKey: `1-${String(sequence).padStart(4, '0')}-${stationLabel}`,
+        });
+        return;
+      }
+      const stationId = Number(key.slice(4));
+      const stationLabel = auxStationLabelById.get(stationId) ?? `Estacion AUX ${stationId}`;
+      options.set(key, {
+        value: key,
+        label: `AUX · ${stationLabel}`,
+        sortKey: `2-${stationLabel}-${String(stationId).padStart(4, '0')}`,
+      });
+    });
+    return Array.from(options.values()).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [auxStationLabelById, catalogSequenceLabelByOrder, stationFilterKeyByTaskId, tasks]);
+
   const filteredTasks = useMemo(() => {
     let result = tasks;
     if (scopeFilter !== 'all') {
@@ -441,12 +508,24 @@ const TaskDefs: React.FC = () => {
     if (statusFilter !== 'all') {
       result = result.filter((task) => (statusFilter === 'active' ? task.active : !task.active));
     }
+    if (stationFilter !== 'all') {
+      result = result.filter((task) => stationFilterKeyByTaskId.get(task.id) === stationFilter);
+    }
+    if (skillFilter !== 'all') {
+      result = result.filter((task) => {
+        const skillId = task.skill_id ?? null;
+        if (skillFilter === 'none') {
+          return skillId === null;
+        }
+        return skillId === Number(skillFilter);
+      });
+    }
     const needle = query.trim().toLowerCase();
     if (needle) {
       result = result.filter((task) => task.name.toLowerCase().includes(needle));
     }
     return result;
-  }, [query, tasks, scopeFilter, statusFilter]);
+  }, [query, skillFilter, scopeFilter, stationFilter, stationFilterKeyByTaskId, statusFilter, tasks]);
 
   const draftSequenceOrder = useMemo(
     () => parseSequenceValue(draft.station_sequence_order),
@@ -945,6 +1024,31 @@ const TaskDefs: React.FC = () => {
                 <option value="active">Activo</option>
                 <option value="inactive">Inactivo</option>
               </select>
+              <select
+                value={stationFilter}
+                onChange={(e) => setStationFilter(e.target.value)}
+                className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="all">Todas las estaciones</option>
+                {stationFilterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={skillFilter}
+                onChange={(e) => setSkillFilter(e.target.value)}
+                className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm"
+              >
+                <option value="all">Todas las especialidades</option>
+                <option value="none">Sin especialidad</option>
+                {skills.map((skill) => (
+                  <option key={skill.id} value={String(skill.id)}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
           <div className="mt-3 flex justify-end">
@@ -1009,6 +1113,12 @@ const TaskDefs: React.FC = () => {
                                 <span className="uppercase tracking-wider">
                                   {formatScopeLabel(task.scope)}
                                 </span>
+                                {task.skill_id !== null && task.skill_id !== undefined && (
+                                  <>
+                                    <span>-</span>
+                                    <span>{skillNameById.get(task.skill_id) ?? `Esp ${task.skill_id}`}</span>
+                                  </>
+                                )}
                                 {task.scope === 'panel' && (
                                   <>
                                     <span>-</span>

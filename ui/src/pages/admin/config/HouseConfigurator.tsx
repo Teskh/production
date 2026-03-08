@@ -79,7 +79,8 @@ type TaskExpectedDuration = {
   sub_type_id: number | null;
   module_number: number | null;
   panel_definition_id: number | null;
-  expected_minutes: number;
+  expected_minutes: number | null;
+  expected_headcount: number | null;
 };
 
 type Station = {
@@ -121,6 +122,7 @@ type MatrixPanelState = {
 type TaskRuleState = {
   applies: boolean;
   expectedMinutes: string;
+  expectedHeadcount: string;
   stationSequence: number | null;
   applicabilityRowId: number | null;
   durationRowId: number | null;
@@ -129,6 +131,7 @@ type TaskRuleState = {
 type TaskRuleBaseline = {
   applies: boolean;
   expectedMinutes: string;
+  expectedHeadcount: string;
   stationSequence: number | null;
 };
 
@@ -255,9 +258,36 @@ const parseOptionalNumber = (value: string): number | null | 'invalid' => {
   return parsed;
 };
 
+const parseOptionalPositiveInteger = (value: string): number | null | 'invalid' => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return 'invalid';
+  }
+  return parsed;
+};
+
 const areDurationValuesEqual = (left: string, right: string): boolean => {
   const leftParsed = parseOptionalNumber(left);
   const rightParsed = parseOptionalNumber(right);
+  if (leftParsed === 'invalid' || rightParsed === 'invalid') {
+    return false;
+  }
+  if (leftParsed === null && rightParsed === null) {
+    return true;
+  }
+  if (leftParsed === null || rightParsed === null) {
+    return false;
+  }
+  return leftParsed === rightParsed;
+};
+
+const areHeadcountValuesEqual = (left: string, right: string): boolean => {
+  const leftParsed = parseOptionalPositiveInteger(left);
+  const rightParsed = parseOptionalPositiveInteger(right);
   if (leftParsed === 'invalid' || rightParsed === 'invalid') {
     return false;
   }
@@ -891,17 +921,39 @@ const HouseConfigurator: React.FC = () => {
           row.sub_type_id === null &&
           row.panel_definition_id === null
       );
-      const resolvedDuration = moduleDuration ?? houseDuration ?? defaultDuration ?? null;
-      const expectedMinutes = resolvedDuration ? String(resolvedDuration.expected_minutes) : '';
+      const expectedMinutesRow =
+        [moduleDuration, houseDuration, defaultDuration].find(
+          (row) => row?.expected_minutes !== null && row?.expected_minutes !== undefined
+        ) ?? null;
+      const expectedHeadcountRow =
+        [moduleDuration, houseDuration, defaultDuration].find(
+          (row) => row?.expected_headcount !== null && row?.expected_headcount !== undefined
+        ) ?? null;
+      const expectedMinutes =
+        expectedMinutesRow?.expected_minutes !== null &&
+        expectedMinutesRow?.expected_minutes !== undefined
+          ? String(expectedMinutesRow.expected_minutes)
+          : '';
+      const expectedHeadcount =
+        expectedHeadcountRow?.expected_headcount !== null &&
+        expectedHeadcountRow?.expected_headcount !== undefined
+          ? String(expectedHeadcountRow.expected_headcount)
+          : '';
 
       nextDraft[task.id] = {
         applies,
         expectedMinutes,
+        expectedHeadcount,
         stationSequence: resolvedStationSequence,
         applicabilityRowId: moduleRow?.id ?? null,
         durationRowId: moduleDuration?.id ?? null,
       };
-      nextBaseline[task.id] = { applies, expectedMinutes, stationSequence: resolvedStationSequence };
+      nextBaseline[task.id] = {
+        applies,
+        expectedMinutes,
+        expectedHeadcount,
+        stationSequence: resolvedStationSequence,
+      };
     });
 
     setModuleDraftByTask(nextDraft);
@@ -928,7 +980,13 @@ const HouseConfigurator: React.FC = () => {
       if (draftState.stationSequence !== baseline.stationSequence) {
         return true;
       }
-      return !areDurationValuesEqual(draftState.expectedMinutes, baseline.expectedMinutes);
+      if (!areDurationValuesEqual(draftState.expectedMinutes, baseline.expectedMinutes)) {
+        return true;
+      }
+      return !areHeadcountValuesEqual(
+        draftState.expectedHeadcount,
+        baseline.expectedHeadcount
+      );
     });
   }, [moduleBaselineByTask, moduleDraftByTask, moduleTasks]);
 
@@ -1588,6 +1646,7 @@ const HouseConfigurator: React.FC = () => {
           next[task.id] = {
             applies: baseline.applies,
             expectedMinutes: baseline.expectedMinutes,
+            expectedHeadcount: baseline.expectedHeadcount,
             stationSequence: baseline.stationSequence,
             applicabilityRowId: null,
             durationRowId: null,
@@ -1598,6 +1657,7 @@ const HouseConfigurator: React.FC = () => {
           ...current,
           applies: baseline.applies,
           expectedMinutes: baseline.expectedMinutes,
+          expectedHeadcount: baseline.expectedHeadcount,
           stationSequence: baseline.stationSequence,
         };
       });
@@ -1634,6 +1694,23 @@ const HouseConfigurator: React.FC = () => {
         [taskId]: {
           ...current,
           expectedMinutes: value,
+        },
+      };
+    });
+    setModuleSaveMessage(null);
+  };
+
+  const updateModuleExpectedHeadcount = (taskId: number, value: string) => {
+    setModuleDraftByTask((prev) => {
+      const current = prev[taskId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [taskId]: {
+          ...current,
+          expectedHeadcount: value,
         },
       };
     });
@@ -1731,22 +1808,33 @@ const HouseConfigurator: React.FC = () => {
         }
       }
 
-      const durationChanged = !areDurationValuesEqual(
-        draftState.expectedMinutes,
-        baseline.expectedMinutes
-      );
+      const durationChanged =
+        !areDurationValuesEqual(draftState.expectedMinutes, baseline.expectedMinutes) ||
+        !areHeadcountValuesEqual(
+          draftState.expectedHeadcount,
+          baseline.expectedHeadcount
+        );
       if (!durationChanged) {
         continue;
       }
-      const parsed = parseOptionalNumber(draftState.expectedMinutes);
-      if (parsed === 'invalid') {
+      const parsedMinutes = parseOptionalNumber(draftState.expectedMinutes);
+      if (parsedMinutes === 'invalid') {
         setModuleSaveMessage('Los minutos esperados deben ser un numero no negativo.');
         setModuleSaveError(true);
         setModuleSaving(false);
         return;
       }
+      const parsedHeadcount = parseOptionalPositiveInteger(
+        draftState.expectedHeadcount
+      );
+      if (parsedHeadcount === 'invalid') {
+        setModuleSaveMessage('La dotacion esperada debe ser un numero entero positivo.');
+        setModuleSaveError(true);
+        setModuleSaving(false);
+        return;
+      }
       const existingDuration = moduleDurations.get(task.id);
-      if (parsed === null) {
+      if (parsedMinutes === null && parsedHeadcount === null) {
         if (existingDuration) {
           requests.push(
             apiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
@@ -1760,7 +1848,10 @@ const HouseConfigurator: React.FC = () => {
         requests.push(
           apiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
             method: 'PUT',
-            body: JSON.stringify({ expected_minutes: parsed }),
+            body: JSON.stringify({
+              expected_minutes: parsedMinutes,
+              expected_headcount: parsedHeadcount,
+            }),
           })
         );
       } else {
@@ -1773,7 +1864,8 @@ const HouseConfigurator: React.FC = () => {
               sub_type_id: null,
               module_number: selectedModuleNumber,
               panel_definition_id: null,
-              expected_minutes: parsed,
+              expected_minutes: parsedMinutes,
+              expected_headcount: parsedHeadcount,
             }),
           })
         );
@@ -2428,10 +2520,11 @@ const HouseConfigurator: React.FC = () => {
                   <table className="w-full table-fixed text-sm">
                     <thead className="bg-[rgba(201,215,245,0.3)] text-xs text-[var(--ink-muted)]">
                       <tr>
-                        <th className="w-[38%] px-4 py-3 text-left">Tarea</th>
-                        <th className="w-[26%] px-4 py-3 text-left">Estacion</th>
-                        <th className="w-[18%] px-4 py-3 text-left">Aplica</th>
-                        <th className="w-[18%] px-4 py-3 text-left">Minutos esperados</th>
+                        <th className="w-[32%] px-4 py-3 text-left">Tarea</th>
+                        <th className="w-[24%] px-4 py-3 text-left">Estacion</th>
+                        <th className="w-[16%] px-4 py-3 text-left">Aplica</th>
+                        <th className="w-[14%] px-4 py-3 text-left">Minutos esperados</th>
+                        <th className="w-[14%] px-4 py-3 text-left">Dotacion esperada</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2444,10 +2537,10 @@ const HouseConfigurator: React.FC = () => {
                         const usesDefaultStation = state.stationSequence === defaultSequence;
                         return (
                           <tr key={task.id} className="border-t border-black/5">
-                            <td className="w-[38%] px-4 py-3 font-medium text-[var(--ink)]">
+                            <td className="w-[32%] px-4 py-3 font-medium text-[var(--ink)]">
                               {task.name}
                             </td>
-                            <td className="w-[26%] px-4 py-3">
+                            <td className="w-[24%] px-4 py-3">
                               <div className="flex flex-col gap-1">
                                 <select
                                   className="w-full rounded-lg border border-black/10 bg-white px-2 py-1 text-sm"
@@ -2484,7 +2577,7 @@ const HouseConfigurator: React.FC = () => {
                                 </span>
                               </div>
                             </td>
-                            <td className="w-[18%] px-4 py-3">
+                            <td className="w-[16%] px-4 py-3">
                               <button
                                 type="button"
                                 onClick={() => toggleModuleApplies(task.id)}
@@ -2510,29 +2603,47 @@ const HouseConfigurator: React.FC = () => {
                                   {state.applies ? 'Aplica' : 'No aplica'}
                               </button>
                             </td>
-                            <td className="w-[18%] px-4 py-3">
+                            <td className="w-[14%] px-4 py-3">
                               {state.applies ? (
                                 <div className="flex items-center gap-2">
                                   <input
-                                      className="w-24 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm"
-                                      value={state.expectedMinutes}
-                                      onChange={(event) =>
-                                        updateModuleExpectedMinutes(task.id, event.target.value)
-                                      }
-                                      placeholder="0"
-                                    />
-                                    <span className="text-xs text-[var(--ink-muted)]">min</span>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-[var(--ink-muted)]">N/A</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                    className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm"
+                                    value={state.expectedMinutes}
+                                    onChange={(event) =>
+                                      updateModuleExpectedMinutes(task.id, event.target.value)
+                                    }
+                                    placeholder="0"
+                                  />
+                                  <span className="text-xs text-[var(--ink-muted)]">min</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-[var(--ink-muted)]">N/A</span>
+                              )}
+                            </td>
+                            <td className="w-[14%] px-4 py-3">
+                              {state.applies ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1 text-right text-sm"
+                                    value={state.expectedHeadcount}
+                                    onChange={(event) =>
+                                      updateModuleExpectedHeadcount(task.id, event.target.value)
+                                    }
+                                    placeholder="1"
+                                    inputMode="numeric"
+                                  />
+                                  <span className="text-xs text-[var(--ink-muted)]">pers</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-[var(--ink-muted)]">N/A</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
                 </section>
               ))}
             </div>
