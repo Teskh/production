@@ -41,11 +41,23 @@ import QCChecks from './pages/admin/quality/QCChecks';
 import DaySummary from './pages/utility/DaySummary';
 import GeneralOverview from './pages/utility/GeneralOverview';
 import FloorStatus from './pages/utility/floorStatus';
-import { isSysadminUser, useAdminSession } from './layouts/AdminLayoutContext';
+import {
+  canViewAssistanceDashboard,
+  isSysadminUser,
+  useAdminSession,
+} from './layouts/AdminLayoutContext';
 
 const SysadminOnlyRoute = ({ element }: { element: ReactElement }) => {
   const admin = useAdminSession();
   if (!isSysadminUser(admin)) {
+    return <Navigate to="/admin/dashboards" replace />;
+  }
+  return element;
+};
+
+const AssistanceDashboardRoute = ({ element }: { element: ReactElement }) => {
+  const admin = useAdminSession();
+  if (!canViewAssistanceDashboard(admin)) {
     return <Navigate to="/admin/dashboards" replace />;
   }
   return element;
@@ -119,7 +131,7 @@ function App() {
           <Route path="dashboards/station-adherence" element={<DashboardTaskStationAdherence />} />
           <Route
             path="dashboards/assistance"
-            element={<SysadminOnlyRoute element={<DashboardAssistance />} />}
+            element={<AssistanceDashboardRoute element={<DashboardAssistance />} />}
           />
           <Route
             path="dashboards/plant-view"

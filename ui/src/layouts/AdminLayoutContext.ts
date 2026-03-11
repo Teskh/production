@@ -44,3 +44,7 @@ export const useAdminSession = (): AdminSession => {
 export const isSysadminUser = (admin: Pick<AdminSession, 'first_name' | 'last_name'>): boolean =>
   admin.first_name.trim().toLowerCase() === 'sysadmin' &&
   admin.last_name.trim().toLowerCase() === 'sysadmin';
+
+export const canViewAssistanceDashboard = (
+  admin: Pick<AdminSession, 'first_name' | 'last_name' | 'role'>
+): boolean => isSysadminUser(admin) || admin.role.trim().toLowerCase() === 'mc senior';

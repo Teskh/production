@@ -12,7 +12,12 @@ import {
   Timer,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { isSysadminUser, useAdminHeader, useAdminSession } from '../../../layouts/AdminLayoutContext';
+import {
+  canViewAssistanceDashboard,
+  isSysadminUser,
+  useAdminHeader,
+  useAdminSession,
+} from '../../../layouts/AdminLayoutContext';
 
 type DashboardCard = {
   id: string;
@@ -23,6 +28,7 @@ type DashboardCard = {
   tags: string[];
   icon: React.ElementType;
   sysadminOnly?: boolean;
+  assistanceAccessOnly?: boolean;
 };
 
 const dashboards: DashboardCard[] = [
@@ -96,7 +102,7 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Personal', 'GeoVictoria', 'Actividad'],
     icon: Clock,
-    sysadminOnly: true,
+    assistanceAccessOnly: true,
   },
 ];
 
@@ -127,6 +133,7 @@ const Dashboards: React.FC = () => {
   const admin = useAdminSession();
   const [favorites, setFavorites] = useState<string[]>(getStoredFavorites);
   const isSysadmin = isSysadminUser(admin);
+  const canViewAssistance = canViewAssistanceDashboard(admin);
 
   useEffect(() => {
     setHeader({
@@ -140,8 +147,17 @@ const Dashboards: React.FC = () => {
   }, [favorites]);
 
   const visibleDashboards = useMemo(
-    () => dashboards.filter((dashboard) => !dashboard.sysadminOnly || isSysadmin),
-    [isSysadmin],
+    () =>
+      dashboards.filter((dashboard) => {
+        if (dashboard.sysadminOnly && !isSysadmin) {
+          return false;
+        }
+        if (dashboard.assistanceAccessOnly && !canViewAssistance) {
+          return false;
+        }
+        return true;
+      }),
+    [canViewAssistance, isSysadmin],
   );
 
   const favoriteDashboards = useMemo(
