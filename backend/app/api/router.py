@@ -9,11 +9,9 @@ from app.api.routes import (
     geovictoria,
     house_params,
     house_types,
-    line_attendance_throughput,
     panel_definitions,
     panel_linear_meters,
     panel_task_history,
-    performance,
     reports,
     task_station_adherence,
     task_history,
@@ -49,11 +47,6 @@ api_router.include_router(qc_config.router, prefix="/qc", tags=["qc-config"])
 api_router.include_router(qc_runtime.router, prefix="/qc", tags=["qc-runtime"])
 api_router.include_router(house_types.router, prefix="/house-types", tags=["house-types"])
 api_router.include_router(
-    line_attendance_throughput.router,
-    prefix="/line-attendance-throughput",
-    tags=["line-attendance-throughput"],
-)
-api_router.include_router(
     panel_definitions.router, prefix="/panel-definitions", tags=["panel-definitions"]
 )
 api_router.include_router(
@@ -66,7 +59,6 @@ api_router.include_router(
     prefix="/panel-task-history",
     tags=["panel-task-history"],
 )
-api_router.include_router(performance.router, prefix="/performance", tags=["performance"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(
     task_station_adherence.router,

@@ -6,12 +6,6 @@ import QRCodeScannerModal from '../components/QRCodeScannerModal';
 import PanelStationGoalPanel from '../components/PanelStationGoalPanel';
 import type { StationContext } from '../utils/stationContext';
 import {
-  createRequestId,
-  parseServerTimingDuration,
-  trackApiPerformance,
-  trackPageLoadPerformance,
-} from '../utils/perfTelemetry';
-import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
   STATION_CONTEXT_STORAGE_KEY,
   formatStationContext,
@@ -21,10 +15,22 @@ import {
   isStationInContext,
   parseStationContext,
 } from '../utils/stationContext';
+import {
+  STATION_CHANGE_AUTH_WINDOW_MS,
+  readStationChangeAuthExpiresAt,
+  readStationChangeProtectionEnabled,
+  writeStationChangeAuthExpiresAt,
+} from '../utils/stationChangeProtection';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QR_SCANNING_STORAGE_KEY = 'login_qr_scanning_enabled';
-const LOGIN_PAGE_PATH = '/login';
+
+const createRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+};
 
 type Station = {
   id: number;
@@ -137,6 +143,41 @@ type TaskCoverage = {
   moduleUnassigned: boolean;
 };
 
+type PendingStationChangeAction =
+  | {
+      type: 'group';
+      context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number };
+      label: string;
+    }
+  | {
+      type: 'specific';
+      stationId: number;
+      label: string;
+    };
+
+type PendingStationChangeRequest =
+  | {
+      type: 'group';
+      context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number };
+    }
+  | {
+      type: 'specific';
+      stationId: number;
+    };
+
+const splitAdminFullName = (
+  value: string
+): { firstName: string; lastName: string } | null => {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) {
+    return null;
+  }
+  return {
+    firstName: parts[0] ?? '',
+    lastName: parts.slice(1).join(' '),
+  };
+};
+
 const buildTaskCoverage = (tasks: TaskDefinition[]): TaskCoverage => {
   const coverage: TaskCoverage = {
     panelSequences: new Set<number>(),
@@ -184,38 +225,13 @@ const buildHeaders = (options: RequestInit): Headers => {
 };
 
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-  const method = (options.method ?? 'GET').toUpperCase();
   const requestId = createRequestId();
   const headers = buildHeaders(options);
   headers.set('x-request-id', requestId);
-  const startedAt = performance.now();
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      headers,
-      credentials: 'include',
-    });
-  } catch (error) {
-    trackApiPerformance({
-      pagePath: LOGIN_PAGE_PATH,
-      apiPath: path,
-      method,
-      durationMs: performance.now() - startedAt,
-      ok: false,
-      requestId,
-    });
-    throw error;
-  }
-  trackApiPerformance({
-    pagePath: LOGIN_PAGE_PATH,
-    apiPath: path,
-    method,
-    durationMs: performance.now() - startedAt,
-    serverDurationMs: parseServerTimingDuration(response.headers.get('server-timing')),
-    statusCode: response.status,
-    ok: response.ok,
-    requestId,
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
   });
   if (!response.ok) {
     const text = await response.text();
@@ -233,6 +249,26 @@ const parseStoredStationId = (value: string | null): number | null => {
   }
   const id = Number(value);
   return Number.isNaN(id) ? null : id;
+};
+
+const formatStationChangeTargetLabel = (
+  action: PendingStationChangeRequest,
+  stations: Station[]
+): string => {
+  if (action.type === 'specific') {
+    const station = stations.find((item) => item.id === action.stationId) ?? null;
+    return station ? formatStationLabel(station) : `Estacion ${action.stationId}`;
+  }
+  if (action.context.kind === 'panel_line') {
+    return 'Linea de paneles';
+  }
+  if (action.context.kind === 'aux') {
+    return 'Auxiliar';
+  }
+  if (action.context.kind === 'assembly_sequence') {
+    return `Ensamble - secuencia ${action.context.sequenceOrder}`;
+  }
+  return 'Cambio de contexto';
 };
 
 const resolveAuthErrorMessage = (
@@ -331,10 +367,23 @@ const Login: React.FC = () => {
     }
     return localStorage.getItem(QR_SCANNING_STORAGE_KEY) === 'true';
   });
+  const [stationChangeProtectionEnabled] = useState(() =>
+    readStationChangeProtectionEnabled()
+  );
+  const [stationChangeAuthExpiresAt, setStationChangeAuthExpiresAt] = useState<
+    number | null
+  >(() => readStationChangeAuthExpiresAt());
+  const [pendingStationChange, setPendingStationChange] =
+    useState<PendingStationChangeAction | null>(null);
+  const [stationChangeAuthOpen, setStationChangeAuthOpen] = useState(false);
+  const [stationChangeAuthName, setStationChangeAuthName] = useState('');
+  const [stationChangeAuthPin, setStationChangeAuthPin] = useState('');
+  const [stationChangeAuthSubmitting, setStationChangeAuthSubmitting] = useState(false);
+  const [stationChangeAuthError, setStationChangeAuthError] = useState<string | null>(
+    null
+  );
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
   const lastTapRef = useRef(0);
-  const loadTimerStartRef = useRef(performance.now());
-  const loadTimerReportedRef = useRef(false);
   const isTouchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -346,9 +395,27 @@ const Login: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!stationChangeAuthExpiresAt) {
+      return;
+    }
+    if (stationChangeAuthExpiresAt <= Date.now()) {
+      writeStationChangeAuthExpiresAt(null);
+      setStationChangeAuthExpiresAt(null);
+      return;
+    }
+    const timeoutMs = stationChangeAuthExpiresAt - Date.now();
+    const timeoutId = window.setTimeout(() => {
+      writeStationChangeAuthExpiresAt(null);
+      setStationChangeAuthExpiresAt(null);
+    }, timeoutMs);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [stationChangeAuthExpiresAt]);
+
+  useEffect(() => {
     const load = async () => {
       setLoading(true);
-      let ok = false;
       try {
         const taskPromise = apiRequest<TaskDefinition[]>('/api/task-definitions').then(
           (data) => ({ ok: true, data }),
@@ -403,20 +470,11 @@ const Login: React.FC = () => {
         } else if (normalizedContext.kind !== 'station' && !resolvedStationId) {
           setShowStationPicker(true);
         }
-        ok = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'No se pudo cargar la informacion de inicio de sesion.';
         setStatusMessage(message);
       } finally {
         setLoading(false);
-        if (!loadTimerReportedRef.current) {
-          trackPageLoadPerformance({
-            pagePath: LOGIN_PAGE_PATH,
-            durationMs: performance.now() - loadTimerStartRef.current,
-            ok,
-          });
-          loadTimerReportedRef.current = true;
-        }
       }
     };
     load();
@@ -586,7 +644,9 @@ const Login: React.FC = () => {
     resetWorkerSelection();
   };
 
-  const handleGroupContextSelect = (context: StationContext) => {
+  const applyGroupContextSelect = (
+    context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => {
     applyStationContext(context);
     setSelectedStationId(null);
     persistSpecificStationId(null);
@@ -594,13 +654,123 @@ const Login: React.FC = () => {
     setShowStationPicker(true);
   };
 
-  const handleSpecificStationSelect = (stationId: number) => {
+  const applySpecificStationSelect = (stationId: number) => {
     const context: StationContext = { kind: 'station', stationId };
     applyStationContext(context);
     setSelectedStationId(stationId);
     persistSpecificStationId(stationId);
     setShowSettings(false);
     setShowStationPicker(false);
+  };
+
+  const resetStationChangeAuthPrompt = () => {
+    setStationChangeAuthOpen(false);
+    setPendingStationChange(null);
+    setStationChangeAuthPin('');
+    setStationChangeAuthError(null);
+    setStationChangeAuthSubmitting(false);
+  };
+
+  const handleCloseSettings = () => {
+    setShowSettings(false);
+    resetStationChangeAuthPrompt();
+  };
+
+  const isStationChangeAlreadyApplied = (action: PendingStationChangeAction): boolean => {
+    if (action.type === 'specific') {
+      return (
+        stationContext?.kind === 'station' &&
+        stationContext.stationId === action.stationId &&
+        selectedStationId === action.stationId
+      );
+    }
+    return (
+      stationContext !== null &&
+      formatStationContext(stationContext) === formatStationContext(action.context) &&
+      selectedStationId === null
+    );
+  };
+
+  const applyPendingStationChange = (action: PendingStationChangeAction) => {
+    if (action.type === 'group') {
+      applyGroupContextSelect(action.context);
+      return;
+    }
+    applySpecificStationSelect(action.stationId);
+  };
+
+  const requestProtectedStationChange = (
+    action: PendingStationChangeRequest
+  ) => {
+    const resolvedAction: PendingStationChangeAction = {
+      ...action,
+      label: formatStationChangeTargetLabel(action, stations),
+    };
+    if (isStationChangeAlreadyApplied(resolvedAction)) {
+      return;
+    }
+    const expiresAt = readStationChangeAuthExpiresAt();
+    setStationChangeAuthExpiresAt(expiresAt);
+    if (
+      !stationChangeProtectionEnabled ||
+      (expiresAt !== null && expiresAt > Date.now())
+    ) {
+      applyPendingStationChange(resolvedAction);
+      return;
+    }
+    setPendingStationChange(resolvedAction);
+    setStationChangeAuthError(null);
+    setStationChangeAuthName('');
+    setStationChangeAuthPin('');
+    setStationChangeAuthOpen(true);
+  };
+
+  const handleGroupContextSelect = (
+    context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => {
+    requestProtectedStationChange({ type: 'group', context });
+  };
+
+  const handleSpecificStationSelect = (stationId: number) => {
+    requestProtectedStationChange({ type: 'specific', stationId });
+  };
+
+  const handleStationChangeAuthorization = async () => {
+    if (!pendingStationChange || stationChangeAuthSubmitting) {
+      return;
+    }
+    const parsedName = splitAdminFullName(stationChangeAuthName);
+    if (!parsedName) {
+      setStationChangeAuthError('Ingresa nombre y apellido.');
+      return;
+    }
+    setStationChangeAuthSubmitting(true);
+    setStationChangeAuthError(null);
+    try {
+      await apiRequest('/api/admin/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: parsedName.firstName,
+          last_name: parsedName.lastName,
+          pin: stationChangeAuthPin,
+        }),
+      });
+      const expiresAt = Date.now() + STATION_CHANGE_AUTH_WINDOW_MS;
+      writeStationChangeAuthExpiresAt(expiresAt);
+      setStationChangeAuthExpiresAt(expiresAt);
+      const action = pendingStationChange;
+      resetStationChangeAuthPrompt();
+      applyPendingStationChange(action);
+    } catch (error) {
+      const message = resolveAuthErrorMessage(
+        error,
+        'No se pudo validar el cambio de estacion.',
+        'Usuario o contrasena incorrectos. Intenta nuevamente.'
+      );
+      setStationChangeAuthError(message);
+    } finally {
+      setStationChangeAuthSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -1048,7 +1218,7 @@ const Login: React.FC = () => {
 
       <LoginSettings
         open={showSettings}
-        onClose={() => setShowSettings(false)}
+        onClose={handleCloseSettings}
         stationContext={stationContext}
         selectedStation={selectedStation}
         panelStations={panelStations}
@@ -1070,6 +1240,16 @@ const Login: React.FC = () => {
         onUseSysadminChange={handleSysadminToggle}
         qrScanningEnabled={qrScanningEnabled}
         onQrScanningChange={setQrScanningEnabled}
+        stationChangeAuthOpen={stationChangeAuthOpen}
+        stationChangeAuthTargetLabel={pendingStationChange?.label ?? null}
+        stationChangeAuthName={stationChangeAuthName}
+        stationChangeAuthPin={stationChangeAuthPin}
+        stationChangeAuthError={stationChangeAuthError}
+        stationChangeAuthSubmitting={stationChangeAuthSubmitting}
+        onStationChangeAuthNameChange={setStationChangeAuthName}
+        onStationChangeAuthPinChange={setStationChangeAuthPin}
+        onStationChangeAuthSubmit={handleStationChangeAuthorization}
+        onStationChangeAuthClose={resetStationChangeAuthPrompt}
       />
 
       <QRCodeScannerModal

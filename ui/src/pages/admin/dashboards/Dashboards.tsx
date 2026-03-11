@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
   ArrowUpRight,
   BarChart3,
   ClipboardList,
@@ -11,7 +10,6 @@ import {
   Ruler,
   Star,
   Timer,
-  TrendingUp,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { isSysadminUser, useAdminHeader, useAdminSession } from '../../../layouts/AdminLayoutContext';
@@ -70,17 +68,6 @@ const dashboards: DashboardCard[] = [
     icon: ClipboardList,
   },
   {
-    id: 'line-attendance-throughput',
-    name: 'Asistencia vs flujo de linea',
-    description:
-      'Cruza asistencia cacheada con produccion de paneles o movimiento de modulos por dia.',
-    path: '/admin/dashboards/line-attendance-throughput',
-    status: 'ready',
-    tags: ['Asistencia', 'Paneles', 'Modulos'],
-    icon: TrendingUp,
-    sysadminOnly: true,
-  },
-  {
     id: 'tasks-analysis',
     name: 'Analisis de tiempos de tareas',
     description:
@@ -101,17 +88,6 @@ const dashboards: DashboardCard[] = [
     icon: Route,
   },
   {
-    id: 'performance-rum',
-    name: 'Performance (RUM)',
-    description:
-      'Monitorea p50/p95 de carga y APIs por dispositivo real desplegado.',
-    path: '/admin/dashboards/performance',
-    status: 'ready',
-    tags: ['Rendimiento', 'Dispositivos', 'Latencia'],
-    icon: Activity,
-    sysadminOnly: true,
-  },
-  {
     id: 'assistance-activity',
     name: 'Asistencias y actividad',
     description:
@@ -125,6 +101,7 @@ const dashboards: DashboardCard[] = [
 ];
 
 const FAVORITES_KEY = 'admin.dashboards.favorites';
+
 const getStoredFavorites = (): string[] => {
   if (typeof window === 'undefined') {
     return [];

@@ -27,10 +27,7 @@ import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_ana
 import DashboardTaskStationAdherence from './pages/admin/dashboards/dashboard_task_station_adherence';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
-import DashboardPerformance from './pages/admin/dashboards/dashboard_performance';
-import DashboardLineAttendanceThroughput from './pages/admin/dashboards/dashboard_line_attendance_throughput';
 import Personnel from './pages/admin/personnel/Personnel';
-import LineStatus from './pages/admin/planning/LineStatus';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
 import Stations from './pages/admin/config/Stations';
 import HouseConfigurator from './pages/admin/config/HouseConfigurator';
@@ -88,10 +85,7 @@ function App() {
           <Route path="assistance" element={<Navigate to="/admin/workers" replace />} />
           
           {/* Planning */}
-          <Route
-            path="line-status"
-            element={<SysadminOnlyRoute element={<LineStatus />} />}
-          />
+          <Route path="line-status" element={<Navigate to="/admin/production-queue" replace />} />
           <Route path="production-queue" element={<ProductionQueue />} />
           
           {/* Config */}
@@ -133,11 +127,11 @@ function App() {
           />
           <Route
             path="dashboards/performance"
-            element={<SysadminOnlyRoute element={<DashboardPerformance />} />}
+            element={<Navigate to="/admin/dashboards" replace />}
           />
           <Route
             path="dashboards/line-attendance-throughput"
-            element={<SysadminOnlyRoute element={<DashboardLineAttendanceThroughput />} />}
+            element={<Navigate to="/admin/dashboards" replace />}
           />
         </Route>
 

@@ -12,9 +12,8 @@ from app.services.admin_bootstrap import SYSADMIN_FIRST_NAME, ensure_sysadmin_us
 router = APIRouter()
 
 
-@router.post("/login", response_model=AdminUserRead)
-def admin_login(
-    payload: AdminLoginRequest, response: Response, db: Session = Depends(get_db)
+def _authenticate_admin_user(
+    payload: AdminLoginRequest, db: Session, *, allow_inactive: bool = False
 ) -> AdminUser:
     normalized_first_name = payload.first_name.strip()
     normalized_last_name = payload.last_name.strip()
@@ -45,6 +44,20 @@ def admin_login(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
+
+    if not allow_inactive and not getattr(admin, "active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin user inactive",
+        )
+    return admin
+
+
+@router.post("/login", response_model=AdminUserRead)
+def admin_login(
+    payload: AdminLoginRequest, response: Response, db: Session = Depends(get_db)
+) -> AdminUser:
+    admin = _authenticate_admin_user(payload, db, allow_inactive=True)
     token = new_session_token()
     expires_at = session_expiry()
     session = AdminSession(
@@ -64,6 +77,13 @@ def admin_login(
         path="/",
     )
     return admin
+
+
+@router.post("/verify", response_model=AdminUserRead)
+def admin_verify(
+    payload: AdminLoginRequest, db: Session = Depends(get_db)
+) -> AdminUser:
+    return _authenticate_admin_user(payload, db)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

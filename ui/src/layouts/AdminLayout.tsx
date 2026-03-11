@@ -52,10 +52,7 @@ const AdminLayout: React.FC = () => {
     },
     {
       title: 'Planeacion y Produccion',
-      items: [
-        { name: 'Estado (pendiente)', path: '/admin/line-status', icon: Home, sysadminOnly: true },
-        { name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers },
-      ].filter((item) => !item.sysadminOnly || isSysadmin),
+      items: [{ name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers }],
     },
     {
       title: 'Definicion de Producto',

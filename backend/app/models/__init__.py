@@ -7,7 +7,6 @@ from app.models.house import (
     HouseType,
     PanelDefinition,
 )
-from app.models.performance import PerformanceEvent
 from app.models.qc import (
     MediaAsset,
     QCApplicability,
@@ -61,7 +60,6 @@ __all__ = [
     "MediaAsset",
     "PanelDefinition",
     "PanelUnit",
-    "PerformanceEvent",
     "PauseReason",
     "QCApplicability",
     "QCApplicabilityHouseType",

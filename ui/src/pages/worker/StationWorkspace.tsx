@@ -15,12 +15,6 @@ import clsx from 'clsx';
 import { useNavigate } from 'react-router-dom';
 import type { StationContext } from '../../utils/stationContext';
 import {
-  createRequestId,
-  parseServerTimingDuration,
-  trackApiPerformance,
-  trackPageLoadPerformance,
-} from '../../utils/perfTelemetry';
-import {
   AUTOFOCUS_PREV_CONTEXT_KEY,
   SPECIFIC_STATION_ID_STORAGE_KEY,
   STATION_CONTEXT_STORAGE_KEY,
@@ -35,7 +29,13 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const MAX_W1_PLANNED = 10;
-const WORKER_WORKSPACE_PATH = '/worker/stationWorkspace';
+
+const createRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+};
 
 type Worker = {
   id: number;
@@ -259,38 +259,13 @@ const buildHeaders = (options: RequestInit): Headers => {
 };
 
 const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-  const method = (options.method ?? 'GET').toUpperCase();
   const requestId = createRequestId();
   const headers = buildHeaders(options);
   headers.set('x-request-id', requestId);
-  const startedAt = performance.now();
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      headers,
-      credentials: 'include',
-    });
-  } catch (error) {
-    trackApiPerformance({
-      pagePath: WORKER_WORKSPACE_PATH,
-      apiPath: path,
-      method,
-      durationMs: performance.now() - startedAt,
-      ok: false,
-      requestId,
-    });
-    throw error;
-  }
-  trackApiPerformance({
-    pagePath: WORKER_WORKSPACE_PATH,
-    apiPath: path,
-    method,
-    durationMs: performance.now() - startedAt,
-    serverDurationMs: parseServerTimingDuration(response.headers.get('server-timing')),
-    statusCode: response.status,
-    ok: response.ok,
-    requestId,
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
   });
   if (!response.ok) {
     const text = await response.text();
@@ -425,8 +400,6 @@ const StationWorkspace: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const snapshotRequestIdRef = useRef(0);
-  const loadTimerStartRef = useRef(performance.now());
-  const loadTimerReportedRef = useRef(false);
   const crewWorkersLoadingRef = useRef(false);
   const quickCrewPrefetchAttemptedRef = useRef(false);
   const lastSelectedWorkItemRef = useRef<{
@@ -890,7 +863,6 @@ const StationWorkspace: React.FC = () => {
   useEffect(() => {
     const bootstrap = async () => {
       setLoading(true);
-      let ok = false;
       try {
         const session = await apiRequest<WorkerSessionResponse>('/api/worker-sessions/me');
         setWorker(session.worker);
@@ -950,21 +922,12 @@ const StationWorkspace: React.FC = () => {
           persistSpecificStationId(null);
         }
         setError(null);
-        ok = true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Sesion de trabajador expirada.';
         setError(message);
         navigate('/login');
       } finally {
         setLoading(false);
-        if (!loadTimerReportedRef.current) {
-          trackPageLoadPerformance({
-            pagePath: WORKER_WORKSPACE_PATH,
-            durationMs: performance.now() - loadTimerStartRef.current,
-            ok,
-          });
-          loadTimerReportedRef.current = true;
-        }
       }
     };
     bootstrap();

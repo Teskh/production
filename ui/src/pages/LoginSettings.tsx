@@ -29,7 +29,12 @@ type LoginSettingsProps = {
   panelStations: Station[];
   assemblyStations: Station[];
   assemblySequenceOrders: number[];
-  onSelectGroupContext: (context: StationContext) => void;
+  onSelectGroupContext: (
+    context:
+      | { kind: 'panel_line' }
+      | { kind: 'aux' }
+      | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => void;
   onSelectSpecificStation: (stationId: number) => void;
   onOpenQc: () => void;
   onAdminLogin: () => void;
@@ -45,6 +50,16 @@ type LoginSettingsProps = {
   onUseSysadminChange: (checked: boolean) => void;
   qrScanningEnabled: boolean;
   onQrScanningChange: (enabled: boolean) => void;
+  stationChangeAuthOpen: boolean;
+  stationChangeAuthTargetLabel: string | null;
+  stationChangeAuthName: string;
+  stationChangeAuthPin: string;
+  stationChangeAuthError: string | null;
+  stationChangeAuthSubmitting: boolean;
+  onStationChangeAuthNameChange: (value: string) => void;
+  onStationChangeAuthPinChange: (value: string) => void;
+  onStationChangeAuthSubmit: () => void;
+  onStationChangeAuthClose: () => void;
   onClose: () => void;
 };
 
@@ -143,6 +158,16 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   onUseSysadminChange,
   qrScanningEnabled,
   onQrScanningChange,
+  stationChangeAuthOpen,
+  stationChangeAuthTargetLabel,
+  stationChangeAuthName,
+  stationChangeAuthPin,
+  stationChangeAuthError,
+  stationChangeAuthSubmitting,
+  onStationChangeAuthNameChange,
+  onStationChangeAuthPinChange,
+  onStationChangeAuthSubmit,
+  onStationChangeAuthClose,
   onClose,
 }) => {
   const initialState = buildInitialContextState(stationContext, selectedStation);
@@ -192,6 +217,10 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     () => resolveAdminErrorMessage(adminError),
     [adminError]
   );
+  const resolvedStationChangeAuthError = useMemo(
+    () => resolveAdminErrorMessage(stationChangeAuthError),
+    [stationChangeAuthError]
+  );
   const assemblySequenceLabelByOrder = useMemo(() => {
     const entries = new Map<number, Set<string>>();
     assemblyStations.forEach((station) => {
@@ -225,6 +254,14 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
       return;
     }
     onAdminLogin();
+  };
+
+  const handleStationChangeAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (stationChangeAuthSubmitting) {
+      return;
+    }
+    onStationChangeAuthSubmit();
   };
 
   useEffect(() => {
@@ -289,7 +326,7 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
           &#8203;
         </span>
 
-        <div className="inline-block w-full transform overflow-hidden rounded-xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:align-middle sm:max-w-5xl">
+        <div className="relative inline-block w-full transform overflow-hidden rounded-xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:align-middle sm:max-w-5xl">
           <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Ajustes</h2>
@@ -666,6 +703,90 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
             </section>
           </div>
         </div>
+
+        {stationChangeAuthOpen && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/35 px-4 py-6">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+                    Validacion requerida
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                    Autorizar cambio de estacion
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {stationChangeAuthTargetLabel
+                      ? `Confirma un admin para cambiar a ${stationChangeAuthTargetLabel}.`
+                      : 'Confirma un admin para aplicar este cambio.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onStationChangeAuthClose}
+                  className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Cerrar validacion de estacion"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form className="mt-5 space-y-3" onSubmit={handleStationChangeAuthSubmit}>
+                {resolvedStationChangeAuthError && (
+                  <div className="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                    {resolvedStationChangeAuthError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Usuario
+                  </label>
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                    placeholder="Nombre Apellido"
+                    value={stationChangeAuthName}
+                    onChange={(event) => onStationChangeAuthNameChange(event.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    PIN
+                  </label>
+                  <input
+                    type="password"
+                    className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                    value={stationChangeAuthPin}
+                    onChange={(event) => onStationChangeAuthPinChange(event.target.value)}
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={onStationChangeAuthClose}
+                    className="rounded-md px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={stationChangeAuthSubmitting}
+                    className={`rounded-md px-4 py-2 text-sm font-semibold text-white transition ${
+                      stationChangeAuthSubmitting
+                        ? 'bg-slate-400'
+                        : 'bg-slate-900 hover:bg-slate-800'
+                    }`}
+                  >
+                    {stationChangeAuthSubmitting ? 'Validando...' : 'Autorizar cambio'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

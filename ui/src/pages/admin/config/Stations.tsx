@@ -2,6 +2,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Camera, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import DashboardShiftEstimation from './dashboard_shift_estimation';
+import {
+  readStationChangeProtectionEnabled,
+  writeStationChangeProtectionEnabled,
+} from '../../../utils/stationChangeProtection';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -81,6 +85,9 @@ const Stations: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'builder' | 'shift-estimation'>('builder');
   const [cameraModalStation, setCameraModalStation] = useState<Station | null>(null);
+  const [stationChangeProtectionEnabled, setStationChangeProtectionEnabled] = useState(
+    () => readStationChangeProtectionEnabled()
+  );
 
   useEffect(() => {
     setHeader({
@@ -347,6 +354,14 @@ const Stations: React.FC = () => {
     setCameraModalStation(null);
   };
 
+  const handleStationChangeProtectionToggle = () => {
+    setStationChangeProtectionEnabled((prev) => {
+      const next = !prev;
+      writeStationChangeProtectionEnabled(next);
+      return next;
+    });
+  };
+
   const cameraStreamUrl = useMemo(
     () =>
       cameraModalStation?.id
@@ -594,6 +609,50 @@ const Stations: React.FC = () => {
               )}
 
               <div className="mt-4 space-y-4">
+                <div className="rounded-2xl border border-black/10 bg-black/5 px-4 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                        Dispositivo
+                      </p>
+                      <h3 className="mt-1 text-sm font-semibold text-[var(--ink)]">
+                        Proteger cambio de estacion
+                      </h3>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        Cuando esta activo, cambiar la estacion desde login requiere validacion de
+                        admin. Solo afecta ese dispositivo.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={stationChangeProtectionEnabled}
+                      onClick={handleStationChangeProtectionToggle}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
+                        stationChangeProtectionEnabled
+                          ? 'border-[var(--ink)] bg-[var(--ink)]'
+                          : 'border-black/10 bg-black/10'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                          stationChangeProtectionEnabled ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        stationChangeProtectionEnabled ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    {stationChangeProtectionEnabled
+                      ? 'Activo por defecto en este dispositivo'
+                      : 'Desactivado para desarrollo en este dispositivo'}
+                  </div>
+                </div>
+
                 <label className="text-sm text-[var(--ink-muted)]">
                   Nombre visible
                   <input
