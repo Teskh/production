@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,9 @@ class Worker(Base):
     pin: Mapped[str | None] = mapped_column(String(10), nullable=True)
     login_required: Mapped[bool] = mapped_column(Boolean, default=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    adjusted_times: Mapped[float | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
     assigned_station_ids: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )

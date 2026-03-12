@@ -9,12 +9,14 @@ class StationReportPoint(BaseModel):
     key: str
     productive_ratio: float | None = None
     expected_ratio: float | None = None
+    adjusted_productive_ratio: float | None = None
 
 
 class WorkerReportMetric(BaseModel):
     label: str
     productive_ratio: float | None = None
     expected_ratio: float | None = None
+    adjusted_productive_ratio: float | None = None
     days_with_data: int = Field(default=0, ge=0)
     days_total: int = Field(default=0, ge=0)
 
@@ -26,6 +28,7 @@ class StationReportSection(BaseModel):
     workers_with_data: int = Field(default=0, ge=0)
     average_productive: float | None = None
     average_expected: float | None = None
+    average_adjusted_productive: float | None = None
     rows: list[StationReportPoint] = Field(default_factory=list)
     workers: list[WorkerReportMetric] = Field(default_factory=list)
 
@@ -46,6 +49,7 @@ class StationAssistancePdfRequest(BaseModel):
     generated_at: datetime | None = None
     global_productive: float | None = None
     global_expected: float | None = None
+    global_adjusted_productive: float | None = None
     total_workers: int = Field(default=0, ge=0)
     worker_productive_brackets: WorkerProductiveBracketSummary | None = None
     stations: list[StationReportSection] = Field(default_factory=list)

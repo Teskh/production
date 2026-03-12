@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Filter,
+  Info,
   Plus,
   Printer,
   Search,
@@ -22,6 +23,7 @@ type Worker = {
   pin: string | null;
   login_required: boolean;
   active: boolean;
+  adjusted_times: number | null;
   assigned_station_ids: number[] | null;
   supervisor_id: number | null;
 };
@@ -57,6 +59,7 @@ type WorkerDraft = {
   pin: string;
   login_required: boolean;
   active: boolean;
+  adjusted_times: string;
   assigned_station_ids: number[];
   supervisor_id: number | null;
   skill_ids: number[];
@@ -103,6 +106,7 @@ const emptyWorkerDraft = (): WorkerDraft => ({
   pin: '',
   login_required: true,
   active: true,
+  adjusted_times: '',
   assigned_station_ids: [],
   supervisor_id: null,
   skill_ids: [],
@@ -125,6 +129,10 @@ const buildDraftFromWorker = (worker: Worker): WorkerDraft => ({
   pin: worker.pin ?? '',
   login_required: worker.login_required,
   active: worker.active,
+  adjusted_times:
+    worker.adjusted_times !== null && worker.adjusted_times !== undefined
+      ? String(worker.adjusted_times)
+      : '',
   assigned_station_ids: worker.assigned_station_ids ?? [],
   supervisor_id: worker.supervisor_id ?? null,
   skill_ids: [],
@@ -186,6 +194,16 @@ const normalizeSearchValue = (value: string): string =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+
+const formatAdjustedTimes = (value: number | null): string => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'Sin dato';
+  }
+  return value.toLocaleString('es-CL', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+};
 
 const splitSearchTokens = (value: string): string[] =>
   normalizeSearchValue(value).split(/\s+/).filter(Boolean);
@@ -835,6 +853,15 @@ const Workers: React.FC<WorkersProps> = ({
     }
     setSaving(true);
     setStatusMessage(null);
+    const adjustedTimesValue = working.adjusted_times.trim();
+    if (adjustedTimesValue) {
+      const parsedAdjustedTimes = Number(adjustedTimesValue.replace(',', '.'));
+      if (!Number.isFinite(parsedAdjustedTimes) || parsedAdjustedTimes < 0) {
+        setStatusMessage('El tiempo ajustado debe ser un numero mayor o igual a 0.');
+        setSaving(false);
+        return;
+      }
+    }
     const payload = {
       geovictoria_id: working.geovictoria_id.trim(),
       geovictoria_identifier: working.geovictoria_identifier.trim(),
@@ -843,6 +870,9 @@ const Workers: React.FC<WorkersProps> = ({
       pin: working.pin.trim() ? working.pin.trim() : null,
       login_required: working.login_required,
       active: working.active,
+      adjusted_times: adjustedTimesValue
+        ? Number(adjustedTimesValue.replace(',', '.'))
+        : null,
       assigned_station_ids: working.assigned_station_ids,
       supervisor_id: working.supervisor_id ?? null,
     };
@@ -1273,6 +1303,7 @@ const Workers: React.FC<WorkersProps> = ({
                     ? supervisorNameById.get(worker.supervisor_id) ?? 'Supervisor desconocido'
                     : 'Sin asignar';
                 const isSelected = selectedWorkerId === worker.id;
+                const adjustedTimesLabel = formatAdjustedTimes(worker.adjusted_times);
 
                 return (
                   <div
@@ -1297,6 +1328,7 @@ const Workers: React.FC<WorkersProps> = ({
                       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
                          <span className="truncate">Estaciones: {stationsLabel}</span>
                          <span className="truncate">Sup: {supervisorLabel}</span>
+                         <span className="truncate">Tiempo ajustado: {adjustedTimesLabel}</span>
                          <span className="truncate text-gray-400">
                            RUT: {worker.geovictoria_identifier || 'Sin vincular'}
                          </span>
@@ -1429,6 +1461,28 @@ const Workers: React.FC<WorkersProps> = ({
                     </select>
                   </label>
                 </div>
+
+                <label className="text-sm text-[var(--ink-muted)]">
+                  <span className="flex items-center gap-1.5">
+                    Tiempo ajustado
+                    <span
+                      className="inline-flex cursor-help text-[var(--ink-muted)]"
+                      title="Tiempos diario esperado asociado a tareas vinculables a la aplicación"
+                    >
+                      <Info className="h-3.5 w-3.5" />
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                    placeholder="Ej: 7.5"
+                    value={draft?.adjusted_times ?? ''}
+                    onChange={(event) => updateDraft({ adjusted_times: event.target.value })}
+                  />
+                </label>
 
                 <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
                   <input

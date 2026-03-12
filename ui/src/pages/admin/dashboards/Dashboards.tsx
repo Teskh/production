@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowUpRight,
   BarChart3,
+  Camera,
   ClipboardList,
   Clock,
   History,
@@ -82,6 +83,16 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Paneles', 'Estaciones', 'Tareas'],
     icon: Timer,
+  },
+  {
+    id: 'task-footage',
+    name: 'Tareas con footage CCTV',
+    description:
+      'Cruza tareas finalizadas con segmentos de respaldo CCTV y abre el video del rango ejecutado.',
+    path: '/admin/dashboards/task-footage',
+    status: 'ready',
+    tags: ['Tareas', 'CCTV', 'Playback'],
+    icon: Camera,
   },
   {
     id: 'station-adherence',

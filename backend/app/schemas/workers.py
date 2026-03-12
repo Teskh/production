@@ -11,6 +11,7 @@ class WorkerBase(BaseModel):
     pin: str | None = None
     login_required: bool = True
     active: bool = True
+    adjusted_times: float | None = None
     assigned_station_ids: list[int] | None = None
     supervisor_id: int | None = None
 
@@ -28,6 +29,7 @@ class WorkerUpdate(BaseModel):
     pin: str | None = None
     login_required: bool | None = None
     active: bool | None = None
+    adjusted_times: float | None = None
     assigned_station_ids: list[int] | None = None
     supervisor_id: int | None = None
 

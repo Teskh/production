@@ -8,6 +8,7 @@ const LOAD_CONCURRENCY = 3;
 const GEO_REQUEST_DELAY_MS = 400;
 const REPORT_MAX_DAYS_BACK = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const ADJUSTED_PRODUCTIVE_COLOR = '#ea580c';
 
 const clampDaysBack = (value) => {
   const numeric = Math.round(Number(value));
@@ -135,22 +136,41 @@ const aggregateStationRows = (workerSummaries) => {
   workerSummaries.forEach((summary) => {
     const rows = summary?.rangeIndicators?.rows || [];
     rows.forEach((row) => {
-      if (!Number.isFinite(row.productiveRatio) || !Number.isFinite(row.expectedRatio)) return;
+      if (
+        !Number.isFinite(row.productiveRatio) &&
+        !Number.isFinite(row.expectedRatio) &&
+        !Number.isFinite(row.adjustedProductiveRatio)
+      ) {
+        return;
+      }
       const presenceWeightRaw = Number(row?.indicators?.presenceNetSeconds);
       const presenceWeight =
         Number.isFinite(presenceWeightRaw) && presenceWeightRaw > 0 ? presenceWeightRaw : 0;
+      const adjustedWeightRaw = Number(row?.indicators?.adjustedPresenceNetSeconds);
+      const adjustedWeight =
+        Number.isFinite(adjustedWeightRaw) && adjustedWeightRaw > 0 ? adjustedWeightRaw : 0;
       const entry = map.get(row.key) || {
         key: row.key,
         label: row.label,
         dateObj: row.dateObj,
         productiveWeighted: 0,
         expectedWeighted: 0,
-        weightTotal: 0,
+        adjustedProductiveWeighted: 0,
+        productiveWeightTotal: 0,
+        expectedWeightTotal: 0,
+        adjustedWeightTotal: 0,
       };
-      if (presenceWeight > 0) {
+      if (presenceWeight > 0 && Number.isFinite(row.productiveRatio)) {
         entry.productiveWeighted += row.productiveRatio * presenceWeight;
+        entry.productiveWeightTotal += presenceWeight;
+      }
+      if (presenceWeight > 0 && Number.isFinite(row.expectedRatio)) {
         entry.expectedWeighted += row.expectedRatio * presenceWeight;
-        entry.weightTotal += presenceWeight;
+        entry.expectedWeightTotal += presenceWeight;
+      }
+      if (adjustedWeight > 0 && Number.isFinite(row.adjustedProductiveRatio)) {
+        entry.adjustedProductiveWeighted += row.adjustedProductiveRatio * adjustedWeight;
+        entry.adjustedWeightTotal += adjustedWeight;
       }
       map.set(row.key, entry);
     });
@@ -162,8 +182,15 @@ const aggregateStationRows = (workerSummaries) => {
       key: entry.key,
       label: entry.label,
       dateObj: entry.dateObj,
-      productiveRatio: entry.weightTotal ? entry.productiveWeighted / entry.weightTotal : null,
-      expectedRatio: entry.weightTotal ? entry.expectedWeighted / entry.weightTotal : null,
+      productiveRatio: entry.productiveWeightTotal
+        ? entry.productiveWeighted / entry.productiveWeightTotal
+        : null,
+      expectedRatio: entry.expectedWeightTotal
+        ? entry.expectedWeighted / entry.expectedWeightTotal
+        : null,
+      adjustedProductiveRatio: entry.adjustedWeightTotal
+        ? entry.adjustedProductiveWeighted / entry.adjustedWeightTotal
+        : null,
     }));
 };
 
@@ -221,6 +248,8 @@ const buildPdfPayload = ({
   let globalPresence = 0;
   let globalProductive = 0;
   let globalExpected = 0;
+  let globalAdjustedPresence = 0;
+  let globalAdjustedProductive = 0;
   let totalWorkers = 0;
   const workerProductiveBrackets = createWorkerProductiveBracketSummary();
 
@@ -242,6 +271,11 @@ const buildPdfPayload = ({
       globalPresence += presence;
       globalProductive += Number(totals?.productiveSeconds) || 0;
       globalExpected += Number(totals?.expectedSecondsTotal) || 0;
+      const adjustedPresence = Number(totals?.adjustedPresenceNetSeconds);
+      if (Number.isFinite(adjustedPresence) && adjustedPresence > 0) {
+        globalAdjustedPresence += adjustedPresence;
+        globalAdjustedProductive += Number(totals?.adjustedProductiveSeconds) || 0;
+      }
     });
 
     return {
@@ -251,11 +285,13 @@ const buildPdfPayload = ({
       workers_with_data: Number(summary?.workersWithData) || 0,
       average_productive: toFiniteOrNull(summary?.averageProductive),
       average_expected: toFiniteOrNull(summary?.averageExpected),
+      average_adjusted_productive: toFiniteOrNull(summary?.averageAdjustedProductive),
       rows: Array.isArray(summary?.rows)
         ? summary.rows.map((row) => ({
             key: row.key,
             productive_ratio: toFiniteOrNull(row.productiveRatio),
             expected_ratio: toFiniteOrNull(row.expectedRatio),
+            adjusted_productive_ratio: toFiniteOrNull(row.adjustedProductiveRatio),
           }))
         : [],
       workers: includeWorkers
@@ -265,6 +301,7 @@ const buildPdfPayload = ({
               label: summaryRow.workerLabel,
               productive_ratio: toFiniteOrNull(range.totalProductiveRatio),
               expected_ratio: toFiniteOrNull(range.totalExpectedRatio),
+              adjusted_productive_ratio: toFiniteOrNull(range.totalAdjustedProductiveRatio),
               days_with_data: Number(range.daysWithData) || 0,
               days_total: Number(range.daysTotal) || 0,
             };
@@ -281,6 +318,8 @@ const buildPdfPayload = ({
     generated_at: new Date().toISOString(),
     global_productive: globalPresence > 0 ? globalProductive / globalPresence : null,
     global_expected: globalPresence > 0 ? globalExpected / globalPresence : null,
+    global_adjusted_productive:
+      globalAdjustedPresence > 0 ? globalAdjustedProductive / globalAdjustedPresence : null,
     total_workers: totalWorkers,
     worker_productive_brackets: includeWorkers ? workerProductiveBrackets : null,
     stations,
@@ -315,6 +354,7 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
 
   const productivePath = buildPath('productiveRatio');
   const expectedPath = buildPath('expectedRatio');
+  const adjustedProductivePath = buildPath('adjustedProductiveRatio');
 
   const handleMouseEnter = (row, idx, event) => {
     const rect = event.currentTarget.ownerSVGElement.getBoundingClientRect();
@@ -337,6 +377,9 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
         <line x1={padX} y1={padY + innerHeight} x2={padX + innerWidth} y2={padY + innerHeight} stroke="#cbd5e1" strokeWidth={0.5} />
         {productivePath && <path d={productivePath} fill="none" stroke="#16a34a" strokeWidth={1.5} />}
         {expectedPath && <path d={expectedPath} fill="none" stroke="#2563eb" strokeWidth={1.5} />}
+        {adjustedProductivePath && (
+          <path d={adjustedProductivePath} fill="none" stroke={ADJUSTED_PRODUCTIVE_COLOR} strokeWidth={1.5} />
+        )}
         {rows.map((row, idx) => {
           const x = xAt(idx);
           const isHovered = hovered?.key === row.key;
@@ -355,6 +398,14 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
               {Number.isFinite(row.expectedRatio) && (
                 <circle cx={x} cy={yAt(row.expectedRatio)} r={isHovered ? 4 : 2} fill="#2563eb" />
               )}
+              {Number.isFinite(row.adjustedProductiveRatio) && (
+                <circle
+                  cx={x}
+                  cy={yAt(row.adjustedProductiveRatio)}
+                  r={isHovered ? 4 : 2}
+                  fill={ADJUSTED_PRODUCTIVE_COLOR}
+                />
+              )}
             </g>
           );
         })}
@@ -371,6 +422,9 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
             </span>
             <span className="text-[#2563eb]">
               Cob: {Number.isFinite(hovered.expectedRatio) ? Math.round(hovered.expectedRatio * 100) + '%' : '—'}
+            </span>
+            <span style={{ color: ADJUSTED_PRODUCTIVE_COLOR }}>
+              Adj: {Number.isFinite(hovered.adjustedProductiveRatio) ? Math.round(hovered.adjustedProductiveRatio * 100) + '%' : '—'}
             </span>
           </div>
         </div>
@@ -532,7 +586,10 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
 
   const indicators = useMemo(() => {
     if (!day?.combinedDay) return day?.indicators;
-    const detailed = buildDailyIndicators(day.combinedDay, { includeBreakdown: true });
+    const detailed = buildDailyIndicators(day.combinedDay, {
+      includeBreakdown: true,
+      adjustedTimeHours: day?.adjustedTimeHours,
+    });
     if (!detailed) return day?.indicators;
     return detailed;
   }, [day]);
@@ -559,6 +616,10 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
   const expectedFraction = formatDebugFraction(
     indicators?.expectedSecondsTotal,
     indicators?.presenceNetSeconds
+  );
+  const adjustedProductiveFraction = formatDebugFraction(
+    indicators?.adjustedProductiveSeconds,
+    indicators?.adjustedPresenceNetSeconds
   );
   const activeUnionSeconds =
     Number.isFinite(indicators?.presenceNetSeconds) && Number.isFinite(indicators?.idleSeconds)
@@ -594,7 +655,7 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
 
         <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(96vh-5.25rem)]">
           {indicators && (
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tiempo productivo</p>
                 <HoverInfoMetric
@@ -669,6 +730,37 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
                     { label: 'Fraccion', value: expectedFraction },
                   ]}
                   rawLine={`ratio_crudo = ${formatDebugRatioValue(indicators.expectedRatio)}`}
+                />
+              </div>
+              <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">Productivo esperado</p>
+                <HoverInfoMetric
+                  label="Productivo esperado"
+                  value={formatPercent(indicators.adjustedProductiveRatio)}
+                  colorClass="text-orange-600"
+                  formulaLines={[
+                    'adjustedProductiveRatio = adjustedProductiveSeconds / adjustedPresenceNetSeconds',
+                    'adjustedPresenceNetSeconds = min(presenceNetSeconds, adjustedTimeSeconds)',
+                    'adjustedProductiveSeconds = min(productiveSeconds, adjustedPresenceNetSeconds)',
+                    'adjustedTimeSeconds = adjusted_times * 3600',
+                  ]}
+                  details={[
+                    { label: 'Entrada fichada', value: formatDebugTimeOfDay(attendanceEntry) },
+                    { label: 'Salida fichada', value: formatDebugTimeOfDay(attendanceExit) },
+                    { label: 'Presencia neta', value: debugSeconds(indicators.presenceNetSeconds) },
+                    { label: 'Jornada esperada', value: debugSeconds(indicators.adjustedTimeSeconds) },
+                    {
+                      label: 'Presencia neta usada (con tope)',
+                      value: debugSeconds(indicators.adjustedPresenceNetSeconds),
+                    },
+                    { label: 'Tiempo productivo', value: debugSeconds(indicators.productiveSeconds) },
+                    {
+                      label: 'Tiempo productivo usado (con tope)',
+                      value: debugSeconds(indicators.adjustedProductiveSeconds),
+                    },
+                    { label: 'Fraccion', value: adjustedProductiveFraction },
+                  ]}
+                  rawLine={`ratio_crudo = ${formatDebugRatioValue(indicators.adjustedProductiveRatio)}`}
                 />
               </div>
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
@@ -937,7 +1029,9 @@ const StationWideAssistanceTab = ({
         normalizeAttendance,
         buildActivityDays
       );
-      const rangeIndicators = buildRangeIndicators(combinedDays);
+      const rangeIndicators = buildRangeIndicators(combinedDays, {
+        adjustedTimeHours: worker.adjusted_times,
+      });
       const lastFullDay = pickLastFullDayRow(rangeIndicators.rows, todayKey);
 
       const warnings = Array.isArray(attendanceResponse?.warnings)
@@ -972,16 +1066,20 @@ const StationWideAssistanceTab = ({
     (workerSummaries) => {
       let productiveWeightedTotal = 0;
       let expectedWeightedTotal = 0;
+      let adjustedProductiveWeightedTotal = 0;
       let productiveWeight = 0;
       let expectedWeight = 0;
+      let adjustedProductiveWeight = 0;
       let workersWithData = 0;
 
       workerSummaries.forEach((summary) => {
         const range = summary?.rangeIndicators;
         const workerPresence = Number(range?.totals?.presenceNetSeconds);
+        const adjustedPresence = Number(range?.totals?.adjustedPresenceNetSeconds);
         if (!Number.isFinite(workerPresence) || workerPresence <= 0) return;
         const hasProductive = Number.isFinite(range?.totalProductiveRatio);
         const hasExpected = Number.isFinite(range?.totalExpectedRatio);
+        const hasAdjustedProductive = Number.isFinite(range?.totalAdjustedProductiveRatio);
         if (hasProductive) {
           productiveWeightedTotal += range.totalProductiveRatio * workerPresence;
           productiveWeight += workerPresence;
@@ -990,7 +1088,11 @@ const StationWideAssistanceTab = ({
           expectedWeightedTotal += range.totalExpectedRatio * workerPresence;
           expectedWeight += workerPresence;
         }
-        if (hasProductive || hasExpected) {
+        if (hasAdjustedProductive && Number.isFinite(adjustedPresence) && adjustedPresence > 0) {
+          adjustedProductiveWeightedTotal += range.totalAdjustedProductiveRatio * adjustedPresence;
+          adjustedProductiveWeight += adjustedPresence;
+        }
+        if (hasProductive || hasExpected || hasAdjustedProductive) {
           workersWithData += 1;
         }
       });
@@ -1000,6 +1102,9 @@ const StationWideAssistanceTab = ({
       return {
         averageProductive: productiveWeight ? productiveWeightedTotal / productiveWeight : null,
         averageExpected: expectedWeight ? expectedWeightedTotal / expectedWeight : null,
+        averageAdjustedProductive: adjustedProductiveWeight
+          ? adjustedProductiveWeightedTotal / adjustedProductiveWeight
+          : null,
         rows,
         lastFullDay,
         workersTotal: workerSummaries.length,
@@ -1348,7 +1453,7 @@ const StationWideAssistanceTab = ({
           <div>
             <h2 className="font-display text-lg text-[var(--ink)]">Vista por estación</h2>
             <p className="text-xs text-[var(--ink-muted)]">
-              Tiempo productivo y cobertura esperada por estación y trabajador.
+              Tiempo productivo, cobertura esperada y productivo esperado por estación y trabajador.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1357,6 +1462,9 @@ const StationWideAssistanceTab = ({
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
               <span className="inline-block h-2 w-3 rounded-sm bg-[#2563eb]" /> Cobertura
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
+              <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: ADJUSTED_PRODUCTIVE_COLOR }} /> Prod. esperado
             </span>
             <select
               className="ml-3 rounded-lg border border-black/10 bg-white px-2 py-1 text-xs text-[var(--ink)]"
@@ -1386,6 +1494,7 @@ const StationWideAssistanceTab = ({
               <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Grafico</th>
               <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Productivo</th>
               <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Cobertura</th>
+              <th className="px-4 py-2 text-center text-xs font-medium uppercase tracking-wider text-[var(--ink-muted)]">Prod. esperado</th>
               <th className="px-4 py-2 w-8"></th>
             </tr>
           </thead>
@@ -1428,6 +1537,11 @@ const StationWideAssistanceTab = ({
                       </span>
                     </td>
                     <td className="px-4 py-2 text-center">
+                      <span className="font-semibold text-[var(--ink)]">
+                        {cache?.loading ? '...' : formatPercent(summary?.averageAdjustedProductive)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-center">
                       {isOpen ? <ChevronUp className="h-4 w-4 text-[var(--ink-muted)]" /> : <ChevronDown className="h-4 w-4 text-[var(--ink-muted)]" />}
                     </td>
                   </tr>
@@ -1444,6 +1558,7 @@ const StationWideAssistanceTab = ({
                         indicators: row.indicators,
                         combinedDay,
                         workerName: workerLabel,
+                        adjustedTimeHours: workerSummary?.worker?.adjusted_times,
                       });
                     };
 
@@ -1469,20 +1584,23 @@ const StationWideAssistanceTab = ({
                         <td className="px-4 py-2 text-center">
                           <span className="text-[var(--ink)]">{formatPercent(rangeIndicators.totalExpectedRatio)}</span>
                         </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-[var(--ink)]">{formatPercent(rangeIndicators.totalAdjustedProductiveRatio)}</span>
+                        </td>
                         <td className="px-4 py-2"></td>
                       </tr>
                     );
                   })}
                   {isOpen && !cache?.loading && (!cache?.workers || !cache.workers.length) && (
                     <tr className="border-b border-black/5 bg-slate-50/30">
-                      <td colSpan={5} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
+                      <td colSpan={6} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
                         No hay trabajadores asignados o datos disponibles.
                       </td>
                     </tr>
                   )}
                   {isOpen && cache?.loading && (
                     <tr className="border-b border-black/5 bg-slate-50/30">
-                      <td colSpan={5} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
+                      <td colSpan={6} className="px-4 py-2 pl-8 text-xs text-[var(--ink-muted)]">
                         Cargando datos...
                       </td>
                     </tr>

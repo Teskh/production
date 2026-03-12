@@ -41,10 +41,12 @@ _CLR_RULE = "#cbd5e1"
 _CLR_ZEBRA = "#f8fafc"
 _CLR_GREEN = "#16a34a"
 _CLR_BLUE = "#2563eb"
-_NOTE_BLOCK_HEIGHT = 34
+_CLR_ORANGE = "#ea580c"
+_NOTE_BLOCK_HEIGHT = 46
 _NOTE_TITLE = "Como leer los indicadores"
 _NOTE_LINE_1 = "Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo."
 _NOTE_LINE_2 = "Uso minimo: grado general de uso del sistema."
+_NOTE_LINE_3 = "Uso esperado: uso correcto con tope en la jornada diaria esperada del trabajador."
 _WORKER_UC_BRACKET_LABELS = ("0-20%", "20-40%", "40-60%", "60+%")
 
 
@@ -208,11 +210,12 @@ def _draw_indicator_note(pdf: "canvas.Canvas", *, margin: float) -> None:
     note_y = margin + 3
     pdf.setFillColor(colors.HexColor(_CLR_DARK))
     pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawString(margin, note_y + 18, _NOTE_TITLE)
+    pdf.drawString(margin, note_y + 28, _NOTE_TITLE)
     pdf.setFillColor(colors.HexColor(_CLR_MID))
     pdf.setFont("Helvetica", 8)
-    pdf.drawString(margin + 4, note_y + 9, f"- {_NOTE_LINE_1}")
-    pdf.drawString(margin + 4, note_y, f"- {_NOTE_LINE_2}")
+    pdf.drawString(margin + 4, note_y + 18, f"- {_NOTE_LINE_1}")
+    pdf.drawString(margin + 4, note_y + 9, f"- {_NOTE_LINE_2}")
+    pdf.drawString(margin + 4, note_y, f"- {_NOTE_LINE_3}")
 
 
 def _draw_station_chart(
@@ -275,17 +278,22 @@ def _draw_station_chart(
 
     productive_points = []
     expected_points = []
+    adjusted_productive_points = []
     for idx, row in enumerate(ordered):
         x_pos = x_at(idx)
         prod_y = y_at(row.productive_ratio)
         exp_y = y_at(row.expected_ratio)
+        adjusted_prod_y = y_at(row.adjusted_productive_ratio)
         if prod_y is not None:
             productive_points.append((x_pos, prod_y))
         if exp_y is not None:
             expected_points.append((x_pos, exp_y))
+        if adjusted_prod_y is not None:
+            adjusted_productive_points.append((x_pos, adjusted_prod_y))
 
     draw_series(productive_points, colors.HexColor(_CLR_GREEN))
     draw_series(expected_points, colors.HexColor(_CLR_BLUE))
+    draw_series(adjusted_productive_points, colors.HexColor(_CLR_ORANGE))
 
     label_step = max(1, len(ordered) // 9) if len(ordered) > 12 else 1
     pdf.setFillColor(colors.HexColor(_CLR_MID))
@@ -308,9 +316,10 @@ def _draw_station_summary_table(
 ) -> None:
     usable = page_width - margin * 2
     pad = 6
-    col_uc = usable * 0.22
-    col_um = usable * 0.22
-    col_station = usable - col_uc - col_um
+    col_uc = usable * 0.18
+    col_um = usable * 0.18
+    col_ue = usable * 0.18
+    col_station = usable - col_uc - col_um - col_ue
     row_h = 16
     right_edge = margin + usable
 
@@ -319,7 +328,8 @@ def _draw_station_summary_table(
         pdf.setFont("Helvetica-Bold", 7.5)
         pdf.drawString(margin + pad, y_pos - 10, "ESTACION")
         pdf.drawRightString(margin + col_station + col_uc - pad, y_pos - 10, "USO CORRECTO")
-        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO MINIMO")
+        pdf.drawRightString(margin + col_station + col_uc + col_um - pad, y_pos - 10, "USO MINIMO")
+        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO ESPERADO")
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
 
     y_pos = start_y
@@ -351,9 +361,14 @@ def _draw_station_summary_table(
             _format_percent(station.average_productive),
         )
         pdf.drawRightString(
-            right_edge - pad,
+            margin + col_station + col_uc + col_um - pad,
             y_pos - 10,
             _format_percent(station.average_expected),
+        )
+        pdf.drawRightString(
+            right_edge - pad,
+            y_pos - 10,
+            _format_percent(station.average_adjusted_productive),
         )
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
@@ -380,9 +395,10 @@ def _draw_worker_table(
 
     usable = page_width - margin * 2
     pad = 6
-    col_uc = 80
-    col_um = 80
-    col_name = usable - col_uc - col_um
+    col_uc = 72
+    col_um = 72
+    col_ue = 72
+    col_name = usable - col_uc - col_um - col_ue
     row_h = 15
     right_edge = margin + usable
 
@@ -391,7 +407,8 @@ def _draw_worker_table(
         pdf.setFont("Helvetica-Bold", 7.5)
         pdf.drawString(margin + pad, y_pos - 10, "TRABAJADOR")
         pdf.drawRightString(margin + col_name + col_uc - pad, y_pos - 10, "USO CORRECTO")
-        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO MINIMO")
+        pdf.drawRightString(margin + col_name + col_uc + col_um - pad, y_pos - 10, "USO MINIMO")
+        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO ESPERADO")
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         return y_pos - row_h
 
@@ -419,7 +436,10 @@ def _draw_worker_table(
             margin + col_name + col_uc - pad, y_pos - 10, _format_percent(worker.productive_ratio)
         )
         pdf.drawRightString(
-            right_edge - pad, y_pos - 10, _format_percent(worker.expected_ratio)
+            margin + col_name + col_uc + col_um - pad, y_pos - 10, _format_percent(worker.expected_ratio)
+        )
+        pdf.drawRightString(
+            right_edge - pad, y_pos - 10, _format_percent(worker.adjusted_productive_ratio)
         )
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
@@ -465,7 +485,7 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     # Metric cards
     y -= 58
     gap = 14
-    card_w = (usable - gap) / 2
+    card_w = (usable - gap * 2) / 3
     card_h = 46
     _draw_metric_card(
         pdf, x=margin, y=y, width=card_w, height=card_h,
@@ -474,6 +494,10 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     _draw_metric_card(
         pdf, x=margin + card_w + gap, y=y, width=card_w, height=card_h,
         label="Uso minimo global", value=_format_percent(payload.global_expected),
+    )
+    _draw_metric_card(
+        pdf, x=margin + (card_w + gap) * 2, y=y, width=card_w, height=card_h,
+        label="Uso esperado global", value=_format_percent(payload.global_adjusted_productive),
     )
 
     # Worker bracket summary on first page when worker detail is enabled.
@@ -528,6 +552,16 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         pdf.setFont("Helvetica", 9)
         pdf.drawString(mid_x + um_w + 4, y + 2, "Uso Minimo")
 
+        right_x = margin + usable * 0.68
+        pdf.setFont("Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_ORANGE))
+        ue_text = _format_percent(station.average_adjusted_productive)
+        pdf.drawString(right_x, y, ue_text)
+        ue_w = pdf.stringWidth(ue_text, "Helvetica-Bold", 28)
+        pdf.setFillColor(colors.HexColor(_CLR_MID))
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(right_x + ue_w + 4, y + 2, "Uso Esperado")
+
         # Chart
         y -= 16
         chart_h = 170
@@ -548,6 +582,9 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         pdf.setStrokeColor(colors.HexColor(_CLR_BLUE))
         pdf.line(margin + 90, legend_y, margin + 102, legend_y)
         pdf.drawString(margin + 106, legend_y - 3, "Uso Minimo")
+        pdf.setStrokeColor(colors.HexColor(_CLR_ORANGE))
+        pdf.line(margin + 176, legend_y, margin + 188, legend_y)
+        pdf.drawString(margin + 192, legend_y - 3, "Uso Esperado")
 
         # Worker detail table
         if payload.include_workers:

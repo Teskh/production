@@ -280,8 +280,15 @@ const isAbsentNoDataDay = (day) => {
   return !hasAttendancePunch(day) && !hasActivityLog(day);
 };
 
+const toAdjustedTimeSeconds = (adjustedTimeHours) => {
+  const hours = Number(adjustedTimeHours);
+  if (!Number.isFinite(hours) || hours <= 0) return null;
+  return hours * 60 * 60;
+};
+
 const buildDailyIndicators = (day, options = {}) => {
   const includeBreakdown = options?.includeBreakdown === true;
+  const adjustedTimeSeconds = toAdjustedTimeSeconds(options?.adjustedTimeHours);
   if (!day) return null;
   if (isAbsentNoDataDay(day)) return null;
   const dayBounds = buildDayBounds(day);
@@ -351,6 +358,14 @@ const buildDailyIndicators = (day, options = {}) => {
   const idleSeconds = Math.max(0, presenceNetSeconds - activeUnionSeconds);
   const idleOverrunSeconds = idleSeconds + overtimeSeconds;
   const productiveSeconds = Math.max(0, presenceNetSeconds - idleOverrunSeconds);
+  const adjustedPresenceNetSeconds =
+    adjustedTimeSeconds != null
+      ? Math.min(presenceNetSeconds, adjustedTimeSeconds)
+      : null;
+  const adjustedProductiveSeconds =
+    adjustedPresenceNetSeconds != null
+      ? Math.min(productiveSeconds, adjustedPresenceNetSeconds)
+      : null;
 
   const result = {
     presenceSeconds,
@@ -361,9 +376,16 @@ const buildDailyIndicators = (day, options = {}) => {
     expectedSecondsTotal,
     idleOverrunSeconds,
     productiveSeconds,
+    adjustedTimeSeconds,
+    adjustedPresenceNetSeconds,
+    adjustedProductiveSeconds,
     idleOverrunRatio: presenceNetSeconds > 0 ? idleOverrunSeconds / presenceNetSeconds : null,
     productiveRatio: presenceNetSeconds > 0 ? productiveSeconds / presenceNetSeconds : null,
     expectedRatio: presenceNetSeconds > 0 ? expectedSecondsTotal / presenceNetSeconds : null,
+    adjustedProductiveRatio:
+      adjustedPresenceNetSeconds && adjustedPresenceNetSeconds > 0
+        ? adjustedProductiveSeconds / adjustedPresenceNetSeconds
+        : null,
   };
 
   if (includeBreakdown) {
@@ -440,7 +462,7 @@ const buildDailyIndicators = (day, options = {}) => {
   return result;
 };
 
-const buildRangeIndicators = (combinedDays) => {
+const buildRangeIndicators = (combinedDays, options = {}) => {
   const eligibleDays = Array.isArray(combinedDays)
     ? combinedDays.filter((day) => !isAbsentNoDataDay(day))
     : [];
@@ -450,12 +472,15 @@ const buildRangeIndicators = (combinedDays) => {
       presenceNetSeconds: 0,
       productiveSeconds: 0,
       expectedSecondsTotal: 0,
+      adjustedPresenceNetSeconds: 0,
+      adjustedProductiveSeconds: 0,
       idleOverrunSeconds: 0,
       idleSeconds: 0,
       overtimeSeconds: 0,
     },
     totalProductiveRatio: null,
     totalExpectedRatio: null,
+    totalAdjustedProductiveRatio: null,
     startDate: '',
     endDate: '',
     daysWithData: 0,
@@ -473,7 +498,7 @@ const buildRangeIndicators = (combinedDays) => {
   const rows = [];
 
   entries.forEach(({ day, dateObj }) => {
-    const indicators = buildDailyIndicators(day);
+    const indicators = buildDailyIndicators(day, options);
     if (!indicators || !Number.isFinite(indicators.productiveRatio)) return;
     rows.push({
       key: day.date,
@@ -481,11 +506,14 @@ const buildRangeIndicators = (combinedDays) => {
       dateObj,
       productiveRatio: indicators.productiveRatio,
       expectedRatio: indicators.expectedRatio,
+      adjustedProductiveRatio: indicators.adjustedProductiveRatio,
       indicators,
     });
     totals.presenceNetSeconds += indicators.presenceNetSeconds || 0;
     totals.productiveSeconds += indicators.productiveSeconds || 0;
     totals.expectedSecondsTotal += indicators.expectedSecondsTotal || 0;
+    totals.adjustedPresenceNetSeconds += indicators.adjustedPresenceNetSeconds || 0;
+    totals.adjustedProductiveSeconds += indicators.adjustedProductiveSeconds || 0;
     totals.idleOverrunSeconds += indicators.idleOverrunSeconds || 0;
     totals.idleSeconds += indicators.idleSeconds || 0;
     totals.overtimeSeconds += indicators.overtimeSeconds || 0;
@@ -499,12 +527,17 @@ const buildRangeIndicators = (combinedDays) => {
     totals.presenceNetSeconds > 0
       ? totals.expectedSecondsTotal / totals.presenceNetSeconds
       : null;
+  const totalAdjustedProductiveRatio =
+    totals.adjustedPresenceNetSeconds > 0
+      ? totals.adjustedProductiveSeconds / totals.adjustedPresenceNetSeconds
+      : null;
 
   return {
     rows,
     totals,
     totalProductiveRatio,
     totalExpectedRatio,
+    totalAdjustedProductiveRatio,
     startDate: rows[0].key,
     endDate: rows[rows.length - 1].key,
     daysWithData: rows.length,
