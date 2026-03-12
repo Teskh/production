@@ -943,17 +943,6 @@ const StationWideAssistanceTab = ({
     return stationGroups.filter((group) => (group.stationIds || []).length > 0);
   }, [stationGroups]);
 
-  useEffect(() => {
-    setReportSelection((prev) => {
-      const next = {};
-      groupedStations.forEach((group) => {
-        const hasWorkers = (workersByGroup.get(group.key) || []).length > 0;
-        next[group.key] = prev[group.key] != null ? prev[group.key] : hasWorkers;
-      });
-      return next;
-    });
-  }, [groupedStations, workersByGroup]);
-
   const workersByGroup = useMemo(() => {
     const map = new Map();
     groupedStations.forEach((group) => {
@@ -970,6 +959,17 @@ const StationWideAssistanceTab = ({
     });
     return map;
   }, [groupedStations, workersByStation]);
+
+  useEffect(() => {
+    setReportSelection((prev) => {
+      const next = {};
+      groupedStations.forEach((group) => {
+        const hasWorkers = (workersByGroup.get(group.key) || []).length > 0;
+        next[group.key] = prev[group.key] != null ? prev[group.key] : hasWorkers;
+      });
+      return next;
+    });
+  }, [groupedStations, workersByGroup]);
 
   const todayKey = useMemo(() => toDateOnly(new Date()), [toDateOnly]);
 
