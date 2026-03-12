@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -9,14 +10,37 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import quote
 
 from app.core.config import BASE_DIR, settings
 
-RECORDER_SQLITE_PATH = Path(
+_WINDOWS_RECORDER_SQLITE_PATH = Path(
+    r"D:\GMB VM\APP\respaldocamarasprod\runtime\respaldos_cctv.sqlite3"
+)
+_WINDOWS_RECORDINGS_ROOT = Path(r"D:\GMB VM\APP\respaldocamarasprod\respaldos")
+_WSL_RECORDER_SQLITE_PATH = Path(
     "/mnt/d/GMB VM/APP/respaldocamarasprod/runtime/respaldos_cctv.sqlite3"
 )
-RECORDER_RECORDINGS_ROOT = Path("/mnt/d/GMB VM/APP/respaldocamarasprod/respaldos")
+_WSL_RECORDINGS_ROOT = Path("/mnt/d/GMB VM/APP/respaldocamarasprod/respaldos")
+
+if os.name == "nt":
+    RECORDER_SQLITE_PATH_CANDIDATES = (
+        _WINDOWS_RECORDER_SQLITE_PATH,
+        _WSL_RECORDER_SQLITE_PATH,
+    )
+    RECORDER_RECORDINGS_ROOT_CANDIDATES = (
+        _WINDOWS_RECORDINGS_ROOT,
+        _WSL_RECORDINGS_ROOT,
+    )
+else:
+    RECORDER_SQLITE_PATH_CANDIDATES = (
+        _WSL_RECORDER_SQLITE_PATH,
+        _WINDOWS_RECORDER_SQLITE_PATH,
+    )
+    RECORDER_RECORDINGS_ROOT_CANDIDATES = (
+        _WSL_RECORDINGS_ROOT,
+        _WINDOWS_RECORDINGS_ROOT,
+    )
+
 TASK_FOOTAGE_CLIPS_DIR = BASE_DIR / "runtime" / "task_footage_clips"
 _MERGE_TOLERANCE_SECONDS = 1.0
 
@@ -118,16 +142,17 @@ def _utc_iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _sqlite_uri(path: Path) -> str:
-    return f"file:{quote(str(path), safe='/:')}?mode=ro"
+@lru_cache(maxsize=1)
+def recorder_sqlite_path() -> Path:
+    for candidate in RECORDER_SQLITE_PATH_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    formatted = ", ".join(str(candidate) for candidate in RECORDER_SQLITE_PATH_CANDIDATES)
+    raise RecorderIntegrationError(f"Recorder SQLite not found at any configured path: {formatted}")
 
 
 def _open_recorder_db() -> sqlite3.Connection:
-    if not RECORDER_SQLITE_PATH.exists():
-        raise RecorderIntegrationError(
-            f"Recorder SQLite not found at {RECORDER_SQLITE_PATH}"
-        )
-    connection = sqlite3.connect(_sqlite_uri(RECORDER_SQLITE_PATH), uri=True)
+    connection = sqlite3.connect(str(recorder_sqlite_path()))
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -141,9 +166,11 @@ def _resolve_segment_path(row: sqlite3.Row) -> Path | None:
 
     relative_path = str(row["relative_path"] or "").strip()
     if relative_path:
-        relative_candidate = RECORDER_RECORDINGS_ROOT / relative_path
-        if relative_candidate.exists():
-            return relative_candidate
+        normalized_relative_path = relative_path.replace("\\", "/")
+        for root in RECORDER_RECORDINGS_ROOT_CANDIDATES:
+            relative_candidate = root / normalized_relative_path
+            if relative_candidate.exists():
+                return relative_candidate
 
     return None
 

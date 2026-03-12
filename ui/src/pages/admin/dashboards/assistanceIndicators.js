@@ -361,11 +361,11 @@ const buildDailyIndicators = (day, options = {}) => {
   const adjustedPresenceNetSeconds =
     adjustedTimeSeconds != null
       ? Math.min(presenceNetSeconds, adjustedTimeSeconds)
-      : null;
+      : presenceNetSeconds;
   const adjustedProductiveSeconds =
     adjustedPresenceNetSeconds != null
       ? Math.min(productiveSeconds, adjustedPresenceNetSeconds)
-      : null;
+      : productiveSeconds;
 
   const result = {
     presenceSeconds,

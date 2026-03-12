@@ -740,7 +740,7 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
                   colorClass="text-orange-600"
                   formulaLines={[
                     'adjustedProductiveRatio = adjustedProductiveSeconds / adjustedPresenceNetSeconds',
-                    'adjustedPresenceNetSeconds = min(presenceNetSeconds, adjustedTimeSeconds)',
+                    'adjustedPresenceNetSeconds = adjustedTimeSeconds ? min(presenceNetSeconds, adjustedTimeSeconds) : presenceNetSeconds',
                     'adjustedProductiveSeconds = min(productiveSeconds, adjustedPresenceNetSeconds)',
                     'adjustedTimeSeconds = adjusted_times * 3600',
                   ]}
