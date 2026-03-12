@@ -9,6 +9,11 @@ const GEO_REQUEST_DELAY_MS = 400;
 const REPORT_MAX_DAYS_BACK = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ADJUSTED_PRODUCTIVE_COLOR = '#ea580c';
+const DEFAULT_REPORT_INDICATORS = {
+  productive: true,
+  expected: true,
+  adjustedProductive: true,
+};
 
 const clampDaysBack = (value) => {
   const numeric = Math.round(Number(value));
@@ -243,6 +248,7 @@ const buildPdfPayload = ({
   fromDate,
   toDate,
   includeWorkers,
+  reportIndicators,
   selectedGroupData,
 }) => {
   let globalPresence = 0;
@@ -315,6 +321,9 @@ const buildPdfPayload = ({
     from_date: fromDate,
     to_date: toDate,
     include_workers: includeWorkers,
+    include_productive: reportIndicators?.productive !== false,
+    include_expected: reportIndicators?.expected !== false,
+    include_adjusted_productive: reportIndicators?.adjustedProductive !== false,
     generated_at: new Date().toISOString(),
     global_productive: globalPresence > 0 ? globalProductive / globalPresence : null,
     global_expected: globalPresence > 0 ? globalExpected / globalPresence : null,
@@ -903,6 +912,7 @@ const StationWideAssistanceTab = ({
   const [reportSelection, setReportSelection] = useState({});
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportError, setReportError] = useState('');
+  const [reportIndicators, setReportIndicators] = useState(DEFAULT_REPORT_INDICATORS);
   const loadTokensRef = useRef(new Map());
   const prevRangeRef = useRef(rangeDays);
   const geoThrottleRef = useRef(null);
@@ -937,11 +947,12 @@ const StationWideAssistanceTab = ({
     setReportSelection((prev) => {
       const next = {};
       groupedStations.forEach((group) => {
-        next[group.key] = prev[group.key] !== false;
+        const hasWorkers = (workersByGroup.get(group.key) || []).length > 0;
+        next[group.key] = prev[group.key] != null ? prev[group.key] : hasWorkers;
       });
       return next;
     });
-  }, [groupedStations]);
+  }, [groupedStations, workersByGroup]);
 
   const workersByGroup = useMemo(() => {
     const map = new Map();
@@ -1186,7 +1197,7 @@ const StationWideAssistanceTab = ({
   const openReportModal = useCallback(() => {
     const defaults = {};
     groupedStations.forEach((group) => {
-      defaults[group.key] = true;
+      defaults[group.key] = (workersByGroup.get(group.key) || []).length > 0;
     });
     setReportSelection(defaults);
     const defaultToDate = todayIso();
@@ -1195,9 +1206,10 @@ const StationWideAssistanceTab = ({
     setReportFromDate(defaultFromDate);
     setReportToDate(defaultToDate);
     setReportIncludeWorkers(false);
+    setReportIndicators(DEFAULT_REPORT_INDICATORS);
     setReportError('');
     setReportModalOpen(true);
-  }, [groupedStations, rangeDays, isoDaysAgo, todayIso]);
+  }, [groupedStations, workersByGroup, rangeDays, isoDaysAgo, todayIso]);
 
   const selectedReportGroups = useMemo(
     () => groupedStations.filter((group) => reportSelection[group.key] !== false),
@@ -1297,6 +1309,10 @@ const StationWideAssistanceTab = ({
       setReportError('Seleccione al menos una estacion para generar el reporte.');
       return;
     }
+    if (!Object.values(reportIndicators).some(Boolean)) {
+      setReportError('Seleccione al menos un indicador para exportar.');
+      return;
+    }
 
     setReportGenerating(true);
     setReportError('');
@@ -1354,6 +1370,7 @@ const StationWideAssistanceTab = ({
         fromDate,
         toDate,
         includeWorkers: reportIncludeWorkers,
+        reportIndicators,
         selectedGroupData,
       });
 
@@ -1413,6 +1430,7 @@ const StationWideAssistanceTab = ({
     formatWorkerDisplayName,
     buildStationSummary,
     reportIncludeWorkers,
+    reportIndicators,
     reportFromDate,
     reportToDate,
   ]);
@@ -1716,6 +1734,53 @@ const StationWideAssistanceTab = ({
                       {reportIncludeWorkers ? 'ON' : 'OFF'}
                     </span>
                   </button>
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-1">
+                    Indicadores a exportar
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <label className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={reportIndicators.productive}
+                        onChange={() =>
+                          setReportIndicators((prev) => ({
+                            ...prev,
+                            productive: !prev.productive,
+                          }))
+                        }
+                      />
+                      Uso correcto
+                    </label>
+                    <label className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={reportIndicators.expected}
+                        onChange={() =>
+                          setReportIndicators((prev) => ({
+                            ...prev,
+                            expected: !prev.expected,
+                          }))
+                        }
+                      />
+                      Uso minimo
+                    </label>
+                    <label className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={reportIndicators.adjustedProductive}
+                        onChange={() =>
+                          setReportIndicators((prev) => ({
+                            ...prev,
+                            adjustedProductive: !prev.adjustedProductive,
+                          }))
+                        }
+                      />
+                      Uso adecuado
+                    </label>
+                  </div>
                 </div>
               </div>
 

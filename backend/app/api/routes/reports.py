@@ -46,8 +46,49 @@ _NOTE_BLOCK_HEIGHT = 46
 _NOTE_TITLE = "Como leer los indicadores"
 _NOTE_LINE_1 = "Uso correcto: grado de uso correcto del sistema, iniciando/cerrando tareas a tiempo."
 _NOTE_LINE_2 = "Uso minimo: grado general de uso del sistema."
-_NOTE_LINE_3 = "Uso esperado: uso correcto con tope en la jornada diaria esperada del trabajador."
+_NOTE_LINE_3 = "Uso adecuado: uso correcto con tope en la jornada diaria esperada del trabajador."
 _WORKER_UC_BRACKET_LABELS = ("0-20%", "20-40%", "40-60%", "60+%")
+
+
+def _selected_indicators(payload: StationAssistancePdfRequest) -> list[dict[str, object]]:
+    selected: list[dict[str, object]] = []
+    if payload.include_productive:
+        selected.append(
+            {
+                "key": "productive",
+                "label": "Uso correcto",
+                "field": "productive_ratio",
+                "station_field": "average_productive",
+                "global_field": "global_productive",
+                "color": _CLR_GREEN,
+                "note": _NOTE_LINE_1,
+            }
+        )
+    if payload.include_expected:
+        selected.append(
+            {
+                "key": "expected",
+                "label": "Uso minimo",
+                "field": "expected_ratio",
+                "station_field": "average_expected",
+                "global_field": "global_expected",
+                "color": _CLR_BLUE,
+                "note": _NOTE_LINE_2,
+            }
+        )
+    if payload.include_adjusted_productive:
+        selected.append(
+            {
+                "key": "adjusted_productive",
+                "label": "Uso adecuado",
+                "field": "adjusted_productive_ratio",
+                "station_field": "average_adjusted_productive",
+                "global_field": "global_adjusted_productive",
+                "color": _CLR_ORANGE,
+                "note": _NOTE_LINE_3,
+            }
+        )
+    return selected
 
 
 def _format_percent(value: float | None) -> str:
@@ -206,22 +247,29 @@ def _draw_worker_productive_bracket_summary(
     return card_y - 14
 
 
-def _draw_indicator_note(pdf: "canvas.Canvas", *, margin: float) -> None:
+def _draw_indicator_note(
+    pdf: "canvas.Canvas",
+    *,
+    margin: float,
+    indicator_notes: list[str],
+) -> None:
     note_y = margin + 3
     pdf.setFillColor(colors.HexColor(_CLR_DARK))
     pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawString(margin, note_y + 28, _NOTE_TITLE)
+    title_offset = 10 + max(0, len(indicator_notes) - 1) * 9
+    pdf.drawString(margin, note_y + title_offset + 8, _NOTE_TITLE)
     pdf.setFillColor(colors.HexColor(_CLR_MID))
     pdf.setFont("Helvetica", 8)
-    pdf.drawString(margin + 4, note_y + 18, f"- {_NOTE_LINE_1}")
-    pdf.drawString(margin + 4, note_y + 9, f"- {_NOTE_LINE_2}")
-    pdf.drawString(margin + 4, note_y, f"- {_NOTE_LINE_3}")
+    for index, line in enumerate(indicator_notes):
+        y = note_y + (len(indicator_notes) - index - 1) * 9
+        pdf.drawString(margin + 4, y, f"- {line}")
 
 
 def _draw_station_chart(
     pdf: "canvas.Canvas",
     rows: list[StationReportPoint],
     *,
+    indicators: list[dict[str, object]],
     x: float,
     y: float,
     width: float,
@@ -276,24 +324,22 @@ def _draw_station_chart(
         for x_pos, y_pos in points:
             pdf.circle(x_pos, y_pos, 2, stroke=0, fill=1)
 
-    productive_points = []
-    expected_points = []
-    adjusted_productive_points = []
+    series_points: dict[str, list[tuple[float, float]]] = {
+        str(indicator["key"]): [] for indicator in indicators
+    }
     for idx, row in enumerate(ordered):
         x_pos = x_at(idx)
-        prod_y = y_at(row.productive_ratio)
-        exp_y = y_at(row.expected_ratio)
-        adjusted_prod_y = y_at(row.adjusted_productive_ratio)
-        if prod_y is not None:
-            productive_points.append((x_pos, prod_y))
-        if exp_y is not None:
-            expected_points.append((x_pos, exp_y))
-        if adjusted_prod_y is not None:
-            adjusted_productive_points.append((x_pos, adjusted_prod_y))
+        for indicator in indicators:
+            field_name = str(indicator["field"])
+            point_y = y_at(getattr(row, field_name))
+            if point_y is not None:
+                series_points[str(indicator["key"])].append((x_pos, point_y))
 
-    draw_series(productive_points, colors.HexColor(_CLR_GREEN))
-    draw_series(expected_points, colors.HexColor(_CLR_BLUE))
-    draw_series(adjusted_productive_points, colors.HexColor(_CLR_ORANGE))
+    for indicator in indicators:
+        draw_series(
+            series_points[str(indicator["key"])],
+            colors.HexColor(str(indicator["color"])),
+        )
 
     label_step = max(1, len(ordered) // 9) if len(ordered) > 12 else 1
     pdf.setFillColor(colors.HexColor(_CLR_MID))
@@ -309,6 +355,8 @@ def _draw_station_summary_table(
     pdf: "canvas.Canvas",
     stations: list[StationReportSection],
     *,
+    indicators: list[dict[str, object]],
+    indicator_notes: list[str],
     page_width: float,
     page_height: float,
     margin: float,
@@ -316,10 +364,8 @@ def _draw_station_summary_table(
 ) -> None:
     usable = page_width - margin * 2
     pad = 6
-    col_uc = usable * 0.18
-    col_um = usable * 0.18
-    col_ue = usable * 0.18
-    col_station = usable - col_uc - col_um - col_ue
+    metric_col_width = usable * 0.18
+    col_station = usable - metric_col_width * len(indicators)
     row_h = 16
     right_edge = margin + usable
 
@@ -327,9 +373,10 @@ def _draw_station_summary_table(
         pdf.setFillColor(colors.HexColor(_CLR_DARK))
         pdf.setFont("Helvetica-Bold", 7.5)
         pdf.drawString(margin + pad, y_pos - 10, "ESTACION")
-        pdf.drawRightString(margin + col_station + col_uc - pad, y_pos - 10, "USO CORRECTO")
-        pdf.drawRightString(margin + col_station + col_uc + col_um - pad, y_pos - 10, "USO MINIMO")
-        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO ESPERADO")
+        indicators_start = margin + col_station
+        for index, indicator in enumerate(indicators):
+            column_right = indicators_start + metric_col_width * (index + 1)
+            pdf.drawRightString(column_right - pad, y_pos - 10, str(indicator["label"]).upper())
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
 
     y_pos = start_y
@@ -338,7 +385,7 @@ def _draw_station_summary_table(
 
     for idx, station in enumerate(stations):
         if y_pos < margin + _NOTE_BLOCK_HEIGHT + 18:
-            _draw_indicator_note(pdf, margin=margin)
+            _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
             pdf.showPage()
             pdf.setFont("Helvetica-Bold", 13)
             pdf.setFillColor(colors.HexColor(_CLR_DARK))
@@ -355,25 +402,15 @@ def _draw_station_summary_table(
         pdf.setFont("Helvetica", 8)
         station_label = _truncate_text(pdf, station.label, col_station - pad * 2, font_size=8)
         pdf.drawString(margin + pad, y_pos - 10, station_label)
-        pdf.drawRightString(
-            margin + col_station + col_uc - pad,
-            y_pos - 10,
-            _format_percent(station.average_productive),
-        )
-        pdf.drawRightString(
-            margin + col_station + col_uc + col_um - pad,
-            y_pos - 10,
-            _format_percent(station.average_expected),
-        )
-        pdf.drawRightString(
-            right_edge - pad,
-            y_pos - 10,
-            _format_percent(station.average_adjusted_productive),
-        )
+        indicators_start = margin + col_station
+        for index, indicator in enumerate(indicators):
+            station_value = getattr(station, str(indicator["station_field"]))
+            column_right = indicators_start + metric_col_width * (index + 1)
+            pdf.drawRightString(column_right - pad, y_pos - 10, _format_percent(station_value))
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
 
-    _draw_indicator_note(pdf, margin=margin)
+    _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
 
 
 def _draw_worker_table(
@@ -381,6 +418,8 @@ def _draw_worker_table(
     workers: list[WorkerReportMetric],
     *,
     station_label: str,
+    indicators: list[dict[str, object]],
+    indicator_notes: list[str],
     page_width: float,
     page_height: float,
     margin: float,
@@ -390,15 +429,13 @@ def _draw_worker_table(
         pdf.setFillColor(colors.HexColor(_CLR_LIGHT))
         pdf.setFont("Helvetica", 9)
         pdf.drawString(margin, start_y, "Sin detalle de trabajadores para este rango.")
-        _draw_indicator_note(pdf, margin=margin)
+        _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
         return
 
     usable = page_width - margin * 2
     pad = 6
-    col_uc = 72
-    col_um = 72
-    col_ue = 72
-    col_name = usable - col_uc - col_um - col_ue
+    metric_col_width = 72
+    col_name = usable - metric_col_width * len(indicators)
     row_h = 15
     right_edge = margin + usable
 
@@ -406,16 +443,17 @@ def _draw_worker_table(
         pdf.setFillColor(colors.HexColor(_CLR_DARK))
         pdf.setFont("Helvetica-Bold", 7.5)
         pdf.drawString(margin + pad, y_pos - 10, "TRABAJADOR")
-        pdf.drawRightString(margin + col_name + col_uc - pad, y_pos - 10, "USO CORRECTO")
-        pdf.drawRightString(margin + col_name + col_uc + col_um - pad, y_pos - 10, "USO MINIMO")
-        pdf.drawRightString(right_edge - pad, y_pos - 10, "USO ESPERADO")
+        indicators_start = margin + col_name
+        for index, indicator in enumerate(indicators):
+            column_right = indicators_start + metric_col_width * (index + 1)
+            pdf.drawRightString(column_right - pad, y_pos - 10, str(indicator["label"]).upper())
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         return y_pos - row_h
 
     y_pos = draw_table_header(start_y)
     for idx, worker in enumerate(workers):
         if y_pos < margin + _NOTE_BLOCK_HEIGHT + 12:
-            _draw_indicator_note(pdf, margin=margin)
+            _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
             pdf.showPage()
             pdf.setFillColor(colors.HexColor(_CLR_DARK))
             pdf.setFont("Helvetica-Bold", 13)
@@ -432,24 +470,24 @@ def _draw_worker_table(
         pdf.setFont("Helvetica", 8)
         worker_label = _truncate_text(pdf, worker.label, col_name - pad * 2, font_size=8)
         pdf.drawString(margin + pad, y_pos - 10, worker_label)
-        pdf.drawRightString(
-            margin + col_name + col_uc - pad, y_pos - 10, _format_percent(worker.productive_ratio)
-        )
-        pdf.drawRightString(
-            margin + col_name + col_uc + col_um - pad, y_pos - 10, _format_percent(worker.expected_ratio)
-        )
-        pdf.drawRightString(
-            right_edge - pad, y_pos - 10, _format_percent(worker.adjusted_productive_ratio)
-        )
+        indicators_start = margin + col_name
+        for index, indicator in enumerate(indicators):
+            worker_value = getattr(worker, str(indicator["field"]))
+            column_right = indicators_start + metric_col_width * (index + 1)
+            pdf.drawRightString(column_right - pad, y_pos - 10, _format_percent(worker_value))
         _hline(pdf, margin, right_edge, y_pos - row_h + 2)
         y_pos -= row_h
 
-    _draw_indicator_note(pdf, margin=margin)
+    _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
 
 
 def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes:
     if _REPORTLAB_ERROR is not None or canvas is None or A4 is None or mm is None:
         raise RuntimeError("reportlab is not available")
+    indicators = _selected_indicators(payload)
+    if not indicators:
+        raise RuntimeError("No indicators selected")
+    indicator_notes = [str(indicator["note"]) for indicator in indicators]
 
     buffer = BytesIO()
     page_size = landscape(A4)
@@ -485,20 +523,18 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     # Metric cards
     y -= 58
     gap = 14
-    card_w = (usable - gap * 2) / 3
+    card_w = (usable - gap * (len(indicators) - 1)) / len(indicators)
     card_h = 46
-    _draw_metric_card(
-        pdf, x=margin, y=y, width=card_w, height=card_h,
-        label="Uso correcto global", value=_format_percent(payload.global_productive),
-    )
-    _draw_metric_card(
-        pdf, x=margin + card_w + gap, y=y, width=card_w, height=card_h,
-        label="Uso minimo global", value=_format_percent(payload.global_expected),
-    )
-    _draw_metric_card(
-        pdf, x=margin + (card_w + gap) * 2, y=y, width=card_w, height=card_h,
-        label="Uso esperado global", value=_format_percent(payload.global_adjusted_productive),
-    )
+    for index, indicator in enumerate(indicators):
+        _draw_metric_card(
+            pdf,
+            x=margin + (card_w + gap) * index,
+            y=y,
+            width=card_w,
+            height=card_h,
+            label=f"{indicator['label']} global",
+            value=_format_percent(getattr(payload, str(indicator["global_field"]))),
+        )
 
     # Worker bracket summary on first page when worker detail is enabled.
     y -= 16
@@ -518,6 +554,8 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     y -= 8
     _draw_station_summary_table(
         pdf, payload.stations,
+        indicators=indicators,
+        indicator_notes=indicator_notes,
         page_width=page_width, page_height=page_height, margin=margin, start_y=y,
     )
 
@@ -533,34 +571,19 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
 
         # Large averages
         y -= 36
-        pdf.setFont("Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_GREEN))
-        uc_text = _format_percent(station.average_productive)
-        pdf.drawString(margin, y, uc_text)
-        uc_w = pdf.stringWidth(uc_text, "Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_MID))
-        pdf.setFont("Helvetica", 9)
-        pdf.drawString(margin + uc_w + 4, y + 2, "Uso Correcto")
-
-        mid_x = margin + usable * 0.35
-        pdf.setFont("Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_BLUE))
-        um_text = _format_percent(station.average_expected)
-        pdf.drawString(mid_x, y, um_text)
-        um_w = pdf.stringWidth(um_text, "Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_MID))
-        pdf.setFont("Helvetica", 9)
-        pdf.drawString(mid_x + um_w + 4, y + 2, "Uso Minimo")
-
-        right_x = margin + usable * 0.68
-        pdf.setFont("Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_ORANGE))
-        ue_text = _format_percent(station.average_adjusted_productive)
-        pdf.drawString(right_x, y, ue_text)
-        ue_w = pdf.stringWidth(ue_text, "Helvetica-Bold", 28)
-        pdf.setFillColor(colors.HexColor(_CLR_MID))
-        pdf.setFont("Helvetica", 9)
-        pdf.drawString(right_x + ue_w + 4, y + 2, "Uso Esperado")
+        indicator_x_positions = [
+            margin + usable * ratio for ratio in (0.0, 0.35, 0.68)
+        ]
+        for index, indicator in enumerate(indicators):
+            x_pos = indicator_x_positions[index] if index < len(indicator_x_positions) else margin + usable * (index / max(1, len(indicators)))
+            pdf.setFont("Helvetica-Bold", 28)
+            pdf.setFillColor(colors.HexColor(str(indicator["color"])))
+            value_text = _format_percent(getattr(station, str(indicator["station_field"])))
+            pdf.drawString(x_pos, y, value_text)
+            value_width = pdf.stringWidth(value_text, "Helvetica-Bold", 28)
+            pdf.setFillColor(colors.HexColor(_CLR_MID))
+            pdf.setFont("Helvetica", 9)
+            pdf.drawString(x_pos + value_width + 4, y + 2, str(indicator["label"]))
 
         # Chart
         y -= 16
@@ -568,6 +591,7 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         chart_y = y - chart_h
         _draw_station_chart(
             pdf, station.rows,
+            indicators=indicators,
             x=margin, y=chart_y, width=usable, height=chart_h,
         )
 
@@ -575,16 +599,13 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         legend_y = chart_y - 14
         pdf.setFont("Helvetica", 7.5)
         pdf.setFillColor(colors.HexColor(_CLR_MID))
-        pdf.setStrokeColor(colors.HexColor(_CLR_GREEN))
-        pdf.setLineWidth(2)
-        pdf.line(margin, legend_y, margin + 12, legend_y)
-        pdf.drawString(margin + 16, legend_y - 3, "Uso Correcto")
-        pdf.setStrokeColor(colors.HexColor(_CLR_BLUE))
-        pdf.line(margin + 90, legend_y, margin + 102, legend_y)
-        pdf.drawString(margin + 106, legend_y - 3, "Uso Minimo")
-        pdf.setStrokeColor(colors.HexColor(_CLR_ORANGE))
-        pdf.line(margin + 176, legend_y, margin + 188, legend_y)
-        pdf.drawString(margin + 192, legend_y - 3, "Uso Esperado")
+        legend_x = margin
+        for indicator in indicators:
+            pdf.setStrokeColor(colors.HexColor(str(indicator["color"])))
+            pdf.setLineWidth(2)
+            pdf.line(legend_x, legend_y, legend_x + 12, legend_y)
+            pdf.drawString(legend_x + 16, legend_y - 3, str(indicator["label"]))
+            legend_x += 16 + pdf.stringWidth(str(indicator["label"]), "Helvetica", 7.5) + 28
 
         # Worker detail table
         if payload.include_workers:
@@ -595,11 +616,13 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
             _draw_worker_table(
                 pdf, station.workers,
                 station_label=station_title,
+                indicators=indicators,
+                indicator_notes=indicator_notes,
                 page_width=page_width, page_height=page_height,
                 margin=margin, start_y=worker_y - 12,
             )
         else:
-            _draw_indicator_note(pdf, margin=margin)
+            _draw_indicator_note(pdf, margin=margin, indicator_notes=indicator_notes)
 
     pdf.save()
     buffer.seek(0)
@@ -615,6 +638,11 @@ def generate_station_assistance_pdf(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one station is required.",
+        )
+    if not (payload.include_productive or payload.include_expected or payload.include_adjusted_productive):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one indicator must be selected.",
         )
     try:
         pdf_bytes = _build_station_assistance_pdf(payload)

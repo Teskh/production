@@ -46,6 +46,9 @@ class StationAssistancePdfRequest(BaseModel):
     from_date: str
     to_date: str
     include_workers: bool = False
+    include_productive: bool = True
+    include_expected: bool = True
+    include_adjusted_productive: bool = True
     generated_at: datetime | None = None
     global_productive: float | None = None
     global_expected: float | None = None
