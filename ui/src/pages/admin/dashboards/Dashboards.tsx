@@ -93,6 +93,7 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Tareas', 'CCTV', 'Playback'],
     icon: Camera,
+    sysadminOnly: true,
   },
   {
     id: 'station-adherence',

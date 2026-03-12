@@ -129,7 +129,10 @@ function App() {
           <Route path="dashboards/stations" element={<DashboardStations />} />
           <Route path="dashboards/panel-analysis" element={<DashboardPanelAnalysis />} />
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
-          <Route path="dashboards/task-footage" element={<DashboardTaskFootage />} />
+          <Route
+            path="dashboards/task-footage"
+            element={<SysadminOnlyRoute element={<DashboardTaskFootage />} />}
+          />
           <Route path="dashboards/station-adherence" element={<DashboardTaskStationAdherence />} />
           <Route
             path="dashboards/assistance"
