@@ -49,6 +49,7 @@ class StationAssistancePdfRequest(BaseModel):
     include_productive: bool = True
     include_expected: bool = True
     include_adjusted_productive: bool = True
+    cover_indicator: str | None = None
     generated_at: datetime | None = None
     global_productive: float | None = None
     global_expected: float | None = None

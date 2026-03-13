@@ -91,6 +91,17 @@ def _selected_indicators(payload: StationAssistancePdfRequest) -> list[dict[str,
     return selected
 
 
+def _cover_indicator(
+    payload: StationAssistancePdfRequest,
+    indicators: list[dict[str, object]],
+) -> dict[str, object]:
+    requested = (payload.cover_indicator or "").strip()
+    for indicator in indicators:
+        if str(indicator["key"]) == requested:
+            return indicator
+    return indicators[0]
+
+
 def _format_percent(value: float | None) -> str:
     if value is None:
         return "-"
@@ -150,9 +161,13 @@ def _hline(pdf: "canvas.Canvas", x1: float, x2: float, y: float) -> None:
     pdf.line(x1, y, x2, y)
 
 
-def _resolve_worker_productive_brackets(
+def _resolve_worker_metric_brackets(
     payload: StationAssistancePdfRequest,
-) -> tuple[list[tuple[str, int]], int, int]:
+) -> tuple[list[tuple[str, int]], int, int, str]:
+    indicators = _selected_indicators(payload)
+    indicator = _cover_indicator(payload, indicators)
+    metric_label = str(indicator["label"])
+    metric_field = str(indicator["field"])
     provided = payload.worker_productive_brackets
     if provided is not None:
         rows = [
@@ -163,7 +178,7 @@ def _resolve_worker_productive_brackets(
         ]
         scored_workers = int(provided.scored_workers)
         total_workers = int(payload.total_workers) if payload.total_workers > 0 else scored_workers
-        return rows, scored_workers, total_workers
+        return rows, scored_workers, total_workers, metric_label
 
     range_0_20 = 0
     range_20_40 = 0
@@ -175,7 +190,7 @@ def _resolve_worker_productive_brackets(
     for station in payload.stations:
         for worker in station.workers:
             total_workers += 1
-            ratio = _safe_ratio(worker.productive_ratio)
+            ratio = _safe_ratio(getattr(worker, metric_field))
             if ratio is None:
                 continue
             scored_workers += 1
@@ -197,12 +212,13 @@ def _resolve_worker_productive_brackets(
         (_WORKER_UC_BRACKET_LABELS[2], range_40_60),
         (_WORKER_UC_BRACKET_LABELS[3], range_60_plus),
     ]
-    return rows, scored_workers, total_workers
+    return rows, scored_workers, total_workers, metric_label
 
 
 def _draw_worker_productive_bracket_summary(
     pdf: "canvas.Canvas",
     *,
+    metric_label: str,
     page_width: float,
     margin: float,
     top_y: float,
@@ -221,11 +237,11 @@ def _draw_worker_productive_bracket_summary(
 
     pdf.setFillColor(colors.HexColor(_CLR_DARK))
     pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawString(margin, top_y, "Trabajadores por rango de Uso Correcto")
+    pdf.drawString(margin, top_y, f"Trabajadores por rango de {metric_label}")
 
-    score_label = f"Con puntaje de Uso Correcto: {scored_workers}"
+    score_label = f"Con puntaje de {metric_label}: {scored_workers}"
     if total_workers > 0:
-        score_label = f"Con puntaje de Uso Correcto: {scored_workers} de {total_workers}"
+        score_label = f"Con puntaje de {metric_label}: {scored_workers} de {total_workers}"
     pdf.setFillColor(colors.HexColor(_CLR_MID))
     pdf.setFont("Helvetica", 7.5)
     pdf.drawString(margin, top_y - 10, score_label)
@@ -487,7 +503,10 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     indicators = _selected_indicators(payload)
     if not indicators:
         raise RuntimeError("No indicators selected")
+    cover_indicator = _cover_indicator(payload, indicators)
+    cover_indicators = [cover_indicator]
     indicator_notes = [str(indicator["note"]) for indicator in indicators]
+    cover_indicator_notes = [str(cover_indicator["note"])]
 
     buffer = BytesIO()
     page_size = landscape(A4)
@@ -523,25 +542,25 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     # Metric cards
     y -= 58
     gap = 14
-    card_w = (usable - gap * (len(indicators) - 1)) / len(indicators)
+    card_w = usable
     card_h = 46
-    for index, indicator in enumerate(indicators):
-        _draw_metric_card(
-            pdf,
-            x=margin + (card_w + gap) * index,
-            y=y,
-            width=card_w,
-            height=card_h,
-            label=f"{indicator['label']} global",
-            value=_format_percent(getattr(payload, str(indicator["global_field"]))),
-        )
+    _draw_metric_card(
+        pdf,
+        x=margin,
+        y=y,
+        width=card_w,
+        height=card_h,
+        label=f"{cover_indicator['label']} global",
+        value=_format_percent(getattr(payload, str(cover_indicator["global_field"]))),
+    )
 
     # Worker bracket summary on first page when worker detail is enabled.
     y -= 16
     if payload.include_workers:
-        bracket_rows, scored_workers, total_workers = _resolve_worker_productive_brackets(payload)
+        bracket_rows, scored_workers, total_workers, metric_label = _resolve_worker_metric_brackets(payload)
         y = _draw_worker_productive_bracket_summary(
             pdf,
+            metric_label=metric_label,
             page_width=page_width,
             margin=margin,
             top_y=y,
@@ -554,8 +573,8 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
     y -= 8
     _draw_station_summary_table(
         pdf, payload.stations,
-        indicators=indicators,
-        indicator_notes=indicator_notes,
+        indicators=cover_indicators,
+        indicator_notes=cover_indicator_notes,
         page_width=page_width, page_height=page_height, margin=margin, start_y=y,
     )
 

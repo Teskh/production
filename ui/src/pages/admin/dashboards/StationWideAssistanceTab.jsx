@@ -14,6 +14,12 @@ const DEFAULT_REPORT_INDICATORS = {
   expected: true,
   adjustedProductive: true,
 };
+const REPORT_INDICATOR_OPTIONS = [
+  { key: 'productive', label: 'Uso correcto' },
+  { key: 'expected', label: 'Uso minimo' },
+  { key: 'adjustedProductive', label: 'Uso adecuado' },
+];
+const DEFAULT_REPORT_COVER_INDICATOR = 'productive';
 
 const clampDaysBack = (value) => {
   const numeric = Math.round(Number(value));
@@ -249,6 +255,7 @@ const buildPdfPayload = ({
   toDate,
   includeWorkers,
   reportIndicators,
+  reportCoverIndicator,
   selectedGroupData,
 }) => {
   let globalPresence = 0;
@@ -324,6 +331,7 @@ const buildPdfPayload = ({
     include_productive: reportIndicators?.productive !== false,
     include_expected: reportIndicators?.expected !== false,
     include_adjusted_productive: reportIndicators?.adjustedProductive !== false,
+    cover_indicator: reportCoverIndicator,
     generated_at: new Date().toISOString(),
     global_productive: globalPresence > 0 ? globalProductive / globalPresence : null,
     global_expected: globalPresence > 0 ? globalExpected / globalPresence : null,
@@ -913,6 +921,9 @@ const StationWideAssistanceTab = ({
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportError, setReportError] = useState('');
   const [reportIndicators, setReportIndicators] = useState(DEFAULT_REPORT_INDICATORS);
+  const [reportCoverIndicator, setReportCoverIndicator] = useState(
+    DEFAULT_REPORT_COVER_INDICATOR
+  );
   const loadTokensRef = useRef(new Map());
   const prevRangeRef = useRef(rangeDays);
   const geoThrottleRef = useRef(null);
@@ -1207,6 +1218,7 @@ const StationWideAssistanceTab = ({
     setReportToDate(defaultToDate);
     setReportIncludeWorkers(false);
     setReportIndicators(DEFAULT_REPORT_INDICATORS);
+    setReportCoverIndicator(DEFAULT_REPORT_COVER_INDICATOR);
     setReportError('');
     setReportModalOpen(true);
   }, [groupedStations, workersByGroup, rangeDays, isoDaysAgo, todayIso]);
@@ -1215,6 +1227,25 @@ const StationWideAssistanceTab = ({
     () => groupedStations.filter((group) => reportSelection[group.key] !== false),
     [groupedStations, reportSelection]
   );
+
+  const selectedReportIndicatorOptions = useMemo(
+    () =>
+      REPORT_INDICATOR_OPTIONS.filter((option) => {
+        if (option.key === 'productive') return reportIndicators.productive;
+        if (option.key === 'expected') return reportIndicators.expected;
+        return reportIndicators.adjustedProductive;
+      }),
+    [reportIndicators]
+  );
+
+  useEffect(() => {
+    if (!selectedReportIndicatorOptions.length) {
+      return;
+    }
+    if (!selectedReportIndicatorOptions.some((option) => option.key === reportCoverIndicator)) {
+      setReportCoverIndicator(selectedReportIndicatorOptions[0].key);
+    }
+  }, [reportCoverIndicator, selectedReportIndicatorOptions]);
 
   const toggleReportGroup = useCallback((groupKey) => {
     setReportSelection((prev) => ({
@@ -1371,6 +1402,7 @@ const StationWideAssistanceTab = ({
         toDate,
         includeWorkers: reportIncludeWorkers,
         reportIndicators,
+        reportCoverIndicator,
         selectedGroupData,
       });
 
@@ -1431,6 +1463,7 @@ const StationWideAssistanceTab = ({
     buildStationSummary,
     reportIncludeWorkers,
     reportIndicators,
+    reportCoverIndicator,
     reportFromDate,
     reportToDate,
   ]);
@@ -1781,6 +1814,27 @@ const StationWideAssistanceTab = ({
                       Uso adecuado
                     </label>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)] mb-1">
+                    Indicador destacado en portada
+                  </label>
+                  <select
+                    value={reportCoverIndicator}
+                    onChange={(event) => setReportCoverIndicator(event.target.value)}
+                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm text-[var(--ink)]"
+                    disabled={!selectedReportIndicatorOptions.length}
+                  >
+                    {selectedReportIndicatorOptions.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                    Este indicador se usa en la primera pagina del PDF, incluyendo la tarjeta principal y los conteos por rango.
+                  </p>
                 </div>
               </div>
 
