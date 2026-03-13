@@ -17,12 +17,12 @@ from app.schemas.parameters import (
 router = APIRouter()
 
 
-@router.get("/", response_model=list[HouseParameterRead])
+@router.get("", response_model=list[HouseParameterRead])
 def list_house_parameters(db: Session = Depends(get_db)) -> list[HouseParameter]:
     return list(db.execute(select(HouseParameter).order_by(HouseParameter.name)).scalars())
 
 
-@router.post("/", response_model=HouseParameterRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=HouseParameterRead, status_code=status.HTTP_201_CREATED)
 def create_house_parameter(
     payload: HouseParameterCreate,
     db: Session = Depends(get_db),

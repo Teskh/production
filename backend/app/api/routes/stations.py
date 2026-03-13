@@ -11,7 +11,7 @@ from app.schemas.stations import StationCreate, StationRead, StationUpdate
 router = APIRouter()
 
 
-@router.get("/", response_model=list[StationRead])
+@router.get("", response_model=list[StationRead])
 def list_stations(db: Session = Depends(get_db)) -> list[Station]:
     return list(db.execute(select(Station).order_by(Station.id)).scalars())
 
@@ -60,7 +60,7 @@ def _normalize_camera_feed_ip(value: str | None) -> str | None:
     return normalized or None
 
 
-@router.post("/", response_model=StationRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=StationRead, status_code=status.HTTP_201_CREATED)
 def create_station(
     payload: StationCreate,
     db: Session = Depends(get_db),

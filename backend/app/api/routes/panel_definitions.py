@@ -14,12 +14,12 @@ from app.schemas.panels import (
 router = APIRouter()
 
 
-@router.get("/", response_model=list[PanelDefinitionRead])
+@router.get("", response_model=list[PanelDefinitionRead])
 def list_panel_definitions(db: Session = Depends(get_db)) -> list[PanelDefinition]:
     return list(db.execute(select(PanelDefinition).order_by(PanelDefinition.id)).scalars())
 
 
-@router.post("/", response_model=PanelDefinitionRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PanelDefinitionRead, status_code=status.HTTP_201_CREATED)
 def create_panel_definition(
     payload: PanelDefinitionCreate,
     db: Session = Depends(get_db),

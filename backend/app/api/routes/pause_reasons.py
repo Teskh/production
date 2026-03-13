@@ -27,12 +27,12 @@ def _validate_station_ids(
         )
 
 
-@router.get("/", response_model=list[PauseReasonRead])
+@router.get("", response_model=list[PauseReasonRead])
 def list_pause_reasons(db: Session = Depends(get_db)) -> list[PauseReason]:
     return list(db.execute(select(PauseReason).order_by(PauseReason.name)).scalars())
 
 
-@router.post("/", response_model=PauseReasonRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PauseReasonRead, status_code=status.HTTP_201_CREATED)
 def create_pause_reason(
     payload: PauseReasonCreate,
     db: Session = Depends(get_db),

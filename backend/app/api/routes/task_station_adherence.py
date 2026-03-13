@@ -40,7 +40,7 @@ def _parse_datetime(value: str | None, field: str, end_of_day: bool = False) -> 
     return dt
 
 
-@router.get("/", response_model=TaskStationAdherenceResponse)
+@router.get("", response_model=TaskStationAdherenceResponse)
 def get_task_station_adherence(
     from_date: str | None = None,
     to_date: str | None = None,

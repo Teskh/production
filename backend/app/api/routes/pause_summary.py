@@ -87,7 +87,7 @@ def _mask_query_bounds(
     return min_dt.date(), max_dt.date()
 
 
-@router.get("/", response_model=PauseSummaryResponse)
+@router.get("", response_model=PauseSummaryResponse)
 def get_pause_summary(
     from_date: str | None = None,
     to_date: str | None = None,

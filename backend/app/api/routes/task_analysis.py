@@ -550,7 +550,7 @@ def list_task_analysis_workers(
     ]
 
 
-@router.get("/", response_model=TaskAnalysisResponse)
+@router.get("", response_model=TaskAnalysisResponse)
 def get_task_analysis(
     house_type_id: int = Query(...),
     scope: TaskScope = Query(TaskScope.PANEL),

@@ -185,7 +185,7 @@ def _average(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2)
 
 
-@router.get("/", response_model=PanelLinearMetersResponse)
+@router.get("", response_model=PanelLinearMetersResponse)
 def get_panel_linear_meters(
     from_date: str | None = None,
     to_date: str | None = None,

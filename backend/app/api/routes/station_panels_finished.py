@@ -340,7 +340,7 @@ def _mask_query_bounds(
     return min_dt.date(), max_dt.date()
 
 
-@router.get("/", response_model=StationPanelsFinishedResponse)
+@router.get("", response_model=StationPanelsFinishedResponse)
 def get_station_panels_finished(
     station_id: int,
     date: str | None = None,

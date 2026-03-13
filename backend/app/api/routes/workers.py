@@ -93,12 +93,12 @@ def _ensure_supervisor_geovictoria_unique(
             )
 
 
-@router.get("/", response_model=list[WorkerRead])
+@router.get("", response_model=list[WorkerRead])
 def list_workers(db: Session = Depends(get_db)) -> list[Worker]:
     return list(db.execute(select(Worker).order_by(Worker.last_name, Worker.first_name)).scalars())
 
 
-@router.post("/", response_model=WorkerRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=WorkerRead, status_code=status.HTTP_201_CREATED)
 def create_worker(
     payload: WorkerCreate,
     db: Session = Depends(get_db),

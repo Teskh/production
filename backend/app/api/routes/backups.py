@@ -18,12 +18,12 @@ from app.services import backups as backup_service
 router = APIRouter()
 
 
-@router.get("/", response_model=list[BackupRecord])
+@router.get("", response_model=list[BackupRecord])
 def list_backups(_admin: AdminUser = Depends(get_current_admin)) -> list[dict]:
     return backup_service.list_backups()
 
 
-@router.post("/", response_model=BackupCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BackupCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_backup(
     payload: BackupCreateRequest,
     _admin: AdminUser = Depends(get_current_admin),

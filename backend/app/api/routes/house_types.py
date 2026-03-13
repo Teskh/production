@@ -367,12 +367,12 @@ def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None
     )
 
 
-@router.get("/", response_model=list[HouseTypeRead])
+@router.get("", response_model=list[HouseTypeRead])
 def list_house_types(db: Session = Depends(get_db)) -> list[HouseType]:
     return list(db.execute(select(HouseType).order_by(HouseType.name)).scalars())
 
 
-@router.post("/", response_model=HouseTypeRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=HouseTypeRead, status_code=status.HTTP_201_CREATED)
 def create_house_type(
     payload: HouseTypeCreate,
     db: Session = Depends(get_db),

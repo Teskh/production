@@ -19,7 +19,7 @@ from app.schemas.tasks import (
 router = APIRouter()
 
 
-@router.get("/", response_model=list[TaskDefinitionRead])
+@router.get("", response_model=list[TaskDefinitionRead])
 def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinitionRead]:
     tasks = list(db.execute(select(TaskDefinition).order_by(TaskDefinition.name)).scalars())
     if not tasks:
@@ -49,7 +49,7 @@ def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinitionR
     ]
 
 
-@router.post("/", response_model=TaskDefinitionRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TaskDefinitionRead, status_code=status.HTTP_201_CREATED)
 def create_task_definition(
     payload: TaskDefinitionCreate,
     db: Session = Depends(get_db),

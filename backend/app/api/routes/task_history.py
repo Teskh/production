@@ -154,7 +154,7 @@ def _resolve_module_expected(
     return None
 
 
-@router.get("/", response_model=list[TaskHistoryRow])
+@router.get("", response_model=list[TaskHistoryRow])
 def get_task_history(
     from_date: str | None = None,
     to_date: str | None = None,

@@ -220,7 +220,7 @@ def _fetch_queue_items(db: Session, include_completed: bool) -> list[ProductionQ
     return _build_queue_items(rows)
 
 
-@router.get("/", response_model=list[ProductionQueueItem])
+@router.get("", response_model=list[ProductionQueueItem])
 def list_queue(
     include_completed: bool = True, db: Session = Depends(get_db)
 ) -> list[ProductionQueueItem]:

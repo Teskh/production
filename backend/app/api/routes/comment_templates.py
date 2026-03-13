@@ -31,12 +31,12 @@ def _validate_station_ids(
         )
 
 
-@router.get("/", response_model=list[CommentTemplateRead])
+@router.get("", response_model=list[CommentTemplateRead])
 def list_comment_templates(db: Session = Depends(get_db)) -> list[CommentTemplate]:
     return list(db.execute(select(CommentTemplate).order_by(CommentTemplate.text)).scalars())
 
 
-@router.post("/", response_model=CommentTemplateRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CommentTemplateRead, status_code=status.HTTP_201_CREATED)
 def create_comment_template(
     payload: CommentTemplateCreate,
     db: Session = Depends(get_db),

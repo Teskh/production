@@ -115,7 +115,7 @@ def _pause_duration_seconds(pause: TaskPause, completed_at: datetime | None) -> 
     return round((end_time - pause.paused_at).total_seconds(), 2)
 
 
-@router.get("/", response_model=list[PanelTaskHistoryRow])
+@router.get("", response_model=list[PanelTaskHistoryRow])
 def get_panel_task_history(
     from_date: str | None = None,
     to_date: str | None = None,
