@@ -17,7 +17,7 @@ const DEFAULT_REPORT_INDICATORS = {
 const REPORT_INDICATOR_OPTIONS = [
   { key: 'productive', label: 'Uso correcto' },
   { key: 'expected', label: 'Uso minimo' },
-  { key: 'adjustedProductive', label: 'Uso adecuado' },
+  { key: 'adjusted_productive', label: 'Uso adecuado' },
 ];
 const DEFAULT_REPORT_COVER_INDICATOR = 'productive';
 
@@ -272,12 +272,10 @@ const buildPdfPayload = ({
     totalWorkers += workerSummaries.length;
 
     workerSummaries.forEach((summaryItem) => {
-      if (includeWorkers) {
-        addProductiveRatioToBracketSummary(
-          workerProductiveBrackets,
-          summaryItem?.rangeIndicators?.totalProductiveRatio
-        );
-      }
+      addProductiveRatioToBracketSummary(
+        workerProductiveBrackets,
+        summaryItem?.rangeIndicators?.totalProductiveRatio
+      );
       const totals = summaryItem?.rangeIndicators?.totals;
       const presence = Number(totals?.presenceNetSeconds);
       if (!Number.isFinite(presence) || presence <= 0) return;
@@ -307,19 +305,17 @@ const buildPdfPayload = ({
             adjusted_productive_ratio: toFiniteOrNull(row.adjustedProductiveRatio),
           }))
         : [],
-      workers: includeWorkers
-        ? workerSummaries.map((summaryRow) => {
-            const range = summaryRow.rangeIndicators || {};
-            return {
-              label: summaryRow.workerLabel,
-              productive_ratio: toFiniteOrNull(range.totalProductiveRatio),
-              expected_ratio: toFiniteOrNull(range.totalExpectedRatio),
-              adjusted_productive_ratio: toFiniteOrNull(range.totalAdjustedProductiveRatio),
-              days_with_data: Number(range.daysWithData) || 0,
-              days_total: Number(range.daysTotal) || 0,
-            };
-          })
-        : [],
+      workers: workerSummaries.map((summaryRow) => {
+        const range = summaryRow.rangeIndicators || {};
+        return {
+          label: summaryRow.workerLabel,
+          productive_ratio: toFiniteOrNull(range.totalProductiveRatio),
+          expected_ratio: toFiniteOrNull(range.totalExpectedRatio),
+          adjusted_productive_ratio: toFiniteOrNull(range.totalAdjustedProductiveRatio),
+          days_with_data: Number(range.daysWithData) || 0,
+          days_total: Number(range.daysTotal) || 0,
+        };
+      }),
     };
   });
 

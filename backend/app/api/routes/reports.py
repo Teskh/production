@@ -168,17 +168,6 @@ def _resolve_worker_metric_brackets(
     indicator = _cover_indicator(payload, indicators)
     metric_label = str(indicator["label"])
     metric_field = str(indicator["field"])
-    provided = payload.worker_productive_brackets
-    if provided is not None:
-        rows = [
-            (_WORKER_UC_BRACKET_LABELS[0], int(provided.range_0_20)),
-            (_WORKER_UC_BRACKET_LABELS[1], int(provided.range_20_40)),
-            (_WORKER_UC_BRACKET_LABELS[2], int(provided.range_40_60)),
-            (_WORKER_UC_BRACKET_LABELS[3], int(provided.range_60_plus)),
-        ]
-        scored_workers = int(provided.scored_workers)
-        total_workers = int(payload.total_workers) if payload.total_workers > 0 else scored_workers
-        return rows, scored_workers, total_workers, metric_label
 
     range_0_20 = 0
     range_20_40 = 0
@@ -554,20 +543,19 @@ def _build_station_assistance_pdf(payload: StationAssistancePdfRequest) -> bytes
         value=_format_percent(getattr(payload, str(cover_indicator["global_field"]))),
     )
 
-    # Worker bracket summary on first page when worker detail is enabled.
+    # Worker bracket summary on first page always reflects the selected cover metric.
     y -= 16
-    if payload.include_workers:
-        bracket_rows, scored_workers, total_workers, metric_label = _resolve_worker_metric_brackets(payload)
-        y = _draw_worker_productive_bracket_summary(
-            pdf,
-            metric_label=metric_label,
-            page_width=page_width,
-            margin=margin,
-            top_y=y,
-            bracket_rows=bracket_rows,
-            scored_workers=scored_workers,
-            total_workers=total_workers,
-        )
+    bracket_rows, scored_workers, total_workers, metric_label = _resolve_worker_metric_brackets(payload)
+    y = _draw_worker_productive_bracket_summary(
+        pdf,
+        metric_label=metric_label,
+        page_width=page_width,
+        margin=margin,
+        top_y=y,
+        bracket_rows=bracket_rows,
+        scored_workers=scored_workers,
+        total_workers=total_workers,
+    )
 
     # Summary table
     y -= 8
