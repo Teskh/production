@@ -87,7 +87,9 @@ def open_qc_checks_for_task_completion(db: Session, instance: TaskInstance) -> N
         normalized_task_ids = (
             {int(task_id) for task_id in task_ids} if task_ids else set()
         )
-        if normalized_task_ids and instance.task_definition_id not in normalized_task_ids:
+        if not normalized_task_ids:
+            continue
+        if instance.task_definition_id not in normalized_task_ids:
             continue
 
         applicability_rows = list(
@@ -166,7 +168,9 @@ def update_sampling_from_execution(
         normalized_task_ids = (
             {int(task_id) for task_id in task_ids} if task_ids else set()
         )
-        if normalized_task_ids and task_definition_id not in normalized_task_ids:
+        if not normalized_task_ids:
+            continue
+        if task_definition_id not in normalized_task_ids:
             continue
         base_rate = trigger.sampling_rate
         current_rate = trigger.current_sampling_rate if trigger.current_sampling_rate is not None else base_rate

@@ -247,7 +247,10 @@ type StationQCReworkTask = {
   created_at: string;
   failure_notes: string | null;
   failure_modes: string[];
-  evidence_uris: string[];
+  evidence: Array<{
+    uri: string;
+    mime_type: string | null;
+  }>;
 };
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -378,7 +381,10 @@ const StationWorkspace: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<StationTask | null>(null);
   const [selectedTaskWorkItem, setSelectedTaskWorkItem] = useState<StationWorkItem | null>(null);
   const [selectedRework, setSelectedRework] = useState<StationQCReworkTask | null>(null);
-  const [selectedReworkImageUri, setSelectedReworkImageUri] = useState<string | null>(null);
+  const [selectedReworkEvidence, setSelectedReworkEvidence] = useState<{
+    uri: string;
+    mime_type: string | null;
+  } | null>(null);
   const [reworkImageZoom, setReworkImageZoom] = useState(1);
   const [startConfirmContext, setStartConfirmContext] = useState<StartConfirmContext | null>(
     null
@@ -1646,7 +1652,7 @@ const StationWorkspace: React.FC = () => {
     setSelectedTask(null);
     setSelectedTaskWorkItem(null);
     setSelectedRework(null);
-    setSelectedReworkImageUri(null);
+    setSelectedReworkEvidence(null);
     setReworkImageZoom(1);
     setStartConfirmContext(null);
     setStartConfirmSeconds(0);
@@ -1685,18 +1691,18 @@ const StationWorkspace: React.FC = () => {
 
   const openReworkDetails = (rework: StationQCReworkTask) => {
     setSelectedRework(rework);
-    setSelectedReworkImageUri(null);
+    setSelectedReworkEvidence(null);
     setReworkImageZoom(1);
     setActiveModal('rework_details');
   };
 
-  const openReworkImage = (uri: string) => {
-    setSelectedReworkImageUri(uri);
+  const openReworkEvidenceViewer = (item: { uri: string; mime_type: string | null }) => {
+    setSelectedReworkEvidence(item);
     setReworkImageZoom(1);
   };
 
   const closeReworkImage = () => {
-    setSelectedReworkImageUri(null);
+    setSelectedReworkEvidence(null);
     setReworkImageZoom(1);
   };
 
@@ -3181,23 +3187,32 @@ const StationWorkspace: React.FC = () => {
               )}
               <div>
                 <p className="text-xs font-semibold text-gray-500">Registro</p>
-                {selectedRework.evidence_uris.length > 0 ? (
+                {selectedRework.evidence.length > 0 ? (
                   <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {selectedRework.evidence_uris.map((uri) => (
+                    {selectedRework.evidence.map((item) => (
                       <button
-                        key={uri}
+                        key={item.uri}
                         type="button"
-                        onClick={() => openReworkImage(uri)}
+                        onClick={() => openReworkEvidenceViewer(item)}
                         className="group relative overflow-hidden rounded-xl border border-gray-200 text-left"
-                        title="Abrir imagen"
+                        title="Abrir evidencia"
                       >
-                        <img
-                          src={`${API_BASE_URL}${uri}`}
-                          alt="Registro Calidad"
-                          className="h-28 w-full object-cover transition-transform duration-200 group-hover:scale-105"
-                        />
+                        {item.mime_type?.startsWith('video/') ? (
+                          <video
+                            src={`${API_BASE_URL}${item.uri}`}
+                            className="h-28 w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <img
+                            src={`${API_BASE_URL}${item.uri}`}
+                            alt="Registro Calidad"
+                            className="h-28 w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                          />
+                        )}
                         <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-900/65 to-transparent px-2 py-1 text-[11px] font-semibold text-white">
-                          Click para ampliar
+                          {item.mime_type?.startsWith('video/') ? 'Video' : 'Click para ampliar'}
                         </span>
                       </button>
                     ))}
@@ -3219,11 +3234,11 @@ const StationWorkspace: React.FC = () => {
         </div>
       )}
 
-      {selectedReworkImageUri && (
+      {selectedReworkEvidence && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <button
             type="button"
-            aria-label="Cerrar visor de imagen"
+            aria-label="Cerrar visor de evidencia"
             className="absolute inset-0 bg-gray-950/85"
             onClick={closeReworkImage}
           />
@@ -3233,29 +3248,33 @@ const StationWorkspace: React.FC = () => {
                 Evidencia de calidad
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => changeReworkImageZoom(-0.25)}
-                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={reworkImageZoom <= 1}
-                >
-                  -
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReworkImageZoom(1)}
-                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
-                >
-                  {Math.round(reworkImageZoom * 100)}%
-                </button>
-                <button
-                  type="button"
-                  onClick={() => changeReworkImageZoom(0.25)}
-                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={reworkImageZoom >= 4}
-                >
-                  +
-                </button>
+                {!selectedReworkEvidence.mime_type?.startsWith('video/') && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => changeReworkImageZoom(-0.25)}
+                      className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={reworkImageZoom <= 1}
+                    >
+                      -
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReworkImageZoom(1)}
+                      className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10"
+                    >
+                      {Math.round(reworkImageZoom * 100)}%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => changeReworkImageZoom(0.25)}
+                      className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={reworkImageZoom >= 4}
+                    >
+                      +
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={closeReworkImage}
@@ -3266,12 +3285,20 @@ const StationWorkspace: React.FC = () => {
               </div>
             </div>
             <div className="max-h-[75vh] overflow-auto rounded-xl border border-white/10 bg-black/40 p-2">
-              <img
-                src={`${API_BASE_URL}${selectedReworkImageUri}`}
-                alt="Evidencia de calidad ampliada"
-                className="mx-auto block h-auto max-w-none rounded-lg"
-                style={{ width: `${reworkImageZoom * 100}%` }}
-              />
+              {selectedReworkEvidence.mime_type?.startsWith('video/') ? (
+                <video
+                  src={`${API_BASE_URL}${selectedReworkEvidence.uri}`}
+                  controls
+                  className="mx-auto block max-h-[72vh] w-full rounded-lg"
+                />
+              ) : (
+                <img
+                  src={`${API_BASE_URL}${selectedReworkEvidence.uri}`}
+                  alt="Evidencia de calidad ampliada"
+                  className="mx-auto block h-auto max-w-none rounded-lg"
+                  style={{ width: `${reworkImageZoom * 100}%` }}
+                />
+              )}
             </div>
           </div>
         </div>

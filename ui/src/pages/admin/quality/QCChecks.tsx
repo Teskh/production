@@ -695,7 +695,7 @@ const QCChecks: React.FC = () => {
   const triggerTaskLabel = (trigger: QCTrigger) => {
     const taskIds = trigger.params_json?.task_definition_ids ?? [];
     if (!taskIds.length) {
-      return 'Sin tareas';
+      return 'Sin tareas (inactivo)';
     }
     return taskIds
       .map((taskId) => {
@@ -1112,6 +1112,10 @@ const QCChecks: React.FC = () => {
   const handleSaveTrigger = async () => {
     if (!selectedCheckId) {
       setTriggerStatus('Seleccione una revision antes de crear un gatillante.');
+      return;
+    }
+    if (triggerDraft.task_definition_ids.length === 0) {
+      setTriggerStatus('Seleccione al menos una tarea para el gatillante.');
       return;
     }
     const samplingRate = Number(triggerDraft.sampling_rate);

@@ -80,6 +80,8 @@ MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 QC_EVIDENCE_DIR = MEDIA_GALLERY_DIR / "qc_evidence"
 QC_ROLE_VALUES = {"Calidad", "QC"}
 QC_DELETE_WINDOW = timedelta(hours=48)
+MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024
+QC_EVIDENCE_MIME_PREFIXES = ("image/", "video/")
 
 
 def _require_qc_admin(admin: AdminUser) -> AdminUser:
@@ -114,6 +116,27 @@ def _delete_media_file(storage_key: str) -> None:
     except OSError:
         # DB cleanup is authoritative; stale files can be cleaned manually.
         return
+
+
+def _store_qc_evidence_upload(file: UploadFile, dest_path: Path) -> int:
+    size_bytes = 0
+    try:
+        with dest_path.open("wb") as buffer:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size_bytes += len(chunk)
+                if size_bytes > MAX_QC_EVIDENCE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"QC evidence exceeds {MAX_QC_EVIDENCE_BYTES // (1024 * 1024)} MB limit",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        _delete_media_file(dest_path.relative_to(MEDIA_GALLERY_DIR).as_posix())
+        raise
+    return size_bytes
 
 
 def _resolve_current_station(
@@ -1063,19 +1086,23 @@ def upload_execution_evidence(
     execution = db.get(QCExecution, execution_id)
     if not execution:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found")
+    if not file.content_type or not file.content_type.startswith(QC_EVIDENCE_MIME_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only image and video evidence uploads are supported",
+        )
 
     QC_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "").suffix or ""
     storage_key = f"qc_evidence/{uuid4().hex}{ext}"
     dest_path = MEDIA_GALLERY_DIR / storage_key
 
-    with dest_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    size_bytes = _store_qc_evidence_upload(file, dest_path)
 
     media = MediaAsset(
         storage_key=storage_key,
         mime_type=file.content_type or "application/octet-stream",
-        size_bytes=dest_path.stat().st_size,
+        size_bytes=size_bytes,
         width=None,
         height=None,
         watermark_text=None,

@@ -86,6 +86,11 @@ def _validate_trigger_params(
     params_json: dict | None,
 ) -> None:
     if params_json is None:
+        if event_type == QCTriggerEventType.TASK_COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="params_json must include task_definition_ids for task_completed",
+            )
         return
     if not isinstance(params_json, dict):
         raise HTTPException(
@@ -105,17 +110,21 @@ def _validate_trigger_params(
                 detail="task_definition_ids must be a list",
             )
         unique_ids = sorted({int(task_id) for task_id in task_ids}) if task_ids else []
-        if unique_ids:
-            rows = list(
-                db.execute(
-                    select(TaskDefinition.id).where(TaskDefinition.id.in_(unique_ids))
-                ).scalars()
+        if not unique_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="task_definition_ids must include at least one task",
             )
-            if len(rows) != len(unique_ids):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="One or more task definitions not found",
-                )
+        rows = list(
+            db.execute(
+                select(TaskDefinition.id).where(TaskDefinition.id.in_(unique_ids))
+            ).scalars()
+        )
+        if len(rows) != len(unique_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="One or more task definitions not found",
+            )
 
 
 def _validate_applicability_refs(

@@ -140,6 +140,28 @@ const SEVERITY_LEVELS = [
   { id: 'sev_critica', name: 'Critica', color: 'bg-red-600 text-white' },
 ];
 
+const MAX_VIDEO_DURATION_SECONDS = 60;
+const MAX_VIDEO_EVIDENCE_BYTES = 50 * 1024 * 1024;
+const VIDEO_RECORDING_MIME_TYPES = [
+  'video/webm;codecs=vp9',
+  'video/webm;codecs=vp8',
+  'video/webm',
+  'video/mp4',
+];
+
+const formatDuration = (seconds: number) => {
+  const mins = String(Math.floor(seconds / 60)).padStart(2, '0');
+  const secs = String(seconds % 60).padStart(2, '0');
+  return `${mins}:${secs}`;
+};
+
+const getSupportedVideoRecordingMimeType = (): string | null => {
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    return null;
+  }
+  return VIDEO_RECORDING_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? null;
+};
+
 const QCExecution: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -164,6 +186,10 @@ const QCExecution: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [evidenceGateError, setEvidenceGateError] = useState<string | null>(null);
+  const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingRecording, setIsProcessingRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   const [refImageIndex, setRefImageIndex] = useState(0);
   const [guideImageIndex, setGuideImageIndex] = useState(0);
@@ -177,6 +203,12 @@ const QCExecution: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingMimeTypeRef = useRef<string | null>(null);
+  const discardRecordingOnStopRef = useRef(false);
+  const recordingIntervalRef = useRef<number | null>(null);
+  const recordingTimeoutRef = useRef<number | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [captureFlash, setCaptureFlash] = useState(false);
@@ -188,6 +220,12 @@ const QCExecution: React.FC = () => {
 
   useEffect(() => {
     return () => {
+      if (recordingIntervalRef.current !== null) {
+        window.clearInterval(recordingIntervalRef.current);
+      }
+      if (recordingTimeoutRef.current !== null) {
+        window.clearTimeout(recordingTimeoutRef.current);
+      }
       evidenceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       evidenceUrlsRef.current.clear();
     };
@@ -484,7 +522,29 @@ const QCExecution: React.FC = () => {
     return lines.filter(Boolean);
   };
 
-  const stopCamera = () => {
+  const clearRecordingTimers = () => {
+    if (recordingIntervalRef.current !== null) {
+      window.clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+    if (recordingTimeoutRef.current !== null) {
+      window.clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+  };
+
+  const stopCamera = (discardRecording = false) => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      discardRecordingOnStopRef.current = discardRecording;
+      recorder.stop();
+    }
+    clearRecordingTimers();
+    mediaRecorderRef.current = null;
+    recordingChunksRef.current = [];
+    recordingMimeTypeRef.current = null;
+    setIsRecording(false);
+    setRecordingSeconds(0);
     if (cameraStreamRef.current) {
       cameraStreamRef.current.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
@@ -505,11 +565,16 @@ const QCExecution: React.FC = () => {
     }
     let active = true;
     const startCamera = async () => {
-      setCameraError(null);
-      setCameraReady(false);
+        setCameraError(null);
+        setCameraReady(false);
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 24, max: 30 },
+          },
           audio: false,
         });
         if (!active) {
@@ -535,11 +600,14 @@ const QCExecution: React.FC = () => {
     void startCamera();
     return () => {
       active = false;
-      stopCamera();
+      stopCamera(true);
     };
   }, [showCamera]);
 
   const handleCameraCapture = async () => {
+    if (isRecording || isProcessingRecording) {
+      return;
+    }
     if (!videoRef.current || !canvasRef.current) {
       setCameraError('No se pudo acceder a la camara.');
       return;
@@ -606,6 +674,128 @@ const QCExecution: React.FC = () => {
     setActionError(null);
   };
 
+  const hasVideoEvidence = evidence.some((item) => item.type === 'video');
+  const videoRecordingMimeType = getSupportedVideoRecordingMimeType();
+
+  const stopVideoRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      return;
+    }
+    recorder.stop();
+  };
+
+  const startVideoRecording = () => {
+    if (!cameraStreamRef.current) {
+      setCameraError('La camara aun no esta lista.');
+      return;
+    }
+    if (!videoRecordingMimeType) {
+      setCameraError('Este navegador no soporta grabacion de video.');
+      return;
+    }
+    if (hasVideoEvidence) {
+      setCameraError('Solo se permite un video por revision.');
+      return;
+    }
+    if (isProcessingRecording) {
+      return;
+    }
+    try {
+      const recorder = new MediaRecorder(cameraStreamRef.current, {
+        mimeType: videoRecordingMimeType,
+      });
+      mediaRecorderRef.current = recorder;
+      recordingChunksRef.current = [];
+      recordingMimeTypeRef.current = videoRecordingMimeType;
+      discardRecordingOnStopRef.current = false;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        clearRecordingTimers();
+        setIsRecording(false);
+        setRecordingSeconds(0);
+        setCameraError('No se pudo grabar el video.');
+      };
+
+      recorder.onstop = () => {
+        clearRecordingTimers();
+        setIsRecording(false);
+        setRecordingSeconds(0);
+
+        if (discardRecordingOnStopRef.current) {
+          discardRecordingOnStopRef.current = false;
+          recordingChunksRef.current = [];
+          recordingMimeTypeRef.current = null;
+          return;
+        }
+
+        setIsProcessingRecording(true);
+        const blob = new Blob(recordingChunksRef.current, {
+          type: recordingMimeTypeRef.current || recorder.mimeType || 'video/webm',
+        });
+        recordingChunksRef.current = [];
+        recordingMimeTypeRef.current = null;
+
+        if (!blob.size) {
+          setCameraError('No se pudo guardar el video.');
+          setIsProcessingRecording(false);
+          return;
+        }
+        if (blob.size > MAX_VIDEO_EVIDENCE_BYTES) {
+          setCameraError('El video excede 50 MB. Grabe un clip mas corto.');
+          setIsProcessingRecording(false);
+          return;
+        }
+
+        const fileExtension =
+          blob.type.includes('mp4') || recorder.mimeType.includes('mp4') ? '.mp4' : '.webm';
+        const fileName = `qc-${checkId ?? 'check'}-${Date.now()}${fileExtension}`;
+        const file = new File([blob], fileName, { type: blob.type || recorder.mimeType || 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const evidenceId = `${file.name}-${file.lastModified}-${file.size}`;
+
+        evidenceUrlsRef.current.add(url);
+        setEvidence((prev) => [
+          ...prev.filter((item) => item.type !== 'video'),
+          {
+            id: evidenceId,
+            url,
+            type: 'video',
+            file,
+          },
+        ]);
+        setPreviewEvidenceId(evidenceId);
+        setEvidenceGateError(null);
+        setActionError(null);
+        setIsProcessingRecording(false);
+      };
+
+      recorder.start(1000);
+      setCameraError(null);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingIntervalRef.current = window.setInterval(() => {
+        setRecordingSeconds((prev) => {
+          if (prev >= MAX_VIDEO_DURATION_SECONDS) {
+            return MAX_VIDEO_DURATION_SECONDS;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+      recordingTimeoutRef.current = window.setTimeout(() => {
+        stopVideoRecording();
+      }, MAX_VIDEO_DURATION_SECONDS * 1000);
+    } catch {
+      setCameraError('No se pudo iniciar la grabacion.');
+    }
+  };
+
   const evidenceRequiredForOutcome = (outcome: 'Pass' | 'Fail' | 'Skip' | 'Waive') =>
     outcome === 'Pass' || outcome === 'Fail';
 
@@ -614,14 +804,38 @@ const QCExecution: React.FC = () => {
     for (const item of uploads) {
       const formData = new FormData();
       formData.append('file', item.file as File);
-      const response = await fetch(`${API_BASE_URL}/api/qc/executions/${executionId}/evidence`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `No se pudo subir registro (${response.status})`);
+      const maxAttempts = item.type === 'video' ? 3 : 1;
+      let uploaded = false;
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/qc/executions/${executionId}/evidence`, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData,
+          });
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || `No se pudo subir registro (${response.status})`);
+          }
+          uploaded = true;
+          break;
+        } catch (error) {
+          lastError =
+            error instanceof Error ? error : new Error('No se pudo subir el registro.');
+          if (attempt < maxAttempts - 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+          }
+        }
+      }
+
+      if (!uploaded) {
+        if (item.type === 'video') {
+          console.warn('QC video evidence upload dropped after retries', lastError);
+          continue;
+        }
+        throw lastError ?? new Error('No se pudo subir el registro.');
       }
     }
   };
@@ -712,6 +926,9 @@ const QCExecution: React.FC = () => {
   };
 
   const closeCamera = () => {
+    if (isRecording || isProcessingRecording) {
+      return;
+    }
     setShowCamera(false);
     setCameraError(null);
     setPreviewEvidenceId(null);
@@ -1111,7 +1328,7 @@ const QCExecution: React.FC = () => {
                 {evidenceGateError ?? 'Agregue registro antes de continuar.'}
               </p>
               <p className="mt-2 text-xs text-slate-400">
-                Adjunte una foto para poder cerrar la revision.
+                Adjunte una foto o video para poder cerrar la revision.
               </p>
             </div>
             <div className="p-4 bg-slate-900/50 flex justify-end gap-3">
@@ -1139,15 +1356,40 @@ const QCExecution: React.FC = () => {
       {showCamera && (
         <div className="fixed inset-0 z-50 bg-black flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900/90 border-b border-slate-800">
-            <div className="text-sm text-slate-200 font-semibold">Registro</div>
-            <div />
+            <div className="text-sm text-slate-200 font-semibold">
+              Registro {captureMode === 'video' ? 'de video' : 'fotografico'}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCaptureMode('photo')}
+                disabled={isRecording || isProcessingRecording}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  captureMode === 'photo'
+                    ? 'bg-white text-slate-900'
+                    : 'bg-slate-800 text-slate-300'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                Foto
+              </button>
+              <button
+                onClick={() => setCaptureMode('video')}
+                disabled={!videoRecordingMimeType || isRecording || isProcessingRecording}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  captureMode === 'video'
+                    ? 'bg-red-500 text-white'
+                    : 'bg-slate-800 text-slate-300'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                Video
+              </button>
+            </div>
           </div>
           <div className="flex-1 relative bg-slate-950">
             {cameraError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-6">
                 <p className="text-red-300 text-sm">{cameraError}</p>
                 <p className="text-xs text-slate-400 mt-2">
-                  Habilite permisos de camara en el navegador.
+                  Verifique permisos de camara o intente de nuevo.
                 </p>
               </div>
             ) : (
@@ -1166,6 +1408,13 @@ const QCExecution: React.FC = () => {
                       <div key={line}>{line}</div>
                     ))}
                   </div>
+                  {captureMode === 'video' && (
+                    <div className="absolute top-3 right-3 rounded-full bg-black/60 px-3 py-1 text-[11px] font-semibold text-white">
+                      {isRecording
+                        ? `Grabando ${formatDuration(recordingSeconds)} / ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`
+                        : `Max ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1233,27 +1482,70 @@ const QCExecution: React.FC = () => {
                   </div>
                 )}
                 <div className="absolute bottom-6 right-6 flex items-center gap-3">
+                  <div className="hidden sm:block text-right text-xs text-slate-300">
+                    {captureMode === 'video' ? (
+                      <>
+                        <div>1 video maximo</div>
+                        <div className="text-slate-400">
+                          {hasVideoEvidence ? 'Video agregado' : 'Sin audio · 60s max'}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>Foto instantanea</div>
+                        <div className="text-slate-400">Puede combinar fotos y 1 video</div>
+                      </>
+                    )}
+                  </div>
                   <button
                     onClick={closeCamera}
+                    disabled={isRecording || isProcessingRecording}
                     className="px-4 py-2 rounded-full bg-emerald-500 text-slate-900 font-semibold hover:bg-emerald-400"
                   >
                     Listo
                   </button>
-                  <button
-                    onClick={handleCameraCapture}
-                    disabled={!cameraReady}
-                    className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
-                      cameraReady
-                        ? 'border-white hover:scale-105'
-                        : 'border-slate-600 opacity-50 cursor-not-allowed'
-                    }`}
-                  >
-                    <div
-                      className={`w-16 h-16 rounded-full ${
-                        cameraReady ? 'bg-white' : 'bg-slate-600'
+                  {captureMode === 'photo' ? (
+                    <button
+                      onClick={handleCameraCapture}
+                      disabled={!cameraReady || isProcessingRecording}
+                      className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
+                        cameraReady && !isProcessingRecording
+                          ? 'border-white hover:scale-105'
+                          : 'border-slate-600 opacity-50 cursor-not-allowed'
                       }`}
-                    />
-                  </button>
+                    >
+                      <div
+                        className={`w-16 h-16 rounded-full ${
+                          cameraReady && !isProcessingRecording ? 'bg-white' : 'bg-slate-600'
+                        }`}
+                      />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={isRecording ? stopVideoRecording : startVideoRecording}
+                      disabled={
+                        !cameraReady ||
+                        isProcessingRecording ||
+                        (!isRecording && hasVideoEvidence) ||
+                        !videoRecordingMimeType
+                      }
+                      className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
+                        cameraReady &&
+                        !isProcessingRecording &&
+                        (isRecording || (!hasVideoEvidence && !!videoRecordingMimeType))
+                          ? 'border-red-400 hover:scale-105'
+                          : 'border-slate-600 opacity-50 cursor-not-allowed'
+                      }`}
+                    >
+                      <div
+                        className={`${
+                          isRecording
+                            ? 'h-7 w-7 rounded-md bg-red-500'
+                            : 'h-16 w-16 rounded-full bg-red-500'
+                        }`}
+                      />
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -1310,7 +1602,7 @@ const QCExecution: React.FC = () => {
               {evidence.length === 0 && (
                 <div className="mb-5 rounded-lg border border-amber-500/40 bg-amber-900/20 px-3 py-2">
                   <p className="text-xs text-amber-200">
-                    Adjunte registro fotografico antes de confirmar la falla.
+                    Adjunte evidencia antes de confirmar la falla.
                   </p>
                   <button
                     onClick={openRegistroCamera}

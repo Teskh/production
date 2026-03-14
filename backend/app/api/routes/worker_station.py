@@ -42,6 +42,7 @@ from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import TaskSkillRequirement, TaskWorkerRestriction, Worker, WorkerSkill
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
 from app.schemas.worker_station import (
+    StationQCEvidenceItem,
     StationQCReworkTask,
     StationSnapshot,
     StationTask,
@@ -1031,7 +1032,7 @@ def station_snapshot(
             .first()
         )
         failure_modes: list[str] = []
-        evidence_uris: list[str] = []
+        evidence_items: list[StationQCEvidenceItem] = []
         failure_notes = latest_fail.notes if latest_fail else None
         if latest_fail:
             mode_rows = list(
@@ -1058,7 +1059,12 @@ def station_snapshot(
                 )
             )
             for evidence, media in evidence_rows:
-                evidence_uris.append(f"/media_gallery/{media.storage_key}")
+                evidence_items.append(
+                    StationQCEvidenceItem(
+                        uri=f"/media_gallery/{media.storage_key}",
+                        mime_type=media.mime_type,
+                    )
+                )
         task_status = (
             db.execute(
                 select(TaskInstance.status)
@@ -1085,7 +1091,7 @@ def station_snapshot(
                 created_at=rework.created_at,
                 failure_notes=failure_notes,
                 failure_modes=failure_modes,
-                evidence_uris=evidence_uris,
+                evidence=evidence_items,
             )
         )
 

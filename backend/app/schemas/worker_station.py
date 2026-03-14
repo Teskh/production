@@ -48,6 +48,11 @@ class StationWorkItem(BaseModel):
     recommended: bool = False
 
 
+class StationQCEvidenceItem(BaseModel):
+    uri: str
+    mime_type: str | None = None
+
+
 class StationQCReworkTask(BaseModel):
     id: int
     check_instance_id: int
@@ -63,7 +68,7 @@ class StationQCReworkTask(BaseModel):
     created_at: datetime
     failure_notes: str | None = None
     failure_modes: list[str] = Field(default_factory=list)
-    evidence_uris: list[str] = Field(default_factory=list)
+    evidence: list[StationQCEvidenceItem] = Field(default_factory=list)
 
 
 class StationSnapshot(BaseModel):
