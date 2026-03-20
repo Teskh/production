@@ -11,6 +11,7 @@ import {
   Eye,
   FileImage,
   Filter,
+  Plus,
   Search,
   ShieldCheck,
   Trash2,
@@ -23,6 +24,7 @@ import { formatDateTimeShort } from '../../utils/timeUtils';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
 const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
+const MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const QC_DELETE_ROLES = new Set(['Calidad', 'QC']);
 
 type QCExecutionOutcome = 'Pass' | 'Fail' | 'Waive' | 'Skip';
@@ -304,6 +306,9 @@ const QCLibrary: React.FC = () => {
   const [checkDeleteError, setCheckDeleteError] = useState<string | null>(null);
   const [deletingCheck, setDeletingCheck] = useState(false);
   const [deletingEvidenceIds, setDeletingEvidenceIds] = useState<Set<number>>(new Set());
+  const [uploadingEvidenceExecutionIds, setUploadingEvidenceExecutionIds] = useState<Set<number>>(
+    new Set()
+  );
 
   const [mediaViewer, setMediaViewer] = useState<{
     uri: string;
@@ -336,6 +341,7 @@ const QCLibrary: React.FC = () => {
     setCheckDeleteError(null);
     setDeletingCheck(false);
     setDeletingEvidenceIds(new Set());
+    setUploadingEvidenceExecutionIds(new Set());
   }, [searchParams, setSearchParams]);
 
   const openCheckOverlay = (checkId: number) => {
@@ -728,11 +734,11 @@ const QCLibrary: React.FC = () => {
     return null;
   }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole, hasFailedExecution, hasReworkTask]);
 
-  const evidenceDeleteBlockedReason = useMemo(() => {
+  const evidenceManageBlockedReason = useMemo(() => {
     if (!checkDetail) return 'No hay check seleccionado.';
-    if (!hasDeleteRole) return 'Solo personal QC puede eliminar evidencia.';
+    if (!hasDeleteRole) return 'Solo personal QC puede gestionar evidencia.';
     if (checkDeleteWindowExpired) {
-      return 'Solo se puede eliminar evidencia dentro de 48 horas desde la apertura del check.';
+      return 'Solo se puede gestionar evidencia dentro de 48 horas desde la apertura del check.';
     }
     return null;
   }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole]);
@@ -766,8 +772,8 @@ const QCLibrary: React.FC = () => {
 
   const handleDeleteEvidence = useCallback(
     async (item: QCEvidenceSummary) => {
-      if (evidenceDeleteBlockedReason) {
-        setCheckDeleteError(evidenceDeleteBlockedReason);
+      if (evidenceManageBlockedReason) {
+        setCheckDeleteError(evidenceManageBlockedReason);
         return;
       }
       const confirmed = window.confirm(
@@ -799,7 +805,65 @@ const QCLibrary: React.FC = () => {
         });
       }
     },
-    [evidenceDeleteBlockedReason]
+    [evidenceManageBlockedReason]
+  );
+
+  const handleAddEvidence = useCallback(
+    async (executionId: number, files: File[]) => {
+      if (evidenceManageBlockedReason) {
+        setCheckDeleteError(evidenceManageBlockedReason);
+        return;
+      }
+      const acceptedFiles = files.filter(
+        (file) => file.type.startsWith('image/') || file.type.startsWith('video/')
+      );
+      if (!acceptedFiles.length) {
+        setCheckDeleteError('Seleccione imagenes o videos para adjuntar como evidencia.');
+        return;
+      }
+      const oversized = acceptedFiles.find((file) => file.size > MAX_QC_EVIDENCE_BYTES);
+      if (oversized) {
+        setCheckDeleteError(
+          `"${oversized.name}" excede el limite de ${MAX_QC_EVIDENCE_BYTES / (1024 * 1024)} MB.`
+        );
+        return;
+      }
+
+      setUploadingEvidenceExecutionIds((prev) => {
+        const next = new Set(prev);
+        next.add(executionId);
+        return next;
+      });
+      setCheckDeleteError(null);
+      try {
+        for (const file of acceptedFiles) {
+          const formData = new FormData();
+          formData.append('file', file);
+          const response = await fetch(`${API_BASE_URL}/api/qc/executions/${executionId}/evidence`, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData,
+          });
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(parseApiErrorMessage(text) || 'No se pudo agregar la evidencia.');
+          }
+        }
+        setCheckRefreshToken((prev) => prev + 1);
+        setDetailRefreshToken((prev) => prev + 1);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'No se pudo agregar la evidencia.';
+        setCheckDeleteError(message);
+      } finally {
+        setUploadingEvidenceExecutionIds((prev) => {
+          const next = new Set(prev);
+          next.delete(executionId);
+          return next;
+        });
+      }
+    },
+    [evidenceManageBlockedReason]
   );
 
   if (isUnauthorized) {
@@ -1332,8 +1396,8 @@ const QCLibrary: React.FC = () => {
                       {checkDeleteBlockedReason ? (
                         <div className="mt-3 text-xs text-[var(--ink-muted)]">{checkDeleteBlockedReason}</div>
                       ) : null}
-                      {evidenceDeleteBlockedReason && !checkDeleteBlockedReason ? (
-                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{evidenceDeleteBlockedReason}</div>
+                      {evidenceManageBlockedReason && !checkDeleteBlockedReason ? (
+                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{evidenceManageBlockedReason}</div>
                       ) : null}
                     </div>
                   </section>
@@ -1411,16 +1475,47 @@ const QCLibrary: React.FC = () => {
                               <div className="text-xs text-[var(--ink-muted)]">#{exec.id}</div>
                             </div>
 
-                            {evidence.length ? (
-                              <div className="mt-4">
-                                <div className="mb-2 text-xs font-semibold text-[var(--ink)]">
+                            <div className="mt-4">
+                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-[var(--ink)]">
                                   Evidencia ({evidence.length})
                                 </div>
-                                {evidenceDeleteBlockedReason ? (
-                                  <div className="mb-2 text-xs text-[var(--ink-muted)]">
-                                    {evidenceDeleteBlockedReason}
-                                  </div>
-                                ) : null}
+                                <label
+                                  className={`inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm ${
+                                    evidenceManageBlockedReason
+                                      ? 'cursor-not-allowed opacity-50'
+                                      : 'cursor-pointer'
+                                  }`}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  {uploadingEvidenceExecutionIds.has(exec.id)
+                                    ? 'Subiendo...'
+                                    : 'Agregar desde galeria'}
+                                  <input
+                                    type="file"
+                                    accept="image/*,video/*"
+                                    multiple
+                                    className="hidden"
+                                    disabled={
+                                      Boolean(evidenceManageBlockedReason) ||
+                                      uploadingEvidenceExecutionIds.has(exec.id)
+                                    }
+                                    onChange={(event) => {
+                                      const files = event.target.files
+                                        ? Array.from(event.target.files)
+                                        : [];
+                                      event.target.value = '';
+                                      void handleAddEvidence(exec.id, files);
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                              {evidenceManageBlockedReason ? (
+                                <div className="mb-2 text-xs text-[var(--ink-muted)]">
+                                  {evidenceManageBlockedReason}
+                                </div>
+                              ) : null}
+                              {evidence.length ? (
                                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
                                   {evidence.map((item) => {
                                     const isDeletingEvidence = deletingEvidenceIds.has(item.id);
@@ -1467,7 +1562,7 @@ const QCLibrary: React.FC = () => {
                                             event.stopPropagation();
                                             void handleDeleteEvidence(item);
                                           }}
-                                          disabled={Boolean(evidenceDeleteBlockedReason) || isDeletingEvidence}
+                                          disabled={Boolean(evidenceManageBlockedReason) || isDeletingEvidence}
                                           className="absolute right-2 top-2 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white/90 p-1 text-rose-700 shadow-sm transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                                           aria-label={`Eliminar evidencia ${item.id}`}
                                         >
@@ -1482,8 +1577,12 @@ const QCLibrary: React.FC = () => {
                                     );
                                   })}
                                 </div>
-                              </div>
-                            ) : null}
+                              ) : (
+                                <div className="rounded-2xl border border-dashed border-black/10 bg-[rgba(15,27,45,0.02)] px-4 py-6 text-sm text-[var(--ink-muted)]">
+                                  Sin evidencia registrada para esta ejecucion.
+                                </div>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
