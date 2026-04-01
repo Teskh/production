@@ -22,6 +22,10 @@ import {
   Upload,
   UserRound,
   X,
+  ChevronLeft,
+  Plus,
+  Pencil,
+  Layers,
 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -352,39 +356,39 @@ const SelectedFilesList: React.FC<SelectedFilesListProps> = ({
       : 'border-black/10 bg-slate-50 text-[var(--ink)] hover:bg-slate-100';
 
   return (
-    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           {files.length} archivos seleccionados
         </div>
         <button
           type="button"
           onClick={onClear}
           className={clsx(
-            'rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition',
+            'rounded-md border px-2.5 py-1 text-[11px] font-semibold transition',
             actionClass
           )}
         >
           Vaciar
         </button>
       </div>
-      <div className="mt-3 space-y-2">
+      <div className="mt-2 space-y-1.5">
         {files.map((file, index) => (
           <div
             key={`${file.name}-${file.lastModified}-${index}`}
-            className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3"
+            className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
           >
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-[var(--ink)]">
+              <div className="truncate text-sm font-medium text-[var(--ink)]">
                 {file.name}
               </div>
-              <div className="mt-1 text-xs text-slate-500">{formatFileSize(file.size)}</div>
+              <div className="text-xs text-slate-500">{formatFileSize(file.size)}</div>
             </div>
             <button
               type="button"
               onClick={() => onRemove(index)}
               className={clsx(
-                'rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition',
+                'rounded-md border px-2.5 py-1 text-[11px] font-semibold transition',
                 actionClass
               )}
             >
@@ -421,7 +425,7 @@ const StatusPill: React.FC<StatusPillProps> = ({ children, tone = 'neutral' }) =
       : 'border-slate-200 bg-white/80 text-slate-600';
 
   return (
-    <span className={clsx('rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]', className)}>
+    <span className={clsx('inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', className)}>
       {children}
     </span>
   );
@@ -442,7 +446,7 @@ const SupervisorChecklist: React.FC<SupervisorChecklistProps> = ({
 }) => {
   if (supervisors.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500">
+      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500">
         No hay supervisores disponibles.
       </div>
     );
@@ -459,23 +463,23 @@ const SupervisorChecklist: React.FC<SupervisorChecklistProps> = ({
             disabled={disabled}
             onClick={() => onToggle(supervisor.id)}
             className={clsx(
-              'rounded-2xl border px-3 py-3 text-left transition',
+              'rounded-lg border px-3 py-2.5 text-left transition',
               selected
                 ? 'border-[var(--leaf)] bg-emerald-50 text-[var(--leaf)]'
-                : 'border-slate-200 bg-white/80 text-slate-700 hover:border-slate-300',
+                : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300',
               disabled && 'cursor-not-allowed opacity-60'
             )}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-semibold">{buildSupervisorName(supervisor)}</div>
-                <div className="mt-1 text-xs text-slate-500">
+                <div className="text-xs text-slate-500">
                   {supervisor.geovictoria_identifier || 'Sin identificador'}
                 </div>
               </div>
               <div
                 className={clsx(
-                  'mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold',
+                  'flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold',
                   selected
                     ? 'border-[var(--leaf)] bg-[var(--leaf)] text-white'
                     : 'border-slate-300 bg-white text-slate-400'
@@ -490,6 +494,40 @@ const SupervisorChecklist: React.FC<SupervisorChecklistProps> = ({
     </div>
   );
 };
+
+/* ─── Modal shell ─── */
+type ModalProps = {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  wide?: boolean;
+  children: React.ReactNode;
+};
+
+const Modal: React.FC<ModalProps> = ({ open, onClose, title, subtitle, wide, children }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-12" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className={clsx('relative w-full rounded-2xl border border-black/10 bg-white shadow-2xl', wide ? 'max-w-2xl' : 'max-w-md')}>
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--ink)]">{title}</h3>
+            {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-5 py-5">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+/* ─── Detail tab type ─── */
+type DetailTab = 'docs' | 'signatures' | 'diff';
 
 const Protocols: React.FC = () => {
   const [protocols, setProtocols] = useState<ProtocolSummary[]>([]);
@@ -537,6 +575,14 @@ const Protocols: React.FC = () => {
   const [versionDraft, setVersionDraft] = useState<VersionDraft>(emptyVersionDraft);
   const [versionSubmitting, setVersionSubmitting] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<ProtocolDocument | null>(null);
+
+  // UI state
+  const [detailTab, setDetailTab] = useState<DetailTab>('docs');
+  const [showSupervisorLogin, setShowSupervisorLogin] = useState(false);
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showVersionModal, setShowVersionModal] = useState(false);
 
   const managerEnabled = isProtocolManager(adminSession);
   const latestSignatureStatuses = selectedProtocol?.latest_signature_statuses ?? [];
@@ -713,6 +759,7 @@ const Protocols: React.FC = () => {
       });
       setSupervisorSession(data);
       setSupervisorLogin({ supervisor_id: String(supervisorId), pin: '' });
+      setShowSupervisorLogin(false);
       await loadProtocols(selectedProtocolId);
       await loadSelectedProtocol(selectedProtocolId);
       setActionMessage('Sesion de supervisor iniciada.');
@@ -760,6 +807,7 @@ const Protocols: React.FC = () => {
         }),
       });
       setAdminLogin({ first_name: firstName, last_name: lastName, pin: '' });
+      setShowAdminLogin(false);
       await Promise.all([refreshAdminSession(), loadSelectedProtocol(selectedProtocolId)]);
       setActionMessage('Sesion admin iniciada.');
     } catch (error) {
@@ -836,6 +884,7 @@ const Protocols: React.FC = () => {
         body: form,
       });
       setCreateDraft(emptyCreateDraft());
+      setShowCreateModal(false);
       await loadProtocols(created.id);
       await loadSelectedProtocol(created.id);
       setActionMessage('Protocolo creado.');
@@ -862,6 +911,7 @@ const Protocols: React.FC = () => {
           applicable_supervisor_ids: updateDraft.applicable_supervisor_ids,
         }),
       });
+      setShowEditModal(false);
       await loadProtocols(selectedProtocol.id);
       await loadSelectedProtocol(selectedProtocol.id);
       setActionMessage('Metadatos del protocolo actualizados.');
@@ -892,6 +942,7 @@ const Protocols: React.FC = () => {
         body: form,
       });
       setVersionDraft(emptyVersionDraft());
+      setShowVersionModal(false);
       await loadProtocols(selectedProtocol.id);
       await loadSelectedProtocol(selectedProtocol.id);
       if (supervisorSession) {
@@ -905,1170 +956,1153 @@ const Protocols: React.FC = () => {
     }
   };
 
+  // Auto-dismiss action messages after a few seconds
+  useEffect(() => {
+    if (!actionMessage) return;
+    const timer = setTimeout(() => setActionMessage(null), 5000);
+    return () => clearTimeout(timer);
+  }, [actionMessage]);
+
+  /* ════════════════════════════════════════════════════════════════
+     RENDER
+     ════════════════════════════════════════════════════════════════ */
+
+  const detailTabs: { key: DetailTab; label: string; icon: React.ReactNode }[] = [
+    { key: 'docs', label: 'Documentos', icon: <FileText className="h-4 w-4" /> },
+    { key: 'signatures', label: 'Firmas', icon: <FileSignature className="h-4 w-4" /> },
+    { key: 'diff', label: 'Cambios', icon: <FileDiff className="h-4 w-4" /> },
+  ];
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(242,98,65,0.18),_transparent_28%),linear-gradient(180deg,_#faf5ed_0%,_#f3ecdf_52%,_#ece5d7_100%)]">
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <header className="overflow-hidden rounded-[2rem] border border-black/5 bg-white/80 shadow-[0_20px_80px_rgba(15,27,45,0.08)] backdrop-blur">
-          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr] lg:px-8">
-            <div>
-              <div className="flex flex-wrap items-center gap-3">
-                <Link
-                  to="/login"
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] transition hover:bg-slate-50"
-                >
-                  Volver al login
-                </Link>
-                <Link
-                  to="/utility/floor-status"
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black"
-                >
-                  Estado de planta
-                </Link>
-              </div>
-              <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.35em] text-[var(--leaf)]">
-                Seguridad y cumplimiento
-              </p>
-              <h1 className="mt-3 max-w-3xl font-display text-4xl text-[var(--ink)] sm:text-5xl">
-                Protocolos de seguridad con versionado y firma interna.
-              </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-6 text-[var(--ink-muted)] sm:text-base">
-                Cualquier persona puede revisar los protocolos vigentes. Los supervisores pueden
-                identificarse para ver sus protocolos aplicables y firmar la version activa con su
-                nombre y PIN.
-              </p>
-            </div>
+    <div className="flex min-h-screen flex-col bg-[var(--canvas)]">
+      {/* ── Top bar ── */}
+      <header className="sticky top-0 z-30 border-b border-black/5 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3 sm:px-6">
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition hover:text-[var(--ink)]"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Volver
+          </Link>
 
-            <div className="rounded-[1.75rem] border border-black/5 bg-[linear-gradient(160deg,_rgba(15,27,45,0.95),_rgba(23,42,62,0.92))] p-6 text-white shadow-xl">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-white/55">Vigencia</p>
-                  <h2 className="mt-2 text-2xl font-semibold">
-                    {protocols.length} protocolos activos
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPageError(null);
-                    void Promise.all([
-                      loadProtocols(selectedProtocolId),
-                      loadSelectedProtocol(selectedProtocolId),
-                      refreshSupervisorSession(),
-                      refreshAdminSession(),
-                    ]);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10"
-                >
-                  <RefreshCcw className="h-4 w-4" />
-                  Actualizar
-                </button>
-              </div>
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.25em] text-white/45">
-                    Firmas pendientes
-                  </div>
-                  <div className="mt-3 flex items-end justify-between gap-3">
-                    <div className="text-3xl font-semibold">
-                      {supervisorSession?.pending_protocol_count ?? 0}
-                    </div>
-                    <BellRing className="h-5 w-5 text-[var(--accent-soft)]" />
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                  <div className="text-[11px] uppercase tracking-[0.25em] text-white/45">
-                    Acceso manager
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <div className="text-base font-semibold">
-                      {managerEnabled ? 'Prevencionista activo' : 'Solo lectura'}
-                    </div>
-                    {managerEnabled ? (
-                      <Shield className="h-5 w-5 text-emerald-300" />
-                    ) : (
-                      <ShieldAlert className="h-5 w-5 text-amber-300" />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div className="mr-auto">
+            <h1 className="text-base font-semibold text-[var(--ink)]">Protocolos de Seguridad</h1>
           </div>
-        </header>
 
-        {supervisorSession && supervisorSession.pending_protocol_count > 0 && (
-          <div className="mt-6 rounded-[1.5rem] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm">
-            <div className="flex items-start gap-3">
-              <BellRing className="mt-0.5 h-5 w-5 flex-none" />
-              <div>
-                <div className="font-semibold">Tienes protocolos pendientes de firma.</div>
-                <div className="mt-1 text-amber-700">
-                  Esta alerta seguira visible mientras la version vigente de alguno de tus
-                  protocolos aplicables siga sin firmarse.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {(actionMessage || pageError) && (
-          <div className="mt-6 space-y-3">
-            {actionMessage && (
-              <div className="rounded-2xl border border-black/5 bg-white/80 px-4 py-3 text-sm text-[var(--ink-muted)] shadow-sm">
-                {actionMessage}
-              </div>
-            )}
-            {pageError && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-sm">
-                {pageError}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="mt-6 grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="space-y-4">
-            <section className="rounded-[1.75rem] border border-black/5 bg-white/80 p-5 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                    Supervisor
-                  </div>
-                  <h2 className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                    {supervisorSession ? 'Sesion activa' : 'Ingresar para firmar'}
-                  </h2>
-                </div>
-                <UserRound className="h-5 w-5 text-[var(--ink-muted)]" />
-              </div>
-
-              {supervisorSession ? (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-                    <div className="text-sm font-semibold text-emerald-800">
-                      {buildSupervisorName(supervisorSession.supervisor)}
-                    </div>
-                    <div className="mt-1 text-xs text-emerald-700">
-                      {supervisorSession.supervisor.geovictoria_identifier || 'Sin identificador'}
-                    </div>
-                    <div className="mt-3">
-                      <StatusPill tone={supervisorSession.pending_protocol_count > 0 ? 'warning' : 'success'}>
-                        {supervisorSession.pending_protocol_count > 0
-                          ? `${supervisorSession.pending_protocol_count} pendientes`
-                          : 'Sin pendientes'}
-                      </StatusPill>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSupervisorLogout}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] transition hover:bg-slate-50"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Cerrar sesion supervisor
-                  </button>
-                </div>
-              ) : (
-                <form className="mt-4 space-y-3" onSubmit={handleSupervisorLogin}>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      Supervisor
-                    </label>
-                    <select
-                      value={supervisorLogin.supervisor_id}
-                      onChange={(event) =>
-                        setSupervisorLogin((current) => ({
-                          ...current,
-                          supervisor_id: event.target.value,
-                        }))
-                      }
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                    >
-                      <option value="">Seleccionar supervisor</option>
-                      {supervisors.map((supervisor) => (
-                        <option key={supervisor.id} value={supervisor.id}>
-                          {buildSupervisorName(supervisor)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      PIN
-                    </label>
-                    <input
-                      type="password"
-                      autoComplete="current-password"
-                      value={supervisorLogin.pin}
-                      onChange={(event) =>
-                        setSupervisorLogin((current) => ({ ...current, pin: event.target.value }))
-                      }
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      placeholder="Ingresar PIN"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={supervisorSubmitting}
-                    className={clsx(
-                      'inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                      supervisorSubmitting
-                        ? 'cursor-not-allowed bg-slate-400'
-                        : 'bg-[var(--leaf)] hover:bg-[#24543d]'
-                    )}
-                  >
-                    <LogIn className="h-4 w-4" />
-                    {supervisorSubmitting ? 'Ingresando...' : 'Ingresar como supervisor'}
-                  </button>
-                </form>
-              )}
-            </section>
-
-            <section className="rounded-[1.75rem] border border-black/5 bg-white/80 p-5 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                    Prevencionista
-                  </div>
-                  <h2 className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                    {adminSession ? 'Sesion admin activa' : 'Gestion de protocolos'}
-                  </h2>
-                </div>
-                <Shield className="h-5 w-5 text-[var(--ink-muted)]" />
-              </div>
-
-              {adminSession ? (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-2xl border border-black/5 bg-slate-50 px-4 py-4">
-                    <div className="text-sm font-semibold text-[var(--ink)]">
-                      {[adminSession.first_name, adminSession.last_name].filter(Boolean).join(' ')}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--ink-muted)]">
-                      Rol: {adminSession.role}
-                    </div>
-                    <div className="mt-3">
-                      <StatusPill tone={managerEnabled ? 'success' : 'warning'}>
-                        {managerEnabled ? 'Permisos de gestion' : 'Sin permisos de gestion'}
-                      </StatusPill>
-                    </div>
-                  </div>
-                  {!managerEnabled && (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      Esta sesion admin puede navegar, pero solo un rol `Prevencionista` o
-                      `SysAdmin` puede crear y versionar protocolos.
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleAdminLogout}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] transition hover:bg-slate-50"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Cerrar sesion admin
-                  </button>
-                </div>
-              ) : (
-                <form className="mt-4 space-y-3" onSubmit={handleAdminLogin}>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Nombre
-                      </label>
-                      <input
-                        type="text"
-                        value={adminLogin.first_name}
-                        onChange={(event) =>
-                          setAdminLogin((current) => ({ ...current, first_name: event.target.value }))
-                        }
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Apellido
-                      </label>
-                      <input
-                        type="text"
-                        value={adminLogin.last_name}
-                        onChange={(event) =>
-                          setAdminLogin((current) => ({ ...current, last_name: event.target.value }))
-                        }
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                      PIN / contraseña
-                    </label>
-                      <input
-                        type="password"
-                        autoComplete="current-password"
-                        value={adminLogin.pin}
-                        onChange={(event) =>
-                          setAdminLogin((current) => ({ ...current, pin: event.target.value }))
-                      }
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={adminSubmitting}
-                    className={clsx(
-                      'inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                      adminSubmitting
-                        ? 'cursor-not-allowed bg-slate-400'
-                        : 'bg-[var(--ink)] hover:bg-black'
-                    )}
-                  >
-                    <Shield className="h-4 w-4" />
-                    {adminSubmitting ? 'Ingresando...' : 'Ingresar como admin'}
-                  </button>
-                </form>
-              )}
-            </section>
-
-            <section className="rounded-[1.75rem] border border-black/5 bg-white/80 p-5 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                    Catalogo
-                  </div>
-                  <h2 className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                    Protocolos visibles
-                  </h2>
-                </div>
-                <FileText className="h-5 w-5 text-[var(--ink-muted)]" />
-              </div>
-
-              <div className="mt-4 space-y-3">
-                <label className="relative block">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Buscar protocolo"
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-10 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                  />
-                </label>
-
-                <button
-                  type="button"
-                  disabled={!supervisorSession}
-                  onClick={() => setApplicableOnly((current) => !current)}
-                  className={clsx(
-                    'inline-flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition',
-                    applicableOnly
-                      ? 'border-[var(--leaf)] bg-emerald-50 text-[var(--leaf)]'
-                      : 'border-slate-200 bg-white text-slate-600',
-                    !supervisorSession && 'cursor-not-allowed opacity-60'
-                  )}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <Filter className="h-4 w-4" />
-                    Solo aplicables a mi
+          {/* Session indicators */}
+          <div className="flex items-center gap-2">
+            {supervisorSession ? (
+              <div className="flex items-center gap-2">
+                <div className="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 sm:flex">
+                  <UserRound className="h-3.5 w-3.5 text-emerald-600" />
+                  <span className="text-xs font-semibold text-emerald-700">
+                    {buildSupervisorName(supervisorSession.supervisor)}
                   </span>
-                  <span>{applicableOnly ? 'ON' : 'OFF'}</span>
+                  {supervisorSession.pending_protocol_count > 0 && (
+                    <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                      {supervisorSession.pending_protocol_count}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSupervisorLogout}
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  title="Cerrar sesion supervisor"
+                >
+                  <LogOut className="h-4 w-4" />
                 </button>
               </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowSupervisorLogin(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <UserRound className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Supervisor</span>
+              </button>
+            )}
 
-              <div className="mt-4 max-h-[32rem] space-y-3 overflow-y-auto pr-1">
-                {loadingList && (
-                  <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-500">
-                    Cargando protocolos...
-                  </div>
-                )}
-                {!loadingList && visibleProtocols.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-4 text-sm text-slate-500">
-                    No hay protocolos que coincidan con el filtro actual.
-                  </div>
-                )}
-                {!loadingList &&
-                  visibleProtocols.map((protocol) => {
-                    const selected = protocol.id === selectedProtocolId;
-                    return (
-                      <button
-                        key={protocol.id}
-                        type="button"
-                        onClick={() => setSelectedProtocolId(protocol.id)}
-                        className={clsx(
-                          'w-full rounded-[1.35rem] border px-4 py-4 text-left transition',
-                          selected
-                            ? 'border-[var(--ink)] bg-[var(--ink)] text-white shadow-lg'
-                            : 'border-slate-200 bg-white hover:border-slate-300'
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold">{protocol.title}</div>
-                            <div
-                              className={clsx(
-                                'mt-2 text-xs leading-5',
-                                selected ? 'text-white/75' : 'text-slate-500'
-                              )}
-                            >
-                              {protocol.description || 'Sin descripcion.'}
-                            </div>
-                          </div>
-                          {protocol.requires_signature ? (
-                            <AlertTriangle className="h-4 w-4 flex-none text-amber-300" />
-                          ) : protocol.has_signed_latest_version ? (
-                            <CheckCircle2 className="h-4 w-4 flex-none text-emerald-300" />
-                          ) : (
-                            <ClipboardCheck
-                              className={clsx(
-                                'h-4 w-4 flex-none',
-                                selected ? 'text-white/45' : 'text-slate-300'
-                              )}
-                            />
-                          )}
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {protocol.latest_version && (
-                            <StatusPill tone={selected ? 'neutral' : protocol.requires_signature ? 'warning' : 'neutral'}>
-                              V{protocol.latest_version.version_number}
-                            </StatusPill>
-                          )}
-                          {protocol.requires_signature && (
-                            <StatusPill tone="warning">Pendiente</StatusPill>
-                          )}
-                          {protocol.has_signed_latest_version && (
-                            <StatusPill tone="success">Firmado</StatusPill>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
+            {adminSession ? (
+              <div className="flex items-center gap-2">
+                <div className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 sm:flex">
+                  <Shield className="h-3.5 w-3.5 text-slate-500" />
+                  <span className="text-xs font-semibold text-slate-600">
+                    {[adminSession.first_name, adminSession.last_name].filter(Boolean).join(' ')}
+                  </span>
+                  {managerEnabled && (
+                    <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">
+                      P
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAdminLogout}
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  title="Cerrar sesion admin"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
               </div>
-            </section>
-          </aside>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowAdminLogin(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <Shield className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
 
-          <main className="space-y-6">
-            <section className="rounded-[2rem] border border-black/5 bg-white/80 p-6 shadow-sm backdrop-blur lg:p-8">
-              {selectedProtocol ? (
-                <>
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="max-w-3xl">
-                      <div className="flex flex-wrap gap-2">
-                        {selectedProtocol.requires_signature ? (
-                          <StatusPill tone="warning">Pendiente de firma</StatusPill>
-                        ) : selectedProtocol.has_signed_latest_version ? (
-                          <StatusPill tone="success">Firmado</StatusPill>
+            <button
+              type="button"
+              onClick={() => {
+                setPageError(null);
+                void Promise.all([
+                  loadProtocols(selectedProtocolId),
+                  loadSelectedProtocol(selectedProtocolId),
+                  refreshSupervisorSession(),
+                  refreshAdminSession(),
+                ]);
+              }}
+              className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+              title="Actualizar"
+            >
+              <RefreshCcw className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Toast messages ── */}
+      {(actionMessage || pageError) && (
+        <div className="mx-auto w-full max-w-7xl px-4 pt-3 sm:px-6">
+          {actionMessage && (
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-[var(--ink-muted)] shadow-sm">
+              <span>{actionMessage}</span>
+              <button type="button" onClick={() => setActionMessage(null)} className="ml-3 text-slate-400 hover:text-slate-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+          {pageError && (
+            <div className="mt-2 flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-700 shadow-sm">
+              <span>{pageError}</span>
+              <button type="button" onClick={() => setPageError(null)} className="ml-3 text-rose-400 hover:text-rose-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Pending signature banner ── */}
+      {supervisorSession && supervisorSession.pending_protocol_count > 0 && (
+        <div className="mx-auto w-full max-w-7xl px-4 pt-3 sm:px-6">
+          <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+            <BellRing className="h-4 w-4 flex-none" />
+            <span>
+              Tienes <strong>{supervisorSession.pending_protocol_count}</strong> protocolo(s) pendiente(s) de firma.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Main layout ── */}
+      <div className="mx-auto flex w-full max-w-7xl flex-1 gap-0 px-4 py-4 sm:px-6 lg:gap-6">
+        {/* ── Sidebar: protocol list ── */}
+        <aside className="hidden w-80 flex-none lg:block">
+          <div className="sticky top-[61px] space-y-3">
+            {/* Search */}
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar protocolo..."
+                className="w-full rounded-lg border border-slate-200 bg-white px-9 py-2 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+              {query && (
+                <button type="button" onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </label>
+
+            {/* Filter toggle */}
+            {supervisorSession && (
+              <button
+                type="button"
+                onClick={() => setApplicableOnly((current) => !current)}
+                className={clsx(
+                  'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-xs font-semibold transition',
+                  applicableOnly
+                    ? 'border-[var(--leaf)] bg-emerald-50 text-[var(--leaf)]'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'
+                )}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Filter className="h-3.5 w-3.5" />
+                  Solo aplicables a mi
+                </span>
+                <span>{applicableOnly ? 'ON' : 'OFF'}</span>
+              </button>
+            )}
+
+            {/* Manager: create button */}
+            {managerEnabled && (
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-500 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Crear protocolo
+              </button>
+            )}
+
+            {/* Protocol list */}
+            <div className="max-h-[calc(100vh-200px)] space-y-1.5 overflow-y-auto pr-1">
+              {loadingList && (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                  Cargando...
+                </div>
+              )}
+              {!loadingList && visibleProtocols.length === 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                  Sin resultados.
+                </div>
+              )}
+              {!loadingList &&
+                visibleProtocols.map((protocol) => {
+                  const selected = protocol.id === selectedProtocolId;
+                  return (
+                    <button
+                      key={protocol.id}
+                      type="button"
+                      onClick={() => setSelectedProtocolId(protocol.id)}
+                      className={clsx(
+                        'w-full rounded-lg border px-3 py-3 text-left transition',
+                        selected
+                          ? 'border-[var(--ink)] bg-[var(--ink)] text-white shadow-md'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 text-sm font-semibold leading-snug">
+                          {protocol.title}
+                        </div>
+                        {protocol.requires_signature ? (
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none text-amber-300" />
+                        ) : protocol.has_signed_latest_version ? (
+                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-none text-emerald-400" />
                         ) : (
-                          <StatusPill>Publico</StatusPill>
+                          <ClipboardCheck
+                            className={clsx(
+                              'mt-0.5 h-3.5 w-3.5 flex-none',
+                              selected ? 'text-white/40' : 'text-slate-300'
+                            )}
+                          />
                         )}
-                        {selectedProtocol.latest_version && (
-                          <StatusPill>
-                            Version {selectedProtocol.latest_version.version_number}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {protocol.latest_version && (
+                          <StatusPill tone={selected ? 'neutral' : protocol.requires_signature ? 'warning' : 'neutral'}>
+                            V{protocol.latest_version.version_number}
                           </StatusPill>
                         )}
+                        {protocol.requires_signature && (
+                          <StatusPill tone="warning">Pendiente</StatusPill>
+                        )}
+                        {protocol.has_signed_latest_version && (
+                          <StatusPill tone="success">Firmado</StatusPill>
+                        )}
                       </div>
-                      <h2 className="mt-4 font-display text-3xl text-[var(--ink)]">
-                        {selectedProtocol.title}
-                      </h2>
-                      <p className="mt-3 max-w-3xl text-sm leading-6 text-[var(--ink-muted)] sm:text-base">
-                        {selectedProtocol.description || 'Sin descripcion registrada.'}
-                      </p>
-                    </div>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+        </aside>
 
-                    <div className="grid min-w-[240px] gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                          Publicada
-                        </div>
-                        <div className="mt-2 text-sm font-semibold text-[var(--ink)]">
-                          {formatDateTime(selectedProtocol.latest_version?.created_at)}
-                        </div>
+        {/* ── Mobile protocol selector (shown on small screens) ── */}
+        <div className="mb-4 w-full lg:hidden">
+          <div className="flex gap-2">
+            <label className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar..."
+                className="w-full rounded-lg border border-slate-200 bg-white px-9 py-2 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </label>
+            {supervisorSession && (
+              <button
+                type="button"
+                onClick={() => setApplicableOnly((c) => !c)}
+                className={clsx(
+                  'rounded-lg border px-3 py-2 text-xs font-semibold transition',
+                  applicableOnly ? 'border-[var(--leaf)] bg-emerald-50 text-[var(--leaf)]' : 'border-slate-200 bg-white text-slate-500'
+                )}
+              >
+                <Filter className="h-4 w-4" />
+              </button>
+            )}
+            {managerEnabled && (
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 transition hover:text-[var(--accent)]"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+            {loadingList && (
+              <div className="whitespace-nowrap rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-500">
+                Cargando...
+              </div>
+            )}
+            {!loadingList &&
+              visibleProtocols.map((protocol) => {
+                const selected = protocol.id === selectedProtocolId;
+                return (
+                  <button
+                    key={protocol.id}
+                    type="button"
+                    onClick={() => setSelectedProtocolId(protocol.id)}
+                    className={clsx(
+                      'flex-none whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition',
+                      selected
+                        ? 'border-[var(--ink)] bg-[var(--ink)] text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                    )}
+                  >
+                    {protocol.title}
+                    {protocol.requires_signature && ' *'}
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+
+        {/* ── Detail panel ── */}
+        <main className="min-w-0 flex-1">
+          {selectedProtocol ? (
+            <div className="rounded-xl border border-black/5 bg-white shadow-sm">
+              {/* Detail header */}
+              <div className="border-b border-slate-100 px-5 py-5 lg:px-6">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedProtocol.requires_signature ? (
+                        <StatusPill tone="warning">Pendiente de firma</StatusPill>
+                      ) : selectedProtocol.has_signed_latest_version ? (
+                        <StatusPill tone="success">Firmado</StatusPill>
+                      ) : (
+                        <StatusPill>Publico</StatusPill>
+                      )}
+                      {selectedProtocol.latest_version && (
+                        <StatusPill>V{selectedProtocol.latest_version.version_number}</StatusPill>
+                      )}
+                      <span className="text-xs text-slate-400">
+                        {formatDateTime(selectedProtocol.latest_version?.created_at)}
+                      </span>
+                    </div>
+                    <h2 className="mt-3 text-xl font-semibold text-[var(--ink)] lg:text-2xl">
+                      {selectedProtocol.title}
+                    </h2>
+                    {selectedProtocol.description && (
+                      <p className="mt-1.5 text-sm leading-relaxed text-[var(--ink-muted)]">
+                        {selectedProtocol.description}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Quick stats */}
+                  <div className="flex flex-none items-center gap-3 text-center">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="text-lg font-semibold text-[var(--ink)]">
+                        {selectedProtocol.latest_signed_supervisor_count}
+                        <span className="text-slate-400">/{selectedProtocol.applicable_supervisor_count}</span>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                        <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                          Supervisores
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Firmaron</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="text-lg font-semibold text-[var(--ink)]">
+                        {selectedProtocol.latest_documents.length}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">Docs</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Manager actions row */}
+                {managerEnabled && selectedProtocol && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowEditModal(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Editar metadatos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowVersionModal(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--leaf)]/30 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-[var(--leaf)] transition hover:bg-emerald-100"
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      Nueva version
+                    </button>
+                  </div>
+                )}
+
+                {/* Change summary */}
+                {selectedProtocol.latest_version?.change_summary && (
+                  <div className="mt-4 rounded-lg border border-[var(--accent-soft)] bg-[#fff3ee] px-4 py-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--accent)]">
+                      Resumen del cambio
+                    </div>
+                    <div className="mt-1 text-sm leading-relaxed text-[var(--ink)]">
+                      {selectedProtocol.latest_version.change_summary}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Signature CTA ── */}
+              {supervisorSession &&
+                selectedProtocol.is_applicable_to_current_supervisor &&
+                !selectedProtocol.has_signed_latest_version && (
+                  <div className="border-b border-amber-100 bg-amber-50 px-5 py-4 lg:px-6">
+                    <div className="flex items-start gap-3">
+                      <FileSignature className="mt-0.5 h-5 w-5 flex-none text-amber-600" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-amber-900">
+                          Firma pendiente para esta version
                         </div>
-                        <div className="mt-2 text-sm font-semibold text-[var(--ink)]">
-                          {selectedProtocol.latest_signed_supervisor_count} firmaron /{' '}
-                          {selectedProtocol.applicable_supervisor_count} aplican
-                        </div>
-                        {adminSession && (
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            <StatusPill tone={pendingSignatureStatuses.length > 0 ? 'warning' : 'neutral'}>
-                              {pendingSignatureStatuses.length} pendientes
-                            </StatusPill>
-                            <StatusPill tone={signedSignatureStatuses.length > 0 ? 'success' : 'neutral'}>
-                              {signedSignatureStatuses.length} firmados
-                            </StatusPill>
+                        <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={handleSignProtocol}>
+                          <div className="flex-1">
+                            <label className="block text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                              Nombre
+                            </label>
+                            <input
+                              type="text"
+                              autoComplete="name"
+                              value={signatureDraft.signed_name}
+                              onChange={(event) =>
+                                setSignatureDraft((current) => ({
+                                  ...current,
+                                  signed_name: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none"
+                              placeholder="Nombre completo"
+                            />
                           </div>
+                          <div className="w-36">
+                            <label className="block text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                              PIN
+                            </label>
+                            <input
+                              type="password"
+                              autoComplete="current-password"
+                              value={signatureDraft.pin}
+                              onChange={(event) =>
+                                setSignatureDraft((current) => ({
+                                  ...current,
+                                  pin: event.target.value,
+                                }))
+                              }
+                              className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none"
+                              placeholder="PIN"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={signatureSubmitting}
+                            className={clsx(
+                              'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition',
+                              signatureSubmitting
+                                ? 'cursor-not-allowed bg-slate-400'
+                                : 'bg-amber-600 hover:bg-amber-700'
+                            )}
+                          >
+                            <FileSignature className="h-4 w-4" />
+                            {signatureSubmitting ? 'Firmando...' : 'Firmar'}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              {/* ── Signed confirmation ── */}
+              {selectedProtocol.current_supervisor_signature && (
+                <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-3 lg:px-6">
+                  <div className="flex items-center gap-2 text-sm text-emerald-800">
+                    <BadgeCheck className="h-4 w-4 text-emerald-600" />
+                    <span>
+                      Firmada por <strong>{selectedProtocol.current_supervisor_signature.signed_name}</strong> el{' '}
+                      {formatDateTime(selectedProtocol.current_supervisor_signature.signed_at)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Tabs ── */}
+              <div className="border-b border-slate-100 px-5 lg:px-6">
+                <div className="-mb-px flex gap-0">
+                  {detailTabs.map((tab) => (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => setDetailTab(tab.key)}
+                      className={clsx(
+                        'flex items-center gap-1.5 border-b-2 px-4 py-3 text-sm font-medium transition',
+                        detailTab === tab.key
+                          ? 'border-[var(--ink)] text-[var(--ink)]'
+                          : 'border-transparent text-slate-400 hover:text-slate-600'
+                      )}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                      {tab.key === 'signatures' && adminSession && pendingSignatureStatuses.length > 0 && (
+                        <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                          {pendingSignatureStatuses.length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── Tab content ── */}
+              <div className="px-5 py-5 lg:px-6">
+                {/* Documents tab */}
+                {detailTab === 'docs' && (
+                  <div className="space-y-3">
+                    {selectedProtocol.latest_documents.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        No hay documentos en esta version.
+                      </div>
+                    ) : (
+                      selectedProtocol.latest_documents.map((document) => (
+                        <div
+                          key={document.id}
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-[var(--ink)]">
+                              {document.original_filename}
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-500">
+                              {formatFileSize(document.size_bytes)} · {formatDateTime(document.uploaded_at)}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewDocument(document)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Ver
+                            </button>
+                            <a
+                              href={buildDocumentUrl(document.uri)}
+                              download={document.original_filename}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Descargar
+                            </a>
+                          </div>
+                        </div>
+                      ))
+                    )}
+
+                    {/* Applicable supervisors summary */}
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Supervisores aplicables
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedProtocol.applicable_supervisors.length > 0 ? (
+                          selectedProtocol.applicable_supervisors.map((supervisor) => (
+                            <StatusPill key={supervisor.id}>
+                              {buildSupervisorName(supervisor)}
+                            </StatusPill>
+                          ))
+                        ) : (
+                          <span className="text-sm text-slate-500">Sin supervisores asignados.</span>
                         )}
                       </div>
                     </div>
                   </div>
+                )}
 
-                  {selectedProtocol.latest_version?.change_summary && (
-                    <div className="mt-6 rounded-[1.5rem] border border-[var(--accent-soft)] bg-[#fff3ee] px-5 py-4">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--accent)]">
-                        Resumen del cambio
+                {/* Signatures tab */}
+                {detailTab === 'signatures' && (
+                  <div>
+                    {!adminSession ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        Inicia sesion como admin para ver el seguimiento detallado de firmas.
                       </div>
-                      <div className="mt-2 text-sm leading-6 text-[var(--ink)]">
-                        {selectedProtocol.latest_version.change_summary}
+                    ) : selectedProtocol.applicable_supervisors.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        No hay supervisores asignados a este protocolo.
                       </div>
-                    </div>
-                  )}
-
-                  {adminSession && (
-                    <div className="mt-6 rounded-[1.6rem] border border-slate-200 bg-slate-50 px-5 py-5">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                    ) : (
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        {/* Pending */}
                         <div>
-                          <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                            Seguimiento de firmas
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-sm font-semibold text-amber-900">Pendientes</h4>
+                            <StatusPill tone="warning">{pendingSignatureStatuses.length}</StatusPill>
                           </div>
-                          <div className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                            Estado por supervisor asignado
-                          </div>
-                        </div>
-                        <FileSignature className="h-5 w-5 text-slate-400" />
-                      </div>
-
-                      {selectedProtocol.applicable_supervisors.length === 0 ? (
-                        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
-                          No hay supervisores asignados a este protocolo.
-                        </div>
-                      ) : (
-                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                          <div className="rounded-[1.4rem] border border-amber-200 bg-amber-50/70 px-4 py-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold text-amber-900">Pendientes</div>
-                              <StatusPill tone="warning">{pendingSignatureStatuses.length}</StatusPill>
+                          {pendingSignatureStatuses.length === 0 ? (
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                              Todos firmaron esta version.
                             </div>
-                            {pendingSignatureStatuses.length === 0 ? (
-                              <div className="mt-4 rounded-2xl border border-emerald-200 bg-white px-4 py-4 text-sm text-emerald-700">
-                                Todos los supervisores asignados ya firmaron esta version.
-                              </div>
-                            ) : (
-                              <div className="mt-4 space-y-3">
-                                {pendingSignatureStatuses.map((entry) => (
-                                  <div
-                                    key={entry.supervisor.id}
-                                    className="rounded-2xl border border-amber-200 bg-white px-4 py-4"
-                                  >
-                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                      <div>
-                                        <div className="text-sm font-semibold text-[var(--ink)]">
-                                          {buildSupervisorName(entry.supervisor)}
-                                        </div>
-                                        <div className="mt-1 text-xs text-slate-500">
-                                          {entry.supervisor.geovictoria_identifier || 'Sin identificador'}
-                                        </div>
-                                      </div>
-                                      <StatusPill tone="warning">Pendiente</StatusPill>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="rounded-[1.4rem] border border-emerald-200 bg-emerald-50/70 px-4 py-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold text-emerald-900">Firmados</div>
-                              <StatusPill tone="success">{signedSignatureStatuses.length}</StatusPill>
-                            </div>
-                            {signedSignatureStatuses.length === 0 ? (
-                              <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
-                                Aun no hay firmas registradas para esta version.
-                              </div>
-                            ) : (
-                              <div className="mt-4 space-y-3">
-                                {signedSignatureStatuses.map((entry) => (
-                                  <div
-                                    key={entry.supervisor.id}
-                                    className="rounded-2xl border border-emerald-200 bg-white px-4 py-4"
-                                  >
-                                    <div className="flex flex-wrap items-center justify-between gap-3">
-                                      <div>
-                                        <div className="text-sm font-semibold text-[var(--ink)]">
-                                          {buildSupervisorName(entry.supervisor)}
-                                        </div>
-                                        <div className="mt-1 text-xs text-slate-500">
-                                          {entry.supervisor.geovictoria_identifier || 'Sin identificador'}
-                                        </div>
-                                        {entry.signed_at && (
-                                          <div className="mt-2 text-xs text-slate-600">
-                                            Firmado como {entry.signed_name} el {formatDateTime(entry.signed_at)}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <StatusPill tone="success">Firmado</StatusPill>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {supervisorSession &&
-                    selectedProtocol.is_applicable_to_current_supervisor &&
-                    !selectedProtocol.has_signed_latest_version && (
-                      <div className="mt-6 rounded-[1.6rem] border border-amber-200 bg-amber-50 px-5 py-5">
-                        <div className="flex items-start gap-3">
-                          <FileSignature className="mt-0.5 h-5 w-5 text-amber-700" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-base font-semibold text-amber-900">
-                              Firma pendiente para esta version
-                            </div>
-                            <div className="mt-1 text-sm text-amber-800">
-                              Debes firmar la version vigente con tu nombre y PIN para dejar
-                              constancia interna de recepcion.
-                            </div>
-                            <form className="mt-4 grid gap-3 lg:grid-cols-[1fr_220px_auto]" onSubmit={handleSignProtocol}>
-                              <input
-                                type="text"
-                                autoComplete="name"
-                                value={signatureDraft.signed_name}
-                                onChange={(event) =>
-                                  setSignatureDraft((current) => ({
-                                    ...current,
-                                    signed_name: event.target.value,
-                                  }))
-                                }
-                                className="rounded-2xl border border-amber-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-amber-400 focus:outline-none"
-                                placeholder="Nombre completo"
-                              />
-                              <input
-                                type="password"
-                                autoComplete="current-password"
-                                value={signatureDraft.pin}
-                                onChange={(event) =>
-                                  setSignatureDraft((current) => ({
-                                    ...current,
-                                    pin: event.target.value,
-                                  }))
-                                }
-                                className="rounded-2xl border border-amber-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-amber-400 focus:outline-none"
-                                placeholder="PIN"
-                              />
-                              <button
-                                type="submit"
-                                disabled={signatureSubmitting}
-                                className={clsx(
-                                  'inline-flex items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                                  signatureSubmitting
-                                    ? 'cursor-not-allowed bg-slate-400'
-                                    : 'bg-amber-600 hover:bg-amber-700'
-                                )}
-                              >
-                                <FileSignature className="h-4 w-4" />
-                                {signatureSubmitting ? 'Firmando...' : 'Firmar protocolo'}
-                              </button>
-                            </form>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                  {selectedProtocol.current_supervisor_signature && (
-                    <div className="mt-6 rounded-[1.6rem] border border-emerald-200 bg-emerald-50 px-5 py-4">
-                      <div className="flex items-start gap-3">
-                        <BadgeCheck className="mt-0.5 h-5 w-5 text-emerald-700" />
-                        <div>
-                          <div className="text-base font-semibold text-emerald-900">
-                            Version firmada
-                          </div>
-                          <div className="mt-1 text-sm text-emerald-800">
-                            Firmada por {selectedProtocol.current_supervisor_signature.signed_name}{' '}
-                            el {formatDateTime(selectedProtocol.current_supervisor_signature.signed_at)}.
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-                    <div className="space-y-4">
-                      <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                              Documentos vigentes
-                            </div>
-                            <div className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                              {selectedProtocol.latest_documents.length} archivos
-                            </div>
-                          </div>
-                          <FileText className="h-5 w-5 text-slate-400" />
-                        </div>
-                        <div className="mt-4 space-y-3">
-                          {selectedProtocol.latest_documents.map((document) => (
-                            <div
-                              key={document.id}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                            >
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-[var(--ink)]">
-                                  {document.original_filename}
-                                </div>
-                                <div className="mt-1 text-xs text-slate-500">
-                                  {document.mime_type} · {formatFileSize(document.size_bytes)} ·{' '}
-                                  {formatDateTime(document.uploaded_at)}
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setPreviewDocument(document)}
-                                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600 transition hover:bg-slate-50"
-                                >
-                                  <Eye className="h-3.5 w-3.5" />
-                                  Ver
-                                </button>
-                                <a
-                                  href={buildDocumentUrl(document.uri)}
-                                  download={document.original_filename}
-                                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition hover:bg-slate-50"
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                  Descargar
-                                </a>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-5 py-5">
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                          Supervisores aplicables
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {selectedProtocol.applicable_supervisors.length > 0 ? (
-                            selectedProtocol.applicable_supervisors.map((supervisor) => (
-                              <StatusPill key={supervisor.id}>
-                                {buildSupervisorName(supervisor)}
-                              </StatusPill>
-                            ))
                           ) : (
-                            <div className="text-sm text-slate-500">
-                              Este protocolo no tiene supervisores asignados.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                    </div>
-
-                    <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-5 py-5">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                            Diferencias con la version anterior
-                          </div>
-                          <div className="mt-2 text-lg font-semibold text-[var(--ink)]">
-                            {selectedProtocol.previous_version_number
-                              ? `Comparando con V${selectedProtocol.previous_version_number}`
-                              : 'Sin version anterior'}
-                          </div>
-                        </div>
-                        <FileDiff className="h-5 w-5 text-slate-400" />
-                      </div>
-                      {selectedProtocol.previous_version_number == null ? (
-                        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
-                          Este protocolo solo tiene una version publicada.
-                        </div>
-                      ) : selectedProtocol.diff_entries.length === 0 ? (
-                        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-4 text-sm text-slate-500">
-                          No se detectaron diferencias textuales entre la version anterior y la
-                          vigente.
-                        </div>
-                      ) : (
-                        <div className="mt-4 space-y-4">
-                          {selectedProtocol.diff_entries.map((entry, index) => (
-                            <div
-                              key={`${entry.document_name}-${index}`}
-                              className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                  <div className="text-sm font-semibold text-[var(--ink)]">
-                                    {entry.document_name}
-                                  </div>
-                                  <div className="mt-1 text-xs text-slate-500">
-                                    {entry.kind === 'added'
-                                      ? 'Documento agregado'
-                                      : entry.kind === 'removed'
-                                      ? 'Documento removido'
-                                      : `Cambios detectados: +${entry.added_lines} / -${entry.removed_lines}`}
-                                  </div>
-                                </div>
-                                <StatusPill
-                                  tone={
-                                    entry.kind === 'changed'
-                                      ? 'warning'
-                                      : entry.kind === 'added'
-                                      ? 'success'
-                                      : 'danger'
-                                  }
+                            <div className="space-y-2">
+                              {pendingSignatureStatuses.map((entry) => (
+                                <div
+                                  key={entry.supervisor.id}
+                                  className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5"
                                 >
-                                  {entry.kind}
-                                </StatusPill>
-                              </div>
-                              {entry.diff_excerpt && (
-                                <pre className="mt-4 overflow-x-auto rounded-2xl bg-[#101926] px-4 py-4 text-xs leading-5 text-slate-100">
-                                  {entry.diff_excerpt}
-                                </pre>
-                              )}
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--ink)]">
+                                      {buildSupervisorName(entry.supervisor)}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {entry.supervisor.geovictoria_identifier || 'Sin ID'}
+                                    </div>
+                                  </div>
+                                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
-                  {loadingDetail || loadingList
-                    ? 'Cargando detalle del protocolo...'
-                    : 'Selecciona un protocolo para revisar documentos, firmas y diferencias.'}
-                </div>
-              )}
-            </section>
 
-            {managerEnabled && (
-              <section className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-                <form
-                  className="rounded-[1.9rem] border border-black/5 bg-white/80 p-6 shadow-sm backdrop-blur"
-                  onSubmit={handleCreateProtocol}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                        Nuevo protocolo
-                      </div>
-                      <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
-                        Crear protocolo
-                      </h3>
-                    </div>
-                    <Upload className="h-5 w-5 text-[var(--ink-muted)]" />
-                  </div>
-                  <div className="mt-5 space-y-4">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Titulo
-                      </label>
-                      <input
-                        type="text"
-                        value={createDraft.title}
-                        onChange={(event) =>
-                          setCreateDraft((current) => ({ ...current, title: event.target.value }))
-                        }
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Descripcion
-                      </label>
-                      <textarea
-                        value={createDraft.description}
-                        onChange={(event) =>
-                          setCreateDraft((current) => ({
-                            ...current,
-                            description: event.target.value,
-                          }))
-                        }
-                        rows={4}
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Resumen del cambio inicial
-                      </label>
-                      <textarea
-                        value={createDraft.change_summary}
-                        onChange={(event) =>
-                          setCreateDraft((current) => ({
-                            ...current,
-                            change_summary: event.target.value,
-                          }))
-                        }
-                        rows={3}
-                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Supervisores aplicables
-                      </label>
-                      <div className="mt-2">
-                        <SupervisorChecklist
-                          supervisors={supervisors}
-                          selectedIds={createDraft.applicable_supervisor_ids}
-                          onToggle={(id) =>
-                            setCreateDraft((current) => ({
-                              ...current,
-                              applicable_supervisor_ids: toggleNumber(
-                                current.applicable_supervisor_ids,
-                                id
-                              ),
-                            }))
-                          }
-                          disabled={createSubmitting}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Documentos
-                      </label>
-                      <input
-                        type="file"
-                        accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        multiple
-                        onChange={(event) => {
-                          const nextFiles = event.currentTarget.files;
-                          const result = mergeSelectedFiles(createDraft.files, nextFiles);
-                          setCreateDraft((current) => ({
-                            ...current,
-                            files: result.files,
-                          }));
-                          if (result.message) {
-                            setActionMessage(result.message);
-                          }
-                          event.currentTarget.value = '';
-                        }}
-                        className="mt-2 block w-full text-sm text-slate-600 file:mr-4 file:rounded-full file:border-0 file:bg-[var(--ink)] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
-                      />
-                      <SelectedFilesList
-                        files={createDraft.files}
-                        tone="ink"
-                        onRemove={(index) =>
-                          setCreateDraft((current) => ({
-                            ...current,
-                            files: current.files.filter((_, currentIndex) => currentIndex !== index),
-                          }))
-                        }
-                        onClear={() =>
-                          setCreateDraft((current) => ({
-                            ...current,
-                            files: [],
-                          }))
-                        }
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={createSubmitting}
-                      className={clsx(
-                        'inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                        createSubmitting
-                          ? 'cursor-not-allowed bg-slate-400'
-                          : 'bg-[var(--accent)] hover:bg-[#df5535]'
-                      )}
-                    >
-                      <Upload className="h-4 w-4" />
-                      {createSubmitting ? 'Creando...' : 'Crear protocolo'}
-                    </button>
-                  </div>
-                </form>
-
-                <div className="space-y-6">
-                  <form
-                    className="rounded-[1.9rem] border border-black/5 bg-white/80 p-6 shadow-sm backdrop-blur"
-                    onSubmit={handleUpdateProtocol}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                          Protocolo seleccionado
-                        </div>
-                        <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
-                          Editar metadatos
-                        </h3>
-                      </div>
-                      <ClipboardCheck className="h-5 w-5 text-[var(--ink-muted)]" />
-                    </div>
-
-                    {!selectedProtocol ? (
-                      <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-                        Selecciona un protocolo para editar su titulo, descripcion y aplicabilidad.
-                      </div>
-                    ) : (
-                      <div className="mt-5 space-y-4">
+                        {/* Signed */}
                         <div>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Titulo
-                          </label>
-                          <input
-                            type="text"
-                            value={updateDraft.title}
-                            onChange={(event) =>
-                              setUpdateDraft((current) => ({
-                                ...current,
-                                title: event.target.value,
-                              }))
-                            }
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Descripcion
-                          </label>
-                          <textarea
-                            value={updateDraft.description}
-                            onChange={(event) =>
-                              setUpdateDraft((current) => ({
-                                ...current,
-                                description: event.target.value,
-                              }))
-                            }
-                            rows={3}
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Supervisores aplicables
-                          </label>
-                          <div className="mt-2">
-                            <SupervisorChecklist
-                              supervisors={supervisors}
-                              selectedIds={updateDraft.applicable_supervisor_ids}
-                              onToggle={(id) =>
-                                setUpdateDraft((current) => ({
-                                  ...current,
-                                  applicable_supervisor_ids: toggleNumber(
-                                    current.applicable_supervisor_ids,
-                                    id
-                                  ),
-                                }))
-                              }
-                              disabled={updateSubmitting}
-                            />
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-sm font-semibold text-emerald-900">Firmados</h4>
+                            <StatusPill tone="success">{signedSignatureStatuses.length}</StatusPill>
                           </div>
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={updateSubmitting}
-                          className={clsx(
-                            'inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                            updateSubmitting
-                              ? 'cursor-not-allowed bg-slate-400'
-                              : 'bg-[var(--ink)] hover:bg-black'
+                          {signedSignatureStatuses.length === 0 ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                              Sin firmas aun.
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {signedSignatureStatuses.map((entry) => (
+                                <div
+                                  key={entry.supervisor.id}
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5"
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="text-sm font-semibold text-[var(--ink)]">
+                                      {buildSupervisorName(entry.supervisor)}
+                                    </div>
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                  </div>
+                                  {entry.signed_at && (
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      Firmado como {entry.signed_name} · {formatDateTime(entry.signed_at)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           )}
-                        >
-                          <ClipboardCheck className="h-4 w-4" />
-                          {updateSubmitting ? 'Guardando...' : 'Guardar metadatos'}
-                        </button>
+                        </div>
                       </div>
                     )}
-                  </form>
+                  </div>
+                )}
 
-                  <form
-                    className="rounded-[1.9rem] border border-black/5 bg-white/80 p-6 shadow-sm backdrop-blur"
-                    onSubmit={handleCreateVersion}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
-                          Versionado
-                        </div>
-                        <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
-                          Publicar nueva version
-                        </h3>
+                {/* Diff tab */}
+                {detailTab === 'diff' && (
+                  <div>
+                    {selectedProtocol.previous_version_number == null ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        Solo hay una version publicada — no hay diferencias disponibles.
                       </div>
-                      <FileSignature className="h-5 w-5 text-[var(--ink-muted)]" />
-                    </div>
-
-                    {!selectedProtocol ? (
-                      <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-                        Selecciona un protocolo para cargar documentos nuevos o reemplazados.
+                    ) : selectedProtocol.diff_entries.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+                        No se detectaron diferencias con V{selectedProtocol.previous_version_number}.
                       </div>
                     ) : (
-                      <div className="mt-5 space-y-4">
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                          Los documentos nuevos reemplazan otros con el mismo nombre de archivo y
-                          el resto de los documentos vigentes se conserva en la nueva version.
+                      <div className="space-y-3">
+                        <div className="text-xs text-slate-500">
+                          Comparando con V{selectedProtocol.previous_version_number}
                         </div>
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Resumen del cambio
-                          </label>
-                          <textarea
-                            value={versionDraft.change_summary}
-                            onChange={(event) =>
-                              setVersionDraft((current) => ({
-                                ...current,
-                                change_summary: event.target.value,
-                              }))
-                            }
-                            rows={3}
-                            className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            Documentos nuevos o actualizados
-                          </label>
-                          <input
-                            type="file"
-                            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            multiple
-                            onChange={(event) => {
-                              const nextFiles = event.currentTarget.files;
-                              const result = mergeSelectedFiles(versionDraft.files, nextFiles);
-                              setVersionDraft((current) => ({
-                                ...current,
-                                files: result.files,
-                              }));
-                              if (result.message) {
-                                setActionMessage(result.message);
-                              }
-                              event.currentTarget.value = '';
-                            }}
-                            className="mt-2 block w-full text-sm text-slate-600 file:mr-4 file:rounded-full file:border-0 file:bg-[var(--leaf)] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
-                          />
-                          <SelectedFilesList
-                            files={versionDraft.files}
-                            tone="leaf"
-                            onRemove={(index) =>
-                              setVersionDraft((current) => ({
-                                ...current,
-                                files: current.files.filter((_, currentIndex) => currentIndex !== index),
-                              }))
-                            }
-                            onClear={() =>
-                              setVersionDraft((current) => ({
-                                ...current,
-                                files: [],
-                              }))
-                            }
-                          />
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={versionSubmitting}
-                          className={clsx(
-                            'inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white transition',
-                            versionSubmitting
-                              ? 'cursor-not-allowed bg-slate-400'
-                              : 'bg-[var(--leaf)] hover:bg-[#24543d]'
-                          )}
-                        >
-                          <FileSignature className="h-4 w-4" />
-                          {versionSubmitting ? 'Publicando...' : 'Publicar nueva version'}
-                        </button>
+                        {selectedProtocol.diff_entries.map((entry, index) => (
+                          <div
+                            key={`${entry.document_name}-${index}`}
+                            className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="text-sm font-semibold text-[var(--ink)]">
+                                  {entry.document_name}
+                                </div>
+                                <div className="mt-0.5 text-xs text-slate-500">
+                                  {entry.kind === 'added'
+                                    ? 'Documento agregado'
+                                    : entry.kind === 'removed'
+                                    ? 'Documento removido'
+                                    : `+${entry.added_lines} / -${entry.removed_lines}`}
+                                </div>
+                              </div>
+                              <StatusPill
+                                tone={
+                                  entry.kind === 'changed'
+                                    ? 'warning'
+                                    : entry.kind === 'added'
+                                    ? 'success'
+                                    : 'danger'
+                                }
+                              >
+                                {entry.kind}
+                              </StatusPill>
+                            </div>
+                            {entry.diff_excerpt && (
+                              <pre className="mt-3 overflow-x-auto rounded-lg bg-[#101926] px-3 py-3 text-xs leading-5 text-slate-100">
+                                {entry.diff_excerpt}
+                              </pre>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
-                  </form>
-                </div>
-              </section>
-            )}
-          </main>
-        </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white text-sm text-slate-500">
+              {loadingDetail || loadingList
+                ? 'Cargando...'
+                : 'Selecciona un protocolo para ver su detalle.'}
+            </div>
+          )}
+        </main>
       </div>
 
+      {/* ════════════════════════════════════════════════════════════
+         MODALS
+         ════════════════════════════════════════════════════════════ */}
+
+      {/* ── Supervisor Login Modal ── */}
+      <Modal open={showSupervisorLogin} onClose={() => setShowSupervisorLogin(false)} title="Ingresar como Supervisor" subtitle="Identifícate para ver protocolos aplicables y firmar.">
+        <form className="space-y-4" onSubmit={handleSupervisorLogin}>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Supervisor
+            </label>
+            <select
+              value={supervisorLogin.supervisor_id}
+              onChange={(event) =>
+                setSupervisorLogin((current) => ({
+                  ...current,
+                  supervisor_id: event.target.value,
+                }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+            >
+              <option value="">Seleccionar supervisor</option>
+              {supervisors.map((supervisor) => (
+                <option key={supervisor.id} value={supervisor.id}>
+                  {buildSupervisorName(supervisor)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              PIN
+            </label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={supervisorLogin.pin}
+              onChange={(event) =>
+                setSupervisorLogin((current) => ({ ...current, pin: event.target.value }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              placeholder="Ingresar PIN"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={supervisorSubmitting}
+            className={clsx(
+              'inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition',
+              supervisorSubmitting
+                ? 'cursor-not-allowed bg-slate-400'
+                : 'bg-[var(--leaf)] hover:bg-[#24543d]'
+            )}
+          >
+            <LogIn className="h-4 w-4" />
+            {supervisorSubmitting ? 'Ingresando...' : 'Ingresar'}
+          </button>
+        </form>
+      </Modal>
+
+      {/* ── Admin Login Modal ── */}
+      <Modal open={showAdminLogin} onClose={() => setShowAdminLogin(false)} title="Ingresar como Admin" subtitle="Acceso para gestionar protocolos y ver firmas.">
+        <form className="space-y-4" onSubmit={handleAdminLogin}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Nombre
+              </label>
+              <input
+                type="text"
+                value={adminLogin.first_name}
+                onChange={(event) =>
+                  setAdminLogin((current) => ({ ...current, first_name: event.target.value }))
+                }
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Apellido
+              </label>
+              <input
+                type="text"
+                value={adminLogin.last_name}
+                onChange={(event) =>
+                  setAdminLogin((current) => ({ ...current, last_name: event.target.value }))
+                }
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              PIN / Contrasena
+            </label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={adminLogin.pin}
+              onChange={(event) =>
+                setAdminLogin((current) => ({ ...current, pin: event.target.value }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={adminSubmitting}
+            className={clsx(
+              'inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition',
+              adminSubmitting
+                ? 'cursor-not-allowed bg-slate-400'
+                : 'bg-[var(--ink)] hover:bg-black'
+            )}
+          >
+            <Shield className="h-4 w-4" />
+            {adminSubmitting ? 'Ingresando...' : 'Ingresar'}
+          </button>
+        </form>
+      </Modal>
+
+      {/* ── Create Protocol Modal ── */}
+      <Modal open={showCreateModal} onClose={() => setShowCreateModal(false)} title="Crear protocolo" subtitle="Publica un nuevo protocolo con sus documentos." wide>
+        <form className="space-y-4" onSubmit={handleCreateProtocol}>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Titulo
+            </label>
+            <input
+              type="text"
+              value={createDraft.title}
+              onChange={(event) =>
+                setCreateDraft((current) => ({ ...current, title: event.target.value }))
+              }
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Descripcion
+            </label>
+            <textarea
+              value={createDraft.description}
+              onChange={(event) =>
+                setCreateDraft((current) => ({
+                  ...current,
+                  description: event.target.value,
+                }))
+              }
+              rows={3}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Resumen del cambio inicial
+            </label>
+            <textarea
+              value={createDraft.change_summary}
+              onChange={(event) =>
+                setCreateDraft((current) => ({
+                  ...current,
+                  change_summary: event.target.value,
+                }))
+              }
+              rows={2}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Supervisores aplicables
+            </label>
+            <div className="mt-2">
+              <SupervisorChecklist
+                supervisors={supervisors}
+                selectedIds={createDraft.applicable_supervisor_ids}
+                onToggle={(id) =>
+                  setCreateDraft((current) => ({
+                    ...current,
+                    applicable_supervisor_ids: toggleNumber(
+                      current.applicable_supervisor_ids,
+                      id
+                    ),
+                  }))
+                }
+                disabled={createSubmitting}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Documentos
+            </label>
+            <input
+              type="file"
+              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              multiple
+              onChange={(event) => {
+                const nextFiles = event.currentTarget.files;
+                const result = mergeSelectedFiles(createDraft.files, nextFiles);
+                setCreateDraft((current) => ({
+                  ...current,
+                  files: result.files,
+                }));
+                if (result.message) {
+                  setActionMessage(result.message);
+                }
+                event.currentTarget.value = '';
+              }}
+              className="mt-1 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[var(--ink)] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+            />
+            <SelectedFilesList
+              files={createDraft.files}
+              tone="ink"
+              onRemove={(index) =>
+                setCreateDraft((current) => ({
+                  ...current,
+                  files: current.files.filter((_, currentIndex) => currentIndex !== index),
+                }))
+              }
+              onClear={() =>
+                setCreateDraft((current) => ({
+                  ...current,
+                  files: [],
+                }))
+              }
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={createSubmitting}
+            className={clsx(
+              'inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition',
+              createSubmitting
+                ? 'cursor-not-allowed bg-slate-400'
+                : 'bg-[var(--accent)] hover:bg-[#df5535]'
+            )}
+          >
+            <Upload className="h-4 w-4" />
+            {createSubmitting ? 'Creando...' : 'Crear protocolo'}
+          </button>
+        </form>
+      </Modal>
+
+      {/* ── Edit Metadata Modal ── */}
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Editar metadatos" subtitle={selectedProtocol?.title} wide>
+        {selectedProtocol && (
+          <form className="space-y-4" onSubmit={handleUpdateProtocol}>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Titulo
+              </label>
+              <input
+                type="text"
+                value={updateDraft.title}
+                onChange={(event) =>
+                  setUpdateDraft((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Descripcion
+              </label>
+              <textarea
+                value={updateDraft.description}
+                onChange={(event) =>
+                  setUpdateDraft((current) => ({
+                    ...current,
+                    description: event.target.value,
+                  }))
+                }
+                rows={3}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Supervisores aplicables
+              </label>
+              <div className="mt-2">
+                <SupervisorChecklist
+                  supervisors={supervisors}
+                  selectedIds={updateDraft.applicable_supervisor_ids}
+                  onToggle={(id) =>
+                    setUpdateDraft((current) => ({
+                      ...current,
+                      applicable_supervisor_ids: toggleNumber(
+                        current.applicable_supervisor_ids,
+                        id
+                      ),
+                    }))
+                  }
+                  disabled={updateSubmitting}
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={updateSubmitting}
+              className={clsx(
+                'inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition',
+                updateSubmitting
+                  ? 'cursor-not-allowed bg-slate-400'
+                  : 'bg-[var(--ink)] hover:bg-black'
+              )}
+            >
+              <ClipboardCheck className="h-4 w-4" />
+              {updateSubmitting ? 'Guardando...' : 'Guardar metadatos'}
+            </button>
+          </form>
+        )}
+      </Modal>
+
+      {/* ── New Version Modal ── */}
+      <Modal open={showVersionModal} onClose={() => setShowVersionModal(false)} title="Publicar nueva version" subtitle={selectedProtocol?.title} wide>
+        {selectedProtocol && (
+          <form className="space-y-4" onSubmit={handleCreateVersion}>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+              Los documentos nuevos reemplazan otros con el mismo nombre y el resto se conserva.
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Resumen del cambio
+              </label>
+              <textarea
+                value={versionDraft.change_summary}
+                onChange={(event) =>
+                  setVersionDraft((current) => ({
+                    ...current,
+                    change_summary: event.target.value,
+                  }))
+                }
+                rows={3}
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[var(--accent)] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Documentos nuevos o actualizados
+              </label>
+              <input
+                type="file"
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                multiple
+                onChange={(event) => {
+                  const nextFiles = event.currentTarget.files;
+                  const result = mergeSelectedFiles(versionDraft.files, nextFiles);
+                  setVersionDraft((current) => ({
+                    ...current,
+                    files: result.files,
+                  }));
+                  if (result.message) {
+                    setActionMessage(result.message);
+                  }
+                  event.currentTarget.value = '';
+                }}
+                className="mt-1 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[var(--leaf)] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+              />
+              <SelectedFilesList
+                files={versionDraft.files}
+                tone="leaf"
+                onRemove={(index) =>
+                  setVersionDraft((current) => ({
+                    ...current,
+                    files: current.files.filter((_, currentIndex) => currentIndex !== index),
+                  }))
+                }
+                onClear={() =>
+                  setVersionDraft((current) => ({
+                    ...current,
+                    files: [],
+                  }))
+                }
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={versionSubmitting}
+              className={clsx(
+                'inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition',
+                versionSubmitting
+                  ? 'cursor-not-allowed bg-slate-400'
+                  : 'bg-[var(--leaf)] hover:bg-[#24543d]'
+              )}
+            >
+              <FileSignature className="h-4 w-4" />
+              {versionSubmitting ? 'Publicando...' : 'Publicar nueva version'}
+            </button>
+          </form>
+        )}
+      </Modal>
+
+      {/* ── Document Preview Modal ── */}
       {previewDocument && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6"
@@ -2079,13 +2113,13 @@ const Protocols: React.FC = () => {
             className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
             onClick={() => setPreviewDocument(null)}
           />
-          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-black/10 bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4">
+          <div className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-3">
               <div className="min-w-0">
-                <div className="truncate text-lg font-semibold text-[var(--ink)]">
+                <div className="truncate text-base font-semibold text-[var(--ink)]">
                   {previewDocument.original_filename}
                 </div>
-                <div className="mt-1 text-xs text-slate-500">
+                <div className="text-xs text-slate-500">
                   {previewDocument.mime_type} · {formatFileSize(previewDocument.size_bytes)}
                 </div>
               </div>
@@ -2093,15 +2127,15 @@ const Protocols: React.FC = () => {
                 <a
                   href={buildDocumentUrl(previewDocument.uri)}
                   download={previewDocument.original_filename}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] transition hover:bg-slate-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] transition hover:bg-slate-50"
                 >
-                  <Download className="h-4 w-4" />
+                  <Download className="h-3.5 w-3.5" />
                   Descargar
                 </a>
                 <button
                   type="button"
                   onClick={() => setPreviewDocument(null)}
-                  className="inline-flex items-center justify-center rounded-full border border-black/10 p-2 text-[var(--ink)] transition hover:bg-slate-50"
+                  className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -2117,14 +2151,14 @@ const Protocols: React.FC = () => {
                 />
               ) : isDocxDocument(previewDocument) ? (
                 <div className="h-full overflow-y-auto px-6 py-6">
-                  <div className="mx-auto max-w-4xl rounded-[1.5rem] border border-slate-200 bg-white px-6 py-6 shadow-sm">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                  <div className="mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
+                    <div className="text-[10px] uppercase tracking-wide text-slate-500">
                       Vista previa DOCX
                     </div>
-                    <div className="mt-2 text-sm text-slate-500">
-                      Se muestra una vista de texto extraido. El formato original del documento puede diferir.
+                    <div className="mt-1 text-xs text-slate-400">
+                      El formato original puede diferir.
                     </div>
-                    <div className="mt-6 whitespace-pre-wrap text-sm leading-7 text-[var(--ink)]">
+                    <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-[var(--ink)]">
                       {previewDocument.preview_text?.trim() ||
                         'No fue posible extraer una vista previa del contenido.'}
                     </div>
