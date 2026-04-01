@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Eye, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
+import { Activity, Eye, FileSignature, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { StationContext } from '../utils/stationContext';
 import { formatStationContext, formatStationLabel } from '../utils/stationContext';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 type Station = {
   id: number;
@@ -20,6 +22,10 @@ type InitialContextState = {
   contextMode: ContextMode;
   specificType: SpecificType;
   groupMode: GroupMode;
+};
+
+type ProtocolSupervisorSessionStatus = {
+  pending_protocol_count: number;
 };
 
 type LoginSettingsProps = {
@@ -183,6 +189,7 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
   const [adminOpen, setAdminOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const [protocolPendingCount, setProtocolPendingCount] = useState(0);
   const isTouchDevice = useMemo(() => {
     if (typeof window === 'undefined') {
       return false;
@@ -301,6 +308,36 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     return () => window.clearInterval(intervalId);
   }, [fullscreenAvailable, open]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let active = true;
+    const loadProtocolPendingStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/protocols/supervisor/session`, {
+          credentials: 'include',
+        });
+        if (!active) {
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('No se pudo cargar el estado de protocolos.');
+        }
+        const data = (await response.json()) as ProtocolSupervisorSessionStatus | null;
+        setProtocolPendingCount(data?.pending_protocol_count ?? 0);
+      } catch {
+        if (active) {
+          setProtocolPendingCount(0);
+        }
+      }
+    };
+    void loadProtocolPendingStatus();
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
   const handleToggleFullscreen = async () => {
     if (!fullscreenAvailable) {
       return;
@@ -342,6 +379,19 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                 title="Abrir estado de planta"
               >
                 <Activity className="h-5 w-5" />
+              </Link>
+              <Link
+                to="/utility/protocols"
+                className="relative rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Abrir protocolos"
+                title="Abrir protocolos"
+              >
+                <FileSignature className="h-5 w-5" />
+                {protocolPendingCount > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                    {protocolPendingCount > 9 ? '9+' : protocolPendingCount}
+                  </span>
+                )}
               </Link>
               <button
                 type="button"
@@ -445,6 +495,7 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                       </label>
                       <input
                         type="password"
+                        autoComplete={useSysadmin ? 'current-password' : 'current-password'}
                         className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
                         value={adminPin}
                         onChange={(event) => onAdminPinChange(event.target.value)}

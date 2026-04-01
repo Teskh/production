@@ -6,6 +6,7 @@ __all__ = [
     "houses",
     "panels",
     "parameters",
+    "protocols",
     "qc",
     "reports",
     "stations",

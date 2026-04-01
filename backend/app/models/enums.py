@@ -58,6 +58,7 @@ class AdminRole(str, Enum):
     ADMIN = "Admin"
     SYSADMIN = "SysAdmin"
     QC = "QC"
+    PREVENCIONISTA = "Prevencionista"
 
 
 class QCCheckKind(str, Enum):

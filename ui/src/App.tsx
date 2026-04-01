@@ -42,6 +42,7 @@ import QCChecks from './pages/admin/quality/QCChecks';
 import DaySummary from './pages/utility/DaySummary';
 import GeneralOverview from './pages/utility/GeneralOverview';
 import FloorStatus from './pages/utility/floorStatus';
+import Protocols from './pages/utility/Protocols';
 import {
   canViewAssistanceDashboard,
   isSysadminUser,
@@ -156,6 +157,7 @@ function App() {
         <Route path="/utility/day-summary" element={<DaySummary />} />
         <Route path="/utility/overview" element={<GeneralOverview />} />
         <Route path="/utility/floor-status" element={<FloorStatus />} />
+        <Route path="/utility/protocols" element={<Protocols />} />
 
         {/* Default Redirect */}
         <Route path="/" element={<Navigate to="/login" replace />} />

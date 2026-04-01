@@ -12,6 +12,7 @@ from app.api.routes import (
     panel_definitions,
     panel_linear_meters,
     panel_task_history,
+    protocols,
     reports,
     task_station_adherence,
     task_history,
@@ -60,6 +61,7 @@ api_router.include_router(
     prefix="/panel-task-history",
     tags=["panel-task-history"],
 )
+api_router.include_router(protocols.router, prefix="/protocols", tags=["protocols"])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(
     task_station_adherence.router,

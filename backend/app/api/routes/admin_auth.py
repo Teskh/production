@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import ADMIN_SESSION_COOKIE, get_current_admin, get_db
+from app.api.deps import ADMIN_SESSION_COOKIE, get_current_admin, get_db, get_optional_admin
 from app.core.config import settings
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import AdminSession, AdminUser
@@ -106,4 +106,11 @@ def admin_logout(
 
 @router.get("/me", response_model=AdminUserRead)
 def admin_me(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
+    return admin
+
+
+@router.get("/session", response_model=AdminUserRead | None)
+def admin_session_status(
+    admin: AdminUser | None = Depends(get_optional_admin),
+) -> AdminUser | None:
     return admin

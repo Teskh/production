@@ -97,3 +97,16 @@ class WorkerSession(Base):
     station_id: Mapped[int | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True
     )
+
+
+class WorkerSupervisorSession(Base):
+    __tablename__ = "worker_supervisor_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supervisor_id: Mapped[int] = mapped_column(
+        ForeignKey("worker_supervisors.id"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

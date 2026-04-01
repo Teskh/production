@@ -9,3 +9,4 @@ python-multipart
 reportlab
 openpyxl
 pillow
+pypdf

@@ -7,6 +7,13 @@ from app.models.house import (
     HouseType,
     PanelDefinition,
 )
+from app.models.protocols import (
+    SafetyProtocol,
+    SafetyProtocolApplicability,
+    SafetyProtocolDocument,
+    SafetyProtocolSignature,
+    SafetyProtocolVersion,
+)
 from app.models.qc import (
     MediaAsset,
     QCApplicability,
@@ -45,6 +52,7 @@ from app.models.workers import (
     TaskWorkerRestriction,
     Worker,
     WorkerSupervisor,
+    WorkerSupervisorSession,
     WorkerSession,
     WorkerSkill,
 )
@@ -76,6 +84,11 @@ __all__ = [
     "QCNotification",
     "QCReworkTask",
     "QCTrigger",
+    "SafetyProtocol",
+    "SafetyProtocolApplicability",
+    "SafetyProtocolDocument",
+    "SafetyProtocolSignature",
+    "SafetyProtocolVersion",
     "Skill",
     "Station",
     "ShiftEstimate",
@@ -94,6 +107,7 @@ __all__ = [
     "WorkUnit",
     "Worker",
     "WorkerSupervisor",
+    "WorkerSupervisorSession",
     "WorkerSession",
     "WorkerSkill",
 ]
