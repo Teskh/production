@@ -41,6 +41,8 @@ __pycache__/
 *.png
 #*.jpg
 *txt
+!backend/requirements.txt
+!backend/app/assets/reports/patagual-home-logo.png
 .vscode/
 .git
 .git/

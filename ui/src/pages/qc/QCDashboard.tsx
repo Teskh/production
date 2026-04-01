@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ChevronDown, ClipboardCheck, ClipboardPlus, LayoutGrid, Wrench, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ClipboardCheck,
+  ClipboardPlus,
+  FileSpreadsheet,
+  LayoutGrid,
+  Wrench,
+  X,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutContext';
 
@@ -130,6 +138,26 @@ const toTimestamp = (value: string): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const parseFilenameFromDisposition = (dispositionHeader: string | null, fallbackName: string) => {
+  if (!dispositionHeader) {
+    return fallbackName;
+  }
+  const utf8Match = dispositionHeader.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const quotedMatch = dispositionHeader.match(/filename="([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1];
+  }
+  const plainMatch = dispositionHeader.match(/filename=([^;]+)/i);
+  return plainMatch?.[1]?.trim() || fallbackName;
+};
+
 const normalizeAssemblyStationName = (station: StationSummary): string => {
   const trimmed = station.name.trim();
   if (!station.line_type) {
@@ -176,6 +204,8 @@ const QCDashboard: React.FC = () => {
   });
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
   const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [stations, setStations] = useState<StationSummary[]>([]);
   const [stationsLoading, setStationsLoading] = useState(true);
@@ -614,6 +644,50 @@ const QCDashboard: React.FC = () => {
     setStationSelection(null);
     navigate(`/qc/execute?check=${check.id}`, { state: { checkId: check.id } });
   };
+  const handleExportReport = async () => {
+    if (!canExecuteChecks || reportGenerating) {
+      return;
+    }
+    setReportError(null);
+    setReportGenerating(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/dashboard/export.xlsx`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const payload = (await response.json()) as { detail?: unknown };
+          detail = typeof payload.detail === 'string' ? payload.detail : '';
+        } catch {
+          detail = (await response.text()) || '';
+        }
+        throw new Error(detail || `No fue posible generar el reporte (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const filename = parseFilenameFromDisposition(
+        response.headers.get('content-disposition'),
+        'qc_dashboard_report.xlsx'
+      );
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 1000);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No fue posible generar el reporte Excel.';
+      setReportError(message);
+    } finally {
+      setReportGenerating(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -634,6 +708,11 @@ const QCDashboard: React.FC = () => {
       {errorMessage && (
         <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
           {errorMessage}
+        </div>
+      )}
+      {reportError && (
+        <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
+          {reportError}
         </div>
       )}
       <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
@@ -687,6 +766,26 @@ const QCDashboard: React.FC = () => {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {canExecuteChecks ? (
+                <button
+                  type="button"
+                  onClick={handleExportReport}
+                  disabled={reportGenerating}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  {reportGenerating ? 'Generando...' : 'Reporte Excel'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink-muted)] opacity-70"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  Reporte Excel
+                </button>
+              )}
               <div ref={stationFilterRef} className="relative">
                 <button
                   type="button"

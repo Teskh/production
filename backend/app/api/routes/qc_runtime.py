@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import case, delete, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -74,6 +75,7 @@ from app.services.qc_runtime import (
     resolve_qc_applicability,
     update_sampling_from_execution,
 )
+from app.services.qc_excel_report import build_qc_dashboard_excel_report
 
 router = APIRouter()
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
@@ -556,6 +558,27 @@ def qc_dashboard(
         )
 
     return QCDashboardResponse(pending_checks=pending_checks, rework_tasks=rework_tasks)
+
+
+@router.get("/dashboard/export.xlsx")
+def qc_dashboard_excel_report(
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    _require_qc_admin(admin)
+    try:
+        content, filename = build_qc_dashboard_excel_report(db)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="La generacion Excel no esta disponible; falta openpyxl en el backend.",
+        ) from exc
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @router.get("/check-instances/{check_instance_id}", response_model=QCCheckInstanceDetail)

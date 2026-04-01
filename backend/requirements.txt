@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy>=2.0
+psycopg2-binary
+alembic
+httpx
+python-dotenv
+python-multipart
+reportlab
+openpyxl
+pillow
