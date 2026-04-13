@@ -25,6 +25,7 @@ from app.api.routes import (
     shift_estimates,
     stations,
     task_analysis,
+    task_corrections,
     task_footage,
     task_definitions,
     task_rules,
@@ -89,6 +90,7 @@ api_router.include_router(
 api_router.include_router(task_definitions.router, prefix="/task-definitions", tags=["task-definitions"])
 api_router.include_router(task_rules.router, prefix="/task-rules", tags=["task-rules"])
 api_router.include_router(task_analysis.router, prefix="/task-analysis", tags=["task-analysis"])
+api_router.include_router(task_corrections.router, prefix="/task-corrections", tags=["task-corrections"])
 api_router.include_router(task_footage.router, prefix="/task-footage", tags=["task-footage"])
 api_router.include_router(pause_summary.router, prefix="/pause-summary", tags=["pause-summary"])
 api_router.include_router(production_queue.router, prefix="/production-queue", tags=["production-queue"])

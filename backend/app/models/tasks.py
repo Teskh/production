@@ -185,3 +185,29 @@ class TaskException(Base):
         ForeignKey("workers.id"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class TaskCorrectionLog(Base):
+    __tablename__ = "task_correction_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    original_task_instance_id: Mapped[int] = mapped_column(Integer, index=True)
+    task_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("task_definitions.id"), index=True
+    )
+    task_name_snapshot: Mapped[str] = mapped_column(String(200))
+    scope: Mapped[TaskScope] = mapped_column(Enum(TaskScope))
+    status_snapshot: Mapped[TaskStatus] = mapped_column(Enum(TaskStatus))
+    work_unit_id: Mapped[int] = mapped_column(ForeignKey("work_units.id"), index=True)
+    panel_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("panel_units.id"), nullable=True, index=True
+    )
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"), index=True)
+    corrected_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_users.id"), index=True
+    )
+    correction_kind: Mapped[str] = mapped_column(String(60))
+    rollback_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    details_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)

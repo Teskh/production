@@ -37,6 +37,7 @@ from app.models.shift_estimates import ShiftEstimate
 from app.models.shift_estimate_worker_presence import ShiftEstimateWorkerPresence
 from app.models.tasks import (
     TaskApplicability,
+    TaskCorrectionLog,
     TaskDefinition,
     TaskException,
     TaskExpectedDuration,
@@ -94,6 +95,7 @@ __all__ = [
     "ShiftEstimate",
     "ShiftEstimateWorkerPresence",
     "TaskApplicability",
+    "TaskCorrectionLog",
     "TaskDefinition",
     "TaskException",
     "TaskExpectedDuration",

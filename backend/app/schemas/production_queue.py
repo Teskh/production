@@ -69,6 +69,7 @@ class ProductionBatchCreate(BaseModel):
 
 
 class ProductionQueueUpdate(BaseModel):
+    house_type_id: int | None = None
     planned_start_datetime: datetime | None = None
     planned_assembly_line: str | None = None
     sub_type_id: int | None = None
@@ -77,6 +78,7 @@ class ProductionQueueUpdate(BaseModel):
 
 class ProductionQueueBulkUpdate(BaseModel):
     work_unit_ids: list[int]
+    house_type_id: int | None = None
     planned_start_datetime: datetime | None = None
     planned_assembly_line: str | None = None
     sub_type_id: int | None = None

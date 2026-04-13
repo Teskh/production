@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin, get_db
@@ -12,6 +13,30 @@ from app.schemas.panels import (
 )
 
 router = APIRouter()
+
+
+_PANEL_DELETE_BLOCKERS = {
+    "task_instances_panel_unit_id_fkey": (
+        "Cannot delete panel definition because generated panel units are still "
+        "referenced by task instances."
+    ),
+    "task_exceptions_panel_unit_id_fkey": (
+        "Cannot delete panel definition because generated panel units are still "
+        "referenced by task exceptions."
+    ),
+    "task_station_adherence_facts_panel_unit_id_fkey": (
+        "Cannot delete panel definition because generated panel units are still "
+        "referenced by station adherence records."
+    ),
+    "task_correction_logs_panel_unit_id_fkey": (
+        "Cannot delete panel definition because generated panel units are still "
+        "referenced by task correction logs."
+    ),
+    "qc_check_instances_panel_unit_id_fkey": (
+        "Cannot delete panel definition because generated panel units are still "
+        "referenced by QC checks."
+    ),
+}
 
 
 @router.get("", response_model=list[PanelDefinitionRead])
@@ -109,4 +134,14 @@ def delete_panel_definition(
             status_code=status.HTTP_404_NOT_FOUND, detail="Panel definition not found"
         )
     db.delete(panel_definition)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+        detail = _PANEL_DELETE_BLOCKERS.get(
+            constraint_name,
+            "Cannot delete panel definition because generated panel units are still "
+            "referenced by production records.",
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc

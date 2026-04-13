@@ -381,6 +381,7 @@ def get_task_history(
                 house_identifier=house_identifier,
                 project_name=work_order.project_name,
                 module_number=work_unit.module_number,
+                work_unit_status=work_unit.status.value if work_unit.status else None,
                 station_id=station.id,
                 station_name=station.name,
                 worker_name=worker_label,

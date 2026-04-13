@@ -512,6 +512,7 @@ const QCLibrary: React.FC = () => {
       if (!needle) return true;
       return (
         String(unit.module_number).toLowerCase().includes(needle) ||
+        (unit.house_identifier ?? '').toLowerCase().includes(needle) ||
         unit.project_name.toLowerCase().includes(needle) ||
         unit.house_type_name.toLowerCase().includes(needle)
       );
@@ -911,7 +912,7 @@ const QCLibrary: React.FC = () => {
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar por modulo, proyecto o tipo..."
+              placeholder="Buscar por modulo, casa, proyecto o tipo..."
               className="w-full rounded-2xl border border-black/10 bg-white px-10 py-3 text-sm text-[var(--ink)] shadow-sm outline-none focus:ring-2 focus:ring-black/10"
             />
           </label>

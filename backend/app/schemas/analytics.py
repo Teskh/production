@@ -145,6 +145,7 @@ class TaskHistoryRow(BaseModel):
     house_identifier: str | None = None
     project_name: str | None = None
     module_number: int | None = None
+    work_unit_status: str | None = None
     station_id: int | None = None
     station_name: str | None = None
     worker_name: str | None = None

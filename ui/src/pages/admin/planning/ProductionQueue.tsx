@@ -383,6 +383,8 @@ const ProductionQueue: React.FC = () => {
     planned_start_datetime: '',
   });
   const [editIds, setEditIds] = useState<number[]>([]);
+  const [editHouseTypeValue, setEditHouseTypeValue] = useState('');
+  const [editHouseTypeInitial, setEditHouseTypeInitial] = useState('');
   const [editStartValue, setEditStartValue] = useState('');
   const [editStartInitial, setEditStartInitial] = useState('');
   const [editStartCleared, setEditStartCleared] = useState(false);
@@ -457,24 +459,43 @@ const ProductionQueue: React.FC = () => {
     [houseTypes, batchDraft.house_type_id]
   );
 
+  const editItems = useMemo(
+    () => items.filter((item) => editIds.includes(item.id)),
+    [editIds, items]
+  );
+
+  const editCanChangeHouseType = useMemo(
+    () => editItems.length > 0 && editItems.every((item) => item.status === 'Planned'),
+    [editItems]
+  );
+
   const editHouseTypeId = useMemo(() => {
-    if (!editIds.length) {
+    if (!editItems.length) {
       return null;
     }
-    const itemsForEdit = items.filter((item) => editIds.includes(item.id));
-    if (!itemsForEdit.length) {
-      return null;
+    const first = editItems[0].house_type_id;
+    return editItems.every((item) => item.house_type_id === first) ? first : null;
+  }, [editItems]);
+
+  const editResolvedHouseTypeId = useMemo(() => {
+    if (editHouseTypeValue === 'keep') {
+      return editHouseTypeId;
     }
-    const first = itemsForEdit[0].house_type_id;
-    return itemsForEdit.every((item) => item.house_type_id === first) ? first : null;
-  }, [editIds, items]);
+    const parsed = Number(editHouseTypeValue);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [editHouseTypeId, editHouseTypeValue]);
+
+  const editSelectedHouseType = useMemo(
+    () => houseTypes.find((house) => house.id === editResolvedHouseTypeId) || null,
+    [houseTypes, editResolvedHouseTypeId]
+  );
 
   const editSubTypes = useMemo(() => {
-    if (!editHouseTypeId) {
+    if (!editResolvedHouseTypeId) {
       return [];
     }
-    return houseSubTypes[editHouseTypeId] ?? [];
-  }, [editHouseTypeId, houseSubTypes]);
+    return houseSubTypes[editResolvedHouseTypeId] ?? [];
+  }, [editResolvedHouseTypeId, houseSubTypes]);
 
   const loadQueue = useCallback(async (silent = false) => {
     try {
@@ -556,6 +577,23 @@ const ProductionQueue: React.FC = () => {
   }, [isAddModalOpen]);
 
   useEffect(() => {
+    if (!isEditModalOpen) {
+      return;
+    }
+    const load = async () => {
+      try {
+        const data = await apiRequest<HouseType[]>('/api/house-types');
+        setHouseTypes(data);
+      } catch (error) {
+        setEditError(
+          error instanceof Error ? error.message : 'No se pudieron cargar los tipos de casa.'
+        );
+      }
+    };
+    load();
+  }, [isEditModalOpen]);
+
+  useEffect(() => {
     if (!isAddModalOpen) {
       return;
     }
@@ -593,13 +631,15 @@ const ProductionQueue: React.FC = () => {
   }, [batchDraft.house_type_id, houseSubTypes]);
 
   useEffect(() => {
-    if (!isEditModalOpen || !editHouseTypeId || houseSubTypes[editHouseTypeId]) {
+    if (!isEditModalOpen || !editResolvedHouseTypeId || houseSubTypes[editResolvedHouseTypeId]) {
       return;
     }
     const load = async () => {
       try {
-        const data = await apiRequest<HouseSubType[]>(`/api/house-types/${editHouseTypeId}/subtypes`);
-        setHouseSubTypes((prev) => ({ ...prev, [editHouseTypeId]: data }));
+        const data = await apiRequest<HouseSubType[]>(
+          `/api/house-types/${editResolvedHouseTypeId}/subtypes`
+        );
+        setHouseSubTypes((prev) => ({ ...prev, [editResolvedHouseTypeId]: data }));
       } catch (error) {
         setEditError(
           error instanceof Error
@@ -609,7 +649,7 @@ const ProductionQueue: React.FC = () => {
       }
     };
     load();
-  }, [editHouseTypeId, houseSubTypes, isEditModalOpen]);
+  }, [editResolvedHouseTypeId, houseSubTypes, isEditModalOpen]);
 
   const visibleItems = filteredItems.slice(0, visibleCount);
   const hasMoreItems = visibleItems.length < filteredItems.length;
@@ -792,11 +832,20 @@ const ProductionQueue: React.FC = () => {
 
   const openEditModal = (ids: number[]) => {
     const uniqueIds = Array.from(new Set(ids));
+    const itemsForEdit = items.filter((item) => uniqueIds.includes(item.id));
+    const sharedHouseTypeId =
+      itemsForEdit.length > 0 &&
+      itemsForEdit.every((item) => item.house_type_id === itemsForEdit[0].house_type_id)
+        ? itemsForEdit[0].house_type_id
+        : null;
     setEditIds(uniqueIds);
     setEditError(null);
     setEditStartCleared(false);
     if (uniqueIds.length === 1) {
       const item = items.find((queue) => queue.id === uniqueIds[0]);
+      const houseTypeValue = item ? String(item.house_type_id) : '';
+      setEditHouseTypeValue(houseTypeValue);
+      setEditHouseTypeInitial(houseTypeValue);
       const initialValue = toInputDateTime(item?.planned_start_datetime ?? null);
       setEditStartValue(initialValue);
       setEditStartInitial(initialValue);
@@ -804,12 +853,29 @@ const ProductionQueue: React.FC = () => {
       setEditSubTypeValue(subtypeValue);
       setEditSubTypeInitial(subtypeValue);
     } else {
+      const houseTypeValue = sharedHouseTypeId ? String(sharedHouseTypeId) : 'keep';
+      setEditHouseTypeValue(houseTypeValue);
+      setEditHouseTypeInitial(houseTypeValue);
       setEditStartValue('');
       setEditStartInitial('');
       setEditSubTypeValue('keep');
       setEditSubTypeInitial('keep');
     }
     setIsEditModalOpen(true);
+  };
+
+  const handleEditHouseTypeChange = (nextValue: string) => {
+    setEditHouseTypeValue(nextValue);
+    if (nextValue === 'keep') {
+      setEditSubTypeValue(editSubTypeInitial);
+      return;
+    }
+    const nextHouseTypeId = Number(nextValue);
+    if (editHouseTypeId && nextHouseTypeId === editHouseTypeId) {
+      setEditSubTypeValue(editSubTypeInitial);
+      return;
+    }
+    setEditSubTypeValue('none');
   };
 
   const handleEditSave = async () => {
@@ -823,6 +889,13 @@ const ProductionQueue: React.FC = () => {
       payload.planned_start_datetime = null;
     } else if (editStartValue && editStartValue !== editStartInitial) {
       payload.planned_start_datetime = editStartValue;
+    }
+    if (
+      editHouseTypeValue &&
+      editHouseTypeValue !== 'keep' &&
+      editHouseTypeValue !== editHouseTypeInitial
+    ) {
+      payload.house_type_id = Number(editHouseTypeValue);
     }
     if (editSubTypeValue !== editSubTypeInitial && editSubTypeValue !== 'keep') {
       payload.sub_type_id = editSubTypeValue === 'none' ? null : Number(editSubTypeValue);
@@ -1127,7 +1200,7 @@ const ProductionQueue: React.FC = () => {
               onClick={() => openEditModal(Array.from(selectedIds))}
               className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20"
             >
-              Editar horario
+              Editar
             </button>
             <button
               onClick={() => handleComplete(Array.from(selectedIds))}
@@ -1223,9 +1296,21 @@ const ProductionQueue: React.FC = () => {
                     </div>
 
                     <div className="col-span-3 flex items-center gap-3 min-w-0">
-                      <p className="text-sm font-medium text-[var(--ink)] truncate max-w-[160px]">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditModal(
+                            selectedIds.has(item.id) && selectedCount > 1
+                              ? Array.from(selectedIds)
+                              : [item.id]
+                          );
+                        }}
+                        className="truncate max-w-[160px] text-left text-sm font-medium text-[var(--ink)] transition-colors hover:text-[var(--accent)]"
+                        title="Editar elementos"
+                      >
                         {item.house_type_name}
-                      </p>
+                      </button>
                       {subTypes.length > 0 ? (
                         <SubTypeSelector
                           subTypes={subTypes}
@@ -1284,7 +1369,7 @@ const ProductionQueue: React.FC = () => {
                             openEditModal(selectedIds.has(item.id) && selectedCount > 1 ? Array.from(selectedIds) : [item.id]);
                           }}
                           className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                          title="Editar horario"
+                          title="Editar"
                         >
                           <Edit className="h-4 w-4" />
                         </button>
@@ -1665,7 +1750,7 @@ const ProductionQueue: React.FC = () => {
             <div className="px-8 py-6 flex justify-between items-center">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
-                  Horario
+                  Edicion
                 </p>
                 <h2 className="text-xl font-display text-[var(--ink)]">
                   Editar elementos de la cola
@@ -1687,6 +1772,42 @@ const ProductionQueue: React.FC = () => {
                   {editError}
                 </div>
               )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Tipo de casa
+                </label>
+                <select
+                  value={editHouseTypeValue}
+                  onChange={(event) => handleEditHouseTypeChange(event.target.value)}
+                  disabled={!editCanChangeHouseType}
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20 disabled:bg-black/5"
+                >
+                  {editIds.length > 1 && editHouseTypeId === null && (
+                    <option value="keep">Mantener actual</option>
+                  )}
+                  <option value="">Selecciona tipo</option>
+                  {houseTypes.map((house) => (
+                    <option key={house.id} value={house.id}>
+                      {house.name} - {house.number_of_modules} modulos
+                    </option>
+                  ))}
+                </select>
+                {!editCanChangeHouseType ? (
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    Solo se puede cambiar el tipo de casa cuando todos los elementos seleccionados estan en estado planificado.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    El cambio aplica a todos los modulos de cada casa seleccionada.
+                  </p>
+                )}
+                {editSelectedHouseType && (
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    {editSelectedHouseType.number_of_modules} modulos por casa. El backend validara que la casa seleccionada tenga la misma estructura de modulos.
+                  </p>
+                )}
+              </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
@@ -1727,7 +1848,7 @@ const ProductionQueue: React.FC = () => {
                 <select
                   value={editSubTypeValue}
                   onChange={(event) => setEditSubTypeValue(event.target.value)}
-                  disabled={!editHouseTypeId}
+                  disabled={!editResolvedHouseTypeId}
                   className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20 disabled:bg-black/5"
                 >
                   {editIds.length > 1 && <option value="keep">Mantener actual</option>}
@@ -1738,9 +1859,9 @@ const ProductionQueue: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                {!editHouseTypeId && (
+                {!editResolvedHouseTypeId && (
                   <p className="text-[11px] text-[var(--ink-muted)]">
-                    Selecciona elementos con el mismo tipo de casa para cambiar el subtipo.
+                    Selecciona un tipo de casa para cambiar el subtipo.
                   </p>
                 )}
               </div>

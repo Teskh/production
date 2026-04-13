@@ -615,6 +615,84 @@ def _apply_queue_updates(
         for unit in work_units:
             unit.status = updates["status"]
 
+    order_ids = {unit.work_order_id for unit in work_units}
+    orders = (
+        list(db.execute(select(WorkOrder).where(WorkOrder.id.in_(order_ids))).scalars())
+        if order_ids
+        else []
+    )
+    order_map = {order.id: order for order in orders}
+
+    if "house_type_id" in updates:
+        new_house_type_id = updates["house_type_id"]
+        if new_house_type_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="House type is required",
+            )
+        house_type = db.get(HouseType, new_house_type_id)
+        if not house_type:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="House type not found",
+            )
+
+        orders_to_change = [
+            order for order in orders if order.house_type_id != house_type.id
+        ]
+        if orders_to_change:
+            changed_order_ids = {order.id for order in orders_to_change}
+            order_work_units = list(
+                db.execute(
+                    select(WorkUnit).where(WorkUnit.work_order_id.in_(changed_order_ids))
+                ).scalars()
+            )
+            work_units_by_order: dict[int, list[WorkUnit]] = {}
+            for unit in order_work_units:
+                work_units_by_order.setdefault(unit.work_order_id, []).append(unit)
+
+            for order in orders_to_change:
+                related_units = work_units_by_order.get(order.id, [])
+                if not related_units:
+                    continue
+                if any(unit.status != WorkUnitStatus.PLANNED for unit in related_units):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="House type can only be changed for planned houses",
+                    )
+                expected_module_numbers = set(range(1, house_type.number_of_modules + 1))
+                existing_module_numbers = {unit.module_number for unit in related_units}
+                if existing_module_numbers != expected_module_numbers:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "House type can only be changed to another type with the same module layout"
+                        ),
+                    )
+
+            changed_work_unit_ids = [unit.id for unit in order_work_units]
+            has_panel_units = (
+                db.execute(
+                    select(PanelUnit.id)
+                    .where(PanelUnit.work_unit_id.in_(changed_work_unit_ids))
+                    .limit(1)
+                ).scalar_one_or_none()
+                if changed_work_unit_ids
+                else None
+            )
+            if has_panel_units is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "House type cannot be changed after panel records have been created"
+                    ),
+                )
+
+            for order in orders_to_change:
+                order.house_type_id = house_type.id
+                if "sub_type_id" not in updates:
+                    order.sub_type_id = None
+
     if "sub_type_id" in updates:
         new_subtype_id = updates["sub_type_id"]
         subtype = None
@@ -627,7 +705,7 @@ def _apply_queue_updates(
                 )
         order_ids = {unit.work_order_id for unit in work_units}
         for order_id in order_ids:
-            order = db.get(WorkOrder, order_id)
+            order = order_map.get(order_id)
             if not order:
                 continue
             if subtype and subtype.house_type_id != order.house_type_id:
