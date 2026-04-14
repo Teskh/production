@@ -275,6 +275,14 @@ const hasActivityLog = (day) => {
   return Number.isFinite(activeSeconds) && activeSeconds > 0;
 };
 
+const hasActivityWithoutAttendance = (day) => !hasAttendancePunch(day) && hasActivityLog(day);
+
+const shouldCountDayAsPresence = (day, options = {}) => {
+  if (hasAttendancePunch(day)) return true;
+  if (options?.countActivityWithoutAttendance === false) return false;
+  return hasActivityLog(day);
+};
+
 const isAbsentNoDataDay = (day) => {
   if (!day) return false;
   return !hasAttendancePunch(day) && !hasActivityLog(day);
@@ -291,6 +299,7 @@ const buildDailyIndicators = (day, options = {}) => {
   const adjustedTimeSeconds = toAdjustedTimeSeconds(options?.adjustedTimeHours);
   if (!day) return null;
   if (isAbsentNoDataDay(day)) return null;
+  if (!shouldCountDayAsPresence(day, options)) return null;
   const dayBounds = buildDayBounds(day);
   if (!dayBounds) return null;
   const { baseDate, dayStart, dayEnd } = dayBounds;
@@ -463,9 +472,13 @@ const buildDailyIndicators = (day, options = {}) => {
 };
 
 const buildRangeIndicators = (combinedDays, options = {}) => {
-  const eligibleDays = Array.isArray(combinedDays)
+  const nonEmptyDays = Array.isArray(combinedDays)
     ? combinedDays.filter((day) => !isAbsentNoDataDay(day))
     : [];
+  const eligibleDays = nonEmptyDays.filter((day) => shouldCountDayAsPresence(day, options));
+  const daysMissingGeoAttendanceWithActivity = nonEmptyDays.filter((day) =>
+    hasActivityWithoutAttendance(day)
+  ).length;
   const empty = {
     rows: [],
     totals: {
@@ -485,6 +498,11 @@ const buildRangeIndicators = (combinedDays, options = {}) => {
     endDate: '',
     daysWithData: 0,
     daysTotal: eligibleDays.length,
+    daysMissingGeoAttendanceWithActivity,
+    daysExcludedFromPresence:
+      options?.countActivityWithoutAttendance === false
+        ? daysMissingGeoAttendanceWithActivity
+        : 0,
   };
   if (!eligibleDays.length) return empty;
 
@@ -508,6 +526,7 @@ const buildRangeIndicators = (combinedDays, options = {}) => {
       expectedRatio: indicators.expectedRatio,
       adjustedProductiveRatio: indicators.adjustedProductiveRatio,
       indicators,
+      hasActivityWithoutAttendance: hasActivityWithoutAttendance(day),
     });
     totals.presenceNetSeconds += indicators.presenceNetSeconds || 0;
     totals.productiveSeconds += indicators.productiveSeconds || 0;
@@ -542,7 +561,19 @@ const buildRangeIndicators = (combinedDays, options = {}) => {
     endDate: rows[rows.length - 1].key,
     daysWithData: rows.length,
     daysTotal: eligibleDays.length,
+    daysMissingGeoAttendanceWithActivity,
+    daysExcludedFromPresence:
+      options?.countActivityWithoutAttendance === false
+        ? daysMissingGeoAttendanceWithActivity
+        : 0,
   };
 };
 
-export { buildDailyIndicators, buildRangeIndicators, isAbsentNoDataDay };
+export {
+  buildDailyIndicators,
+  buildRangeIndicators,
+  hasActivityWithoutAttendance,
+  hasAttendancePunch,
+  isAbsentNoDataDay,
+  shouldCountDayAsPresence,
+};

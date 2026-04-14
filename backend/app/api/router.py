@@ -9,6 +9,7 @@ from app.api.routes import (
     geovictoria,
     house_params,
     house_types,
+    line_attendance_throughput,
     panel_definitions,
     panel_linear_meters,
     panel_task_history,
@@ -42,6 +43,11 @@ api_router.include_router(admin_users.router, prefix="/admin", tags=["admin-user
 api_router.include_router(backups.router, prefix="/backups", tags=["backups"])
 api_router.include_router(camera_feed.router, prefix="/camera-feed", tags=["camera-feed"])
 api_router.include_router(geovictoria.router, prefix="/geovictoria", tags=["geovictoria"])
+api_router.include_router(
+    line_attendance_throughput.router,
+    prefix="/line-attendance-throughput",
+    tags=["line-attendance-throughput"],
+)
 api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
 api_router.include_router(stations.router, prefix="/stations", tags=["stations"])
 api_router.include_router(pause_reasons.router, prefix="/pause-reasons", tags=["pause-reasons"])

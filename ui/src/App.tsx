@@ -27,6 +27,7 @@ import DashboardPanelAnalysis from './pages/admin/dashboards/dashboard_panel_ana
 import DashboardTaskStationAdherence from './pages/admin/dashboards/dashboard_task_station_adherence';
 import DashboardTaskFootage from './pages/admin/dashboards/dashboard_task_footage';
 import DashboardAssistance from './pages/admin/dashboards/dashboard_assistance.jsx';
+import DashboardLineAttendanceThroughput from './pages/admin/dashboards/dashboard_line_attendance_throughput';
 import DashboardPlantView from './pages/admin/dashboards/dashboard_plant_view';
 import Personnel from './pages/admin/personnel/Personnel';
 import ProductionQueue from './pages/admin/planning/ProductionQueue';
@@ -149,7 +150,7 @@ function App() {
           />
           <Route
             path="dashboards/line-attendance-throughput"
-            element={<Navigate to="/admin/dashboards" replace />}
+            element={<AssistanceDashboardRoute element={<DashboardLineAttendanceThroughput />} />}
           />
         </Route>
 

@@ -35,6 +35,12 @@ class Settings:
     geovictoria_token_ttl_seconds: int = int(
         os.getenv("GEOVICTORIA_TOKEN_TTL_SECONDS", "1200")
     )
+    buk_base_url: str = os.getenv("BUK_BASE_URL", "https://grupopatagual.buk.cl")
+    buk_api_token: str | None = os.getenv("BUK_API_TOKEN") or os.getenv("BUK_TOKEN")
+    buk_country: str = os.getenv("BUK_COUNTRY", "chile")
+    buk_people_cache_ttl_seconds: int = int(
+        os.getenv("BUK_PEOPLE_CACHE_TTL_SECONDS", "300")
+    )
     backup_dir: Path = Path(os.getenv("BACKUP_DIR", str(BASE_DIR / "backups")))
     backup_admin_db: str = os.getenv("BACKUP_ADMIN_DB", "postgres")
     pg_dump_path: str = os.getenv("PG_DUMP_PATH", "pg_dump")

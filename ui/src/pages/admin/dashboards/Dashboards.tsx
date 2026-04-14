@@ -11,6 +11,7 @@ import {
   Ruler,
   Star,
   Timer,
+  Workflow,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -114,6 +115,17 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Personal', 'GeoVictoria', 'Actividad'],
     icon: Clock,
+    assistanceAccessOnly: true,
+  },
+  {
+    id: 'line-attendance-throughput',
+    name: 'Asistencia vs produccion',
+    description:
+      'Borrador para cruzar roster GeoVictoria, presencia cacheada y actividad productiva por supervisor.',
+    path: '/admin/dashboards/line-attendance-throughput',
+    status: 'ready',
+    tags: ['GeoVictoria', 'Cobertura', 'Supervisores'],
+    icon: Workflow,
     assistanceAccessOnly: true,
   },
 ];

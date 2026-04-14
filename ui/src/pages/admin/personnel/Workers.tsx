@@ -914,7 +914,7 @@ const Workers: React.FC<WorkersProps> = ({
       return;
     }
     if (!working.first_name.trim() || !working.last_name.trim()) {
-      setStatusMessage('First and last name are required.');
+      setStatusMessage('Nombre y apellido son obligatorios.');
       return;
     }
     if (!working.geovictoria_id.trim() || !working.geovictoria_identifier.trim()) {

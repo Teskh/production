@@ -18,7 +18,6 @@ import {
   RefreshCcw,
   Search,
   Shield,
-  ShieldAlert,
   Upload,
   UserRound,
   X,

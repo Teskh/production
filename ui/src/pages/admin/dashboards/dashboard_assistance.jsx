@@ -6,7 +6,9 @@ import { formatMinutesDetailed } from '../../../utils/timeUtils';
 import {
   buildDailyIndicators,
   buildRangeIndicators,
+  hasActivityWithoutAttendance,
   isAbsentNoDataDay,
+  shouldCountDayAsPresence,
 } from './assistanceIndicators';
 import StationWideAssistanceTab from './StationWideAssistanceTab';
 
@@ -339,7 +341,7 @@ const buildCanonicalShiftBounds = (day) => {
   return { dayStart, dayEnd };
 };
 
-const resolveShiftDisplay = (day) => {
+const resolveShiftDisplay = (day, options = {}) => {
   if (!day) {
     return {
       entry: null,
@@ -352,6 +354,16 @@ const resolveShiftDisplay = (day) => {
 
   const attendanceEntry = parseDateTime(day?.attendance?.entry);
   const attendanceExit = parseDateTime(day?.attendance?.exit);
+  const missingGeoAttendance = hasActivityWithoutAttendance(day);
+  if (missingGeoAttendance && options?.countActivityWithoutAttendance === false) {
+    return {
+      entry: null,
+      exit: null,
+      entrySource: 'Sin marcaje GeoVictoria',
+      exitSource: 'Sin marcaje GeoVictoria',
+      presenceSeconds: null,
+    };
+  }
   const bounds = buildCanonicalShiftBounds(day);
 
   if (bounds) {
@@ -366,8 +378,16 @@ const resolveShiftDisplay = (day) => {
     return {
       entry: resolvedEntry,
       exit: resolvedExit,
-      entrySource: attendanceEntry ? 'GeoVictoria' : 'Asumida (08:00)',
-      exitSource: attendanceExit ? 'GeoVictoria' : 'Asumida (17:30)',
+      entrySource: attendanceEntry
+        ? 'GeoVictoria'
+        : missingGeoAttendance
+          ? 'Sin marcaje GeoVictoria · asumida (08:00)'
+          : 'Asumida (08:00)',
+      exitSource: attendanceExit
+        ? 'GeoVictoria'
+        : missingGeoAttendance
+          ? 'Sin marcaje GeoVictoria · asumida (17:30)'
+          : 'Asumida (17:30)',
       presenceSeconds,
     };
   }
@@ -383,8 +403,20 @@ const resolveShiftDisplay = (day) => {
   return {
     entry: fallbackEntry,
     exit: fallbackExit,
-    entrySource: attendanceEntry ? 'GeoVictoria' : activityEntry ? 'Actividad' : '-',
-    exitSource: attendanceExit ? 'GeoVictoria' : activityExit ? 'Actividad' : '-',
+    entrySource: attendanceEntry
+      ? 'GeoVictoria'
+      : activityEntry
+        ? missingGeoAttendance
+          ? 'Actividad · sin marcaje GeoVictoria'
+          : 'Actividad'
+        : '-',
+    exitSource: attendanceExit
+      ? 'GeoVictoria'
+      : activityExit
+        ? missingGeoAttendance
+          ? 'Actividad · sin marcaje GeoVictoria'
+          : 'Actividad'
+        : '-',
     presenceSeconds,
   };
 };
@@ -707,6 +739,7 @@ const buildMonthlyDataset = (combinedDays, anchorDate) => {
         overtimeMinutes,
         cumulativeOvertimeMinutes: cumulative,
         isEstimated: !attendanceEntry || !attendanceExit,
+        hasActivityWithoutAttendance: hasActivityWithoutAttendance(day),
       };
     })
     .filter(Boolean);
@@ -1039,7 +1072,7 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
             const opacity = item.isEstimated ? 0.55 : 0.85;
             const tooltip = `${item.key}: ${formatTime(item.entry)} → ${formatTime(item.exit)}${
               item.isEstimated ? ' (est.)' : ''
-            }`;
+            }${item.hasActivityWithoutAttendance ? ' · actividad sin marcaje GeoVictoria' : ''}`;
             return (
               <g key={item.key}>
                 <title>{tooltip}</title>
@@ -1067,6 +1100,16 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
                     strokeDasharray={item.isEstimated ? '4 3' : undefined}
                   />
                 )}
+                {item.hasActivityWithoutAttendance && (
+                  <circle
+                    cx={xCenter}
+                    cy={Math.max(10, exitY - 10)}
+                    r={4}
+                    fill="#f59e0b"
+                    stroke="#ffffff"
+                    strokeWidth={1.5}
+                  />
+                )}
                 <circle cx={xCenter} cy={entryY} r={3} fill="#1d4ed8" />
                 <circle cx={xCenter} cy={exitY} r={3} fill="#0f172a" />
                 <text x={xCenter} y={axisY + 16} textAnchor="middle" fontSize={11} fill="#334155">
@@ -1092,13 +1135,25 @@ const MonthlyAssistanceChart = ({ combinedDays, anchorDate }) => {
         Horas extra acumuladas: {formatMinutesDetailed(meta.totalOvertimeMinutes)}
         {meta.endDayLabel ? ` · Hasta el dia ${meta.endDayLabel}` : ''}
       </div>
+      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+          Actividad registrada sin marcaje GeoVictoria
+        </span>
+      </div>
     </div>
   );
 };
 
-const RangeIndicatorsChart = ({ combinedDays }) => {
+const RangeIndicatorsChart = ({ combinedDays, countActivityWithoutAttendance }) => {
   const { ref, width } = useContainerWidth();
-  const dataset = useMemo(() => buildRangeIndicators(combinedDays), [combinedDays]);
+  const dataset = useMemo(
+    () =>
+      buildRangeIndicators(combinedDays, {
+        countActivityWithoutAttendance,
+      }),
+    [combinedDays, countActivityWithoutAttendance]
+  );
   const {
     rows,
     totals,
@@ -1108,13 +1163,24 @@ const RangeIndicatorsChart = ({ combinedDays }) => {
     endDate,
     daysWithData,
     daysTotal,
+    daysMissingGeoAttendanceWithActivity,
+    daysExcludedFromPresence,
   } = dataset;
 
   if (!rows.length) {
     return (
-      <p className="mt-4 text-sm text-[var(--ink-muted)]">
-        No hay suficientes dias con presencia para calcular indicadores en este rango.
-      </p>
+      <div className="mt-4 space-y-2">
+        <p className="text-sm text-[var(--ink-muted)]">
+          No hay suficientes dias con presencia para calcular indicadores en este rango.
+        </p>
+        {daysMissingGeoAttendanceWithActivity > 0 && (
+          <p className="text-xs text-amber-700">
+            {daysMissingGeoAttendanceWithActivity} dias tienen actividad registrada pero no
+            marcaje GeoVictoria
+            {daysExcludedFromPresence > 0 ? ' y quedaron fuera del calculo actual.' : '.'}
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -1224,10 +1290,22 @@ const RangeIndicatorsChart = ({ combinedDays }) => {
             const x = xAt(idx);
             const tooltip = `${row.key}: ${formatPercent(row.productiveRatio)} productivo · ${formatPercent(
               row.expectedRatio
-            )} cobertura`;
+            )} cobertura${
+              row.hasActivityWithoutAttendance ? ' · actividad sin marcaje GeoVictoria' : ''
+            }`;
             return (
               <g key={row.key}>
                 <title>{tooltip}</title>
+                {row.hasActivityWithoutAttendance && (
+                  <circle
+                    cx={x}
+                    cy={topPad + 8}
+                    r={4}
+                    fill="#f59e0b"
+                    stroke="#ffffff"
+                    strokeWidth={1.5}
+                  />
+                )}
                 <circle cx={x} cy={productY} r={3} fill="#16a34a" />
                 <circle cx={x} cy={expectedY} r={3} fill="#2563eb" />
                 {idx % labelStep === 0 && (
@@ -1262,6 +1340,13 @@ const RangeIndicatorsChart = ({ combinedDays }) => {
           <span className="inline-block h-2 w-4 rounded-sm bg-[#2563eb]" />
           Cobertura esperada
         </span>
+        {daysMissingGeoAttendanceWithActivity > 0 && (
+          <span className="inline-flex items-center gap-2 text-amber-700">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
+            {daysMissingGeoAttendanceWithActivity} dias con actividad sin marcaje GeoVictoria
+            {daysExcludedFromPresence > 0 ? ' fuera del calculo' : ''}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1766,6 +1851,7 @@ const DashboardAssistance = () => {
   const [rangeDays, setRangeDays] = useState(DEFAULT_RANGE);
   const [detailTab, setDetailTab] = useState(DETAIL_TABS[0].id);
   const [viewTab, setViewTab] = useState(VIEW_TABS[0].id);
+  const [countActivityWithoutAttendance, setCountActivityWithoutAttendance] = useState(true);
 
   useEffect(() => {
     setHeader({
@@ -1977,10 +2063,26 @@ const DashboardAssistance = () => {
     if (!anchor) return '';
     return `${MONTH_NAMES[anchor.getMonth()]} ${anchor.getFullYear()}`;
   }, [selectedDay?.date, combinedDays]);
+  const daysMissingGeoAttendanceWithActivity = useMemo(
+    () => combinedDays.filter((day) => hasActivityWithoutAttendance(day)).length,
+    [combinedDays]
+  );
+  const selectedDayHasGeoGap = useMemo(
+    () => hasActivityWithoutAttendance(selectedDay),
+    [selectedDay]
+  );
 
   const totals = useMemo(() => {
     return combinedDays.reduce(
       (acc, day) => {
+        if (!shouldCountDayAsPresence(day, { countActivityWithoutAttendance })) {
+          if (day.activity) {
+            acc.activeSeconds += day.activity.activeSeconds || 0;
+            acc.pausedSeconds += day.activity.pausedSeconds || 0;
+            acc.activityDays += 1;
+          }
+          return acc;
+        }
         const attendanceSeconds = attendancePresenceSeconds(day.attendance);
         if (attendanceSeconds !== null) {
           acc.presenceSeconds += attendanceSeconds;
@@ -2010,7 +2112,7 @@ const DashboardAssistance = () => {
         activityDays: 0,
       }
     );
-  }, [combinedDays]);
+  }, [combinedDays, countActivityWithoutAttendance]);
 
   const goToDate = (dateValue) => {
     if (!dateValue) return;
@@ -2020,17 +2122,29 @@ const DashboardAssistance = () => {
     }
   };
 
-  const shiftDisplay = useMemo(() => resolveShiftDisplay(selectedDay), [selectedDay]);
+  const shiftDisplay = useMemo(
+    () => resolveShiftDisplay(selectedDay, { countActivityWithoutAttendance }),
+    [selectedDay, countActivityWithoutAttendance]
+  );
 
   const dailyIndicators = useMemo(
-    () => buildDailyIndicators(selectedDay),
-    [selectedDay]
+    () =>
+      buildDailyIndicators(selectedDay, {
+        countActivityWithoutAttendance,
+      }),
+    [selectedDay, countActivityWithoutAttendance]
   );
 
   const rangeIndicators = useMemo(
-    () => buildRangeIndicators(combinedDays),
-    [combinedDays]
+    () =>
+      buildRangeIndicators(combinedDays, {
+        countActivityWithoutAttendance,
+      }),
+    [combinedDays, countActivityWithoutAttendance]
   );
+  const presenceModeSummary = countActivityWithoutAttendance
+    ? 'Cuenta dias con GeoVictoria o actividad registrada.'
+    : 'Cuenta solo dias con marcaje GeoVictoria.';
 
   return (
     <div className="space-y-6">
@@ -2063,6 +2177,28 @@ const DashboardAssistance = () => {
                 );
               })}
             </div>
+            <label className="flex items-center gap-3 rounded-2xl border border-black/10 bg-white px-3 py-2 text-left">
+              <span className="relative inline-flex h-6 w-11 shrink-0 items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={countActivityWithoutAttendance}
+                  onChange={(event) => setCountActivityWithoutAttendance(event.target.checked)}
+                />
+                <span className="absolute inset-0 rounded-full bg-slate-200 transition peer-checked:bg-[var(--ink)]/80" />
+                <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition peer-checked:translate-x-5" />
+              </span>
+              <span>
+                <span className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Presencia sin marcaje
+                </span>
+                <span className="block text-xs text-[var(--ink)]">
+                  {countActivityWithoutAttendance
+                    ? 'Cuenta actividad registrada'
+                    : 'Cuenta solo GeoVictoria'}
+                </span>
+              </span>
+            </label>
             {viewTab === 'worker' && (
               <button
                 type="button"
@@ -2179,6 +2315,13 @@ const DashboardAssistance = () => {
                   {activityError}
                 </div>
               )}
+              {selectedWorker && daysMissingGeoAttendanceWithActivity > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+                  {daysMissingGeoAttendanceWithActivity} dias tienen actividad registrada pero no
+                  marcaje GeoVictoria.
+                  <span className="ml-2 text-xs text-amber-700">{presenceModeSummary}</span>
+                </div>
+              )}
             </div>
 
             <div className="grid gap-3">
@@ -2192,6 +2335,7 @@ const DashboardAssistance = () => {
                 <p className="text-xs text-[var(--ink-muted)]">
                   {formatSeconds(totals.presenceSeconds)} totales
                 </p>
+                <p className="mt-1 text-xs text-[var(--ink-muted)]">{presenceModeSummary}</p>
               </div>
               <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
                 <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">
@@ -2246,6 +2390,16 @@ const DashboardAssistance = () => {
                 />
               </div>
             </div>
+
+            {!loading && selectedDayHasGeoGap && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-amber-800">
+                  <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+                  Dia con actividad registrada pero sin marcaje GeoVictoria
+                </span>
+                <span className="text-[var(--ink-muted)]">{presenceModeSummary}</span>
+              </div>
+            )}
 
             {loading && <p className="mt-4 text-sm text-[var(--ink-muted)]">Cargando...</p>}
 
@@ -2421,7 +2575,11 @@ const DashboardAssistance = () => {
                       anchorDate={selectedDay.date}
                     />
                   ) : detailTab === 'range' ? (
-                    <RangeIndicatorsChart key="range" combinedDays={combinedDays} />
+                    <RangeIndicatorsChart
+                      key="range"
+                      combinedDays={combinedDays}
+                      countActivityWithoutAttendance={countActivityWithoutAttendance}
+                    />
                   ) : (
                     <>
                       <TaskTimeline key="timeline" day={selectedDay} />
@@ -2507,6 +2665,7 @@ const DashboardAssistance = () => {
           formatPercent={formatPercent}
           formatSeconds={formatSeconds}
           toDateOnly={toDateOnly}
+          countActivityWithoutAttendance={countActivityWithoutAttendance}
           TaskTimeline={TaskTimeline}
         />
       )}

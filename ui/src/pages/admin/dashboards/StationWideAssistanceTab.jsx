@@ -1,7 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { formatMinutesDetailed } from '../../../utils/timeUtils';
-import { buildDailyIndicators, buildRangeIndicators, isAbsentNoDataDay } from './assistanceIndicators';
+import {
+  buildDailyIndicators,
+  buildRangeIndicators,
+  hasActivityWithoutAttendance,
+  isAbsentNoDataDay,
+} from './assistanceIndicators';
 
 const RANGE_OPTIONS = [3, 7, 14];
 const LOAD_CONCURRENCY = 3;
@@ -170,6 +175,7 @@ const aggregateStationRows = (workerSummaries) => {
         productiveWeightTotal: 0,
         expectedWeightTotal: 0,
         adjustedWeightTotal: 0,
+        hasActivityWithoutAttendance: false,
       };
       if (presenceWeight > 0 && Number.isFinite(row.productiveRatio)) {
         entry.productiveWeighted += row.productiveRatio * presenceWeight;
@@ -182,6 +188,9 @@ const aggregateStationRows = (workerSummaries) => {
       if (adjustedWeight > 0 && Number.isFinite(row.adjustedProductiveRatio)) {
         entry.adjustedProductiveWeighted += row.adjustedProductiveRatio * adjustedWeight;
         entry.adjustedWeightTotal += adjustedWeight;
+      }
+      if (row.hasActivityWithoutAttendance) {
+        entry.hasActivityWithoutAttendance = true;
       }
       map.set(row.key, entry);
     });
@@ -202,6 +211,7 @@ const aggregateStationRows = (workerSummaries) => {
       adjustedProductiveRatio: entry.adjustedWeightTotal
         ? entry.adjustedProductiveWeighted / entry.adjustedWeightTotal
         : null,
+      hasActivityWithoutAttendance: entry.hasActivityWithoutAttendance,
     }));
 };
 
@@ -405,6 +415,16 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
               style={{ cursor: onPointClick ? 'pointer' : 'default' }}
             >
               <rect x={x - 6} y={padY} width={12} height={innerHeight} fill="transparent" />
+              {row.hasActivityWithoutAttendance && (
+                <circle
+                  cx={x}
+                  cy={padY + 4}
+                  r={isHovered ? 4 : 3}
+                  fill="#f59e0b"
+                  stroke="#ffffff"
+                  strokeWidth={1}
+                />
+              )}
               {Number.isFinite(row.productiveRatio) && (
                 <circle cx={x} cy={yAt(row.productiveRatio)} r={isHovered ? 4 : 2} fill="#16a34a" />
               )}
@@ -440,6 +460,9 @@ const CompactSparkline = ({ rows, width = 140, height = 36, onPointClick }) => {
               Adj: {Number.isFinite(hovered.adjustedProductiveRatio) ? Math.round(hovered.adjustedProductiveRatio * 100) + '%' : '—'}
             </span>
           </div>
+          {hovered.hasActivityWithoutAttendance && (
+            <div className="mt-1 text-amber-700">Actividad sin marcaje GeoVictoria</div>
+          )}
         </div>
       )}
     </div>
@@ -594,18 +617,28 @@ const HoverInfoMetric = ({
   </div>
 );
 
-const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent, formatSeconds }) => {
+const DayDetailModal = ({
+  day,
+  workerName,
+  onClose,
+  TaskTimeline,
+  formatPercent,
+  formatSeconds,
+  countActivityWithoutAttendance,
+}) => {
   if (!day) return null;
+  const missingGeoAttendance = hasActivityWithoutAttendance(day?.combinedDay);
 
   const indicators = useMemo(() => {
     if (!day?.combinedDay) return day?.indicators;
     const detailed = buildDailyIndicators(day.combinedDay, {
       includeBreakdown: true,
       adjustedTimeHours: day?.adjustedTimeHours,
+      countActivityWithoutAttendance,
     });
     if (!detailed) return day?.indicators;
     return detailed;
-  }, [day]);
+  }, [day, countActivityWithoutAttendance]);
   const attendanceEntry = day?.combinedDay?.attendance?.entry;
   const attendanceExit = day?.combinedDay?.attendance?.exit;
   const attendanceEntryDate = parseDebugDateTime(attendanceEntry);
@@ -667,6 +700,16 @@ const DayDetailModal = ({ day, workerName, onClose, TaskTimeline, formatPercent,
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(96vh-5.25rem)]">
+          {missingGeoAttendance && (
+            <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-sm text-amber-800">
+              Dia con actividad registrada pero sin marcaje GeoVictoria.
+              <span className="ml-2 text-xs text-amber-700">
+                {countActivityWithoutAttendance
+                  ? 'Se esta contando en el calculo actual.'
+                  : 'No se esta contando en el calculo actual.'}
+              </span>
+            </div>
+          )}
           {indicators && (
             <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
               <div className="rounded-xl border border-black/5 bg-slate-50/50 px-4 py-3">
@@ -902,6 +945,7 @@ const StationWideAssistanceTab = ({
   formatPercent,
   formatSeconds,
   toDateOnly,
+  countActivityWithoutAttendance,
   TaskTimeline,
 }) => {
   const [rangeDays, setRangeDays] = useState(RANGE_OPTIONS[0]);
@@ -921,7 +965,8 @@ const StationWideAssistanceTab = ({
     DEFAULT_REPORT_COVER_INDICATOR
   );
   const loadTokensRef = useRef(new Map());
-  const prevRangeRef = useRef(rangeDays);
+  const presenceModeKey = countActivityWithoutAttendance ? 'with-activity' : 'geo-only';
+  const prevCacheKeyRef = useRef(`${rangeDays}:${presenceModeKey}`);
   const geoThrottleRef = useRef(null);
 
   if (!geoThrottleRef.current) {
@@ -1049,6 +1094,7 @@ const StationWideAssistanceTab = ({
       );
       const rangeIndicators = buildRangeIndicators(combinedDays, {
         adjustedTimeHours: worker.adjusted_times,
+        countActivityWithoutAttendance,
       });
       const lastFullDay = pickLastFullDayRow(rangeIndicators.rows, todayKey);
 
@@ -1067,6 +1113,9 @@ const StationWideAssistanceTab = ({
         activityError,
         geovictoriaWarnings: warnings,
         combinedDaysMap,
+        daysMissingGeoAttendanceWithActivity: combinedDays.filter((day) =>
+          hasActivityWithoutAttendance(day)
+        ).length,
       };
     },
     [
@@ -1077,6 +1126,7 @@ const StationWideAssistanceTab = ({
       normalizeAttendance,
       buildActivityDays,
       todayKey,
+      countActivityWithoutAttendance,
     ]
   );
 
@@ -1089,11 +1139,18 @@ const StationWideAssistanceTab = ({
       let expectedWeight = 0;
       let adjustedProductiveWeight = 0;
       let workersWithData = 0;
+      let workersWithGeoGaps = 0;
+      let daysMissingGeoAttendanceWithActivity = 0;
 
       workerSummaries.forEach((summary) => {
         const range = summary?.rangeIndicators;
         const workerPresence = Number(range?.totals?.presenceNetSeconds);
         const adjustedPresence = Number(range?.totals?.adjustedPresenceNetSeconds);
+        const workerGeoGapDays = Number(summary?.daysMissingGeoAttendanceWithActivity) || 0;
+        if (workerGeoGapDays > 0) {
+          workersWithGeoGaps += 1;
+          daysMissingGeoAttendanceWithActivity += workerGeoGapDays;
+        }
         if (!Number.isFinite(workerPresence) || workerPresence <= 0) return;
         const hasProductive = Number.isFinite(range?.totalProductiveRatio);
         const hasExpected = Number.isFinite(range?.totalExpectedRatio);
@@ -1127,6 +1184,8 @@ const StationWideAssistanceTab = ({
         lastFullDay,
         workersTotal: workerSummaries.length,
         workersWithData,
+        workersWithGeoGaps,
+        daysMissingGeoAttendanceWithActivity,
       };
     },
     [todayKey]
@@ -1135,7 +1194,13 @@ const StationWideAssistanceTab = ({
   const loadGroupData = useCallback(
     async (groupKey, { force = false } = {}) => {
       const cached = groupCache[groupKey];
-      if (!force && cached && cached.rangeDays === rangeDays && !cached.loading) {
+      if (
+        !force &&
+        cached &&
+        cached.rangeDays === rangeDays &&
+        cached.presenceModeKey === presenceModeKey &&
+        !cached.loading
+      ) {
         return;
       }
 
@@ -1150,6 +1215,7 @@ const StationWideAssistanceTab = ({
           loading: true,
           error: '',
           rangeDays,
+          presenceModeKey,
         },
       }));
 
@@ -1160,6 +1226,7 @@ const StationWideAssistanceTab = ({
             loading: false,
             error: '',
             rangeDays,
+            presenceModeKey,
             workers: [],
             stationSummary: null,
           },
@@ -1187,6 +1254,7 @@ const StationWideAssistanceTab = ({
           loading: false,
           error: '',
           rangeDays,
+          presenceModeKey,
           workers: workerSummaries,
           stationSummary,
         },
@@ -1195,6 +1263,7 @@ const StationWideAssistanceTab = ({
     [
       groupCache,
       rangeDays,
+      presenceModeKey,
       workersByGroup,
       fetchWorkerSummary,
       buildStationSummary,
@@ -1355,6 +1424,7 @@ const StationWideAssistanceTab = ({
           !cached.loading &&
           !cached.error &&
           cached.rangeDays === rangeDays &&
+          cached.presenceModeKey === presenceModeKey &&
           Array.isArray(cached.workers);
 
         let workerSummaries = [];
@@ -1457,6 +1527,7 @@ const StationWideAssistanceTab = ({
     fetchWorkerSummary,
     formatWorkerDisplayName,
     buildStationSummary,
+    presenceModeKey,
     reportIncludeWorkers,
     reportIndicators,
     reportCoverIndicator,
@@ -1465,13 +1536,14 @@ const StationWideAssistanceTab = ({
   ]);
 
   useEffect(() => {
-    if (prevRangeRef.current === rangeDays) return;
-    prevRangeRef.current = rangeDays;
+    const cacheKey = `${rangeDays}:${presenceModeKey}`;
+    if (prevCacheKeyRef.current === cacheKey) return;
+    prevCacheKeyRef.current = cacheKey;
     setGroupCache({});
     Object.entries(expandedGroups).forEach(([groupKey, isOpen]) => {
       if (isOpen) loadGroupData(groupKey, { force: true });
     });
-  }, [rangeDays, expandedGroups, loadGroupData]);
+  }, [rangeDays, presenceModeKey, expandedGroups, loadGroupData]);
 
   const toggleGroup = useCallback(
     (groupKey) => {
@@ -1502,8 +1574,13 @@ const StationWideAssistanceTab = ({
             <p className="text-xs text-[var(--ink-muted)]">
               Tiempo productivo, cobertura esperada y productivo esperado por estación y trabajador.
             </p>
+            <p className="mt-1 text-xs text-[var(--ink-muted)]">
+              {countActivityWithoutAttendance
+                ? 'El calculo actual cuenta dias con GeoVictoria o actividad registrada.'
+                : 'El calculo actual cuenta solo dias con marcaje GeoVictoria.'}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
               <span className="inline-block h-2 w-3 rounded-sm bg-[#16a34a]" /> Productivo
             </span>
@@ -1512,6 +1589,9 @@ const StationWideAssistanceTab = ({
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
               <span className="inline-block h-2 w-3 rounded-sm" style={{ backgroundColor: ADJUSTED_PRODUCTIVE_COLOR }} /> Prod. esperado
+            </span>
+            <span className="inline-flex items-center gap-1 text-xs text-[var(--ink-muted)]">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500" /> Sin marcaje GeoVictoria
             </span>
             <select
               className="ml-3 rounded-lg border border-black/10 bg-white px-2 py-1 text-xs text-[var(--ink)]"
@@ -1562,7 +1642,14 @@ const StationWideAssistanceTab = ({
                   >
                     <td className="px-4 py-3">
                       <div className="font-medium text-[var(--ink)]">{group.label}</div>
-                      <div className="text-xs text-[var(--ink-muted)]">{groupWorkerCount} trabajadores</div>
+                      <div className="text-xs text-[var(--ink-muted)]">
+                        {groupWorkerCount} trabajadores
+                        {Number(summary?.workersWithGeoGaps) > 0 && (
+                          <span className="ml-2 text-amber-700">
+                            · {summary.workersWithGeoGaps} con dias sin marcaje
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2 text-center">
                       {cache?.loading ? (
@@ -1597,6 +1684,7 @@ const StationWideAssistanceTab = ({
                     const rangeIndicators = workerSummary.rangeIndicators;
                     const hasWarnings = Array.isArray(workerSummary.geovictoriaWarnings) && workerSummary.geovictoriaWarnings.length > 0;
                     const hasErrors = workerSummary.attendanceError || workerSummary.activityError;
+                    const geoGapDays = Number(workerSummary.daysMissingGeoAttendanceWithActivity) || 0;
 
                     const handlePointClick = (row) => {
                       const combinedDay = workerSummary.combinedDaysMap?.get(row.key);
@@ -1615,6 +1703,11 @@ const StationWideAssistanceTab = ({
                           <div className="text-[var(--ink)]">{workerLabel}</div>
                           <div className="text-xs text-[var(--ink-muted)]">
                             {rangeIndicators.daysWithData}/{rangeIndicators.daysTotal} dias
+                            {geoGapDays > 0 && (
+                              <span className="ml-2 text-amber-700">
+                                · {geoGapDays} sin marcaje GeoVictoria
+                              </span>
+                            )}
                             {(hasErrors || hasWarnings) && <span className="ml-1 text-amber-600">⚠</span>}
                           </div>
                         </td>
@@ -1665,6 +1758,7 @@ const StationWideAssistanceTab = ({
           workerName={modalData.workerName}
           onClose={() => setModalData(null)}
           TaskTimeline={TaskTimeline}
+          countActivityWithoutAttendance={countActivityWithoutAttendance}
           formatPercent={formatPercent}
           formatSeconds={formatSeconds || defaultFormatSeconds}
         />

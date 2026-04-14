@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin, get_db
 from app.models.admin import AdminUser
 from app.models.stations import Station
-from app.models.workers import Skill, Worker, WorkerSkill, WorkerSupervisor
+from app.models.workers import (
+    Skill,
+    Worker,
+    WorkerSkill,
+    WorkerSupervisor,
+)
 from app.schemas.workers import (
     SkillAssignment,
     SkillCreate,
@@ -156,7 +161,7 @@ def create_supervisor(
     payload: WorkerSupervisorCreate,
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(get_current_admin),
-) -> WorkerSupervisor:
+) -> WorkerSupervisorRead:
     geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
     geovictoria_identifier = _normalize_geovictoria_value(
         payload.geovictoria_identifier, "GeoVictoria identifier"
@@ -177,9 +182,7 @@ def create_supervisor(
 
 
 @router.get("/supervisors/{supervisor_id}", response_model=WorkerSupervisorRead)
-def get_supervisor(
-    supervisor_id: int, db: Session = Depends(get_db)
-) -> WorkerSupervisor:
+def get_supervisor(supervisor_id: int, db: Session = Depends(get_db)) -> WorkerSupervisor:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
         raise HTTPException(
@@ -194,7 +197,7 @@ def update_supervisor(
     payload: WorkerSupervisorUpdate,
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(get_current_admin),
-) -> WorkerSupervisor:
+) -> WorkerSupervisorRead:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
         raise HTTPException(
