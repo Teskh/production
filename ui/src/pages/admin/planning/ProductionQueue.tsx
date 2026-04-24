@@ -13,7 +13,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  canManageProductionQueue,
+  useAdminHeader,
+  useAdminSession,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -57,6 +61,19 @@ type PanelStatusDetail = {
   pending_tasks: PanelTaskStatus[];
 };
 
+type ProgressCount = {
+  completed: number;
+  total: number;
+  skipped: number;
+};
+
+type ModuleProgressSummary = {
+  panels_finished: number;
+  total_panels: number;
+  panel_tasks: ProgressCount;
+  module_tasks: ProgressCount;
+};
+
 type ModuleStatusDetail = {
   work_unit_id: number;
   work_order_id: number;
@@ -71,6 +88,7 @@ type ModuleStatusDetail = {
   planned_assembly_line: LineId;
   current_station_id: number | null;
   current_station_name: string | null;
+  summary: ModuleProgressSummary;
   panels: PanelStatusDetail[];
 };
 
@@ -273,6 +291,32 @@ const taskStatusStyles: Record<TaskStatus, string> = {
   Skipped: 'bg-black/10 text-[var(--ink-muted)] border-black/10',
 };
 
+const productionStatusOptions: ProductionStatus[] = [
+  'Planned',
+  'Panels',
+  'Magazine',
+  'Assembly',
+  'Completed',
+];
+
+const ProgressMetricCard: React.FC<{
+  label: string;
+  count: ProgressCount | { completed: number; total: number };
+}> = ({ label, count }) => {
+  const skipped = 'skipped' in count ? count.skipped : 0;
+  return (
+    <div className="rounded-2xl border border-black/5 bg-[rgba(15,27,45,0.03)] px-4 py-3">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-[var(--ink)]">
+        {count.completed}/{count.total}
+      </p>
+      {skipped > 0 && (
+        <p className="text-[11px] text-[var(--ink-muted)]">{skipped} omitidas</p>
+      )}
+    </div>
+  );
+};
+
 const LineSelector: React.FC<{
   current: LineId;
   onChange: (l: LineId) => void;
@@ -351,7 +395,9 @@ const SubTypeSelector: React.FC<{
 // --- Main Component ---
 
 const ProductionQueue: React.FC = () => {
+  const admin = useAdminSession();
   const { setHeader } = useAdminHeader();
+  const canManageQueue = canManageProductionQueue(admin);
   const pageSize = 20;
   const [items, setItems] = useState<QueueItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -362,10 +408,19 @@ const ProductionQueue: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<QueueItem | null>(null);
   const [detailData, setDetailData] = useState<ModuleStatusDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [statusIds, setStatusIds] = useState<number[]>([]);
+  const [statusValue, setStatusValue] = useState<ProductionStatus | ''>('');
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusDetailItem, setStatusDetailItem] = useState<QueueItem | null>(null);
+  const [statusDetailData, setStatusDetailData] = useState<ModuleStatusDetail | null>(null);
+  const [statusDetailLoading, setStatusDetailLoading] = useState(false);
+  const [statusDetailError, setStatusDetailError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -412,6 +467,17 @@ const ProductionQueue: React.FC = () => {
 
   const selectedCount = selectedIds.size;
   const hasCompletedSelected = selectedItems.some((item) => item.status === 'Completed');
+  const statusItems = useMemo(
+    () => items.filter((item) => statusIds.includes(item.id)),
+    [items, statusIds]
+  );
+  const singleStatusItem = statusItems.length === 1 ? statusItems[0] : null;
+  const isBackwardStatusMove = Boolean(
+    singleStatusItem &&
+      statusValue &&
+      productionStatusOptions.indexOf(statusValue) <
+        productionStatusOptions.indexOf(singleStatusItem.status)
+  );
 
   const filteredItems = useMemo(() => {
     const needle = normalizeSearchValue(query.trim());
@@ -696,7 +762,18 @@ const ProductionQueue: React.FC = () => {
     clearSelection();
   };
 
+  const ensureQueueMutationAllowed = (): boolean => {
+    if (canManageQueue) {
+      return true;
+    }
+    setErrorMessage('Solo Admin y MC Senior pueden modificar la cola.');
+    return false;
+  };
+
   const commitReorder = async (nextItems: QueueItem[]) => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     const previousItems = items;
     setItems(nextItems);
     try {
@@ -746,6 +823,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const moveSelectionByOne = (direction: 'up' | 'down', anchorId: number) => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     const activeItems = items.filter((item) => item.status !== 'Completed');
     const completedItems = items.filter((item) => item.status === 'Completed');
     const anchorItem = activeItems.find((item) => item.id === anchorId);
@@ -786,7 +866,7 @@ const ProductionQueue: React.FC = () => {
     item: QueueItem,
     index: number
   ) => {
-    if (item.status === 'Completed') {
+    if (!canManageQueue || item.status === 'Completed') {
       event.preventDefault();
       return;
     }
@@ -803,6 +883,9 @@ const ProductionQueue: React.FC = () => {
     event: React.DragEvent<HTMLDivElement>,
     itemId: number
   ) => {
+    if (!canManageQueue) {
+      return;
+    }
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = event.clientY - bounds.top > bounds.height / 2 ? 'after' : 'before';
@@ -814,6 +897,9 @@ const ProductionQueue: React.FC = () => {
     event: React.DragEvent<HTMLDivElement>,
     targetId: number
   ) => {
+    if (!canManageQueue) {
+      return;
+    }
     event.preventDefault();
     if (!draggingIds.length) {
       setDragTarget(null);
@@ -831,6 +917,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const openEditModal = (ids: number[]) => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     const uniqueIds = Array.from(new Set(ids));
     const itemsForEdit = items.filter((item) => uniqueIds.includes(item.id));
     const sharedHouseTypeId =
@@ -864,6 +953,61 @@ const ProductionQueue: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
+  const openStatusModal = async (ids: number[]) => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    const uniqueIds = Array.from(new Set(ids));
+    const statusItemsForEdit = items.filter((item) => uniqueIds.includes(item.id));
+    const sharedStatus =
+      statusItemsForEdit.length > 0 &&
+      statusItemsForEdit.every((item) => item.status === statusItemsForEdit[0].status)
+        ? statusItemsForEdit[0].status
+        : '';
+    setStatusIds(uniqueIds);
+    setStatusValue(sharedStatus);
+    setStatusSaving(false);
+    setStatusError(null);
+    setStatusDetailError(null);
+    setStatusDetailData(null);
+    setStatusDetailLoading(false);
+
+    if (uniqueIds.length !== 1) {
+      setStatusDetailItem(null);
+      setIsStatusModalOpen(true);
+      return;
+    }
+
+    const item = statusItemsForEdit[0] ?? null;
+    setStatusDetailItem(item);
+    setStatusDetailLoading(true);
+    setIsStatusModalOpen(true);
+    try {
+      const data = await apiRequest<ModuleStatusDetail>(
+        `/api/production-queue/items/${uniqueIds[0]}/status`
+      );
+      setStatusDetailData(data);
+    } catch (error) {
+      setStatusDetailError(
+        error instanceof Error ? error.message : 'No se pudo cargar el resumen del modulo.'
+      );
+    } finally {
+      setStatusDetailLoading(false);
+    }
+  };
+
+  const closeStatusModal = () => {
+    setIsStatusModalOpen(false);
+    setStatusIds([]);
+    setStatusValue('');
+    setStatusSaving(false);
+    setStatusError(null);
+    setStatusDetailItem(null);
+    setStatusDetailData(null);
+    setStatusDetailLoading(false);
+    setStatusDetailError(null);
+  };
+
   const handleEditHouseTypeChange = (nextValue: string) => {
     setEditHouseTypeValue(nextValue);
     if (nextValue === 'keep') {
@@ -879,6 +1023,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const handleEditSave = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     if (!editIds.length) {
       return;
     }
@@ -922,8 +1069,41 @@ const ProductionQueue: React.FC = () => {
     }
   };
 
+  const handleStatusSave = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    if (!statusIds.length || !statusValue) {
+      setStatusError('Selecciona un estado para continuar.');
+      return;
+    }
+    try {
+      setStatusSaving(true);
+      setStatusError(null);
+      await apiRequest<QueueItem[]>('/api/production-queue/items', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          work_unit_ids: statusIds,
+          status: statusValue,
+        }),
+      });
+      closeStatusModal();
+      await loadQueue(true);
+      clearSelection();
+    } catch (error) {
+      setStatusError(
+        error instanceof Error ? error.message : 'No se pudo actualizar el estado.'
+      );
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
   const handleLineChange = async (line: LineId, anchorId: number) => {
     if (!line) {
+      return;
+    }
+    if (!ensureQueueMutationAllowed()) {
       return;
     }
     const targetIds =
@@ -952,6 +1132,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const handleSubTypeToggle = async (subTypeId: number, anchorId: number) => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     const targetIds =
       selectedCount > 1 && selectedIds.has(anchorId)
         ? Array.from(selectedIds)
@@ -985,28 +1168,10 @@ const ProductionQueue: React.FC = () => {
     }
   };
 
-  const handleComplete = async (targetIds: number[]) => {
-    if (!targetIds.length) {
+  const handleDelete = async () => {
+    if (!ensureQueueMutationAllowed()) {
       return;
     }
-    try {
-      await apiRequest<QueueItem[]>('/api/production-queue/items', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          work_unit_ids: targetIds,
-          status: 'Completed',
-        }),
-      });
-      await loadQueue(true);
-      clearSelection();
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : 'No se pudo marcar como completado.'
-      );
-    }
-  };
-
-  const handleDelete = async () => {
     if (!selectedCount) {
       return;
     }
@@ -1032,6 +1197,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const handleBatchCreate = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
     setBatchError(null);
     if (!batchDraft.project_name.trim() || !batchDraft.house_identifier_base.trim()) {
       setBatchError('El nombre del proyecto y la base del identificador son obligatorios.');
@@ -1111,8 +1279,13 @@ const ProductionQueue: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-end">
         <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity"
+          onClick={() => {
+            if (ensureQueueMutationAllowed()) {
+              setIsAddModalOpen(true);
+            }
+          }}
+          disabled={!canManageQueue}
+          className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="h-4 w-4" /> Agregar lote de produccion
         </button>
@@ -1175,7 +1348,7 @@ const ProductionQueue: React.FC = () => {
               <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             <button
-              disabled={selectedCount === 0}
+              disabled={!canManageQueue || selectedCount === 0}
               onClick={handleDelete}
               className="p-2 text-[var(--ink-muted)] hover:text-red-500 disabled:opacity-30 transition-colors"
               title="Eliminar seleccionados"
@@ -1191,6 +1364,12 @@ const ProductionQueue: React.FC = () => {
           </div>
         )}
 
+        {!canManageQueue && (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Vista solo lectura. Solo Admin y MC Senior pueden agregar o editar la cola.
+          </div>
+        )}
+
         {selectedCount > 0 && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[var(--accent)]/20 bg-[rgba(242,98,65,0.06)] px-4 py-3">
             <span className="text-xs font-semibold text-[var(--ink)]">
@@ -1198,15 +1377,17 @@ const ProductionQueue: React.FC = () => {
             </span>
             <button
               onClick={() => openEditModal(Array.from(selectedIds))}
-              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20"
+              disabled={!canManageQueue}
+              className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Editar
             </button>
             <button
-              onClick={() => handleComplete(Array.from(selectedIds))}
-              className="rounded-full bg-[var(--leaf)]/10 px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[var(--leaf)]/20 hover:bg-[var(--leaf)]/20"
+              onClick={() => openStatusModal(Array.from(selectedIds))}
+              disabled={!canManageQueue}
+              className="rounded-full bg-[var(--leaf)]/10 px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[var(--leaf)]/20 hover:bg-[var(--leaf)]/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Marcar completado
+              Editar estado
             </button>
             <button
               onClick={clearSelection}
@@ -1267,7 +1448,7 @@ const ProductionQueue: React.FC = () => {
                   onDragOver={(event) => handleDragOver(event, item.id)}
                   onDrop={(event) => handleDrop(event, item.id)}
                   onDragEnd={handleDragEnd}
-                  draggable={item.status !== 'Completed'}
+                  draggable={canManageQueue && item.status !== 'Completed'}
                   className={`
                     group relative flex items-center p-4 rounded-2xl border transition-all animate-rise select-none cursor-pointer
                     ${
@@ -1306,7 +1487,8 @@ const ProductionQueue: React.FC = () => {
                               : [item.id]
                           );
                         }}
-                        className="truncate max-w-[160px] text-left text-sm font-medium text-[var(--ink)] transition-colors hover:text-[var(--accent)]"
+                        disabled={!canManageQueue}
+                        className="truncate max-w-[160px] text-left text-sm font-medium text-[var(--ink)] transition-colors hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                         title="Editar elementos"
                       >
                         {item.house_type_name}
@@ -1316,6 +1498,7 @@ const ProductionQueue: React.FC = () => {
                           subTypes={subTypes}
                           currentId={item.sub_type_id}
                           onToggle={(subTypeId) => handleSubTypeToggle(subTypeId, item.id)}
+                          disabled={!canManageQueue}
                         />
                       ) : (
                         item.sub_type_name && (
@@ -1330,7 +1513,8 @@ const ProductionQueue: React.FC = () => {
                           event.stopPropagation();
                           openEditModal([item.id]);
                         }}
-                        className="flex items-center gap-1.5 text-left"
+                        disabled={!canManageQueue}
+                        className="flex items-center gap-1.5 text-left disabled:cursor-not-allowed disabled:opacity-60"
                         title={formatPlannedTime(item.planned_start_datetime)}
                       >
                         <Calendar className="h-3 w-3 text-black/20" />
@@ -1344,7 +1528,7 @@ const ProductionQueue: React.FC = () => {
                       <LineSelector
                         current={item.planned_assembly_line}
                         onChange={(line) => handleLineChange(line, item.id)}
-                        disabled={item.status === 'Completed' || hasCompletedSelected}
+                        disabled={!canManageQueue || item.status === 'Completed' || hasCompletedSelected}
                       />
                     </div>
 
@@ -1368,7 +1552,8 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             openEditModal(selectedIds.has(item.id) && selectedCount > 1 ? Array.from(selectedIds) : [item.id]);
                           }}
-                          className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                          disabled={!canManageQueue}
+                          className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
                           title="Editar"
                         >
                           <Edit className="h-4 w-4" />
@@ -1376,14 +1561,15 @@ const ProductionQueue: React.FC = () => {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            handleComplete(
+                            openStatusModal(
                               selectedIds.has(item.id) && selectedCount > 1
                                 ? Array.from(selectedIds)
                                 : [item.id]
                             );
                           }}
-                          className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                          title="Marcar completado"
+                          disabled={!canManageQueue}
+                          className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                          title="Editar estado"
                         >
                           <CheckCircle className="h-4 w-4" />
                         </button>
@@ -1392,7 +1578,7 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             moveSelectionByOne('up', item.id);
                           }}
-                          disabled={item.status === 'Completed'}
+                          disabled={!canManageQueue || item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
                           title="Mover arriba"
                         >
@@ -1403,7 +1589,7 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             moveSelectionByOne('down', item.id);
                           }}
-                          disabled={item.status === 'Completed'}
+                          disabled={!canManageQueue || item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
                           title="Mover abajo"
                         >
@@ -1441,6 +1627,137 @@ const ProductionQueue: React.FC = () => {
           </div>
         )}
       </section>
+
+      {isStatusModalOpen && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-[560px] max-h-[80vh] overflow-hidden border border-black/5 animate-rise">
+            <div className="px-8 py-6 flex justify-between items-start gap-6 border-b border-black/5">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Override
+                </p>
+                <h2 className="text-xl font-display text-[var(--ink)]">Editar estado</h2>
+                <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                  {statusDetailItem ?? singleStatusItem
+                    ? `${(statusDetailItem ?? singleStatusItem)?.house_identifier} · M-${String((statusDetailItem ?? singleStatusItem)?.module_number ?? 0).padStart(2, '0')}`
+                    : `${statusIds.length} modulos seleccionados`}
+                </p>
+              </div>
+              <button
+                onClick={closeStatusModal}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-8 py-6 space-y-5 overflow-y-auto max-h-[calc(80vh-140px)]">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Ultimo recurso. Este cambio ajusta el estado del modulo para reencauzar la cola,
+                pero no limpia automaticamente paneles, tareas completadas ni historial previo.
+              </div>
+
+              {isBackwardStatusMove && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  Estas moviendo el modulo hacia atras en el flujo. Hazlo solo si ya validaste
+                  que el equipo necesita corregir manualmente la cola.
+                </div>
+              )}
+
+              {statusValue === 'Assembly' && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                  Si el modulo no tiene estacion de ensamblaje activa, el sistema intentara
+                  ubicarlo en la primera estacion aplicable de su linea.
+                </div>
+              )}
+
+              {statusError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {statusError}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Nuevo estado
+                </label>
+                <select
+                  value={statusValue}
+                  onChange={(event) => setStatusValue(event.target.value as ProductionStatus | '')}
+                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/20"
+                >
+                  <option value="">Selecciona estado</option>
+                  {productionStatusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {formatStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+                {statusItems.length > 1 && (
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    El cambio se aplicara a todos los modulos seleccionados.
+                  </p>
+                )}
+              </div>
+
+              {statusDetailLoading && (
+                <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                  Cargando resumen del modulo...
+                </div>
+              )}
+
+              {statusDetailError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {statusDetailError}
+                </div>
+              )}
+
+              {statusDetailData && !statusDetailLoading && !statusDetailError && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ink-muted)]">
+                    <span>Linea {statusDetailData.planned_assembly_line ?? '-'}</span>
+                    <span>-</span>
+                    <span>Estacion actual {statusDetailData.current_station_name ?? '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <ProgressMetricCard
+                      label="Paneles terminados"
+                      count={{
+                        completed: statusDetailData.summary.panels_finished,
+                        total: statusDetailData.summary.total_panels,
+                      }}
+                    />
+                    <ProgressMetricCard
+                      label="Tareas de panel"
+                      count={statusDetailData.summary.panel_tasks}
+                    />
+                    <ProgressMetricCard
+                      label="Tareas de modulo"
+                      count={statusDetailData.summary.module_tasks}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={closeStatusModal}
+                  className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleStatusSave}
+                  disabled={statusSaving || !statusValue}
+                  className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
+                >
+                  {statusSaving ? 'Guardando...' : 'Guardar override'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isDetailModalOpen && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">

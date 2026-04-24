@@ -35,6 +35,15 @@ class Settings:
     geovictoria_token_ttl_seconds: int = int(
         os.getenv("GEOVICTORIA_TOKEN_TTL_SECONDS", "1200")
     )
+    geovictoria_attendance_min_interval_seconds: float = float(
+        os.getenv("GEOVICTORIA_ATTENDANCE_MIN_INTERVAL_SECONDS", "0.35")
+    )
+    geovictoria_429_retry_seconds: float = float(
+        os.getenv("GEOVICTORIA_429_RETRY_SECONDS", "1.5")
+    )
+    geovictoria_429_max_retries: int = int(
+        os.getenv("GEOVICTORIA_429_MAX_RETRIES", "2")
+    )
     buk_base_url: str = os.getenv("BUK_BASE_URL", "https://grupopatagual.buk.cl")
     buk_api_token: str | None = os.getenv("BUK_API_TOKEN") or os.getenv("BUK_TOKEN")
     buk_country: str = os.getenv("BUK_COUNTRY", "chile")

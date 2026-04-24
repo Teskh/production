@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin, get_db
 from app.models.admin import AdminUser
 from app.models.enums import (
+    AdminRole,
     PanelUnitStatus,
     StationRole,
     TaskExceptionType,
@@ -37,6 +38,11 @@ router = APIRouter()
 _LINE_SEQUENCE = ("1", "2", "3")
 _LINE_SET = set(_LINE_SEQUENCE)
 _LINE_ALIASES = {"A": "1", "B": "2", "C": "3"}
+_QUEUE_MANAGER_ROLES = {
+    AdminRole.ADMIN.value.casefold(),
+    AdminRole.SYSADMIN.value.casefold(),
+    "mc senior",
+}
 
 
 def _coerce_line(line: str | None) -> str | None:
@@ -59,6 +65,18 @@ def _normalize_line(line: str | None) -> str | None:
             detail="Assembly line must be 1, 2, or 3",
         )
     return coerced
+
+
+def require_queue_manager(
+    admin: AdminUser = Depends(get_current_admin),
+) -> AdminUser:
+    role = str(getattr(admin, "role", "")).strip().casefold()
+    if role not in _QUEUE_MANAGER_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or MC Senior role required",
+        )
+    return admin
 
 
 def _order_task_definitions(
@@ -130,6 +148,281 @@ def _pending_panel_tasks(
             }
         )
     return pending
+
+
+def _applicable_panel_definitions(
+    db: Session, work_unit: WorkUnit, work_order: WorkOrder
+) -> list[PanelDefinition]:
+    panel_definitions = list(
+        db.execute(
+            select(PanelDefinition)
+            .where(PanelDefinition.house_type_id == work_order.house_type_id)
+            .where(PanelDefinition.module_sequence_number == work_unit.module_number)
+        ).scalars()
+    )
+    general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
+    if work_order.sub_type_id is not None:
+        specific = [
+            panel_def
+            for panel_def in panel_definitions
+            if panel_def.sub_type_id == work_order.sub_type_id
+        ]
+        panel_definitions = general + specific
+    else:
+        panel_definitions = general
+
+    panel_definitions.sort(
+        key=lambda panel_def: (
+            panel_def.panel_sequence_number or 9999,
+            panel_def.panel_code or "",
+        )
+    )
+    return panel_definitions
+
+
+def _latest_task_instance_by_definition(
+    instances: list[TaskInstance],
+) -> dict[int, TaskInstance]:
+    latest_by_definition: dict[int, TaskInstance] = {}
+    for instance in instances:
+        existing = latest_by_definition.get(instance.task_definition_id)
+        if not existing or instance.id > existing.id:
+            latest_by_definition[instance.task_definition_id] = instance
+    return latest_by_definition
+
+
+def _station_has_module_tasks(
+    station: Station,
+    task_definitions: list[TaskDefinition],
+    applicability_map: dict[int, list[TaskApplicability]],
+    work_order: WorkOrder,
+    work_unit: WorkUnit,
+) -> bool:
+    if station.sequence_order is None:
+        return False
+    for task in task_definitions:
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
+            applicability_map.get(task.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            work_unit.module_number,
+            None,
+        )
+        if applies and station_sequence_order == station.sequence_order:
+            return True
+    return False
+
+
+def _first_applicable_assembly_station(
+    db: Session, work_unit: WorkUnit, work_order: WorkOrder
+) -> Station | None:
+    line_value = _coerce_line(work_unit.planned_assembly_line)
+    if line_value is None:
+        return None
+    line_stations = list(
+        db.execute(
+            select(Station)
+            .where(Station.role == StationRole.ASSEMBLY)
+            .where(Station.line_type == line_value)
+            .order_by(Station.sequence_order, Station.id)
+        ).scalars()
+    )
+    if not line_stations:
+        return None
+
+    task_definitions = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.active == True)
+            .where(TaskDefinition.scope == TaskScope.MODULE)
+            .where(TaskDefinition.is_rework == False)
+        ).scalars()
+    )
+    if not task_definitions:
+        return line_stations[0]
+
+    applicability_rows = list(
+        db.execute(
+            select(TaskApplicability).where(
+                TaskApplicability.task_definition_id.in_([task.id for task in task_definitions])
+            )
+        ).scalars()
+    )
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    for row in applicability_rows:
+        applicability_map.setdefault(row.task_definition_id, []).append(row)
+
+    for station in line_stations:
+        if _station_has_module_tasks(
+            station, task_definitions, applicability_map, work_order, work_unit
+        ):
+            return station
+    return line_stations[0]
+
+
+def _build_module_progress_summary(
+    db: Session,
+    work_unit: WorkUnit,
+    work_order: WorkOrder,
+    panel_definitions: list[PanelDefinition],
+    panel_units: list[PanelUnit],
+    panel_task_instances: list[TaskInstance],
+    panel_task_exceptions: list[TaskException],
+) -> dict[str, object]:
+    panel_unit_map: dict[int, PanelUnit] = {}
+    for panel_unit in panel_units:
+        existing = panel_unit_map.get(panel_unit.panel_definition_id)
+        if not existing or panel_unit.id > existing.id:
+            panel_unit_map[panel_unit.panel_definition_id] = panel_unit
+
+    terminal_panel_statuses = {PanelUnitStatus.COMPLETED, PanelUnitStatus.CONSUMED}
+    panels_finished = sum(
+        1
+        for panel_def in panel_definitions
+        if (panel_unit := panel_unit_map.get(panel_def.id)) is not None
+        and panel_unit.status in terminal_panel_statuses
+    )
+
+    panel_task_definitions = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.active == True)
+            .where(TaskDefinition.scope == TaskScope.PANEL)
+            .where(TaskDefinition.is_rework == False)
+        ).scalars()
+    )
+    panel_applicability_map: dict[int, list[TaskApplicability]] = {}
+    if panel_task_definitions:
+        applicability_rows = list(
+            db.execute(
+                select(TaskApplicability).where(
+                    TaskApplicability.task_definition_id.in_(
+                        [task.id for task in panel_task_definitions]
+                    )
+                )
+            ).scalars()
+        )
+        for row in applicability_rows:
+            panel_applicability_map.setdefault(row.task_definition_id, []).append(row)
+
+    panel_instances_by_unit: dict[int, list[TaskInstance]] = {}
+    for instance in panel_task_instances:
+        if instance.panel_unit_id is None:
+            continue
+        panel_instances_by_unit.setdefault(instance.panel_unit_id, []).append(instance)
+
+    panel_skips_by_unit: dict[int, set[int]] = {}
+    for exc in panel_task_exceptions:
+        if exc.panel_unit_id is None or exc.exception_type != TaskExceptionType.SKIP:
+            continue
+        panel_skips_by_unit.setdefault(exc.panel_unit_id, set()).add(exc.task_definition_id)
+
+    panel_tasks_total = 0
+    panel_tasks_completed = 0
+    panel_tasks_skipped = 0
+    for panel_def in panel_definitions:
+        panel_unit = panel_unit_map.get(panel_def.id)
+        latest_instances = _latest_task_instance_by_definition(
+            panel_instances_by_unit.get(panel_unit.id, []) if panel_unit else []
+        )
+        skipped_task_ids = panel_skips_by_unit.get(panel_unit.id, set()) if panel_unit else set()
+        for task in _order_task_definitions(
+            panel_task_definitions, panel_def.applicable_task_ids
+        ):
+            applies, _station_sequence = resolve_task_station_sequence(
+                task,
+                panel_applicability_map.get(task.id, []),
+                work_order.house_type_id,
+                work_order.sub_type_id,
+                work_unit.module_number,
+                panel_def.id,
+            )
+            if not applies:
+                continue
+            panel_tasks_total += 1
+            if task.id in skipped_task_ids:
+                panel_tasks_skipped += 1
+                continue
+            instance = latest_instances.get(task.id)
+            if instance and instance.status == TaskStatus.COMPLETED:
+                panel_tasks_completed += 1
+
+    module_task_definitions = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.active == True)
+            .where(TaskDefinition.scope == TaskScope.MODULE)
+            .where(TaskDefinition.is_rework == False)
+        ).scalars()
+    )
+    module_applicability_map: dict[int, list[TaskApplicability]] = {}
+    if module_task_definitions:
+        applicability_rows = list(
+            db.execute(
+                select(TaskApplicability).where(
+                    TaskApplicability.task_definition_id.in_(
+                        [task.id for task in module_task_definitions]
+                    )
+                )
+            ).scalars()
+        )
+        for row in applicability_rows:
+            module_applicability_map.setdefault(row.task_definition_id, []).append(row)
+
+    module_instances = list(
+        db.execute(
+            select(TaskInstance)
+            .where(TaskInstance.work_unit_id == work_unit.id)
+            .where(TaskInstance.panel_unit_id.is_(None))
+        ).scalars()
+    )
+    module_latest_instances = _latest_task_instance_by_definition(module_instances)
+    module_skipped_task_ids = set(
+        db.execute(
+            select(TaskException.task_definition_id)
+            .where(TaskException.work_unit_id == work_unit.id)
+            .where(TaskException.panel_unit_id.is_(None))
+            .where(TaskException.exception_type == TaskExceptionType.SKIP)
+        ).scalars()
+    )
+
+    module_tasks_total = 0
+    module_tasks_completed = 0
+    module_tasks_skipped = 0
+    for task in module_task_definitions:
+        applies, _station_sequence = resolve_task_station_sequence(
+            task,
+            module_applicability_map.get(task.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            work_unit.module_number,
+            None,
+        )
+        if not applies:
+            continue
+        module_tasks_total += 1
+        if task.id in module_skipped_task_ids:
+            module_tasks_skipped += 1
+            continue
+        instance = module_latest_instances.get(task.id)
+        if instance and instance.status == TaskStatus.COMPLETED:
+            module_tasks_completed += 1
+
+    return {
+        "panels_finished": panels_finished,
+        "total_panels": len(panel_definitions),
+        "panel_tasks": {
+            "completed": panel_tasks_completed,
+            "total": panel_tasks_total,
+            "skipped": panel_tasks_skipped,
+        },
+        "module_tasks": {
+            "completed": module_tasks_completed,
+            "total": module_tasks_total,
+            "skipped": module_tasks_skipped,
+        },
+    }
 
 
 def _split_identifier_base(base: str) -> tuple[str, int, int]:
@@ -248,35 +541,16 @@ def module_status(
     if work_unit.current_station_id is not None:
         module_station = db.get(Station, work_unit.current_station_id)
 
-    panel_definitions = list(
-        db.execute(
-            select(PanelDefinition)
-            .where(PanelDefinition.house_type_id == work_order.house_type_id)
-            .where(PanelDefinition.module_sequence_number == work_unit.module_number)
-        ).scalars()
-    )
-    general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
-    if work_order.sub_type_id is not None:
-        specific = [
-            panel_def
-            for panel_def in panel_definitions
-            if panel_def.sub_type_id == work_order.sub_type_id
-        ]
-        panel_definitions = general + specific
-    else:
-        panel_definitions = general
-
-    panel_definitions.sort(
-        key=lambda panel_def: (
-            panel_def.panel_sequence_number or 9999,
-            panel_def.panel_code or "",
-        )
-    )
+    panel_definitions = _applicable_panel_definitions(db, work_unit, work_order)
 
     panel_units = list(
         db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
     )
-    panel_unit_map = {panel_unit.panel_definition_id: panel_unit for panel_unit in panel_units}
+    panel_unit_map: dict[int, PanelUnit] = {}
+    for panel_unit in panel_units:
+        existing = panel_unit_map.get(panel_unit.panel_definition_id)
+        if not existing or panel_unit.id > existing.id:
+            panel_unit_map[panel_unit.panel_definition_id] = panel_unit
     panel_unit_ids = [panel_unit.id for panel_unit in panel_units]
 
     station_ids = {
@@ -331,6 +605,16 @@ def module_status(
                 .where(TaskException.panel_unit_id.in_(panel_unit_ids))
             ).scalars()
         )
+
+    summary = _build_module_progress_summary(
+        db,
+        work_unit,
+        work_order,
+        panel_definitions,
+        panel_units,
+        task_instances,
+        task_exceptions,
+    )
 
     instance_map: dict[tuple[int, int], list[TaskInstance]] = {}
     for instance in task_instances:
@@ -389,6 +673,7 @@ def module_status(
         planned_assembly_line=_coerce_line(work_unit.planned_assembly_line),
         current_station_id=work_unit.current_station_id,
         current_station_name=module_station.name if module_station else None,
+        summary=summary,
         panels=panels,
     )
 
@@ -397,7 +682,7 @@ def module_status(
 def create_batch(
     payload: ProductionBatchCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> list[ProductionQueueItem]:
     project_name = payload.project_name.strip()
     if not project_name:
@@ -510,7 +795,7 @@ def create_batch(
 def reorder_queue(
     payload: ProductionQueueReorder,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> list[ProductionQueueItem]:
     ordered_ids = payload.ordered_ids
     if not ordered_ids:
@@ -552,6 +837,14 @@ def _apply_queue_updates(
     updates = payload.model_dump(exclude_unset=True)
     if not updates:
         return
+
+    order_ids = {unit.work_order_id for unit in work_units}
+    orders = (
+        list(db.execute(select(WorkOrder).where(WorkOrder.id.in_(order_ids))).scalars())
+        if order_ids
+        else []
+    )
+    order_map = {order.id: order for order in orders}
 
     if "planned_assembly_line" in updates:
         line_value = _normalize_line(updates["planned_assembly_line"])
@@ -612,16 +905,56 @@ def _apply_queue_updates(
             unit.planned_start_datetime = updates["planned_start_datetime"]
 
     if "status" in updates and updates["status"] is not None:
+        next_status = updates["status"]
         for unit in work_units:
-            unit.status = updates["status"]
+            unit.status = next_status
+            if next_status in {
+                WorkUnitStatus.PLANNED,
+                WorkUnitStatus.PANELS,
+                WorkUnitStatus.MAGAZINE,
+                WorkUnitStatus.COMPLETED,
+            }:
+                unit.current_station_id = None
+                continue
+            if next_status != WorkUnitStatus.ASSEMBLY:
+                continue
 
-    order_ids = {unit.work_order_id for unit in work_units}
-    orders = (
-        list(db.execute(select(WorkOrder).where(WorkOrder.id.in_(order_ids))).scalars())
-        if order_ids
-        else []
-    )
-    order_map = {order.id: order for order in orders}
+            current_station = (
+                db.get(Station, unit.current_station_id)
+                if unit.current_station_id is not None
+                else None
+            )
+            if current_station and current_station.role == StationRole.ASSEMBLY:
+                line_value = _coerce_line(unit.planned_assembly_line)
+                if (
+                    line_value is None
+                    or current_station.line_type == line_value
+                    or current_station.sequence_order is None
+                ):
+                    continue
+                target_station_id = db.execute(
+                    select(Station.id)
+                    .where(Station.role == StationRole.ASSEMBLY)
+                    .where(Station.line_type == line_value)
+                    .where(Station.sequence_order == current_station.sequence_order)
+                ).scalar_one_or_none()
+                if target_station_id is not None:
+                    unit.current_station_id = target_station_id
+                    continue
+
+            work_order = order_map.get(unit.work_order_id)
+            if work_order is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Work order not found",
+                )
+            target_station = _first_applicable_assembly_station(db, unit, work_order)
+            if target_station is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Set an assembly line before moving a module to Assembly",
+                )
+            unit.current_station_id = target_station.id
 
     if "house_type_id" in updates:
         new_house_type_id = updates["house_type_id"]
@@ -721,7 +1054,7 @@ def update_queue_item(
     work_unit_id: int,
     payload: ProductionQueueUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> ProductionQueueItem:
     unit = db.get(WorkUnit, work_unit_id)
     if not unit:
@@ -739,7 +1072,7 @@ def update_queue_item(
 def bulk_update_queue(
     payload: ProductionQueueBulkUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> list[ProductionQueueItem]:
     if not payload.work_unit_ids:
         raise HTTPException(
@@ -767,7 +1100,7 @@ def bulk_update_queue(
 def delete_queue_item(
     work_unit_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> None:
     unit = db.get(WorkUnit, work_unit_id)
     if not unit:
@@ -789,7 +1122,7 @@ def delete_queue_item(
 def bulk_delete_queue_items(
     payload: ProductionQueueBulkDelete,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_queue_manager),
 ) -> None:
     if not payload.work_unit_ids:
         raise HTTPException(

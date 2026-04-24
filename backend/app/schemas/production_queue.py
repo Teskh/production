@@ -41,6 +41,19 @@ class ProductionQueuePanelStatus(BaseModel):
     pending_tasks: list[ProductionQueuePanelTask]
 
 
+class ProductionQueueProgressCount(BaseModel):
+    completed: int
+    total: int
+    skipped: int = 0
+
+
+class ProductionQueueModuleProgressSummary(BaseModel):
+    panels_finished: int
+    total_panels: int
+    panel_tasks: ProductionQueueProgressCount
+    module_tasks: ProductionQueueProgressCount
+
+
 class ProductionQueueModuleStatus(BaseModel):
     work_unit_id: int
     work_order_id: int
@@ -55,6 +68,7 @@ class ProductionQueueModuleStatus(BaseModel):
     planned_assembly_line: str | None = None
     current_station_id: int | None = None
     current_station_name: str | None = None
+    summary: ProductionQueueModuleProgressSummary
     panels: list[ProductionQueuePanelStatus]
 
 

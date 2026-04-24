@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta
 import logging
 import re
+from threading import Lock
 from typing import Any, Mapping
 
 import httpx
@@ -23,6 +24,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _TOKEN_CACHE: dict[str, object] = {"token": None, "expires_at": 0.0}
+_REQUEST_PACING_LOCK = Lock()
+_ENDPOINT_NEXT_ALLOWED_AT: dict[str, float] = {}
 
 
 def _require_credentials() -> tuple[str, str]:
@@ -67,33 +70,95 @@ def _get_token() -> str:
     return token
 
 
+def _normalize_endpoint_name(endpoint: str) -> str:
+    return endpoint.lstrip("/").split("?", 1)[0]
+
+
+def _endpoint_min_interval_seconds(endpoint: str) -> float:
+    normalized_endpoint = _normalize_endpoint_name(endpoint)
+    if normalized_endpoint == "AttendanceBook":
+        return max(settings.geovictoria_attendance_min_interval_seconds, 0.0)
+    return 0.0
+
+
+def _pace_geovictoria_request(endpoint: str, *, minimum_delay_seconds: float = 0.0) -> None:
+    normalized_endpoint = _normalize_endpoint_name(endpoint)
+    endpoint_interval = _endpoint_min_interval_seconds(normalized_endpoint)
+    minimum_delay = max(minimum_delay_seconds, 0.0)
+    if endpoint_interval <= 0 and minimum_delay <= 0:
+        return
+
+    with _REQUEST_PACING_LOCK:
+        now = time.monotonic()
+        next_allowed = _ENDPOINT_NEXT_ALLOWED_AT.get(normalized_endpoint, 0.0)
+        wait_seconds = max(next_allowed - now, minimum_delay)
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+            now = time.monotonic()
+        _ENDPOINT_NEXT_ALLOWED_AT[normalized_endpoint] = now + endpoint_interval
+
+
+def _extract_retry_after_seconds(response: httpx.Response) -> float | None:
+    retry_after = response.headers.get("Retry-After")
+    if not retry_after:
+        return None
+    try:
+        return max(float(retry_after.strip()), 0.0)
+    except ValueError:
+        return None
+
+
 def _post_geovictoria(endpoint: str, payload: Mapping[str, Any]) -> Any:
     token = _get_token()
     url = f"{settings.geovictoria_base_url}/{endpoint.lstrip('/')}"
-    try:
-        resp = httpx.post(
+    max_retries = max(settings.geovictoria_429_max_retries, 0)
+    attempt = 0
+    retry_delay_seconds = 0.0
+
+    def _send(current_token: str) -> httpx.Response:
+        return httpx.post(
             url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {current_token}"},
             json=payload,
             timeout=60,
         )
-        if resp.status_code in (401, 403):
-            _TOKEN_CACHE["token"] = None
-            _TOKEN_CACHE["expires_at"] = 0.0
-            token = _get_token()
-            resp = httpx.post(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload,
-                timeout=60,
+
+    while True:
+        try:
+            _pace_geovictoria_request(
+                endpoint,
+                minimum_delay_seconds=retry_delay_seconds,
             )
-        resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GeoVictoria request failed: {exc}",
-        ) from exc
-    return resp.json()
+            retry_delay_seconds = 0.0
+            resp = _send(token)
+            if resp.status_code in (401, 403):
+                _TOKEN_CACHE["token"] = None
+                _TOKEN_CACHE["expires_at"] = 0.0
+                token = _get_token()
+                _pace_geovictoria_request(endpoint)
+                resp = _send(token)
+            if resp.status_code == 429 and attempt < max_retries:
+                attempt += 1
+                retry_after_seconds = _extract_retry_after_seconds(resp) or 0.0
+                retry_delay_seconds = max(
+                    settings.geovictoria_429_retry_seconds * attempt,
+                    retry_after_seconds,
+                    _endpoint_min_interval_seconds(endpoint),
+                )
+                logger.warning(
+                    "GeoVictoria 429 endpoint=%s attempt=%s retry_delay=%.2fs",
+                    _normalize_endpoint_name(endpoint),
+                    attempt,
+                    retry_delay_seconds,
+                )
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"GeoVictoria request failed: {exc}",
+            ) from exc
 
 
 def _candidate_user_ids(identifier: str, geovictoria_id: str) -> list[str]:

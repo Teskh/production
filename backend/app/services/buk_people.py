@@ -284,7 +284,48 @@ def fetch_buk_cost_center_names(*, force_refresh: bool = False) -> dict[str, str
     return resolved_mapping
 
 
-def fetch_buk_people(*, force_refresh: bool = False) -> list[BukPerson]:
+def _apply_cost_center_names(
+    people: list[BukPerson],
+    cost_center_names: dict[str, str],
+) -> list[BukPerson]:
+    if not cost_center_names:
+        return people
+    return [
+        BukPerson(
+            identifier=person.identifier,
+            normalized_identifier=person.normalized_identifier,
+            full_name=person.full_name,
+            cost_center_code=person.cost_center_code,
+            cost_center_name=person.cost_center_name
+            or (
+                cost_center_names.get(person.cost_center_code)
+                if person.cost_center_code
+                else None
+            ),
+            status=person.status,
+            active=person.active,
+        )
+        for person in people
+    ]
+
+
+def _enrich_people_with_cost_center_names(
+    people: list[BukPerson],
+    *,
+    force_refresh: bool = False,
+) -> list[BukPerson]:
+    try:
+        cost_center_names = fetch_buk_cost_center_names(force_refresh=force_refresh)
+    except RuntimeError:
+        return people
+    return _apply_cost_center_names(people, cost_center_names)
+
+
+def fetch_buk_people(
+    *,
+    force_refresh: bool = False,
+    include_cost_center_names: bool = True,
+) -> list[BukPerson]:
     now = time.time()
     cached_people = _PEOPLE_CACHE.get("people")
     expires_at = _PEOPLE_CACHE.get("expires_at", 0.0)
@@ -294,6 +335,11 @@ def fetch_buk_people(*, force_refresh: bool = False) -> list[BukPerson]:
         and isinstance(expires_at, (int, float))
         and expires_at > now
     ):
+        if include_cost_center_names:
+            enriched_people = _enrich_people_with_cost_center_names(cached_people)
+            if enriched_people is not cached_people:
+                _PEOPLE_CACHE["people"] = enriched_people
+            return enriched_people
         return cached_people
 
     token = _require_token()
@@ -358,29 +404,11 @@ def fetch_buk_people(*, force_refresh: bool = False) -> list[BukPerson]:
             if len(page_rows) < PEOPLE_PER_PAGE:
                 break
 
-    try:
-        cost_center_names = fetch_buk_cost_center_names(force_refresh=force_refresh)
-    except RuntimeError:
-        cost_center_names = {}
-
-    if cost_center_names:
-        people = [
-            BukPerson(
-                identifier=person.identifier,
-                normalized_identifier=person.normalized_identifier,
-                full_name=person.full_name,
-                cost_center_code=person.cost_center_code,
-                cost_center_name=person.cost_center_name
-                or (
-                    cost_center_names.get(person.cost_center_code)
-                    if person.cost_center_code
-                    else None
-                ),
-                status=person.status,
-                active=person.active,
-            )
-            for person in people
-        ]
+    if include_cost_center_names:
+        people = _enrich_people_with_cost_center_names(
+            people,
+            force_refresh=force_refresh,
+        )
 
     _PEOPLE_CACHE["people"] = people
     _PEOPLE_CACHE["expires_at"] = now + settings.buk_people_cache_ttl_seconds

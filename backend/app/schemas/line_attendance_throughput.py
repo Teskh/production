@@ -38,6 +38,10 @@ class LineAttendanceThroughputDay(BaseModel):
     task_participation_count: int
     completed_task_count: int
     completed_panel_count: int
+    finished_panel_count: int = 0
+    finished_panel_area_m2: float = 0
+    finished_panel_linear_meters: float = 0
+    finished_module_count: int = 0
 
 
 class LineAttendanceThroughputSupervisorSummary(BaseModel):
@@ -75,9 +79,35 @@ class LineAttendanceThroughputSupervisorOption(BaseModel):
 class LineAttendanceThroughputCostCenterSummary(BaseModel):
     cost_center_code: str
     cost_center_name: str | None = None
+    buk_people_count: int = 0
     matched_local_worker_count: int = 0
     direct_supervisor_worker_count: int = 0
     fallback_candidate_worker_count: int = 0
+
+
+class LineAttendanceThroughputCostCenterDay(BaseModel):
+    date: date
+    cost_center_code: str
+    present_people_count: int = 0
+    total_people_count: int = 0
+
+
+class LineAttendanceThroughputCostCenterPerson(BaseModel):
+    identifier: str
+    person_name: str | None = None
+    cost_center_code: str
+    cost_center_name: str | None = None
+
+
+class LineAttendanceThroughputPersonShiftDay(BaseModel):
+    date: date
+    identifier: str
+    person_name: str | None = None
+    cost_center_code: str
+    cost_center_name: str | None = None
+    present: bool = False
+    first_entry: datetime | None = None
+    last_exit: datetime | None = None
 
 
 class LineAttendanceThroughputWorkerAssignment(BaseModel):
@@ -99,6 +129,21 @@ class LineAttendanceThroughputWorkerDay(BaseModel):
     panel_touch_ids: list[int] = Field(default_factory=list)
 
 
+class LineAttendanceThroughputAttendanceResponse(BaseModel):
+    from_date: date
+    to_date: date
+    generated_at: datetime
+    requested_cost_center_codes: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    buk_cost_center_days: list[LineAttendanceThroughputCostCenterDay] = Field(
+        default_factory=list
+    )
+    buk_people: list[LineAttendanceThroughputCostCenterPerson] = Field(default_factory=list)
+    buk_person_shift_days: list[LineAttendanceThroughputPersonShiftDay] = Field(
+        default_factory=list
+    )
+
+
 class LineAttendanceThroughputResponse(BaseModel):
     from_date: date
     to_date: date
@@ -115,6 +160,9 @@ class LineAttendanceThroughputResponse(BaseModel):
     )
     supervisors: list[LineAttendanceThroughputSupervisorOption] = Field(default_factory=list)
     buk_cost_centers: list[LineAttendanceThroughputCostCenterSummary] = Field(
+        default_factory=list
+    )
+    buk_cost_center_days: list[LineAttendanceThroughputCostCenterDay] = Field(
         default_factory=list
     )
     worker_assignments: list[LineAttendanceThroughputWorkerAssignment] = Field(

@@ -48,3 +48,12 @@ export const isSysadminUser = (admin: Pick<AdminSession, 'first_name' | 'last_na
 export const canViewAssistanceDashboard = (
   admin: Pick<AdminSession, 'first_name' | 'last_name' | 'role'>
 ): boolean => isSysadminUser(admin) || admin.role.trim().toLowerCase() === 'mc senior';
+
+export const canManageProductionQueue = (
+  admin: Pick<AdminSession, 'first_name' | 'last_name' | 'role'>
+): boolean => {
+  const normalizedRole = admin.role.trim().toLowerCase();
+  return (
+    isSysadminUser(admin) || normalizedRole === 'admin' || normalizedRole === 'mc senior'
+  );
+};
