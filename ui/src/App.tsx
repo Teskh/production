@@ -18,6 +18,7 @@ import QCDashboard from './pages/qc/QCDashboard';
 import QCExecution from './pages/qc/QCExecution';
 import QCLibrary from './pages/qc/QCLibrary';
 import QCManualCheck from './pages/qc/QCManualCheck';
+import QCComplaints from './pages/qc/QCComplaints';
 
 // Admin Pages
 import Dashboards from './pages/admin/dashboards/Dashboards';
@@ -119,6 +120,7 @@ function App() {
           <Route index element={<QCDashboard />} />
           <Route path="new" element={<QCManualCheck />} />
           <Route path="library" element={<QCLibrary />} />
+          <Route path="complaints" element={<QCComplaints />} />
           <Route path="checks" element={<QCChecks />} />
         </Route>
         

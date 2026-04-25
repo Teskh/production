@@ -9,6 +9,7 @@ __all__ = [
     "parameters",
     "protocols",
     "qc",
+    "qc_complaints",
     "reports",
     "stations",
     "task_corrections",

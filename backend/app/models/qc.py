@@ -21,6 +21,10 @@ from app.models.enums import (
     QCCheckOrigin,
     QCCheckStatus,
     QCCheckMediaType,
+    QCComplaintActorType,
+    QCComplaintEventType,
+    QCComplaintMediaRole,
+    QCComplaintStatus,
     QCExecutionOutcome,
     QCNotificationStatus,
     QCReworkStatus,
@@ -312,6 +316,154 @@ class QCNotification(Base):
     )
     status: Mapped[QCNotificationStatus] = mapped_column(
         Enum(QCNotificationStatus)
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QCQualityComplaint(Base):
+    __tablename__ = "qc_quality_complaints"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_unit_id: Mapped[int] = mapped_column(ForeignKey("work_units.id"), index=True)
+    panel_unit_id: Mapped[int | None] = mapped_column(
+        ForeignKey("panel_units.id"), nullable=True
+    )
+    station_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stations.id"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    severity_level: Mapped[QCSeverityLevel] = mapped_column(
+        Enum(
+            QCSeverityLevel,
+            name="qcseveritylevel",
+            values_callable=lambda enum: [item.value for item in enum],
+        )
+    )
+    status: Mapped[QCComplaintStatus] = mapped_column(
+        Enum(
+            QCComplaintStatus,
+            name="qccomplaintstatus",
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        index=True,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    closure_proposed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    supervisors: Mapped[list["QCQualityComplaintSupervisor"]] = relationship(
+        "QCQualityComplaintSupervisor",
+        back_populates="complaint",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list["QCQualityComplaintEvent"]] = relationship(
+        "QCQualityComplaintEvent",
+        back_populates="complaint",
+        cascade="all, delete-orphan",
+    )
+
+
+class QCQualityComplaintSupervisor(Base):
+    __tablename__ = "qc_quality_complaint_supervisors"
+
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_quality_complaints.id", ondelete="CASCADE"), primary_key=True
+    )
+    supervisor_id: Mapped[int] = mapped_column(
+        ForeignKey("worker_supervisors.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    complaint: Mapped[QCQualityComplaint] = relationship(
+        "QCQualityComplaint", back_populates="supervisors"
+    )
+
+
+class QCQualityComplaintEvent(Base):
+    __tablename__ = "qc_quality_complaint_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_quality_complaints.id", ondelete="CASCADE"), index=True
+    )
+    actor_type: Mapped[QCComplaintActorType] = mapped_column(
+        Enum(
+            QCComplaintActorType,
+            name="qccomplaintactortype",
+            values_callable=lambda enum: [item.value for item in enum],
+        )
+    )
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id"), nullable=True
+    )
+    actor_supervisor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("worker_supervisors.id"), nullable=True
+    )
+    event_type: Mapped[QCComplaintEventType] = mapped_column(
+        Enum(
+            QCComplaintEventType,
+            name="qccomplainteventtype",
+            values_callable=lambda enum: [item.value for item in enum],
+        )
+    )
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+    complaint: Mapped[QCQualityComplaint] = relationship(
+        "QCQualityComplaint", back_populates="events"
+    )
+
+
+class QCQualityComplaintMedia(Base):
+    __tablename__ = "qc_quality_complaint_media"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_quality_complaints.id", ondelete="CASCADE"), index=True
+    )
+    event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_quality_complaint_events.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    media_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[QCComplaintMediaRole] = mapped_column(
+        Enum(
+            QCComplaintMediaRole,
+            name="qccomplaintmediarole",
+            values_callable=lambda enum: [item.value for item in enum],
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class QCQualityComplaintNotification(Base):
+    __tablename__ = "qc_quality_complaint_notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    complaint_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_quality_complaints.id", ondelete="CASCADE"), index=True
+    )
+    supervisor_id: Mapped[int] = mapped_column(
+        ForeignKey("worker_supervisors.id", ondelete="CASCADE"), index=True
+    )
+    event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("qc_quality_complaint_events.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    status: Mapped[QCNotificationStatus] = mapped_column(
+        Enum(
+            QCNotificationStatus,
+            name="qcnotificationstatus",
+            values_callable=lambda enum: [item.value for item in enum],
+        )
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)
     seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

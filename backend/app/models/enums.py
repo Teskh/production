@@ -104,6 +104,34 @@ class QCSeverityLevel(str, Enum):
     CRITICA = "critica"
 
 
+class QCComplaintStatus(str, Enum):
+    OPEN = "Open"
+    CLOSURE_PROPOSED = "ClosureProposed"
+    CLOSED = "Closed"
+
+
+class QCComplaintActorType(str, Enum):
+    QC = "qc"
+    SUPERVISOR = "supervisor"
+    SYSTEM = "system"
+
+
+class QCComplaintEventType(str, Enum):
+    CREATED = "created"
+    COMMENT = "comment"
+    MEDIA_ADDED = "media_added"
+    CLOSURE_PROPOSED = "closure_proposed"
+    CLOSURE_ACCEPTED = "closure_accepted"
+    CLOSURE_REJECTED = "closure_rejected"
+
+
+class QCComplaintMediaRole(str, Enum):
+    INITIAL = "initial"
+    COMMENT = "comment"
+    CLOSURE_PROPOSAL = "closure_proposal"
+    QC_REJECTION = "qc_rejection"
+
+
 class QCCheckMediaType(str, Enum):
     GUIDANCE = "guidance"
     REFERENCE = "reference"

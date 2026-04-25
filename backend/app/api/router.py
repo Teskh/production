@@ -23,6 +23,7 @@ from app.api.routes import (
     pause_summary,
     production_queue,
     qc_config,
+    qc_complaints,
     qc_runtime,
     shift_estimates,
     stations,
@@ -59,6 +60,7 @@ api_router.include_router(stations.router, prefix="/stations", tags=["stations"]
 api_router.include_router(pause_reasons.router, prefix="/pause-reasons", tags=["pause-reasons"])
 api_router.include_router(comment_templates.router, prefix="/comment-templates", tags=["comment-templates"])
 api_router.include_router(qc_config.router, prefix="/qc", tags=["qc-config"])
+api_router.include_router(qc_complaints.router, prefix="/qc", tags=["qc-complaints"])
 api_router.include_router(qc_runtime.router, prefix="/qc", tags=["qc-runtime"])
 api_router.include_router(house_types.router, prefix="/house-types", tags=["house-types"])
 api_router.include_router(
