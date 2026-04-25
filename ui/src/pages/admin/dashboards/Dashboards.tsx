@@ -5,21 +5,29 @@ import {
   Camera,
   ClipboardList,
   Clock,
+  Eye,
   History,
   MapPin,
   Route,
+  Save,
   Ruler,
   Star,
   Timer,
   Workflow,
+  X,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
-  canViewAssistanceDashboard,
   isSysadminUser,
   useAdminHeader,
   useAdminSession,
 } from '../../../layouts/AdminLayoutContext';
+import {
+  canViewDashboard,
+  dashboardApiRequest,
+  type DashboardPermission,
+  permissionsToMap,
+} from './dashboardVisibility';
 
 type DashboardCard = {
   id: string;
@@ -29,8 +37,10 @@ type DashboardCard = {
   status: 'ready' | 'planned';
   tags: string[];
   icon: React.ElementType;
-  sysadminOnly?: boolean;
-  assistanceAccessOnly?: boolean;
+};
+
+type DashboardPermissionUpdate = {
+  roles: string[];
 };
 
 const dashboards: DashboardCard[] = [
@@ -43,7 +53,6 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Planta', 'Tiempo', 'Operarios'],
     icon: MapPin,
-    sysadminOnly: true,
   },
   {
     id: 'panel-linear-meters',
@@ -94,7 +103,6 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Tareas', 'CCTV', 'Playback'],
     icon: Camera,
-    sysadminOnly: true,
   },
   {
     id: 'station-adherence',
@@ -115,7 +123,6 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Personal', 'GeoVictoria', 'Actividad'],
     icon: Clock,
-    assistanceAccessOnly: true,
   },
   {
     id: 'line-attendance-throughput',
@@ -126,7 +133,6 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['GeoVictoria', 'Cobertura', 'Supervisores'],
     icon: Workflow,
-    assistanceAccessOnly: true,
   },
 ];
 
@@ -156,8 +162,19 @@ const Dashboards: React.FC = () => {
   const { setHeader } = useAdminHeader();
   const admin = useAdminSession();
   const [favorites, setFavorites] = useState<string[]>(getStoredFavorites);
+  const [roleOptions, setRoleOptions] = useState<string[]>([]);
+  const [permissions, setPermissions] = useState<DashboardPermission[]>([]);
+  const [permissionDialogId, setPermissionDialogId] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<string[]>([]);
+  const [permissionsLoading, setPermissionsLoading] = useState(true);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const isSysadmin = isSysadminUser(admin);
-  const canViewAssistance = canViewAssistanceDashboard(admin);
+  const permissionMap = useMemo(() => permissionsToMap(permissions), [permissions]);
+  const permissionDialogDashboard = useMemo(
+    () => dashboards.find((dashboard) => dashboard.id === permissionDialogId) ?? null,
+    [permissionDialogId],
+  );
 
   useEffect(() => {
     setHeader({
@@ -170,18 +187,42 @@ const Dashboards: React.FC = () => {
     window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites));
   }, [favorites]);
 
+  useEffect(() => {
+    let isMounted = true;
+    const loadPermissions = async () => {
+      setPermissionsLoading(true);
+      setPermissionError(null);
+      try {
+        const [nextPermissions, nextRoles] = await Promise.all([
+          dashboardApiRequest<DashboardPermission[]>('/api/admin/dashboard-permissions'),
+          dashboardApiRequest<string[]>('/api/admin/roles'),
+        ]);
+        if (!isMounted) {
+          return;
+        }
+        setPermissions(nextPermissions);
+        setRoleOptions(nextRoles ?? []);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+        setPermissionError(error instanceof Error ? error.message : 'No se pudo cargar permisos.');
+      } finally {
+        if (isMounted) {
+          setPermissionsLoading(false);
+        }
+      }
+    };
+
+    void loadPermissions();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const visibleDashboards = useMemo(
-    () =>
-      dashboards.filter((dashboard) => {
-        if (dashboard.sysadminOnly && !isSysadmin) {
-          return false;
-        }
-        if (dashboard.assistanceAccessOnly && !canViewAssistance) {
-          return false;
-        }
-        return true;
-      }),
-    [canViewAssistance, isSysadmin],
+    () => dashboards.filter((dashboard) => canViewDashboard(admin, dashboard.id, permissionMap)),
+    [admin, permissionMap],
   );
 
   const favoriteDashboards = useMemo(
@@ -196,6 +237,45 @@ const Dashboards: React.FC = () => {
 
   const toggleFavorite = (id: string) => {
     setFavorites((prev) => (prev.includes(id) ? prev.filter((fav) => fav !== id) : [...prev, id]));
+  };
+
+  const openPermissionDialog = (dashboard: DashboardCard) => {
+    setPermissionDialogId(dashboard.id);
+    setPermissionDraft(permissionMap[dashboard.id] ?? roleOptions);
+    setPermissionError(null);
+  };
+
+  const togglePermissionRole = (role: string) => {
+    setPermissionDraft((prev) =>
+      prev.includes(role) ? prev.filter((item) => item !== role) : [...prev, role],
+    );
+  };
+
+  const savePermissionDraft = async () => {
+    if (!permissionDialogId) {
+      return;
+    }
+    setPermissionsSaving(true);
+    setPermissionError(null);
+    try {
+      const updated = await dashboardApiRequest<DashboardPermissionUpdate>(
+        `/api/admin/dashboard-permissions/${encodeURIComponent(permissionDialogId)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ roles: permissionDraft }),
+        },
+      );
+      setPermissions((prev) => {
+        const next = prev.filter((item) => item.dashboard_id !== permissionDialogId);
+        next.push({ dashboard_id: permissionDialogId, roles: updated.roles });
+        return next;
+      });
+      setPermissionDialogId(null);
+    } catch (error) {
+      setPermissionError(error instanceof Error ? error.message : 'No se pudo guardar permisos.');
+    } finally {
+      setPermissionsSaving(false);
+    }
   };
 
   return (
@@ -216,6 +296,18 @@ const Dashboards: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {permissionsLoading && (
+        <div className="rounded-2xl border border-black/5 bg-white/80 px-5 py-3 text-sm text-[var(--ink-muted)] shadow-sm">
+          Cargando visibilidad de dashboards...
+        </div>
+      )}
+
+      {permissionError && !permissionDialogId && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700 shadow-sm">
+          {permissionError}
+        </div>
+      )}
 
       <div className="rounded-2xl border border-black/5 bg-white/80 px-6 py-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -243,14 +335,27 @@ const Dashboards: React.FC = () => {
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
                     <dashboard.icon className="h-5 w-5" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleFavorite(dashboard.id)}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--accent)] transition hover:border-black/20"
-                    aria-label="Quitar de favoritos"
-                  >
-                    <Star className="h-4 w-4 fill-[var(--accent)]" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {isSysadmin && (
+                      <button
+                        type="button"
+                        onClick={() => openPermissionDialog(dashboard)}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--accent)]"
+                        aria-label="Configurar visibilidad"
+                        title="Configurar visibilidad"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleFavorite(dashboard.id)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--accent)] transition hover:border-black/20"
+                      aria-label="Quitar de favoritos"
+                    >
+                      <Star className="h-4 w-4 fill-[var(--accent)]" />
+                    </button>
+                  </div>
                 </div>
                 <h3 className="mt-4 text-lg font-semibold text-[var(--ink)]">{dashboard.name}</h3>
                 <p className="mt-2 text-sm text-[var(--ink-muted)]">{dashboard.description}</p>
@@ -310,6 +415,17 @@ const Dashboards: React.FC = () => {
                 >
                   {dashboard.status === 'ready' ? 'Disponible' : 'Planeado'}
                 </span>
+                {isSysadmin && (
+                  <button
+                    type="button"
+                    onClick={() => openPermissionDialog(dashboard)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--accent)]"
+                    aria-label="Configurar visibilidad"
+                    title="Configurar visibilidad"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleFavorite(dashboard.id)}
@@ -354,6 +470,82 @@ const Dashboards: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {permissionDialogDashboard && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-8"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-black/10 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">
+                  Visibilidad
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-[var(--ink)]">
+                  {permissionDialogDashboard.name}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPermissionDialogId(null)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--ink)]"
+                aria-label="Cerrar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {roleOptions.map((role) => (
+                <label
+                  key={role}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-black/10 px-3 py-2 text-sm text-[var(--ink)]"
+                >
+                  <span>{role}</span>
+                  <input
+                    type="checkbox"
+                    checked={permissionDraft.includes(role)}
+                    onChange={() => togglePermissionRole(role)}
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                </label>
+              ))}
+              {roleOptions.length === 0 && (
+                <p className="rounded-xl border border-dashed border-black/10 px-3 py-4 text-sm text-[var(--ink-muted)]">
+                  No hay roles admin disponibles para configurar.
+                </p>
+              )}
+            </div>
+
+            {permissionError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {permissionError}
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPermissionDialogId(null)}
+                className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={savePermissionDraft}
+                disabled={permissionsSaving}
+                className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Save className="h-4 w-4" />
+                {permissionsSaving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

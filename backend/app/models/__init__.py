@@ -1,4 +1,4 @@
-from app.models.admin import AdminSession, AdminUser, CommentTemplate, PauseReason
+from app.models.admin import AdminDashboardPermission, AdminSession, AdminUser, CommentTemplate, PauseReason
 from app.models.enums import *  # noqa: F403
 from app.models.geovictoria_attendance_cache import GeoVictoriaAttendanceCache
 from app.models.house import (
@@ -62,6 +62,7 @@ from app.models.workers import (
 __all__ = [
     "AdminUser",
     "AdminSession",
+    "AdminDashboardPermission",
     "CommentTemplate",
     "GeoVictoriaAttendanceCache",
     "HouseParameter",

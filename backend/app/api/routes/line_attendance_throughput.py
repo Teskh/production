@@ -553,7 +553,9 @@ def _build_buk_cost_center_attendance_days(
     attendance_present_dates_by_identifier: dict[str, set[date]] = {}
     attendance_failure_count = 0
     attendance_failure_samples: list[str] = []
+    invalid_identifier_count = 0
     fallback_local_identifier_count = 0
+    invalid_identifier_fallback_count = 0
     geovictoria_unavailable_detail: str | None = None
     cache_rows_to_upsert: list[dict[str, object]] = []
     pending_batch_entries: list[tuple[str, str, str | None]] = []
@@ -654,15 +656,21 @@ def _build_buk_cost_center_attendance_days(
                     )
                 )
             except HTTPException as exc:
-                attendance_failure_count += 1
                 is_bad_request = _is_geovictoria_bad_request(exc)
-                if len(attendance_failure_samples) < 2:
-                    attendance_failure_samples.append(
-                        _summarize_upstream_detail(exc.detail)
-                    )
+                if is_bad_request:
+                    invalid_identifier_count += 1
+                else:
+                    attendance_failure_count += 1
+                    if len(attendance_failure_samples) < 2:
+                        attendance_failure_samples.append(
+                            _summarize_upstream_detail(exc.detail)
+                        )
                 present_dates = set(local_presence_dates_by_identifier.get(identifier_key, set()))
                 if present_dates:
-                    fallback_local_identifier_count += 1
+                    if is_bad_request:
+                        invalid_identifier_fallback_count += 1
+                    else:
+                        fallback_local_identifier_count += 1
                 elif not is_bad_request:
                     geovictoria_unavailable_detail = _summarize_upstream_detail(exc.detail)
                 if is_bad_request:
@@ -685,6 +693,35 @@ def _build_buk_cost_center_attendance_days(
             )
 
     _upsert_persisted_attendance_cache(db, cache_rows_to_upsert)
+    for row in cache_rows_to_upsert:
+        normalized_identifier = row.get("normalized_identifier")
+        attendance_date = row.get("attendance_date")
+        if not isinstance(normalized_identifier, str) or not isinstance(attendance_date, date):
+            continue
+        persisted_cache_by_identifier[normalized_identifier][attendance_date] = CachedAttendanceDay(
+            is_present=bool(row.get("is_present")),
+            first_entry=(
+                row.get("first_entry")
+                if isinstance(row.get("first_entry"), datetime)
+                else None
+            ),
+            last_exit=(
+                row.get("last_exit")
+                if isinstance(row.get("last_exit"), datetime)
+                else None
+            ),
+        )
+
+    if invalid_identifier_count > 0:
+        fallback_text = (
+            f"; se uso fallback local para {invalid_identifier_fallback_count} personas vinculadas"
+            if invalid_identifier_fallback_count > 0
+            else ""
+        )
+        warnings.append(
+            "GeoVictoria omitio "
+            f"{invalid_identifier_count} identificadores no aceptados{fallback_text}."
+        )
 
     if attendance_failure_count > 0:
         sample = (
@@ -745,19 +782,13 @@ def _build_buk_cost_center_attendance_days(
         if person.normalized_identifier
     ]
 
-    fresh_cache_by_identifier = _load_persisted_attendance_cache(
-        db,
-        [identifier_key for identifier_key, _person in ordered_people],
-        start_date,
-        end_date,
-    )
     response_shift_days: list[LineAttendanceThroughputPersonShiftDay] = []
     for cost_center_code, people in buk_people_by_cost_center.items():
         for person in people:
             identifier_key = person.normalized_identifier
             if not identifier_key:
                 continue
-            cached_days = fresh_cache_by_identifier.get(identifier_key, {})
+            cached_days = persisted_cache_by_identifier.get(identifier_key, {})
             for current_date in requested_days:
                 cached_day = cached_days.get(current_date)
                 response_shift_days.append(

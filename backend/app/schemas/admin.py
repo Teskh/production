@@ -31,3 +31,12 @@ class AdminUserUpdate(BaseModel):
     pin: str | None = None
     role: str | None = None
     active: bool | None = None
+
+
+class AdminDashboardPermissionRead(BaseModel):
+    dashboard_id: str
+    roles: list[str]
+
+
+class AdminDashboardPermissionUpdate(BaseModel):
+    roles: list[str]

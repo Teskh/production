@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,6 +29,17 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AdminDashboardPermission(Base):
+    __tablename__ = "admin_dashboard_permissions"
+    __table_args__ = (
+        UniqueConstraint("dashboard_id", "role", name="uq_admin_dashboard_permissions_dashboard_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dashboard_id: Mapped[str] = mapped_column(String(100), index=True)
+    role: Mapped[str] = mapped_column(String(50), index=True)
 
 
 class PauseReason(Base):

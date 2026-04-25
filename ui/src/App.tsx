@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
 
 // Layouts
@@ -44,11 +45,13 @@ import DaySummary from './pages/utility/DaySummary';
 import GeneralOverview from './pages/utility/GeneralOverview';
 import FloorStatus from './pages/utility/floorStatus';
 import Protocols from './pages/utility/Protocols';
+import { isSysadminUser, useAdminSession } from './layouts/AdminLayoutContext';
 import {
-  canViewAssistanceDashboard,
-  isSysadminUser,
-  useAdminSession,
-} from './layouts/AdminLayoutContext';
+  canViewDashboard,
+  dashboardApiRequest,
+  type DashboardPermission,
+  permissionsToMap,
+} from './pages/admin/dashboards/dashboardVisibility';
 
 const SysadminOnlyRoute = ({ element }: { element: ReactElement }) => {
   const admin = useAdminSession();
@@ -58,9 +61,42 @@ const SysadminOnlyRoute = ({ element }: { element: ReactElement }) => {
   return element;
 };
 
-const AssistanceDashboardRoute = ({ element }: { element: ReactElement }) => {
+const DashboardPermissionRoute = ({
+  dashboardId,
+  element,
+}: {
+  dashboardId: string;
+  element: ReactElement;
+}) => {
   const admin = useAdminSession();
-  if (!canViewAssistanceDashboard(admin)) {
+  const [permissions, setPermissions] = useState<DashboardPermission[] | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    dashboardApiRequest<DashboardPermission[]>('/api/admin/dashboard-permissions')
+      .then((nextPermissions) => {
+        if (isMounted) {
+          setPermissions(nextPermissions);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setPermissions([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  if (isSysadminUser(admin)) {
+    return element;
+  }
+  if (permissions === null) {
+    return null;
+  }
+  if (!canViewDashboard(admin, dashboardId, permissionsToMap(permissions))) {
     return <Navigate to="/admin/dashboards" replace />;
   }
   return element;
@@ -133,16 +169,31 @@ function App() {
           <Route path="dashboards/tasks" element={<DashboardTasks />} />
           <Route
             path="dashboards/task-footage"
-            element={<SysadminOnlyRoute element={<DashboardTaskFootage />} />}
+            element={
+              <DashboardPermissionRoute
+                dashboardId="task-footage"
+                element={<DashboardTaskFootage />}
+              />
+            }
           />
           <Route path="dashboards/station-adherence" element={<DashboardTaskStationAdherence />} />
           <Route
             path="dashboards/assistance"
-            element={<AssistanceDashboardRoute element={<DashboardAssistance />} />}
+            element={
+              <DashboardPermissionRoute
+                dashboardId="assistance-activity"
+                element={<DashboardAssistance />}
+              />
+            }
           />
           <Route
             path="dashboards/plant-view"
-            element={<SysadminOnlyRoute element={<DashboardPlantView />} />}
+            element={
+              <DashboardPermissionRoute
+                dashboardId="plant-view"
+                element={<DashboardPlantView />}
+              />
+            }
           />
           <Route
             path="dashboards/performance"
@@ -150,7 +201,12 @@ function App() {
           />
           <Route
             path="dashboards/line-attendance-throughput"
-            element={<AssistanceDashboardRoute element={<DashboardLineAttendanceThroughput />} />}
+            element={
+              <DashboardPermissionRoute
+                dashboardId="line-attendance-throughput"
+                element={<DashboardLineAttendanceThroughput />}
+              />
+            }
           />
         </Route>
 

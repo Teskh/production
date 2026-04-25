@@ -4,6 +4,7 @@ import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const CECO_MAPPING_STORAGE_KEY = 'lineAttendanceThroughput.cecoSupervisorMappings.v1';
+const DATE_RANGE_STORAGE_KEY = 'lineAttendanceThroughput.dateRange.v1';
 const HIDDEN_CECO_MAPPING_VALUE = 'none';
 type CecoMappingValue = number | typeof HIDDEN_CECO_MAPPING_VALUE;
 
@@ -275,6 +276,39 @@ const loadStoredCecoMappings = (): CecoMappingByFamily => {
   }
 };
 
+const getDefaultDateRange = () => {
+  const end = new Date();
+  end.setDate(end.getDate() - 1);
+  const start = new Date(end);
+  start.setDate(end.getDate() - 13);
+  return {
+    fromDate: toDateInputValue(start),
+    toDate: toDateInputValue(end),
+  };
+};
+
+const loadStoredDateRange = () => {
+  const fallback = getDefaultDateRange();
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  try {
+    const raw = window.localStorage.getItem(DATE_RANGE_STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+    const parsed = JSON.parse(raw) as Partial<Record<'fromDate' | 'toDate', unknown>>;
+    const fromDate = typeof parsed.fromDate === 'string' ? parsed.fromDate : fallback.fromDate;
+    const toDate = typeof parsed.toDate === 'string' ? parsed.toDate : fallback.toDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+      return fallback;
+    }
+    return { fromDate, toDate };
+  } catch {
+    return fallback;
+  }
+};
+
 const formatCostCenterLabel = (
   costCenterCode: string | null | undefined,
   costCenterName?: string | null,
@@ -443,12 +477,14 @@ const SummaryCard = ({
   detail,
   tone = 'default',
   onClick,
+  tooltip,
 }: {
   label: string;
   value: string;
   detail?: string;
   tone?: 'default' | 'accent' | 'warning';
   onClick?: () => void;
+  tooltip?: string;
 }) => {
   const toneClasses =
     tone === 'accent'
@@ -468,6 +504,7 @@ const SummaryCard = ({
       <button
         type="button"
         onClick={onClick}
+        title={tooltip}
         className={`rounded-2xl border px-4 py-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${toneClasses}`}
       >
         {content}
@@ -475,7 +512,7 @@ const SummaryCard = ({
     );
   }
   return (
-    <article className={`rounded-2xl border px-4 py-4 shadow-sm ${toneClasses}`}>
+    <article title={tooltip} className={`rounded-2xl border px-4 py-4 shadow-sm ${toneClasses}`}>
       {content}
     </article>
   );
@@ -890,18 +927,8 @@ const ScatterRegressionChart = ({
 
 const DashboardLineAttendanceThroughput: React.FC = () => {
   const { setHeader } = useAdminHeader();
-  const [fromDate, setFromDate] = useState<string>(() => {
-    const end = new Date();
-    end.setDate(end.getDate() - 1);
-    const start = new Date(end);
-    start.setDate(end.getDate() - 13);
-    return toDateInputValue(start);
-  });
-  const [toDate, setToDate] = useState<string>(() => {
-    const end = new Date();
-    end.setDate(end.getDate() - 1);
-    return toDateInputValue(end);
-  });
+  const [fromDate, setFromDate] = useState<string>(() => loadStoredDateRange().fromDate);
+  const [toDate, setToDate] = useState<string>(() => loadStoredDateRange().toDate);
   const [cecoSupervisorMaps, setCecoSupervisorMaps] = useState<CecoMappingByFamily>(
     () => loadStoredCecoMappings(),
   );
@@ -976,6 +1003,16 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
     }
     window.localStorage.setItem(CECO_MAPPING_STORAGE_KEY, JSON.stringify(cecoSupervisorMaps));
   }, [cecoSupervisorMaps]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(
+      DATE_RANGE_STORAGE_KEY,
+      JSON.stringify({ fromDate, toDate }),
+    );
+  }, [fromDate, toDate]);
 
   const updateActiveCecoSupervisorMap = useCallback(
     (updater: (current: CecoMappingSet) => CecoMappingSet) => {
@@ -1443,6 +1480,12 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
   );
   const fteTotalDays = fteTotalNetHours / fteDailyHours;
   const fteAverage = fteWorkdayCount > 0 ? fteTotalDays / fteWorkdayCount : 0;
+  const fteRegularHours = Math.max(0, fteTotalNetHours - fteTotalExtraHours);
+  const fteFormulaTooltip = `${formatDecimal(fteRegularHours)} h regulares + ${formatDecimal(
+    fteTotalExtraHours,
+  )} h extra / ${formatDecimal(fteDailyHours)} h dia / ${formatInteger(
+    fteWorkdayCount,
+  )} dias = ${formatDecimal(fteAverage)} FTE`;
   const fteCostCenterSummaries = useMemo<FteCostCenterSummary[]>(
     () =>
       visibleCostCenters
@@ -1962,6 +2005,7 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
             value={formatDecimal(fteAverage)}
             detail={`${formatDecimal(fteDailyHours)} h/dia base`}
             tone="accent"
+            tooltip={fteFormulaTooltip}
           />
           <SummaryCard
             label="Horas netas"
@@ -2029,7 +2073,9 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
                 <span className="text-right">Presentes</span>
                 <span className="text-right">Horas</span>
                 <span className="text-right">Extra</span>
-                <span className="text-right">FTE prom.</span>
+                <span className="text-right" title="FTE prom. = horas netas / horas base del dia / dias habiles">
+                  FTE prom.
+                </span>
               </div>
               {fteCostCenterSummaries.map((summary) => (
                 <button
@@ -2048,7 +2094,16 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
                   <span className="text-right text-[var(--ink-muted)]">{formatInteger(summary.presentDays)}</span>
                   <span className="text-right text-[var(--ink-muted)]">{formatDecimal(summary.netHours)}</span>
                   <span className="text-right text-[var(--ink-muted)]">{formatDecimal(summary.extraHours)}</span>
-                  <span className="text-right font-semibold text-[var(--ink)]">{formatDecimal(summary.avgFte)}</span>
+                  <span
+                    className="text-right font-semibold text-[var(--ink)]"
+                    title={`${formatDecimal(Math.max(0, summary.netHours - summary.extraHours))} h regulares + ${formatDecimal(
+                      summary.extraHours,
+                    )} h extra / ${formatDecimal(fteDailyHours)} h dia / ${formatInteger(
+                      fteWorkdayCount,
+                    )} dias = ${formatDecimal(summary.avgFte)} FTE`}
+                  >
+                    {formatDecimal(summary.avgFte)}
+                  </span>
                 </button>
               ))}
             </div>
