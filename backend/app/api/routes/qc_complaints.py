@@ -368,6 +368,28 @@ def list_complaints(
     return _build_summaries(db, complaints)
 
 
+@router.get("/supervisor/complaints", response_model=list[QCComplaintSummary])
+def list_current_supervisor_complaints(
+    status_filter: QCComplaintStatus | None = Query(None, alias="status"),
+    work_unit_id: int | None = None,
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> list[QCComplaintSummary]:
+    stmt = (
+        select(QCQualityComplaint)
+        .join(QCQualityComplaintSupervisor)
+        .options(selectinload(QCQualityComplaint.supervisors))
+        .where(QCQualityComplaintSupervisor.supervisor_id == supervisor.id)
+        .order_by(QCQualityComplaint.updated_at.desc(), QCQualityComplaint.id.desc())
+    )
+    if status_filter is not None:
+        stmt = stmt.where(QCQualityComplaint.status == status_filter)
+    if work_unit_id is not None:
+        stmt = stmt.where(QCQualityComplaint.work_unit_id == work_unit_id)
+    complaints = list(db.execute(stmt).scalars().unique())
+    return _build_summaries(db, complaints)
+
+
 @router.post("/complaints", response_model=QCComplaintDetail, status_code=status.HTTP_201_CREATED)
 def create_complaint(
     payload: QCComplaintCreate,
