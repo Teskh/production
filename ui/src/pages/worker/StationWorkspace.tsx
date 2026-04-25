@@ -1556,7 +1556,21 @@ const StationWorkspace: React.FC = () => {
                 </span>
               )}
             </div>
-            <p className="mt-2 text-sm text-gray-700">{rework.description}</p>
+            <button
+              type="button"
+              onClick={() => openReworkDetails(rework)}
+              className="group mt-2 block w-full rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+              aria-label={`Ver descripcion completa de retrabajo ${formatReworkDisplayTitle(
+                rework
+              )}`}
+            >
+              <span className="block overflow-hidden text-sm text-gray-700 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] group-hover:text-gray-900">
+                {rework.description}
+              </span>
+              <span className="mt-1 inline-flex text-xs font-semibold text-amber-700 group-hover:text-amber-800">
+                Ver descripcion completa
+              </span>
+            </button>
             {rework.failure_modes.length > 0 && (
               <p className="mt-2 text-xs text-gray-600">
                 <span className="font-semibold text-gray-700">Fallas:</span>{' '}

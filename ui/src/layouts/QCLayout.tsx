@@ -38,7 +38,7 @@ const QCLayout: React.FC = () => {
   const navItems = [
     { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
-    ...(admin ? [{ name: 'Reclamos', path: '/qc/complaints', icon: MessageSquare }] : []),
+    ...(admin ? [{ name: 'Observaciones', path: '/qc/complaints', icon: MessageSquare }] : []),
     ...(admin ? [{ name: 'Checks', path: '/qc/checks', icon: ShieldCheck }] : []),
   ];
 

@@ -9,6 +9,7 @@ import QCLayout from './layouts/QCLayout';
 
 // Pages
 import Login from './pages/Login';
+import PanelLineSupervisorView from './pages/PanelLineSupervisorView';
 
 // Worker Pages
 import StationWorkspace from './pages/worker/StationWorkspace';
@@ -109,6 +110,9 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         
+        {/* Supervisor Routes */}
+        <Route path="/supervisor/panel-line" element={<PanelLineSupervisorView />} />
+
         {/* Worker Routes */}
         <Route path="/worker" element={<WorkerLayout />}>
           <Route index element={<Navigate to="stationWorkspace" replace />} />

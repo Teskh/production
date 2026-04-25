@@ -373,6 +373,14 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <Link
+                to="/supervisor/panel-line"
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Vista de supervisor"
+                title="Vista de supervisor"
+              >
+                <MapPin className="h-5 w-5" />
+              </Link>
+              <Link
                 to="/utility/floor-status"
                 className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                 aria-label="Abrir estado de planta"

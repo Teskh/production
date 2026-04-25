@@ -6,10 +6,15 @@ import {
   ClipboardPlus,
   FileSpreadsheet,
   LayoutGrid,
+  Loader2,
+  MessageSquare,
+  Plus,
+  Send,
   Wrench,
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
+import QCPhotoCaptureButton from '../../components/QCPhotoCaptureButton';
 import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutContext';
 
 const REFRESH_INTERVAL_MS = 20000;
@@ -77,6 +82,83 @@ type StationSummary = {
   sequence_order: number | null;
 };
 
+type QCSeverityLevel = 'baja' | 'media' | 'critica';
+type QCComplaintStatus = 'Open' | 'ClosureProposed' | 'Closed';
+
+type SupervisorSummary = {
+  id: number;
+  first_name: string;
+  last_name: string;
+};
+
+type QCComplaintMedia = {
+  id: number;
+  event_id: number | null;
+  media_asset_id: number;
+  role: string;
+  uri: string;
+  mime_type: string;
+  created_at: string;
+};
+
+type QCComplaintEvent = {
+  id: number;
+  complaint_id: number;
+  actor_type: 'qc' | 'supervisor' | 'system';
+  actor_user_id: number | null;
+  actor_supervisor_id: number | null;
+  actor_name: string | null;
+  event_type:
+    | 'created'
+    | 'comment'
+    | 'media_added'
+    | 'closure_proposed'
+    | 'closure_accepted'
+    | 'closure_rejected';
+  message: string | null;
+  created_at: string;
+  media: QCComplaintMedia[];
+};
+
+type QCComplaintSummary = {
+  id: number;
+  work_unit_id: number;
+  panel_unit_id: number | null;
+  station_id: number | null;
+  station_name: string | null;
+  title: string;
+  description: string;
+  severity_level: QCSeverityLevel;
+  status: QCComplaintStatus;
+  created_by_user_id: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  closure_proposed_at: string | null;
+  closed_at: string | null;
+  module_number: number;
+  house_identifier: string | null;
+  project_name: string;
+  house_type_name: string;
+  panel_code: string | null;
+  supervisors: SupervisorSummary[];
+  media_count: number;
+  event_count: number;
+  latest_event_at: string | null;
+};
+
+type QCComplaintDetail = QCComplaintSummary & {
+  events: QCComplaintEvent[];
+};
+
+type ObservationModuleSelection = {
+  workUnitId: number;
+  moduleNumber: number;
+  projectName: string | null;
+  houseTypeName: string | null;
+  houseIdentifier: string | null;
+};
+
 const formatTimestamp = (value: string): string => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -108,6 +190,65 @@ const reworkTaskStatusLabels: Record<string, string> = {
   InProgress: 'En trabajo',
   Paused: 'En pausa',
   Completed: 'Completado',
+};
+
+const severityLabels: Record<QCSeverityLevel, string> = {
+  baja: 'Baja',
+  media: 'Media',
+  critica: 'Critica',
+};
+
+const observationStatusLabels: Record<QCComplaintStatus, string> = {
+  Open: 'Abierta',
+  ClosureProposed: 'Cierre propuesto',
+  Closed: 'Cerrada',
+};
+
+const observationEventLabels: Record<QCComplaintEvent['event_type'], string> = {
+  created: 'Creo la observacion',
+  comment: 'Comento',
+  media_added: 'Agrego evidencia',
+  closure_proposed: 'Propuso cierre',
+  closure_accepted: 'Acepto cierre',
+  closure_rejected: 'Rechazo cierre',
+};
+
+const fullName = (person: SupervisorSummary): string =>
+  `${person.first_name} ${person.last_name}`;
+
+const fileKey = (file: File) => `${file.name}-${file.lastModified}-${file.size}`;
+
+const formatStampDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}/${month}/${day}`;
+};
+
+const formatStampTime = (date: Date) => {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const buildObservationWatermarkLines = (
+  date: Date,
+  context: {
+    projectName?: string | null;
+    houseIdentifier?: string | null;
+    moduleNumber?: number | null;
+    title?: string | null;
+  }
+) => {
+  const parts: string[] = [];
+  if (context.projectName) parts.push(context.projectName);
+  if (context.houseIdentifier) parts.push(`Casa ${context.houseIdentifier}`);
+  if (context.moduleNumber) parts.push(`Modulo ${context.moduleNumber}`);
+  const lines: string[] = [];
+  if (parts.length) lines.push(parts.join(' · '));
+  lines.push(context.title?.trim() || 'Observacion QC');
+  lines.push(`${formatStampDate(date)} ${formatStampTime(date)}`);
+  return lines.filter(Boolean);
 };
 
 const buildWorkUnitLabel = (
@@ -210,6 +351,22 @@ const QCDashboard: React.FC = () => {
   const [stations, setStations] = useState<StationSummary[]>([]);
   const [stationsLoading, setStationsLoading] = useState(true);
   const [stationsError, setStationsError] = useState<string | null>(null);
+  const [observations, setObservations] = useState<QCComplaintSummary[]>([]);
+  const [observationSelection, setObservationSelection] =
+    useState<ObservationModuleSelection | null>(null);
+  const [observationDetail, setObservationDetail] = useState<QCComplaintDetail | null>(null);
+  const [observationDetailLoading, setObservationDetailLoading] = useState(false);
+  const [observationError, setObservationError] = useState<string | null>(null);
+  const [supervisors, setSupervisors] = useState<SupervisorSummary[]>([]);
+  const [newObservationOpen, setNewObservationOpen] = useState(false);
+  const [newObservationTitle, setNewObservationTitle] = useState('');
+  const [newObservationDescription, setNewObservationDescription] = useState('');
+  const [newObservationSeverity, setNewObservationSeverity] = useState<QCSeverityLevel>('media');
+  const [newObservationSupervisorIds, setNewObservationSupervisorIds] = useState<Set<number>>(
+    new Set()
+  );
+  const [newObservationFiles, setNewObservationFiles] = useState<File[]>([]);
+  const [newObservationSubmitting, setNewObservationSubmitting] = useState(false);
   const [stationSelection, setStationSelection] = useState<{
     stationName: string;
     checks: QCCheckInstanceSummary[];
@@ -273,6 +430,70 @@ const QCDashboard: React.FC = () => {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  const loadObservations = async () => {
+    if (!canExecuteChecks) {
+      setObservations([]);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/complaints`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      const data = (await response.json()) as QCComplaintSummary[];
+      setObservations(data);
+    } catch (error) {
+      setObservationError(
+        error instanceof Error ? error.message : 'No se pudieron cargar observaciones.'
+      );
+    }
+  };
+
+  useEffect(() => {
+    void loadObservations();
+    const intervalId = window.setInterval(() => void loadObservations(), REFRESH_INTERVAL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canExecuteChecks]);
+
+  useEffect(() => {
+    if (!canExecuteChecks) {
+      setSupervisors([]);
+      return;
+    }
+    let isMounted = true;
+    const loadSupervisors = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/workers/supervisors`, {
+          credentials: 'include',
+        });
+        if (!isMounted) {
+          return;
+        }
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Solicitud fallida (${response.status})`);
+        }
+        setSupervisors((await response.json()) as SupervisorSummary[]);
+      } catch (error) {
+        if (isMounted) {
+          setObservationError(
+            error instanceof Error ? error.message : 'No se pudieron cargar supervisores.'
+          );
+        }
+      }
+    };
+    void loadSupervisors();
+    return () => {
+      isMounted = false;
+    };
+  }, [canExecuteChecks]);
 
   useEffect(() => {
     let isMounted = true;
@@ -427,6 +648,16 @@ const QCDashboard: React.FC = () => {
     });
     return activity;
   }, [filteredPendingChecks, activeReworkTasks]);
+  const openObservationCountsByWorkUnit = useMemo(() => {
+    const counts = new Map<number, number>();
+    observations.forEach((observation) => {
+      if (observation.status === 'Closed') {
+        return;
+      }
+      counts.set(observation.work_unit_id, (counts.get(observation.work_unit_id) ?? 0) + 1);
+    });
+    return counts;
+  }, [observations]);
   const stationGroups = useMemo(() => {
     const panels: StationSummary[] = [];
     const lines: Record<'1' | '2' | '3', StationSummary[]> = {
@@ -604,12 +835,30 @@ const QCDashboard: React.FC = () => {
   const getStationSummary = (stationId: number) => {
     const activity = stationActivity.get(stationId);
     if (!activity) {
-      return { moduleLabel: 'Sin datos', workUnitLabel: '', openCheckCount: 0 };
+      return {
+        moduleLabel: 'Sin datos',
+        workUnitLabel: '',
+        openCheckCount: 0,
+        workUnitId: null as number | null,
+        moduleNumber: null as number | null,
+        projectName: null as string | null,
+        houseTypeName: null as string | null,
+        houseIdentifier: null as string | null,
+      };
     }
     const primary = activity.openChecks[0] ?? activity.reworks[0];
     const openCheckCount = activity.openChecks.length;
     if (!primary) {
-      return { moduleLabel: 'Sin datos', workUnitLabel: '', openCheckCount };
+      return {
+        moduleLabel: 'Sin datos',
+        workUnitLabel: '',
+        openCheckCount,
+        workUnitId: null as number | null,
+        moduleNumber: null as number | null,
+        projectName: null as string | null,
+        houseTypeName: null as string | null,
+        houseIdentifier: null as string | null,
+      };
     }
     const workUnitLabel = buildWorkUnitLabel(
       primary.project_name,
@@ -620,6 +869,11 @@ const QCDashboard: React.FC = () => {
       moduleLabel: formatModulePanelLabel(primary.module_number, primary.panel_code),
       workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
       openCheckCount,
+      workUnitId: primary.work_unit_id,
+      moduleNumber: primary.module_number,
+      projectName: primary.project_name,
+      houseTypeName: primary.house_type_name,
+      houseIdentifier: primary.house_identifier,
     };
   };
   const openStationChecks = (station: StationSummary) => {
@@ -643,6 +897,143 @@ const QCDashboard: React.FC = () => {
   const handleSelectCheck = (check: QCCheckInstanceSummary) => {
     setStationSelection(null);
     navigate(`/qc/execute?check=${check.id}`, { state: { checkId: check.id } });
+  };
+  const closeObservationModal = () => {
+    setObservationSelection(null);
+    setObservationDetail(null);
+    setObservationError(null);
+    setNewObservationOpen(false);
+    setNewObservationTitle('');
+    setNewObservationDescription('');
+    setNewObservationSeverity('media');
+    setNewObservationSupervisorIds(new Set());
+    setNewObservationFiles([]);
+  };
+  const openObservationModal = async (selection: ObservationModuleSelection, initialObservationId?: number) => {
+    setObservationSelection(selection);
+    setObservationDetail(null);
+    setObservationError(null);
+    setNewObservationOpen(false);
+    const moduleObservations = observations
+      .filter((observation) => observation.work_unit_id === selection.workUnitId)
+      .sort((a, b) => toTimestamp(b.updated_at) - toTimestamp(a.updated_at));
+    const targetObs =
+      (initialObservationId ? moduleObservations.find(o => o.id === initialObservationId) : null) ??
+      moduleObservations.find((observation) => observation.status !== 'Closed') ??
+      moduleObservations[0] ??
+      null;
+    if (!targetObs) {
+      return;
+    }
+    setObservationDetailLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/complaints/${targetObs.id}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      setObservationDetail((await response.json()) as QCComplaintDetail);
+    } catch (error) {
+      setObservationError(
+        error instanceof Error ? error.message : 'No se pudo cargar la observacion.'
+      );
+    } finally {
+      setObservationDetailLoading(false);
+    }
+  };
+  const selectObservationDetail = async (observationId: number) => {
+    setObservationDetailLoading(true);
+    setObservationError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/complaints/${observationId}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      setObservationDetail((await response.json()) as QCComplaintDetail);
+    } catch (error) {
+      setObservationError(
+        error instanceof Error ? error.message : 'No se pudo cargar la observacion.'
+      );
+    } finally {
+      setObservationDetailLoading(false);
+    }
+  };
+  const uploadObservationFiles = async (complaintId: number, eventId: number, files: File[]) => {
+    for (const file of files) {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch(
+        `${API_BASE_URL}/api/qc/complaints/${complaintId}/events/${eventId}/media`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        }
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `No se pudo subir ${file.name}`);
+      }
+    }
+  };
+  const createModuleObservation = async () => {
+    if (!observationSelection) {
+      return;
+    }
+    if (!newObservationTitle.trim() || !newObservationDescription.trim()) {
+      setObservationError('Titulo y descripcion son obligatorios.');
+      return;
+    }
+    if (!newObservationSupervisorIds.size) {
+      setObservationError('Seleccione al menos un supervisor.');
+      return;
+    }
+    setNewObservationSubmitting(true);
+    setObservationError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/complaints`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_unit_id: observationSelection.workUnitId,
+          panel_unit_id: null,
+          station_id: null,
+          title: newObservationTitle.trim(),
+          description: newObservationDescription.trim(),
+          severity_level: newObservationSeverity,
+          supervisor_ids: Array.from(newObservationSupervisorIds),
+        }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      const created = (await response.json()) as QCComplaintDetail;
+      const initialEvent = created.events.find((event) => event.event_type === 'created');
+      if (initialEvent && newObservationFiles.length) {
+        await uploadObservationFiles(created.id, initialEvent.id, newObservationFiles);
+      }
+      setNewObservationOpen(false);
+      setNewObservationTitle('');
+      setNewObservationDescription('');
+      setNewObservationSeverity('media');
+      setNewObservationSupervisorIds(new Set());
+      setNewObservationFiles([]);
+      await loadObservations();
+      await selectObservationDetail(created.id);
+    } catch (error) {
+      setObservationError(
+        error instanceof Error ? error.message : 'No se pudo crear la observacion.'
+      );
+    } finally {
+      setNewObservationSubmitting(false);
+    }
   };
   const handleExportReport = async () => {
     if (!canExecuteChecks || reportGenerating) {
@@ -688,6 +1079,25 @@ const QCDashboard: React.FC = () => {
       setReportGenerating(false);
     }
   };
+
+  const selectedModuleObservations = observationSelection
+    ? observations
+        .filter((observation) => observation.work_unit_id === observationSelection.workUnitId)
+        .sort((a, b) => toTimestamp(b.updated_at) - toTimestamp(a.updated_at))
+    : [];
+  const selectedModuleOpenObservations = selectedModuleObservations.filter(
+    (observation) => observation.status !== 'Closed'
+  );
+  const selectedModuleClosedObservations = selectedModuleObservations.filter(
+    (observation) => observation.status === 'Closed'
+  );
+  const observationModuleLabel = observationSelection
+    ? buildWorkUnitLabel(
+        observationSelection.projectName,
+        observationSelection.houseTypeName,
+        observationSelection.houseIdentifier
+      )
+    : '';
 
   return (
     <div className="space-y-6">
@@ -749,7 +1159,7 @@ const QCDashboard: React.FC = () => {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-3">
         <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -865,7 +1275,7 @@ const QCDashboard: React.FC = () => {
               <ClipboardCheck className="h-5 w-5 text-[var(--ink-muted)]" />
             </div>
           </div>
-          <div className="mt-4 grid gap-3">
+          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
             {loading && !pendingChecks.length ? (
               <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
                 Cargando revisiones pendientes...
@@ -929,6 +1339,81 @@ const QCDashboard: React.FC = () => {
         </section>
 
         <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                Observaciones
+              </p>
+              <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
+                {observations.filter((obs) => obs.status !== 'Closed').length} observaciones abiertas
+              </h3>
+            </div>
+            <MessageSquare className="h-5 w-5 text-[var(--ink-muted)]" />
+          </div>
+          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
+            {!observations.filter((obs) => obs.status !== 'Closed').length ? (
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
+                No hay observaciones abiertas.
+              </div>
+            ) : null}
+            {observations.filter((obs) => obs.status !== 'Closed')
+              .sort((a, b) => toTimestamp(b.updated_at) - toTimestamp(a.updated_at))
+              .map((obs) => {
+              const workUnitLabel = buildWorkUnitLabel(
+                obs.project_name,
+                obs.house_type_name,
+                obs.house_identifier
+              );
+              const cardContent = (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[var(--ink)] truncate">
+                        {obs.title}
+                      </p>
+                      <p className="text-xs text-[var(--ink-muted)] truncate">{workUnitLabel}</p>
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        {obs.module_number}
+                        {obs.panel_code ? ` · Panel ${obs.panel_code}` : ''}
+                      </p>
+                    </div>
+                    <span className={clsx(
+                      "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      obs.severity_level === 'critica' ? 'bg-red-100 text-red-700' :
+                      obs.severity_level === 'media' ? 'bg-amber-100 text-amber-700' :
+                      'bg-slate-100 text-slate-700'
+                    )}>
+                      {severityLabels[obs.severity_level]}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                    <span>{observationStatusLabels[obs.status]} · {formatTimestamp(obs.updated_at)}</span>
+                  </div>
+                </>
+              );
+              return (
+                <button
+                  key={obs.id}
+                  type="button"
+                  onClick={() => {
+                    openObservationModal({
+                      workUnitId: obs.work_unit_id,
+                      moduleNumber: obs.module_number,
+                      projectName: obs.project_name,
+                      houseTypeName: obs.house_type_name,
+                      houseIdentifier: obs.house_identifier,
+                    }, obs.id);
+                  }}
+                  className={clsx(baseCardClass, 'text-left')}
+                >
+                  {cardContent}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
@@ -940,7 +1425,7 @@ const QCDashboard: React.FC = () => {
             </div>
             <Wrench className="h-5 w-5 text-[var(--ink-muted)]" />
           </div>
-          <div className="mt-4 grid gap-3">
+          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
             {loading && !activeReworkTasks.length ? (
               <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
                 Cargando re-trabajos...
@@ -1062,56 +1547,78 @@ const QCDashboard: React.FC = () => {
                     group.stations.map((station) => {
                       const summary = getStationSummary(station.id);
                       const hasOpenChecks = summary.openCheckCount > 0;
-                      const openCheckLabel = `${summary.openCheckCount} inspeccion${
-                        summary.openCheckCount === 1 ? '' : 'es'
-                      } abierta${summary.openCheckCount === 1 ? '' : 's'}`;
+                      const openObservationCount = summary.workUnitId
+                        ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
+                        : 0;
+                      const canOpenObservations = canExecuteChecks && summary.workUnitId !== null;
+                      const observationSelectionForStation =
+                        summary.workUnitId !== null && summary.moduleNumber !== null
+                          ? {
+                              workUnitId: summary.workUnitId,
+                              moduleNumber: summary.moduleNumber,
+                              projectName: summary.projectName,
+                              houseTypeName: summary.houseTypeName,
+                              houseIdentifier: summary.houseIdentifier,
+                            }
+                          : null;
                       return (
-                        <button
-                          key={station.id}
-                          type="button"
-                          onClick={() => openStationChecks(station)}
-                          disabled={!canExecuteChecks || !hasOpenChecks}
-                          className={clsx(
-                            'w-full rounded-xl border px-3 py-2 text-left transition',
-                            hasOpenChecks
-                              ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)]'
-                              : 'border-black/10 bg-white',
-                            canExecuteChecks && hasOpenChecks
-                              ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-sm'
-                              : 'opacity-70',
-                            'disabled:cursor-not-allowed disabled:opacity-70'
-                          )}
-                          aria-label={
-                            hasOpenChecks
-                              ? `Abrir ${openCheckLabel} en ${station.name}`
-                              : `Sin inspecciones abiertas en ${station.name}`
-                          }
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-[var(--ink)]">
-                                {station.name}
+                        <div key={station.id} className="flex flex-col justify-between rounded-xl border border-black/10 bg-white p-3 shadow-sm transition hover:shadow-md">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-[var(--ink)]">
+                              {station.name}
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
+                              {summary.moduleLabel}
+                            </p>
+                            {summary.workUnitLabel ? (
+                              <p className="mt-0.5 truncate text-[10px] text-[var(--ink-muted)]">
+                                {summary.workUnitLabel}
                               </p>
-                              <p className="text-[11px] text-[var(--ink-muted)]">
-                                {summary.moduleLabel}
-                              </p>
-                            </div>
-                            {hasOpenChecks ? (
-                              <span
-                                className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.16)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]"
-                                aria-label={openCheckLabel}
-                              >
-                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-                                {summary.openCheckCount}
-                              </span>
                             ) : null}
                           </div>
-                          {summary.workUnitLabel ? (
-                            <p className="mt-1 truncate text-[10px] text-[var(--ink-muted)]">
-                              {summary.workUnitLabel}
-                            </p>
-                          ) : null}
-                        </button>
+                          
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openStationChecks(station)}
+                              disabled={!canExecuteChecks || !hasOpenChecks}
+                              className={clsx(
+                                'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
+                                hasOpenChecks
+                                  ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                                  : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
+                                canExecuteChecks && hasOpenChecks
+                                  ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                                  : 'opacity-70 cursor-not-allowed'
+                              )}
+                            >
+                              <ClipboardCheck className="h-3.5 w-3.5" />
+                              {summary.openCheckCount} Checks
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (observationSelectionForStation) {
+                                  openObservationModal(observationSelectionForStation);
+                                }
+                              }}
+                              disabled={!canOpenObservations || !observationSelectionForStation}
+                              className={clsx(
+                                'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
+                                openObservationCount > 0
+                                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                  : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
+                                canOpenObservations && observationSelectionForStation
+                                  ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                                  : 'opacity-70 cursor-not-allowed'
+                              )}
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                              {openObservationCount} Obs.
+                            </button>
+                          </div>
+                        </div>
                       );
                     })
                   ) : (
@@ -1125,6 +1632,320 @@ const QCDashboard: React.FC = () => {
           </div>
         ) : null}
       </section>
+
+      {observationSelection ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/40" onClick={closeObservationModal} />
+          <div className="relative grid max-h-[90vh] w-full max-w-5xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-2xl border border-black/10 bg-white shadow-xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-black/10 px-5 py-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Observaciones
+                </p>
+                <h4 className="mt-1 text-base font-display text-[var(--ink)]">
+                  Modulo {observationSelection.moduleNumber}
+                </h4>
+                <p className="text-xs text-[var(--ink-muted)]">{observationModuleLabel}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewObservationOpen((open) => !open)}
+                  className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-3 py-2 text-xs font-semibold text-white"
+                >
+                  <Plus className="h-4 w-4" />
+                  Nueva observacion
+                </button>
+                <button
+                  type="button"
+                  onClick={closeObservationModal}
+                  className="rounded-full p-2 text-[var(--ink-muted)] transition hover:text-[var(--ink)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid min-h-0 gap-0 md:grid-cols-[340px_minmax(0,1fr)]">
+              <div className="min-h-0 overflow-y-auto border-r border-black/10 p-4">
+                {observationError ? (
+                  <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {observationError}
+                  </div>
+                ) : null}
+                {newObservationOpen ? (
+                  <div className="mb-4 rounded-2xl border border-black/10 bg-[var(--canvas)] p-3">
+                    <div className="grid gap-2">
+                      <input
+                        value={newObservationTitle}
+                        onChange={(event) => setNewObservationTitle(event.target.value)}
+                        placeholder="Titulo"
+                        className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+                      />
+                      <textarea
+                        value={newObservationDescription}
+                        onChange={(event) => setNewObservationDescription(event.target.value)}
+                        placeholder="Descripcion"
+                        rows={3}
+                        className="resize-none rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+                      />
+                      <select
+                        value={newObservationSeverity}
+                        onChange={(event) =>
+                          setNewObservationSeverity(event.target.value as QCSeverityLevel)
+                        }
+                        className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="baja">Baja</option>
+                        <option value="media">Media</option>
+                        <option value="critica">Critica</option>
+                      </select>
+                      <div className="max-h-32 overflow-y-auto rounded-lg border border-black/10 bg-white p-2">
+                        {supervisors.map((supervisor) => {
+                          const checked = newObservationSupervisorIds.has(supervisor.id);
+                          return (
+                            <label
+                              key={supervisor.id}
+                              className="flex items-center gap-2 rounded px-1 py-1 text-xs hover:bg-slate-50"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  setNewObservationSupervisorIds((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) {
+                                      next.add(supervisor.id);
+                                    } else {
+                                      next.delete(supervisor.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                              {fullName(supervisor)}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <QCPhotoCaptureButton
+                          fileNamePrefix={`qc-observacion-${observationSelection.workUnitId}`}
+                          buttonLabel="Tomar foto"
+                          className="py-1.5 text-xs"
+                          watermarkLines={(date) =>
+                            buildObservationWatermarkLines(date, {
+                              projectName: observationSelection.projectName,
+                              houseIdentifier: observationSelection.houseIdentifier,
+                              moduleNumber: observationSelection.moduleNumber,
+                              title: newObservationTitle,
+                            })
+                          }
+                          onCapture={(file) =>
+                            setNewObservationFiles((current) => [...current, file])
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void createModuleObservation()}
+                          disabled={newObservationSubmitting}
+                          className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                        >
+                          {newObservationSubmitting ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Send className="h-3.5 w-3.5" />
+                          )}
+                          Crear
+                        </button>
+                      </div>
+                      {newObservationFiles.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {newObservationFiles.map((file) => (
+                            <span
+                              key={fileKey(file)}
+                              className="inline-flex max-w-full items-center gap-1 rounded-full bg-white px-2 py-1 text-[10px] text-[var(--ink-muted)] ring-1 ring-black/10"
+                            >
+                              <span className="truncate">{file.name}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setNewObservationFiles((current) =>
+                                    current.filter((item) => fileKey(item) !== fileKey(file))
+                                  )
+                                }
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
+                  Abiertas
+                </p>
+                <div className="mt-2 space-y-2">
+                  {selectedModuleOpenObservations.length ? (
+                    selectedModuleOpenObservations.map((observation) => (
+                      <button
+                        key={observation.id}
+                        type="button"
+                        onClick={() => void selectObservationDetail(observation.id)}
+                        className={clsx(
+                          'w-full rounded-xl border px-3 py-2 text-left text-xs transition hover:bg-slate-50',
+                          observationDetail?.id === observation.id
+                            ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                            : 'border-black/10 bg-white'
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-semibold text-[var(--ink)]">
+                            {observation.title}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-[var(--ink-muted)]">
+                            {severityLabels[observation.severity_level]}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[11px] text-[var(--ink-muted)]">
+                          {observation.description}
+                        </p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-black/10 px-3 py-3 text-xs text-[var(--ink-muted)]">
+                      Sin observaciones abiertas.
+                    </div>
+                  )}
+                </div>
+
+                <p className="mt-5 text-[11px] uppercase tracking-[0.24em] text-[var(--ink-muted)]">
+                  Cerradas
+                </p>
+                <div className="mt-2 space-y-2">
+                  {selectedModuleClosedObservations.length ? (
+                    selectedModuleClosedObservations.map((observation) => (
+                      <button
+                        key={observation.id}
+                        type="button"
+                        onClick={() => void selectObservationDetail(observation.id)}
+                        className={clsx(
+                          'w-full rounded-xl border px-3 py-2 text-left text-xs opacity-80 transition hover:bg-slate-50',
+                          observationDetail?.id === observation.id
+                            ? 'border-[var(--accent)] bg-[var(--accent)]/10'
+                            : 'border-black/10 bg-white'
+                        )}
+                      >
+                        <span className="truncate font-semibold text-[var(--ink)]">
+                          {observation.title}
+                        </span>
+                        <p className="mt-1 text-[11px] text-[var(--ink-muted)]">
+                          {observation.closed_at ? formatTimestamp(observation.closed_at) : 'Cerrada'}
+                        </p>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-black/10 px-3 py-3 text-xs text-[var(--ink-muted)]">
+                      Sin observaciones cerradas.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="min-h-0 overflow-y-auto p-5">
+                {observationDetailLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-[var(--ink-muted)]">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Cargando observacion...
+                  </div>
+                ) : observationDetail ? (
+                  <div>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h5 className="text-base font-semibold text-[var(--ink)]">
+                          {observationDetail.title}
+                        </h5>
+                        <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                          {observationStatusLabels[observationDetail.status]} ·{' '}
+                          {severityLabels[observationDetail.severity_level]} ·{' '}
+                          {formatTimestamp(observationDetail.updated_at)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {observationDetail.events.map((event) => {
+                        const fromQc = event.actor_type === 'qc';
+                        return (
+                          <div
+                            key={event.id}
+                            className={clsx('flex', fromQc ? 'justify-end' : 'justify-start')}
+                          >
+                            <div
+                              className={clsx(
+                                'max-w-[82%] rounded-2xl px-4 py-3 text-sm',
+                                fromQc
+                                  ? 'bg-[var(--ink)] text-white'
+                                  : 'bg-slate-100 text-[var(--ink)]'
+                              )}
+                            >
+                              <p
+                                className={clsx(
+                                  'mb-1 text-[11px]',
+                                  fromQc ? 'text-white/70' : 'text-[var(--ink-muted)]'
+                                )}
+                              >
+                                {event.actor_name ?? (fromQc ? 'Calidad' : 'Supervisor')} ·{' '}
+                                {observationEventLabels[event.event_type]} ·{' '}
+                                {formatTimestamp(event.created_at)}
+                              </p>
+                              {event.message ? (
+                                <p className="whitespace-pre-wrap">{event.message}</p>
+                              ) : null}
+                              {event.media.length ? (
+                                <div className="mt-3 grid grid-cols-2 gap-2">
+                                  {event.media.map((media) => (
+                                    <a
+                                      key={media.id}
+                                      href={`${API_BASE_URL}${media.uri}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block overflow-hidden rounded-lg bg-black/10"
+                                    >
+                                      {media.mime_type.startsWith('image/') ? (
+                                        <img
+                                          src={`${API_BASE_URL}${media.uri}`}
+                                          alt=""
+                                          className="h-28 w-full object-cover"
+                                        />
+                                      ) : (
+                                        <video
+                                          src={`${API_BASE_URL}${media.uri}`}
+                                          className="h-28 w-full object-cover"
+                                        />
+                                      )}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-black/10 px-4 py-8 text-sm text-[var(--ink-muted)]">
+                    Selecciona una observacion o crea una nueva para este modulo.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {stationSelection && stationSelection.checks.length > 1 ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

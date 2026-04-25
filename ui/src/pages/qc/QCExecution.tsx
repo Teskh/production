@@ -1394,10 +1394,10 @@ const QCExecution: React.FC = () => {
               </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center px-4 py-6">
-                <div className="w-full max-w-4xl aspect-[4/3] border border-white/10 relative overflow-hidden rounded-xl bg-black">
+                <div className="h-full w-full max-w-4xl border border-white/10 relative overflow-hidden rounded-xl bg-black">
                   <video
                     ref={videoRef}
-                    className="w-full h-full object-cover"
+                    className="h-full w-full object-contain"
                     playsInline
                     muted
                     autoPlay

@@ -108,6 +108,19 @@ def _validate_work_context(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Station not found")
 
 
+def _resolve_complaint_station_id(
+    db: Session, work_unit_id: int, panel_unit_id: int | None, station_id: int | None
+) -> int | None:
+    if station_id is not None:
+        return station_id
+    if panel_unit_id is not None:
+        panel = db.get(PanelUnit, panel_unit_id)
+        if panel and panel.current_station_id is not None:
+            return panel.current_station_id
+    work_unit = db.get(WorkUnit, work_unit_id)
+    return work_unit.current_station_id if work_unit else None
+
+
 def _load_supervisors(db: Session, supervisor_ids: list[int]) -> list[WorkerSupervisor]:
     unique_ids = sorted(set(supervisor_ids))
     if not unique_ids:
@@ -371,11 +384,14 @@ def create_complaint(
         )
     _validate_work_context(db, payload.work_unit_id, payload.panel_unit_id, payload.station_id)
     supervisors = _load_supervisors(db, payload.supervisor_ids)
+    station_id = _resolve_complaint_station_id(
+        db, payload.work_unit_id, payload.panel_unit_id, payload.station_id
+    )
     now = utc_now()
     complaint = QCQualityComplaint(
         work_unit_id=payload.work_unit_id,
         panel_unit_id=payload.panel_unit_id,
-        station_id=payload.station_id,
+        station_id=station_id,
         title=title,
         description=description,
         severity_level=payload.severity_level,

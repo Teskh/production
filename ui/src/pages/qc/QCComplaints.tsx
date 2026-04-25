@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import {
   AlertTriangle,
   CheckCircle2,
-  ImagePlus,
   Loader2,
   MessageSquare,
   Plus,
@@ -12,12 +11,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import QCPhotoCaptureButton from '../../components/QCPhotoCaptureButton';
 import { useOptionalQCSession } from '../../layouts/QCLayoutContext';
 import { formatDateTimeShort } from '../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
-const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 
 type QCSeverityLevel = 'baja' | 'media' | 'critica';
 type QCComplaintStatus = 'Open' | 'ClosureProposed' | 'Closed';
@@ -39,12 +38,6 @@ type PanelStatus = {
 
 type ProductionQueueModuleStatus = {
   panels: PanelStatus[];
-};
-
-type StationSummary = {
-  id: number;
-  name: string;
-  sequence_order?: number | null;
 };
 
 type SupervisorSummary = {
@@ -126,7 +119,7 @@ const statusLabels: Record<QCComplaintStatus, string> = {
 };
 
 const eventLabels: Record<ComplaintEvent['event_type'], string> = {
-  created: 'Creo el reclamo',
+  created: 'Creo la observacion',
   comment: 'Comento',
   media_added: 'Agrego evidencia',
   closure_proposed: 'Propuso cierre',
@@ -163,6 +156,41 @@ const moduleLabel = (item: Pick<ComplaintSummary, 'house_identifier' | 'module_n
 
 const fileKey = (file: File) => `${file.name}-${file.lastModified}-${file.size}`;
 
+const formatStampDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}/${month}/${day}`;
+};
+
+const formatStampTime = (date: Date) => {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+const buildObservationWatermarkLines = (
+  date: Date,
+  context: {
+    projectName?: string | null;
+    houseIdentifier?: string | null;
+    moduleNumber?: number | null;
+    panelCode?: string | null;
+    title?: string | null;
+  }
+) => {
+  const parts: string[] = [];
+  if (context.projectName) parts.push(context.projectName);
+  if (context.houseIdentifier) parts.push(`Casa ${context.houseIdentifier}`);
+  if (context.moduleNumber) parts.push(`Modulo ${context.moduleNumber}`);
+  if (context.panelCode) parts.push(`Panel ${context.panelCode}`);
+  const lines: string[] = [];
+  if (parts.length) lines.push(parts.join(' · '));
+  lines.push(context.title?.trim() || 'Observacion QC');
+  lines.push(`${formatStampDate(date)} ${formatStampTime(date)}`);
+  return lines.filter(Boolean);
+};
+
 const QCComplaints: React.FC = () => {
   const qcSession = useOptionalQCSession();
   const canManage = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
@@ -179,13 +207,11 @@ const QCComplaints: React.FC = () => {
 
   const [workUnits, setWorkUnits] = useState<ProductionQueueItem[]>([]);
   const [supervisors, setSupervisors] = useState<SupervisorSummary[]>([]);
-  const [stations, setStations] = useState<StationSummary[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [workUnitId, setWorkUnitId] = useState<number | null>(null);
   const [panelUnitId, setPanelUnitId] = useState<number | null>(null);
-  const [stationId, setStationId] = useState<number | null>(null);
   const [panels, setPanels] = useState<PanelStatus[]>([]);
   const [panelsLoading, setPanelsLoading] = useState(false);
   const [title, setTitle] = useState('');
@@ -198,8 +224,6 @@ const QCComplaints: React.FC = () => {
   const [commentFiles, setCommentFiles] = useState<File[]>([]);
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const initialFileInputRef = useRef<HTMLInputElement | null>(null);
-  const commentFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadComplaints = async () => {
     setLoading(true);
@@ -216,7 +240,7 @@ const QCComplaints: React.FC = () => {
         setSelectedId(data[0].id);
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar reclamos.');
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar observaciones.');
     } finally {
       setLoading(false);
     }
@@ -226,15 +250,13 @@ const QCComplaints: React.FC = () => {
     let active = true;
     const loadBaseData = async () => {
       try {
-        const [queue, supervisorData, stationData] = await Promise.all([
+        const [queue, supervisorData] = await Promise.all([
           apiRequest<ProductionQueueItem[]>('/api/production-queue?include_completed=false'),
           apiRequest<SupervisorSummary[]>('/api/workers/supervisors'),
-          apiRequest<StationSummary[]>('/api/stations'),
         ]);
         if (!active) return;
         setWorkUnits(queue);
         setSupervisors(supervisorData);
-        setStations(stationData);
       } catch (error) {
         if (active) {
           setErrorMessage(error instanceof Error ? error.message : 'No se pudieron cargar datos base.');
@@ -281,8 +303,12 @@ const QCComplaints: React.FC = () => {
     };
   }, [selectedId]);
 
+  const selectedWorkUnit = workUnits.find((item) => item.id === workUnitId) ?? null;
+  const selectedWorkUnitRequiresPanel =
+    selectedWorkUnit?.status === 'Panels' || selectedWorkUnit?.status === 'Magazine';
+
   useEffect(() => {
-    if (!workUnitId) {
+    if (!workUnitId || !selectedWorkUnitRequiresPanel) {
       setPanels([]);
       setPanelUnitId(null);
       return;
@@ -307,7 +333,7 @@ const QCComplaints: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [workUnitId]);
+  }, [workUnitId, selectedWorkUnitRequiresPanel]);
 
   const filteredComplaints = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -329,30 +355,6 @@ const QCComplaints: React.FC = () => {
     });
   }, [complaints, search]);
 
-  const selectedWorkUnit = workUnits.find((item) => item.id === workUnitId) ?? null;
-
-  const appendFiles = (files: FileList | null, target: 'initial' | 'comment') => {
-    const nextFiles = Array.from(files ?? []).filter(
-      (file) => file.type.startsWith('image/') || file.type.startsWith('video/')
-    );
-    const oversized = nextFiles.find((file) => file.size > MAX_MEDIA_BYTES);
-    if (oversized) {
-      setActionError('Cada archivo debe pesar 50 MB o menos.');
-      return;
-    }
-    if (target === 'initial') {
-      setInitialFiles((current) => {
-        const seen = new Set(current.map(fileKey));
-        return [...current, ...nextFiles.filter((file) => !seen.has(fileKey(file)))];
-      });
-    } else {
-      setCommentFiles((current) => {
-        const seen = new Set(current.map(fileKey));
-        return [...current, ...nextFiles.filter((file) => !seen.has(fileKey(file)))];
-      });
-    }
-  };
-
   const uploadFiles = async (complaintId: number, eventId: number, files: File[]) => {
     for (const file of files) {
       const formData = new FormData();
@@ -370,7 +372,6 @@ const QCComplaints: React.FC = () => {
   const resetCreateForm = () => {
     setWorkUnitId(null);
     setPanelUnitId(null);
-    setStationId(null);
     setPanels([]);
     setTitle('');
     setDescription('');
@@ -393,6 +394,10 @@ const QCComplaints: React.FC = () => {
       setCreateError('Seleccione al menos un supervisor.');
       return;
     }
+    if (selectedWorkUnitRequiresPanel && !panelUnitId) {
+      setCreateError('Seleccione un panel para modulos en Paneles o Magazine.');
+      return;
+    }
     setCreateSubmitting(true);
     setCreateError(null);
     try {
@@ -400,8 +405,8 @@ const QCComplaints: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           work_unit_id: workUnitId,
-          panel_unit_id: panelUnitId,
-          station_id: stationId,
+          panel_unit_id: selectedWorkUnitRequiresPanel ? panelUnitId : null,
+          station_id: null,
           title: title.trim(),
           description: description.trim(),
           severity_level: severity,
@@ -418,7 +423,7 @@ const QCComplaints: React.FC = () => {
       await loadComplaints();
       setDetail(await apiRequest<ComplaintDetail>(`/api/qc/complaints/${created.id}`));
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : 'No se pudo crear el reclamo.');
+      setCreateError(error instanceof Error ? error.message : 'No se pudo crear la observacion.');
     } finally {
       setCreateSubmitting(false);
     }
@@ -452,7 +457,7 @@ const QCComplaints: React.FC = () => {
   };
 
   const handleCancel = async () => {
-    if (!detail || !window.confirm('Cancelar y eliminar este reclamo con sus comentarios y fotos?')) {
+    if (!detail || !window.confirm('Cancelar y eliminar esta observacion con sus comentarios y fotos?')) {
       return;
     }
     setActionError(null);
@@ -462,7 +467,7 @@ const QCComplaints: React.FC = () => {
       setSelectedId(null);
       await loadComplaints();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'No se pudo cancelar el reclamo.');
+      setActionError(error instanceof Error ? error.message : 'No se pudo cancelar la observacion.');
     }
   };
 
@@ -492,7 +497,7 @@ const QCComplaints: React.FC = () => {
     return (
       <div className="p-8">
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          Inicia sesion como Calidad para gestionar reclamos.
+          Inicia sesion como Calidad para gestionar observaciones.
         </div>
       </div>
     );
@@ -502,7 +507,7 @@ const QCComplaints: React.FC = () => {
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">Reclamos QC</p>
+          <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">Observaciones QC</p>
           <h2 className="font-display text-2xl text-[var(--ink)]">Seguimiento con supervisores</h2>
         </div>
         <button
@@ -511,7 +516,7 @@ const QCComplaints: React.FC = () => {
           className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
         >
           <Plus className="h-4 w-4" />
-          Nuevo reclamo
+          Nueva observacion
         </button>
       </div>
 
@@ -554,7 +559,7 @@ const QCComplaints: React.FC = () => {
           {loading ? (
             <div className="flex items-center gap-2 p-5 text-sm text-[var(--ink-muted)]">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Cargando reclamos...
+              Cargando observaciones...
             </div>
           ) : errorMessage ? (
             <div className="p-4 text-sm text-red-700">{errorMessage}</div>
@@ -597,7 +602,7 @@ const QCComplaints: React.FC = () => {
                 </button>
               ))}
               {!filteredComplaints.length && (
-                <div className="p-5 text-sm text-[var(--ink-muted)]">Sin reclamos para estos filtros.</div>
+                <div className="p-5 text-sm text-[var(--ink-muted)]">Sin observaciones para estos filtros.</div>
               )}
             </div>
           )}
@@ -606,7 +611,7 @@ const QCComplaints: React.FC = () => {
         <section className="min-h-[72vh] overflow-hidden rounded-lg border border-black/10 bg-white/85 shadow-sm">
           {!detail ? (
             <div className="flex h-full min-h-[420px] items-center justify-center p-8 text-sm text-[var(--ink-muted)]">
-              Selecciona un reclamo para ver la conversacion.
+              Selecciona una observacion para ver la conversacion.
             </div>
           ) : (
             <div className="flex h-full min-h-[72vh] flex-col">
@@ -749,22 +754,20 @@ const QCComplaints: React.FC = () => {
                     </div>
                   )}
                   <div className="mt-3 flex items-center justify-between gap-2">
-                    <input
-                      ref={commentFileInputRef}
-                      type="file"
-                      accept="image/*,video/*"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => appendFiles(event.target.files, 'comment')}
+                    <QCPhotoCaptureButton
+                      fileNamePrefix={`qc-observacion-${detail.id}`}
+                      buttonLabel="Tomar foto"
+                      watermarkLines={(date) =>
+                        buildObservationWatermarkLines(date, {
+                          projectName: detail.project_name,
+                          houseIdentifier: detail.house_identifier,
+                          moduleNumber: detail.module_number,
+                          panelCode: detail.panel_code,
+                          title: detail.title,
+                        })
+                      }
+                      onCapture={(file) => setCommentFiles((current) => [...current, file])}
                     />
-                    <button
-                      type="button"
-                      onClick={() => commentFileInputRef.current?.click()}
-                      className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-semibold text-[var(--ink)] ring-1 ring-black/10"
-                    >
-                      <ImagePlus className="h-4 w-4" />
-                      Adjuntar
-                    </button>
                     <button
                       type="button"
                       onClick={() => void handleComment()}
@@ -787,7 +790,7 @@ const QCComplaints: React.FC = () => {
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-black/10 px-5 py-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-muted)]">Nuevo reclamo</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-muted)]">Nueva observacion</p>
                 <h3 className="font-display text-xl text-[var(--ink)]">Crear conversacion con supervisores</h3>
               </div>
               <button
@@ -834,37 +837,28 @@ const QCComplaints: React.FC = () => {
                     <option value="critica">Critica</option>
                   </select>
                 </label>
-                <label className="text-sm">
-                  <span className="mb-1 block font-semibold text-[var(--ink)]">Panel opcional</span>
-                  <select
-                    value={panelUnitId ?? ''}
-                    disabled={!selectedWorkUnit || panelsLoading}
-                    onChange={(event) => setPanelUnitId(event.target.value ? Number(event.target.value) : null)}
-                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 disabled:bg-slate-50"
-                  >
-                    <option value="">{panelsLoading ? 'Cargando paneles...' : 'Sin panel especifico'}</option>
-                    {panels.map((panel) => (
-                      <option key={panel.panel_unit_id ?? panel.panel_code} value={panel.panel_unit_id ?? ''}>
-                        {panel.panel_code ?? `Panel ${panel.panel_unit_id}`}
+                {selectedWorkUnitRequiresPanel ? (
+                  <label className="text-sm md:col-span-2">
+                    <span className="mb-1 block font-semibold text-[var(--ink)]">Panel</span>
+                    <select
+                      value={panelUnitId ?? ''}
+                      disabled={!selectedWorkUnit || panelsLoading}
+                      onChange={(event) =>
+                        setPanelUnitId(event.target.value ? Number(event.target.value) : null)
+                      }
+                      className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 disabled:bg-slate-50"
+                    >
+                      <option value="">
+                        {panelsLoading ? 'Cargando paneles...' : 'Seleccione panel'}
                       </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-sm">
-                  <span className="mb-1 block font-semibold text-[var(--ink)]">Estacion opcional</span>
-                  <select
-                    value={stationId ?? ''}
-                    onChange={(event) => setStationId(event.target.value ? Number(event.target.value) : null)}
-                    className="w-full rounded-lg border border-black/10 bg-white px-3 py-2"
-                  >
-                    <option value="">Sin estacion</option>
-                    {stations.map((station) => (
-                      <option key={station.id} value={station.id}>
-                        {station.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                      {panels.map((panel) => (
+                        <option key={panel.panel_unit_id ?? panel.panel_code} value={panel.panel_unit_id ?? ''}>
+                          {panel.panel_code ?? `Panel ${panel.panel_unit_id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
               </div>
 
               <label className="block text-sm">
@@ -912,22 +906,22 @@ const QCComplaints: React.FC = () => {
               </div>
 
               <div>
-                <input
-                  ref={initialFileInputRef}
-                  type="file"
-                  accept="image/*,video/*"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => appendFiles(event.target.files, 'initial')}
+                <QCPhotoCaptureButton
+                  fileNamePrefix={`qc-observacion-${workUnitId ?? 'modulo'}`}
+                  buttonLabel="Tomar foto"
+                  watermarkLines={(date) =>
+                    buildObservationWatermarkLines(date, {
+                      projectName: selectedWorkUnit?.project_name,
+                      houseIdentifier: selectedWorkUnit?.house_identifier,
+                      moduleNumber: selectedWorkUnit?.module_number,
+                      panelCode:
+                        panels.find((panel) => panel.panel_unit_id === panelUnitId)?.panel_code ??
+                        null,
+                      title,
+                    })
+                  }
+                  onCapture={(file) => setInitialFiles((current) => [...current, file])}
                 />
-                <button
-                  type="button"
-                  onClick={() => initialFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-semibold text-[var(--ink)] ring-1 ring-black/10"
-                >
-                  <ImagePlus className="h-4 w-4" />
-                  Agregar fotos o videos
-                </button>
                 {initialFiles.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {initialFiles.map((file) => (
