@@ -391,6 +391,8 @@ const QCDashboard: React.FC = () => {
   );
   const [stationFilterOpen, setStationFilterOpen] = useState(false);
   const stationFilterRef = useRef<HTMLDivElement | null>(null);
+  const [activeTaskTab, setActiveTaskTab] = useState<'checks' | 'observations' | 'reworks'>('checks');
+  const [activePlantTab, setActivePlantTab] = useState<'panels' | 'armado'>('panels');
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
   const canExecuteChecks = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
@@ -1188,75 +1190,52 @@ const QCDashboard: React.FC = () => {
       )}
       <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Flujo manual
-            </p>
-            <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-              Crear inspeccion fuera de trigger
-            </h3>
-            <p className="mt-1 text-sm text-[var(--ink-muted)]">
-              Abra checks libres o desde checks predefinidos para modulo o panel.
-            </p>
+          <div className="inline-flex flex-wrap items-center gap-2">
+            {([
+              { id: 'checks' as const, label: 'Revisiones', icon: ClipboardCheck, count: filteredPendingChecks.length },
+              { id: 'observations' as const, label: 'Observaciones', icon: MessageSquare, count: observations.filter((o) => o.status !== 'Closed').length },
+              { id: 'reworks' as const, label: 'Re-trabajos', icon: Wrench, count: activeReworkTasks.length },
+            ]).map(({ id, label, icon: Icon, count }) => {
+              const active = activeTaskTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveTaskTab(id)}
+                  className={clsx(
+                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition',
+                    active
+                      ? 'bg-[var(--ink)] text-white shadow-sm'
+                      : 'border border-black/10 bg-white text-[var(--ink-muted)] hover:bg-[var(--canvas)]'
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                  <span
+                    className={clsx(
+                      'rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                      active ? 'bg-white/20 text-white' : 'bg-black/5 text-[var(--ink)]'
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          {canExecuteChecks ? (
-            <Link
-              to="/qc/new"
-              className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
-            >
-              <ClipboardPlus className="h-4 w-4" />
-              Nueva inspeccion manual
-            </Link>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] opacity-70"
-            >
-              <ClipboardPlus className="h-4 w-4" />
-              Nueva inspeccion manual
-            </button>
-          )}
-        </div>
-      </section>
-
-      <div className="grid gap-6 xl:grid-cols-3">
-        <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                Revisiones pendientes
-              </p>
-              <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                {filteredPendingChecks.length} inspecciones abiertas
-              </h3>
-              <p className="mt-1 text-xs text-[var(--ink-muted)]">
-                {hasStationFilter
-                  ? `Filtro activo: ${stationFilterSummary}`
-                  : 'Mostrando todas las estaciones'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {canExecuteChecks ? (
-                <button
-                  type="button"
-                  onClick={handleExportReport}
-                  disabled={reportGenerating}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  <FileSpreadsheet className="h-3.5 w-3.5" />
-                  {reportGenerating ? 'Generando...' : 'Reporte Excel'}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink-muted)] opacity-70"
-                >
-                  <FileSpreadsheet className="h-3.5 w-3.5" />
-                  Reporte Excel
-                </button>
-              )}
+          <div className="flex flex-wrap items-center gap-2">
+            {activeTaskTab === 'checks' && canExecuteChecks ? (
+              <button
+                type="button"
+                onClick={handleExportReport}
+                disabled={reportGenerating}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+                {reportGenerating ? 'Generando...' : 'Reporte Excel'}
+              </button>
+            ) : null}
+            {activeTaskTab === 'checks' ? (
               <div ref={stationFilterRef} className="relative">
                 <button
                   type="button"
@@ -1333,87 +1312,92 @@ const QCDashboard: React.FC = () => {
                   </div>
                 ) : null}
               </div>
-              <ClipboardCheck className="h-5 w-5 text-[var(--ink-muted)]" />
-            </div>
-          </div>
-          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
-            {loading && !pendingChecks.length ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
-                Cargando revisiones pendientes...
-              </div>
             ) : null}
-            {!loading && !filteredPendingChecks.length ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
-                {hasStationFilter && pendingChecks.length
-                  ? 'No hay revisiones abiertas para las estaciones seleccionadas.'
-                  : 'No hay revisiones abiertas en este momento.'}
-              </div>
+            {canExecuteChecks ? (
+              <Link
+                to="/qc/new"
+                className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <ClipboardPlus className="h-4 w-4" />
+                Nueva inspeccion
+              </Link>
             ) : null}
-            {filteredPendingChecks.map((check) => {
-              const workUnitLabel = buildWorkUnitLabel(
-                check.project_name,
-                check.house_type_name,
-                check.house_identifier
-              );
-              const cardContent = (
-                <>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-[var(--ink)]">
-                        {check.check_name ?? 'Inspeccion sin titulo'}
-                      </p>
-                      <p className="text-xs text-[var(--ink-muted)]">{workUnitLabel}</p>
-                      <p className="text-xs text-[var(--ink-muted)]">
-                        {check.module_number}
-                        {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
-                        en {locationLabel(check.station_name, check.current_station_name)}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
-                      {scopeLabels[check.scope]}
-                    </span>
-                    <span>Creado {formatTimestamp(check.opened_at)}</span>
-                  </div>
-                </>
-              );
-              if (!canExecuteChecks) {
-                return (
-                  <div key={check.id} className={disabledCardClass} aria-disabled="true">
-                    {cardContent}
-                  </div>
-                );
-              }
-              return (
-                <Link
-                  key={check.id}
-                  to={`/qc/execute?check=${check.id}`}
-                  state={{ checkId: check.id }}
-                  className={baseCardClass}
-                >
-                  {cardContent}
-                </Link>
-              );
-            })}
           </div>
-        </section>
+        </div>
 
-        <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                Observaciones
-              </p>
-              <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                {observations.filter((obs) => obs.status !== 'Closed').length} observaciones abiertas
-              </h3>
+        {activeTaskTab === 'checks' ? (
+          <div className="mt-5">
+            {hasStationFilter ? (
+              <p className="mb-3 text-xs text-[var(--ink-muted)]">Filtro: {stationFilterSummary}</p>
+            ) : null}
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {loading && !pendingChecks.length ? (
+                <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)] sm:col-span-2 xl:col-span-3">
+                  Cargando revisiones pendientes...
+                </div>
+              ) : null}
+              {!loading && !filteredPendingChecks.length ? (
+                <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)] sm:col-span-2 xl:col-span-3">
+                  {hasStationFilter && pendingChecks.length
+                    ? 'No hay revisiones abiertas para las estaciones seleccionadas.'
+                    : 'No hay revisiones abiertas en este momento.'}
+                </div>
+              ) : null}
+              {filteredPendingChecks.map((check) => {
+                const workUnitLabel = buildWorkUnitLabel(
+                  check.project_name,
+                  check.house_type_name,
+                  check.house_identifier
+                );
+                const cardContent = (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[var(--ink)]">
+                          {check.check_name ?? 'Inspeccion sin titulo'}
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">{workUnitLabel}</p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {check.module_number}
+                          {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
+                          en {locationLabel(check.station_name, check.current_station_name)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
+                        {scopeLabels[check.scope]}
+                      </span>
+                      <span>Creado {formatTimestamp(check.opened_at)}</span>
+                    </div>
+                  </>
+                );
+                if (!canExecuteChecks) {
+                  return (
+                    <div key={check.id} className={disabledCardClass} aria-disabled="true">
+                      {cardContent}
+                    </div>
+                  );
+                }
+                return (
+                  <Link
+                    key={check.id}
+                    to={`/qc/execute?check=${check.id}`}
+                    state={{ checkId: check.id }}
+                    className={baseCardClass}
+                  >
+                    {cardContent}
+                  </Link>
+                );
+              })}
             </div>
-            <MessageSquare className="h-5 w-5 text-[var(--ink-muted)]" />
           </div>
-          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
+        ) : null}
+
+        {activeTaskTab === 'observations' ? (
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {!observations.filter((obs) => obs.status !== 'Closed').length ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)] sm:col-span-2 xl:col-span-3">
                 No hay observaciones abiertas.
               </div>
             ) : null}
@@ -1472,28 +1456,17 @@ const QCDashboard: React.FC = () => {
               );
             })}
           </div>
-        </section>
+        ) : null}
 
-        <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                Re-trabajos activos
-              </p>
-              <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-                {activeReworkTasks.length} re-trabajos abiertos
-              </h3>
-            </div>
-            <Wrench className="h-5 w-5 text-[var(--ink-muted)]" />
-          </div>
-          <div className="mt-4 grid gap-3 max-h-[600px] overflow-y-auto pr-1">
+        {activeTaskTab === 'reworks' ? (
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {loading && !activeReworkTasks.length ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)] sm:col-span-2 xl:col-span-3">
                 Cargando re-trabajos...
               </div>
             ) : null}
             {!loading && !activeReworkTasks.length ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
+              <div className="rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)] sm:col-span-2 xl:col-span-3">
                 No hay re-trabajos activos.
               </div>
             ) : null}
@@ -1558,20 +1531,35 @@ const QCDashboard: React.FC = () => {
               );
             })}
           </div>
-        </section>
-      </div>
+        ) : null}
+      </section>
 
       <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Vista de planta
-            </p>
-            <h3 className="mt-2 text-lg font-display text-[var(--ink)]">
-              Estaciones con inspecciones abiertas
-            </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-2">
+            {(['panels', 'armado'] as const).map((id) => {
+              const active = activePlantTab === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActivePlantTab(id)}
+                  className={clsx(
+                    'rounded-full px-5 py-2 text-sm font-semibold transition',
+                    active
+                      ? 'bg-[var(--ink)] text-white shadow-sm'
+                      : 'border border-black/10 bg-white text-[var(--ink-muted)] hover:bg-[var(--canvas)]'
+                  )}
+                >
+                  {id === 'panels' ? 'Paneles' : 'Armado'}
+                </button>
+              );
+            })}
           </div>
-          <LayoutGrid className="h-5 w-5 text-[var(--ink-muted)]" />
+          <div className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+            <LayoutGrid className="h-4 w-4" />
+            Vista de planta
+          </div>
         </div>
         {stationsError ? (
           <div className="mt-4 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
@@ -1588,110 +1576,117 @@ const QCDashboard: React.FC = () => {
             No hay estaciones para mostrar.
           </div>
         ) : null}
-        {hasStations ? (
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {stationGroups.map((group) => (
-              <div
-                key={group.id}
-                className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm"
-              >
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    {group.title}
-                  </p>
-                  <span className="text-[10px] text-[var(--ink-muted)]">
-                    {group.stations.length} est.
-                  </span>
+        {hasStations ? (() => {
+          const renderStationCard = (station: StationSummary) => {
+            const summary = getStationSummary(station.id);
+            const hasOpenChecks = summary.openCheckCount > 0;
+            const obsCount = summary.workUnitId
+              ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
+              : 0;
+            const canOpenObservations = canExecuteChecks && summary.workUnitId !== null;
+            const observationSelectionForStation =
+              summary.workUnitId !== null && summary.moduleNumber !== null
+                ? {
+                    workUnitId: summary.workUnitId,
+                    moduleNumber: summary.moduleNumber,
+                    projectName: summary.projectName,
+                    houseTypeName: summary.houseTypeName,
+                    houseIdentifier: summary.houseIdentifier,
+                  }
+                : null;
+            return (
+              <div key={station.id} className="flex flex-col justify-between rounded-xl border border-black/10 bg-white p-3 shadow-sm transition hover:shadow-md">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-[var(--ink)]">{station.name}</p>
+                  <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">{summary.moduleLabel}</p>
+                  {summary.workUnitLabel ? (
+                    <p className="mt-0.5 truncate text-[10px] text-[var(--ink-muted)]">
+                      {summary.workUnitLabel}
+                    </p>
+                  ) : null}
                 </div>
-                <div className="mt-3 grid gap-2">
-                  {group.stations.length ? (
-                    group.stations.map((station) => {
-                      const summary = getStationSummary(station.id);
-                      const hasOpenChecks = summary.openCheckCount > 0;
-                      const openObservationCount = summary.workUnitId
-                        ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
-                        : 0;
-                      const canOpenObservations = canExecuteChecks && summary.workUnitId !== null;
-                      const observationSelectionForStation =
-                        summary.workUnitId !== null && summary.moduleNumber !== null
-                          ? {
-                              workUnitId: summary.workUnitId,
-                              moduleNumber: summary.moduleNumber,
-                              projectName: summary.projectName,
-                              houseTypeName: summary.houseTypeName,
-                              houseIdentifier: summary.houseIdentifier,
-                            }
-                          : null;
-                      return (
-                        <div key={station.id} className="flex flex-col justify-between rounded-xl border border-black/10 bg-white p-3 shadow-sm transition hover:shadow-md">
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-[var(--ink)]">
-                              {station.name}
-                            </p>
-                            <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
-                              {summary.moduleLabel}
-                            </p>
-                            {summary.workUnitLabel ? (
-                              <p className="mt-0.5 truncate text-[10px] text-[var(--ink-muted)]">
-                                {summary.workUnitLabel}
-                              </p>
-                            ) : null}
-                          </div>
-                          
-                          <div className="mt-3 grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openStationChecks(station)}
-                              disabled={!canExecuteChecks || !hasOpenChecks}
-                              className={clsx(
-                                'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
-                                hasOpenChecks
-                                  ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
-                                  : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
-                                canExecuteChecks && hasOpenChecks
-                                  ? 'hover:-translate-y-0.5 hover:shadow-sm'
-                                  : 'opacity-70 cursor-not-allowed'
-                              )}
-                            >
-                              <ClipboardCheck className="h-3.5 w-3.5" />
-                              {summary.openCheckCount} Checks
-                            </button>
-                            
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (observationSelectionForStation) {
-                                  openObservationModal(observationSelectionForStation);
-                                }
-                              }}
-                              disabled={!canOpenObservations || !observationSelectionForStation}
-                              className={clsx(
-                                'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
-                                openObservationCount > 0
-                                  ? 'border-amber-200 bg-amber-50 text-amber-800'
-                                  : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
-                                canOpenObservations && observationSelectionForStation
-                                  ? 'hover:-translate-y-0.5 hover:shadow-sm'
-                                  : 'opacity-70 cursor-not-allowed'
-                              )}
-                            >
-                              <MessageSquare className="h-3.5 w-3.5" />
-                              {openObservationCount} Obs.
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-black/10 bg-[var(--canvas)] px-3 py-3 text-xs text-[var(--ink-muted)]">
-                      Sin estaciones configuradas.
-                    </div>
-                  )}
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openStationChecks(station)}
+                    disabled={!canExecuteChecks || !hasOpenChecks}
+                    className={clsx(
+                      'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
+                      hasOpenChecks
+                        ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                        : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
+                      canExecuteChecks && hasOpenChecks
+                        ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                        : 'opacity-70 cursor-not-allowed'
+                    )}
+                  >
+                    <ClipboardCheck className="h-3.5 w-3.5" />
+                    {summary.openCheckCount} Checks
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (observationSelectionForStation) {
+                        openObservationModal(observationSelectionForStation);
+                      }
+                    }}
+                    disabled={!canOpenObservations || !observationSelectionForStation}
+                    className={clsx(
+                      'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
+                      obsCount > 0
+                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                        : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
+                      canOpenObservations && observationSelectionForStation
+                        ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                        : 'opacity-70 cursor-not-allowed'
+                    )}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    {obsCount} Obs.
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
-        ) : null}
+            );
+          };
+          const panelStations = stationGroups.find((g) => g.id === 'panels')?.stations ?? [];
+          const lineGroups = stationGroups.filter((g) => g.id !== 'panels');
+          if (activePlantTab === 'panels') {
+            return panelStations.length ? (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                {panelStations.map(renderStationCard)}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-dashed border-black/10 bg-white px-4 py-6 text-sm text-[var(--ink-muted)]">
+                No hay estaciones de paneles configuradas.
+              </div>
+            );
+          }
+          return (
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              {lineGroups.map((group) => (
+                <div key={group.id} className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                      {group.title}
+                    </p>
+                    <span className="text-[10px] text-[var(--ink-muted)]">
+                      {group.stations.length} est.
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2">
+                    {group.stations.length ? (
+                      group.stations.map(renderStationCard)
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-black/10 bg-[var(--canvas)] px-3 py-3 text-xs text-[var(--ink-muted)]">
+                        Sin estaciones configuradas.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })() : null}
       </section>
 
       {observationSelection ? (
