@@ -462,7 +462,6 @@ class QCQualityComplaintNotification(Base):
         Enum(
             QCNotificationStatus,
             name="qcnotificationstatus",
-            values_callable=lambda enum: [item.value for item in enum],
         )
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)

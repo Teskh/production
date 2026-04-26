@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
+  AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ClipboardCheck,
   ClipboardPlus,
@@ -159,6 +161,11 @@ type ObservationModuleSelection = {
   houseIdentifier: string | null;
 };
 
+type MediaPreview = {
+  uri: string;
+  mime_type?: string | null;
+} | null;
+
 const formatTimestamp = (value: string): string => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -249,6 +256,13 @@ const buildObservationWatermarkLines = (
   lines.push(context.title?.trim() || 'Observacion QC');
   lines.push(`${formatStampDate(date)} ${formatStampTime(date)}`);
   return lines.filter(Boolean);
+};
+
+const resolveMediaUri = (uri: string): string => {
+  if (!uri) return uri;
+  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
+  if (uri.startsWith('/')) return `${API_BASE_URL}${uri}`;
+  return `${API_BASE_URL}/${uri}`;
 };
 
 const buildWorkUnitLabel = (
@@ -357,10 +371,11 @@ const QCDashboard: React.FC = () => {
   const [observationDetail, setObservationDetail] = useState<QCComplaintDetail | null>(null);
   const [observationDetailLoading, setObservationDetailLoading] = useState(false);
   const [observationError, setObservationError] = useState<string | null>(null);
+  const [observationMediaPreview, setObservationMediaPreview] = useState<MediaPreview>(null);
   const [supervisors, setSupervisors] = useState<SupervisorSummary[]>([]);
   const [newObservationOpen, setNewObservationOpen] = useState(false);
-  const [newObservationTitle, setNewObservationTitle] = useState('');
-  const [newObservationDescription, setNewObservationDescription] = useState('');
+  const newObservationTitleRef = useRef<HTMLInputElement | null>(null);
+  const newObservationDescriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const [newObservationSeverity, setNewObservationSeverity] = useState<QCSeverityLevel>('media');
   const [newObservationSupervisorIds, setNewObservationSupervisorIds] = useState<Set<number>>(
     new Set()
@@ -902,9 +917,14 @@ const QCDashboard: React.FC = () => {
     setObservationSelection(null);
     setObservationDetail(null);
     setObservationError(null);
+    setObservationMediaPreview(null);
     setNewObservationOpen(false);
-    setNewObservationTitle('');
-    setNewObservationDescription('');
+    if (newObservationTitleRef.current) {
+      newObservationTitleRef.current.value = '';
+    }
+    if (newObservationDescriptionRef.current) {
+      newObservationDescriptionRef.current.value = '';
+    }
     setNewObservationSeverity('media');
     setNewObservationSupervisorIds(new Set());
     setNewObservationFiles([]);
@@ -985,7 +1005,9 @@ const QCDashboard: React.FC = () => {
     if (!observationSelection) {
       return;
     }
-    if (!newObservationTitle.trim() || !newObservationDescription.trim()) {
+    const title = newObservationTitleRef.current?.value.trim() ?? '';
+    const description = newObservationDescriptionRef.current?.value.trim() ?? '';
+    if (!title || !description) {
       setObservationError('Titulo y descripcion son obligatorios.');
       return;
     }
@@ -1004,8 +1026,8 @@ const QCDashboard: React.FC = () => {
           work_unit_id: observationSelection.workUnitId,
           panel_unit_id: null,
           station_id: null,
-          title: newObservationTitle.trim(),
-          description: newObservationDescription.trim(),
+          title,
+          description,
           severity_level: newObservationSeverity,
           supervisor_ids: Array.from(newObservationSupervisorIds),
         }),
@@ -1020,8 +1042,12 @@ const QCDashboard: React.FC = () => {
         await uploadObservationFiles(created.id, initialEvent.id, newObservationFiles);
       }
       setNewObservationOpen(false);
-      setNewObservationTitle('');
-      setNewObservationDescription('');
+      if (newObservationTitleRef.current) {
+        newObservationTitleRef.current.value = '';
+      }
+      if (newObservationDescriptionRef.current) {
+        newObservationDescriptionRef.current.value = '';
+      }
       setNewObservationSeverity('media');
       setNewObservationSupervisorIds(new Set());
       setNewObservationFiles([]);
@@ -1033,6 +1059,41 @@ const QCDashboard: React.FC = () => {
       );
     } finally {
       setNewObservationSubmitting(false);
+    }
+  };
+  const reviewModuleObservationClosure = async (action: 'accept-closure' | 'reject-closure') => {
+    if (!observationDetail) {
+      return;
+    }
+    const message =
+      action === 'accept-closure'
+        ? window.prompt('Comentario opcional para aceptar el cierre') ?? ''
+        : window.prompt('Motivo para rechazar el cierre') ?? '';
+    if (action === 'reject-closure' && !message.trim()) {
+      setObservationError('Indique un motivo para rechazar el cierre.');
+      return;
+    }
+    setObservationError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/qc/complaints/${observationDetail.id}/${action}`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        }
+      );
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      setObservationDetail((await response.json()) as QCComplaintDetail);
+      await loadObservations();
+    } catch (error) {
+      setObservationError(
+        error instanceof Error ? error.message : 'No se pudo revisar el cierre.'
+      );
     }
   };
   const handleExportReport = async () => {
@@ -1677,14 +1738,12 @@ const QCDashboard: React.FC = () => {
                   <div className="mb-4 rounded-2xl border border-black/10 bg-[var(--canvas)] p-3">
                     <div className="grid gap-2">
                       <input
-                        value={newObservationTitle}
-                        onChange={(event) => setNewObservationTitle(event.target.value)}
+                        ref={newObservationTitleRef}
                         placeholder="Titulo"
                         className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
                       />
                       <textarea
-                        value={newObservationDescription}
-                        onChange={(event) => setNewObservationDescription(event.target.value)}
+                        ref={newObservationDescriptionRef}
                         placeholder="Descripcion"
                         rows={3}
                         className="resize-none rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
@@ -1738,7 +1797,7 @@ const QCDashboard: React.FC = () => {
                               projectName: observationSelection.projectName,
                               houseIdentifier: observationSelection.houseIdentifier,
                               moduleNumber: observationSelection.moduleNumber,
-                              title: newObservationTitle,
+                              title: newObservationTitleRef.current?.value ?? '',
                             })
                           }
                           onCapture={(file) =>
@@ -1878,23 +1937,38 @@ const QCDashboard: React.FC = () => {
                     <div className="mt-4 space-y-3">
                       {observationDetail.events.map((event) => {
                         const fromQc = event.actor_type === 'qc';
+                        const isStatusEvent =
+                          event.event_type === 'closure_accepted' ||
+                          event.event_type === 'closure_rejected';
+                        const isPendingClosureProposal =
+                          event.event_type === 'closure_proposed' &&
+                          observationDetail.status === 'ClosureProposed';
                         return (
                           <div
                             key={event.id}
                             className={clsx('flex', fromQc ? 'justify-end' : 'justify-start')}
                           >
+                            <div className={clsx('flex max-w-[82%] flex-col', fromQc ? 'items-end' : 'items-start')}>
                             <div
                               className={clsx(
-                                'max-w-[82%] rounded-2xl px-4 py-3 text-sm',
-                                fromQc
+                                isStatusEvent
+                                  ? 'max-w-[90%] rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900'
+                                  : 'max-w-[82%] rounded-2xl px-4 py-3 text-sm',
+                                !isStatusEvent && fromQc
                                   ? 'bg-[var(--ink)] text-white'
-                                  : 'bg-slate-100 text-[var(--ink)]'
+                                  : !isStatusEvent
+                                  ? 'bg-slate-100 text-[var(--ink)]'
+                                  : ''
                               )}
                             >
                               <p
                                 className={clsx(
                                   'mb-1 text-[11px]',
-                                  fromQc ? 'text-white/70' : 'text-[var(--ink-muted)]'
+                                  isStatusEvent
+                                    ? 'font-semibold uppercase tracking-wide text-amber-700'
+                                    : fromQc
+                                    ? 'text-white/70'
+                                    : 'text-[var(--ink-muted)]'
                                 )}
                               >
                                 {event.actor_name ?? (fromQc ? 'Calidad' : 'Supervisor')} ·{' '}
@@ -1906,30 +1980,60 @@ const QCDashboard: React.FC = () => {
                               ) : null}
                               {event.media.length ? (
                                 <div className="mt-3 grid grid-cols-2 gap-2">
-                                  {event.media.map((media) => (
-                                    <a
-                                      key={media.id}
-                                      href={`${API_BASE_URL}${media.uri}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="block overflow-hidden rounded-lg bg-black/10"
-                                    >
-                                      {media.mime_type.startsWith('image/') ? (
+                                  {event.media.map((media) => {
+                                    const mediaSrc = resolveMediaUri(media.uri);
+                                    return (
+                                      <button
+                                        key={media.id}
+                                        type="button"
+                                        onClick={() =>
+                                          setObservationMediaPreview({
+                                            uri: media.uri,
+                                            mime_type: media.mime_type,
+                                          })
+                                        }
+                                        className="block overflow-hidden rounded-lg bg-black/10"
+                                      >
+                                        {media.mime_type.startsWith('image/') ? (
                                         <img
-                                          src={`${API_BASE_URL}${media.uri}`}
+                                          src={mediaSrc}
                                           alt=""
                                           className="h-28 w-full object-cover"
                                         />
-                                      ) : (
+                                        ) : (
                                         <video
-                                          src={`${API_BASE_URL}${media.uri}`}
+                                          src={mediaSrc}
                                           className="h-28 w-full object-cover"
+                                          muted
+                                          playsInline
                                         />
-                                      )}
-                                    </a>
-                                  ))}
+                                        )}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                               ) : null}
+                            </div>
+                            {isPendingClosureProposal ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void reviewModuleObservationClosure('accept-closure')}
+                                  className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Cerrar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void reviewModuleObservationClosure('reject-closure')}
+                                  className="inline-flex items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white"
+                                >
+                                  <AlertTriangle className="h-3.5 w-3.5" />
+                                  Rechazar
+                                </button>
+                              </div>
+                            ) : null}
                             </div>
                           </div>
                         );
@@ -1943,6 +2047,35 @@ const QCDashboard: React.FC = () => {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {observationMediaPreview ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4">
+          <div className="relative flex max-h-[92vh] w-full max-w-6xl items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setObservationMediaPreview(null)}
+              className="absolute right-0 top-0 z-10 rounded-full bg-white/90 p-2 text-[var(--ink)] shadow-lg transition hover:bg-white"
+              aria-label="Cerrar vista previa"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            {(observationMediaPreview.mime_type ?? '').startsWith('video/') ? (
+              <video
+                src={resolveMediaUri(observationMediaPreview.uri)}
+                className="max-h-[88vh] max-w-full rounded-xl bg-black object-contain"
+                controls
+                autoPlay
+              />
+            ) : (
+              <img
+                src={resolveMediaUri(observationMediaPreview.uri)}
+                alt=""
+                className="max-h-[88vh] max-w-full rounded-xl bg-black object-contain"
+              />
+            )}
           </div>
         </div>
       ) : null}

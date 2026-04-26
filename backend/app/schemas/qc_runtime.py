@@ -45,6 +45,7 @@ class QCReworkTaskSummary(BaseModel):
     description: str
     status: QCReworkStatus
     check_status: QCCheckStatus | None = None
+    severity_level: QCSeverityLevel | None = None
     task_status: TaskStatus | None = None
     work_unit_id: int
     panel_unit_id: int | None = None

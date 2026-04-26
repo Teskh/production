@@ -339,6 +339,82 @@ def _create_event(
     return event
 
 
+def _load_supervisor_complaint(
+    db: Session, complaint_id: int, supervisor: WorkerSupervisor
+) -> QCQualityComplaint:
+    complaint = db.execute(
+        select(QCQualityComplaint)
+        .join(QCQualityComplaintSupervisor)
+        .options(selectinload(QCQualityComplaint.supervisors))
+        .where(QCQualityComplaint.id == complaint_id)
+        .where(QCQualityComplaintSupervisor.supervisor_id == supervisor.id)
+    ).scalar_one_or_none()
+    if not complaint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
+    return complaint
+
+
+def _store_event_media(
+    db: Session,
+    complaint: QCQualityComplaint,
+    event: QCQualityComplaintEvent,
+    file: UploadFile,
+) -> QCComplaintMediaRead:
+    if complaint.status == QCComplaintStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
+    if not file.content_type or not file.content_type.startswith(QC_COMPLAINT_MIME_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only image and video uploads are supported",
+        )
+
+    QC_COMPLAINT_DIR.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "").suffix or ""
+    storage_key = f"qc_complaints/{uuid4().hex}{ext}"
+    dest_path = MEDIA_GALLERY_DIR / storage_key
+    size_bytes = _store_upload(file, dest_path)
+    now = utc_now()
+    asset = MediaAsset(
+        storage_key=storage_key,
+        mime_type=file.content_type or "application/octet-stream",
+        size_bytes=size_bytes,
+        width=None,
+        height=None,
+        watermark_text=None,
+        created_at=now,
+    )
+    db.add(asset)
+    db.flush()
+    if event.event_type == QCComplaintEventType.CREATED:
+        role = QCComplaintMediaRole.INITIAL
+    elif event.event_type == QCComplaintEventType.CLOSURE_PROPOSED:
+        role = QCComplaintMediaRole.CLOSURE_PROPOSAL
+    elif event.event_type == QCComplaintEventType.CLOSURE_REJECTED:
+        role = QCComplaintMediaRole.QC_REJECTION
+    else:
+        role = QCComplaintMediaRole.COMMENT
+    media = QCQualityComplaintMedia(
+        complaint_id=complaint.id,
+        event_id=event.id,
+        media_asset_id=asset.id,
+        role=role,
+        created_at=now,
+    )
+    complaint.updated_at = now
+    db.add(media)
+    db.commit()
+    db.refresh(media)
+    return QCComplaintMediaRead(
+        id=media.id,
+        event_id=event.id,
+        media_asset_id=asset.id,
+        role=media.role,
+        uri=f"/media_gallery/{storage_key}",
+        mime_type=asset.mime_type,
+        created_at=media.created_at,
+    )
+
+
 @router.get("/complaints", response_model=list[QCComplaintSummary])
 def list_complaints(
     status_filter: QCComplaintStatus | None = Query(None, alias="status"),
@@ -346,9 +422,7 @@ def list_complaints(
     supervisor_id: int | None = None,
     severity_level: QCSeverityLevel | None = None,
     db: Session = Depends(get_db),
-    admin: AdminUser = Depends(get_current_admin),
 ) -> list[QCComplaintSummary]:
-    _require_qc_admin(admin)
     stmt = (
         select(QCQualityComplaint)
         .options(selectinload(QCQualityComplaint.supervisors))
@@ -388,6 +462,121 @@ def list_current_supervisor_complaints(
         stmt = stmt.where(QCQualityComplaint.work_unit_id == work_unit_id)
     complaints = list(db.execute(stmt).scalars().unique())
     return _build_summaries(db, complaints)
+
+
+def _build_detail(db: Session, complaint: QCQualityComplaint) -> QCComplaintDetail:
+    summary = _build_summaries(db, [complaint])[0]
+    events = list(
+        db.execute(
+            select(QCQualityComplaintEvent)
+            .where(QCQualityComplaintEvent.complaint_id == complaint.id)
+            .order_by(QCQualityComplaintEvent.created_at, QCQualityComplaintEvent.id)
+        ).scalars()
+    )
+    _, media_by_event = _media_for_complaints(db, [complaint.id])
+    names = _actor_names(db, events)
+    event_reads = [
+        QCComplaintEventRead(
+            id=event.id,
+            complaint_id=event.complaint_id,
+            actor_type=event.actor_type,
+            actor_user_id=event.actor_user_id,
+            actor_supervisor_id=event.actor_supervisor_id,
+            actor_name=names.get(("admin", event.actor_user_id))
+            if event.actor_user_id
+            else names.get(("supervisor", event.actor_supervisor_id))
+            if event.actor_supervisor_id
+            else None,
+            event_type=event.event_type,
+            message=event.message,
+            created_at=event.created_at,
+            media=media_by_event.get(event.id, []),
+        )
+        for event in events
+    ]
+    return QCComplaintDetail(**summary.model_dump(), events=event_reads)
+
+
+@router.get("/supervisor/complaints/{complaint_id}", response_model=QCComplaintDetail)
+def get_current_supervisor_complaint(
+    complaint_id: int,
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> QCComplaintDetail:
+    complaint = _load_supervisor_complaint(db, complaint_id, supervisor)
+    return _build_detail(db, complaint)
+
+
+@router.post("/supervisor/complaints/{complaint_id}/events", response_model=QCComplaintEventRead)
+def add_supervisor_comment(
+    complaint_id: int,
+    payload: QCComplaintEventCreate,
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> QCComplaintEventRead:
+    complaint = _load_supervisor_complaint(db, complaint_id, supervisor)
+    if complaint.status == QCComplaintStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message is required")
+    event = _create_event(
+        db,
+        complaint,
+        actor_type=QCComplaintActorType.SUPERVISOR,
+        event_type=QCComplaintEventType.COMMENT,
+        message=payload.message,
+        supervisor=supervisor,
+    )
+    db.commit()
+    return _build_detail(db, complaint).events[-1]
+
+
+@router.post("/supervisor/complaints/{complaint_id}/propose-closure", response_model=QCComplaintEventRead)
+def propose_supervisor_closure(
+    complaint_id: int,
+    payload: QCComplaintClosureReview,
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> QCComplaintEventRead:
+    complaint = _load_supervisor_complaint(db, complaint_id, supervisor)
+    if complaint.status == QCComplaintStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
+    now = utc_now()
+    complaint.status = QCComplaintStatus.CLOSURE_PROPOSED
+    complaint.closure_proposed_at = now
+    event = _create_event(
+        db,
+        complaint,
+        actor_type=QCComplaintActorType.SUPERVISOR,
+        event_type=QCComplaintEventType.CLOSURE_PROPOSED,
+        message=payload.message,
+        supervisor=supervisor,
+    )
+    db.commit()
+    return _build_detail(db, complaint).events[-1]
+
+
+@router.post(
+    "/supervisor/complaints/{complaint_id}/events/{event_id}/media",
+    response_model=QCComplaintMediaRead,
+)
+def upload_supervisor_event_media(
+    complaint_id: int,
+    event_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> QCComplaintMediaRead:
+    complaint = _load_supervisor_complaint(db, complaint_id, supervisor)
+    event = db.get(QCQualityComplaintEvent, event_id)
+    if (
+        not event
+        or event.complaint_id != complaint_id
+        or event.actor_type != QCComplaintActorType.SUPERVISOR
+        or event.actor_supervisor_id != supervisor.id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint event not found")
+    return _store_event_media(db, complaint, event, file)
 
 
 @router.post("/complaints", response_model=QCComplaintDetail, status_code=status.HTTP_201_CREATED)
@@ -442,16 +631,14 @@ def create_complaint(
         admin=admin,
     )
     db.commit()
-    return get_complaint(complaint.id, db, admin)
+    return get_complaint(complaint.id, db)
 
 
 @router.get("/complaints/{complaint_id}", response_model=QCComplaintDetail)
 def get_complaint(
     complaint_id: int,
     db: Session = Depends(get_db),
-    admin: AdminUser = Depends(get_current_admin),
 ) -> QCComplaintDetail:
-    _require_qc_admin(admin)
     complaint = db.execute(
         select(QCQualityComplaint)
         .options(selectinload(QCQualityComplaint.supervisors))
@@ -459,36 +646,7 @@ def get_complaint(
     ).scalar_one_or_none()
     if not complaint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
-    summary = _build_summaries(db, [complaint])[0]
-    events = list(
-        db.execute(
-            select(QCQualityComplaintEvent)
-            .where(QCQualityComplaintEvent.complaint_id == complaint.id)
-            .order_by(QCQualityComplaintEvent.created_at, QCQualityComplaintEvent.id)
-        ).scalars()
-    )
-    _, media_by_event = _media_for_complaints(db, [complaint.id])
-    names = _actor_names(db, events)
-    event_reads = [
-        QCComplaintEventRead(
-            id=event.id,
-            complaint_id=event.complaint_id,
-            actor_type=event.actor_type,
-            actor_user_id=event.actor_user_id,
-            actor_supervisor_id=event.actor_supervisor_id,
-            actor_name=names.get(("admin", event.actor_user_id))
-            if event.actor_user_id
-            else names.get(("supervisor", event.actor_supervisor_id))
-            if event.actor_supervisor_id
-            else None,
-            event_type=event.event_type,
-            message=event.message,
-            created_at=event.created_at,
-            media=media_by_event.get(event.id, []),
-        )
-        for event in events
-    ]
-    return QCComplaintDetail(**summary.model_dump(), events=event_reads)
+    return _build_detail(db, complaint)
 
 
 @router.post("/complaints/{complaint_id}/events", response_model=QCComplaintEventRead)
@@ -519,7 +677,7 @@ def add_qc_comment(
         admin=admin,
     )
     db.commit()
-    return get_complaint(complaint_id, db, admin).events[-1]
+    return get_complaint(complaint_id, db).events[-1]
 
 
 @router.post("/complaints/{complaint_id}/events/{event_id}/media", response_model=QCComplaintMediaRead)
@@ -535,56 +693,9 @@ def upload_event_media(
     if not event or event.complaint_id != complaint_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint event not found")
     complaint = db.get(QCQualityComplaint, complaint_id)
-    if not complaint or complaint.status == QCComplaintStatus.CLOSED:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
-    if not file.content_type or not file.content_type.startswith(QC_COMPLAINT_MIME_PREFIXES):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only image and video uploads are supported",
-        )
-
-    QC_COMPLAINT_DIR.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "").suffix or ""
-    storage_key = f"qc_complaints/{uuid4().hex}{ext}"
-    dest_path = MEDIA_GALLERY_DIR / storage_key
-    size_bytes = _store_upload(file, dest_path)
-    now = utc_now()
-    asset = MediaAsset(
-        storage_key=storage_key,
-        mime_type=file.content_type or "application/octet-stream",
-        size_bytes=size_bytes,
-        width=None,
-        height=None,
-        watermark_text=None,
-        created_at=now,
-    )
-    db.add(asset)
-    db.flush()
-    role = (
-        QCComplaintMediaRole.INITIAL
-        if event.event_type == QCComplaintEventType.CREATED
-        else QCComplaintMediaRole.COMMENT
-    )
-    media = QCQualityComplaintMedia(
-        complaint_id=complaint_id,
-        event_id=event_id,
-        media_asset_id=asset.id,
-        role=role,
-        created_at=now,
-    )
-    complaint.updated_at = now
-    db.add(media)
-    db.commit()
-    db.refresh(media)
-    return QCComplaintMediaRead(
-        id=media.id,
-        event_id=event_id,
-        media_asset_id=asset.id,
-        role=media.role,
-        uri=f"/media_gallery/{storage_key}",
-        mime_type=asset.mime_type,
-        created_at=media.created_at,
-    )
+    if not complaint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
+    return _store_event_media(db, complaint, event, file)
 
 
 @router.post("/complaints/{complaint_id}/accept-closure", response_model=QCComplaintDetail)
@@ -602,6 +713,11 @@ def accept_closure(
     ).scalar_one_or_none()
     if not complaint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
+    if complaint.status != QCComplaintStatus.CLOSURE_PROPOSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Complaint does not have a pending closure proposal",
+        )
     now = utc_now()
     complaint.status = QCComplaintStatus.CLOSED
     complaint.closed_at = now
@@ -615,7 +731,7 @@ def accept_closure(
         admin=admin,
     )
     db.commit()
-    return get_complaint(complaint_id, db, admin)
+    return get_complaint(complaint_id, db)
 
 
 @router.post("/complaints/{complaint_id}/reject-closure", response_model=QCComplaintDetail)
@@ -633,6 +749,11 @@ def reject_closure(
     ).scalar_one_or_none()
     if not complaint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
+    if complaint.status != QCComplaintStatus.CLOSURE_PROPOSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Complaint does not have a pending closure proposal",
+        )
     complaint.status = QCComplaintStatus.OPEN
     complaint.closure_proposed_at = None
     _create_event(
@@ -644,7 +765,7 @@ def reject_closure(
         admin=admin,
     )
     db.commit()
-    return get_complaint(complaint_id, db, admin)
+    return get_complaint(complaint_id, db)
 
 
 @router.delete("/complaints/{complaint_id}", status_code=status.HTTP_204_NO_CONTENT)

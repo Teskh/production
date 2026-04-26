@@ -11,7 +11,11 @@ from sqlalchemy import case, delete, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_admin, get_current_worker, get_db
+from app.api.deps import (
+    get_current_admin,
+    get_current_worker,
+    get_db,
+)
 from app.core.config import BASE_DIR
 from app.core.security import utc_now
 from app.models.admin import AdminUser
@@ -276,6 +280,7 @@ def _build_rework_summary(
     current_station_id: int | None,
     current_station_name: str | None,
     check_status: QCCheckStatus | None = None,
+    severity_level=None,
     task_status: TaskStatus | None = None,
     project_name: str | None = None,
     house_type_name: str | None = None,
@@ -287,6 +292,7 @@ def _build_rework_summary(
         description=rework.description,
         status=rework.status,
         check_status=check_status,
+        severity_level=severity_level,
         task_status=task_status,
         work_unit_id=work_unit_id,
         panel_unit_id=panel_unit_id,
@@ -550,6 +556,7 @@ def qc_dashboard(
                 current_station_id,
                 current_station_name,
                 check_instance.status,
+                check_instance.severity_level,
                 task_status,
                 project_name,
                 house_type_name,
@@ -584,10 +591,8 @@ def qc_dashboard_excel_report(
 @router.get("/check-instances/{check_instance_id}", response_model=QCCheckInstanceDetail)
 def qc_check_instance_detail(
     check_instance_id: int,
-    _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCCheckInstanceDetail:
-    _require_qc_admin(_admin)
     instance = db.get(QCCheckInstance, check_instance_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
@@ -775,6 +780,7 @@ def qc_check_instance_detail(
             current_station_id,
             current_station_name,
             instance.status,
+            instance.severity_level,
             (
                 db.execute(
                     select(TaskInstance.status)
@@ -1778,6 +1784,7 @@ def library_work_unit_detail(
                 current_station_id,
                 current_station_name,
                 check_instance.status if check_instance else None,
+                check_instance.severity_level if check_instance else None,
                 (
                     db.execute(
                         select(TaskInstance.status)

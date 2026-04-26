@@ -636,26 +636,6 @@ const QCComplaints: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {detail.status === 'ClosureProposed' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void reviewClosure('accept-closure')}
-                          className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
-                        >
-                          <CheckCircle2 className="h-4 w-4" />
-                          Aceptar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void reviewClosure('reject-closure')}
-                          className="inline-flex items-center gap-2 rounded-full bg-amber-600 px-3 py-2 text-xs font-semibold text-white"
-                        >
-                          <AlertTriangle className="h-4 w-4" />
-                          Rechazar
-                        </button>
-                      </>
-                    )}
                     {detail.status !== 'Closed' && (
                       <button
                         type="button"
@@ -685,21 +665,46 @@ const QCComplaints: React.FC = () => {
                   <div className="space-y-4">
                     {detail.events.map((event) => {
                       const fromQc = event.actor_type === 'qc';
+                      const isStatusEvent =
+                        event.event_type === 'closure_accepted' ||
+                        event.event_type === 'closure_rejected';
+                      const isPendingClosureProposal =
+                        event.event_type === 'closure_proposed' &&
+                        detail.status === 'ClosureProposed';
                       return (
-                        <div key={event.id} className={clsx('flex', fromQc ? 'justify-end' : 'justify-start')}>
+                        <div
+                          key={event.id}
+                          className={clsx('flex', fromQc ? 'justify-end' : 'justify-start')}
+                        >
+                          <div className={clsx('flex max-w-[78%] flex-col', fromQc ? 'items-end' : 'items-start')}>
                           <div
                             className={clsx(
-                              'max-w-[78%] rounded-lg px-4 py-3 text-sm shadow-sm',
-                              fromQc ? 'bg-[var(--ink)] text-white' : 'bg-slate-100 text-[var(--ink)]'
+                              isStatusEvent
+                                ? 'max-w-[90%] rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900'
+                                : 'max-w-[78%] rounded-lg px-4 py-3 text-sm shadow-sm',
+                              !isStatusEvent && fromQc
+                                ? 'bg-[var(--ink)] text-white'
+                                : !isStatusEvent
+                                ? 'bg-slate-100 text-[var(--ink)]'
+                                : ''
                             )}
                           >
-                            <div className={clsx('mb-1 text-[11px]', fromQc ? 'text-white/70' : 'text-[var(--ink-muted)]')}>
+                            <div
+                              className={clsx(
+                                'mb-1 text-[11px]',
+                                isStatusEvent
+                                  ? 'font-semibold uppercase tracking-wide text-amber-700'
+                                  : fromQc
+                                  ? 'text-white/70'
+                                  : 'text-[var(--ink-muted)]'
+                              )}
+                            >
                               {event.actor_name ?? (fromQc ? 'Calidad' : 'Supervisor')} · {eventLabels[event.event_type]} ·{' '}
                               {formatDateTimeShort(event.created_at)}
                             </div>
                             {event.message && <div className="whitespace-pre-wrap">{event.message}</div>}
-                            {event.media.length > 0 && (
-                              <div className="mt-3 grid grid-cols-2 gap-2">
+                              {event.media.length > 0 && (
+                                <div className="mt-3 grid grid-cols-2 gap-2">
                                 {event.media.map((media) => (
                                   <a
                                     key={media.id}
@@ -720,7 +725,28 @@ const QCComplaints: React.FC = () => {
                                   </a>
                                 ))}
                               </div>
-                            )}
+                              )}
+                            </div>
+                            {isPendingClosureProposal ? (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void reviewClosure('accept-closure')}
+                                  className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Aceptar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void reviewClosure('reject-closure')}
+                                  className="inline-flex items-center gap-2 rounded-full bg-amber-600 px-3 py-2 text-xs font-semibold text-white"
+                                >
+                                  <AlertTriangle className="h-4 w-4" />
+                                  Rechazar
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
