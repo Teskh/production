@@ -1189,7 +1189,7 @@ const PanelLineSupervisorView: React.FC = () => {
                   </table>
                 )
               ) : (
-                <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid gap-x-4 gap-y-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {visibleStations.length === 0 ? (
                     <div className="col-span-full py-12 text-center text-gray-400">
                       No hay estaciones configuradas para esta vista.
@@ -1198,42 +1198,128 @@ const PanelLineSupervisorView: React.FC = () => {
                     visibleStations.map((station) => {
                       const stationSnapshot = snapshots[station.id];
                       const workItems = stationSnapshot?.work_items.filter((wi) => !isMagazineStatus(wi.status)) || [];
-                      
+
+                      const groupedWorkItems = Object.values(
+                        workItems.reduce((acc, wu) => {
+                          const key = `${wu.house_identifier}-${wu.module_number}`;
+                          if (!acc[key]) {
+                            acc[key] = {
+                              id: key,
+                              house_identifier: wu.house_identifier,
+                              module_number: wu.module_number,
+                              project_name: wu.project_name,
+                              house_type_name: wu.house_type_name,
+                              panels: []
+                            };
+                          }
+                          acc[key].panels.push(wu);
+                          return acc;
+                        }, {} as Record<string, {
+                          id: string;
+                          house_identifier: string;
+                          module_number: number;
+                          project_name: string;
+                          house_type_name: string;
+                          panels: typeof workItems;
+                        }>)
+                      );
+
                       return (
-                        <div 
-                          key={station.id} 
-                          className="bg-white border border-gray-100 hover:border-gray-200 transition-colors rounded-2xl p-5 flex flex-col shadow-sm"
+                        <div
+                          key={station.id}
+                          className="flex flex-col relative group/station"
                         >
-                          <div className="flex items-center gap-3 mb-5">
-                            <div className="bg-blue-50 text-blue-600 p-2.5 rounded-xl shrink-0">
-                              <MapPin className="w-5 h-5" />
-                            </div>
-                            <h3 className="font-bold text-gray-900 text-lg truncate" title={station.name}>
-                              {station.name}
-                            </h3>
-                          </div>
-                          
-                          <div className="flex-1 flex flex-col gap-3">
-                            {workItems.length > 0 ? (
-                              workItems.map(wu => (
-                                <div key={wu.id} className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-bold text-gray-900">{wu.house_identifier}</span>
-                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
-                                      M{wu.module_number}
+                          <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider truncate mb-1.5 border-b border-gray-900 pb-1.5" title={station.name}>
+                            {station.name}
+                          </h3>
+
+                          <div className="flex-1 flex flex-col gap-0 divide-y divide-gray-100 border-t border-gray-100">
+                            {groupedWorkItems.length > 0 ? (
+                              groupedWorkItems.map(group => (
+                                <div key={group.id} className="py-2.5 flex flex-col gap-1 group/house">
+                                  <div className="flex items-center gap-1 min-w-0 text-xs text-gray-500">
+                                    <span className="font-bold text-gray-950 tabular-nums">
+                                      {group.house_identifier}
                                     </span>
-                                    <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
-                                      {formatProjectInitials(wu.project_name)}
+                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1 py-0.5 rounded shrink-0">
+                                      M{group.module_number}
+                                    </span>
+                                    <span className="flex-none text-[10px] font-bold text-gray-500 bg-gray-100 px-1 py-0.5 rounded">
+                                      {formatProjectInitials(group.project_name)}
+                                    </span>
+                                    <span className="truncate" title={group.house_type_name}>
+                                      {group.house_type_name}
                                     </span>
                                   </div>
-                                  <div className="text-sm text-gray-500 truncate" title={wu.house_type_name}>
-                                    {wu.house_type_name}
+
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {group.panels.map(wu => {
+                                      const alerts = alertsByWorkUnit.get(wu.work_unit_id);
+                                      const hasAlerts = alerts && (alerts.reworks > 0 || alerts.complaints > 0 || alerts.failedChecks > 0);
+
+                                      return (
+                                        <div 
+                                          key={wu.id} 
+                                          className={clsx(
+                                            "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all",
+                                            hasAlerts 
+                                              ? "bg-white border-red-200 shadow-sm" 
+                                              : "bg-gray-50 border-gray-200/60 text-gray-600 hover:border-gray-300"
+                                          )}
+                                        >
+                                          <span className={clsx(hasAlerts && "text-gray-900")}>
+                                            {wu.panel_code || 'S/N'}
+                                          </span>
+
+                                          {hasAlerts && (
+                                            <div className="flex items-center gap-0.5 border-l border-gray-100 pl-1 ml-0.5">
+                                              {alerts.reworks > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setAlertModal({ kind: 'reworks', workItem: wu })}
+                                                  className={severityTextClass(alerts.maxCheckSeverity)}
+                                                  title={`Re-trabajos abiertos (${severityLabel(alerts.maxCheckSeverity)})`}
+                                                >
+                                                  <Wrench className="h-2.5 w-2.5" />
+                                                </button>
+                                              )}
+                                              {alerts.complaints > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setAlertModal({ kind: 'complaints', workItem: wu })}
+                                                  className={
+                                                    alerts.maxComplaintSeverity === 'critica'
+                                                      ? 'text-rose-600 hover:text-rose-800'
+                                                      : alerts.maxComplaintSeverity === 'media'
+                                                      ? 'text-orange-500 hover:text-orange-700'
+                                                      : 'text-slate-500 hover:text-slate-700'
+                                                  }
+                                                  title={`Observaciones abiertas (${severityLabel(alerts.maxComplaintSeverity)})`}
+                                                >
+                                                  <MessageSquare className="h-2.5 w-2.5" />
+                                                </button>
+                                              )}
+                                              {alerts.failedChecks > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setAlertModal({ kind: 'failedChecks', workItem: wu })}
+                                                  className={severityTextClass(alerts.maxCheckSeverity)}
+                                                  title={`Checks fallidos (${severityLabel(alerts.maxCheckSeverity)})`}
+                                                >
+                                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               ))
                             ) : (
-                              <div className="flex-1 flex items-center text-gray-400 text-sm font-light">
-                                Sin módulos en estación
+                              <div className="py-6 flex items-center justify-center text-gray-300 text-xs font-medium">
+                                Sin paneles en estación
                               </div>
                             )}
                           </div>
@@ -1241,8 +1327,7 @@ const PanelLineSupervisorView: React.FC = () => {
                       );
                     })
                   )}
-                </div>
-              )}
+                </div>              )}
             </div>
           </div>
         )}
