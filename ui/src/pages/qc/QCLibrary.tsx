@@ -23,7 +23,7 @@ import { formatDateTimeShort } from '../../utils/timeUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
-const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
+// const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const QC_DELETE_ROLES = new Set(['Calidad', 'QC']);
 
@@ -209,11 +209,9 @@ const apiDeleteRequest = async (path: string): Promise<void> => {
   }
 };
 
-const isWithinDeleteWindow = (openedAt: string): boolean => {
-  const openedAtMs = Date.parse(openedAt);
-  if (Number.isNaN(openedAtMs)) return false;
-  return Date.now() - openedAtMs <= CHECK_DELETE_WINDOW_MS;
-};
+// Temporarily paused. Keep the helper for the 48h delete/evidence window so it can be
+// restored without rediscovering all call sites.
+const isWithinDeleteWindow = (_openedAt: string): boolean => true;
 
 const resolveMediaUri = (uri: string): string => {
   if (!uri) return uri;
@@ -372,6 +370,9 @@ const QCLibrary: React.FC = () => {
           include_planned: 'false',
           sort: 'newest',
         });
+        if (searchTerm.trim()) {
+          params.set('q', searchTerm.trim());
+        }
         const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
           credentials: 'include',
         });
@@ -406,7 +407,7 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [qcSession, unitsRefreshToken]);
+  }, [qcSession, searchTerm, unitsRefreshToken]);
 
   const loadMoreUnits = async () => {
     if (!qcSession) return;
@@ -420,6 +421,9 @@ const QCLibrary: React.FC = () => {
         include_planned: 'false',
         sort: 'newest',
       });
+      if (searchTerm.trim()) {
+        params.set('q', searchTerm.trim());
+      }
       const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
         credentials: 'include',
       });

@@ -213,8 +213,6 @@ def _build_panel_task_plan(
         }
     planned: list[tuple[int, int, TaskDefinition, Station]] = []
     for task in panel_tasks:
-        if panel_order and task.id not in panel_order:
-            continue
         applies, sequence = resolve_task_station_sequence(
             task,
             applicability_map.get(task.id, []),

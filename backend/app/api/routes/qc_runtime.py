@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from sqlalchemy import case, delete, exists, func, or_, select, text
+from sqlalchemy import String, case, cast, delete, exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -85,7 +85,7 @@ router = APIRouter()
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 QC_EVIDENCE_DIR = MEDIA_GALLERY_DIR / "qc_evidence"
 QC_ROLE_VALUES = {"Calidad", "QC"}
-QC_DELETE_WINDOW = timedelta(hours=48)
+# QC_DELETE_WINDOW = timedelta(hours=48)
 MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024
 QC_EVIDENCE_MIME_PREFIXES = ("image/", "video/")
 
@@ -105,13 +105,15 @@ def _ensure_aware_utc(dt: datetime) -> datetime:
 
 
 def _enforce_check_within_delete_window(instance: QCCheckInstance) -> None:
-    opened_at = _ensure_aware_utc(instance.opened_at)
-    age = utc_now() - opened_at
-    if age > QC_DELETE_WINDOW:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="QC checks can only be deleted within 48 hours of opening",
-        )
+    # Temporarily paused; restore this block when the 48h QC management window is re-enabled.
+    _ = instance
+    # opened_at = _ensure_aware_utc(instance.opened_at)
+    # age = utc_now() - opened_at
+    # if age > QC_DELETE_WINDOW:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_409_CONFLICT,
+    #         detail="QC checks can only be deleted within 48 hours of opening",
+    #     )
 
 
 def _delete_media_file(storage_key: str) -> None:
@@ -1594,6 +1596,7 @@ def list_library_work_units(
     offset: int = Query(default=0, ge=0),
     include_planned: bool = Query(default=True),
     sort: str = Query(default="planned_sequence"),
+    q: str | None = Query(default=None),
     _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> list[QCLibraryWorkUnitSummary]:
@@ -1604,6 +1607,16 @@ def list_library_work_units(
     )
     if not include_planned:
         stmt = stmt.where(WorkUnit.status != WorkUnitStatus.PLANNED)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                WorkOrder.house_identifier.ilike(pattern),
+                WorkOrder.project_name.ilike(pattern),
+                HouseType.name.ilike(pattern),
+                cast(WorkUnit.module_number, String).ilike(pattern),
+            )
+        )
     if sort == "newest":
         last_exec_ts = (
             select(func.max(QCExecution.performed_at))

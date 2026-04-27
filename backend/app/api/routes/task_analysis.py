@@ -1014,11 +1014,6 @@ def get_task_analysis(
             )
             group["breakdown"].append(breakdown)
 
-        panel_task_order_set = (
-            set(panel_definition.applicable_task_ids or [])
-            if scope == TaskScope.PANEL and panel_definition and panel_definition.applicable_task_ids is not None
-            else None
-        )
         required_expected_cache: dict[
             tuple[int, int | None, int, int | None], dict[int, float] | None
         ] = {}
@@ -1041,8 +1036,6 @@ def get_task_analysis(
 
             required_expected: dict[int, float] = {}
             for task in scope_tasks:
-                if panel_task_order_set is not None and task.id not in panel_task_order_set:
-                    continue
                 applies, station_sequence = resolve_task_station_sequence(
                     task,
                     applicability_map.get(task.id, []),

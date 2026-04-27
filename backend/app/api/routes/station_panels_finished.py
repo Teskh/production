@@ -110,8 +110,6 @@ def _required_panel_task_ids(
         return set()
     required_ids: set[int] = set()
     for task in task_definitions:
-        if panel_task_order is not None and task.id not in panel_task_order:
-            continue
         applies, station_sequence = resolve_task_station_sequence(
             task,
             applicability_map.get(task.id, []),

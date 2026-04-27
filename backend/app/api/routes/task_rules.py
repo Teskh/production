@@ -44,6 +44,40 @@ def _validate_task_duration_values(
         )
 
 
+def _find_task_applicability_scope(
+    db: Session,
+    task_definition_id: int,
+    house_type_id: int | None,
+    sub_type_id: int | None,
+    module_number: int | None,
+    panel_definition_id: int | None,
+) -> TaskApplicability | None:
+    stmt = select(TaskApplicability).where(
+        TaskApplicability.task_definition_id == task_definition_id
+    )
+    stmt = stmt.where(
+        TaskApplicability.house_type_id.is_(None)
+        if house_type_id is None
+        else TaskApplicability.house_type_id == house_type_id
+    )
+    stmt = stmt.where(
+        TaskApplicability.sub_type_id.is_(None)
+        if sub_type_id is None
+        else TaskApplicability.sub_type_id == sub_type_id
+    )
+    stmt = stmt.where(
+        TaskApplicability.module_number.is_(None)
+        if module_number is None
+        else TaskApplicability.module_number == module_number
+    )
+    stmt = stmt.where(
+        TaskApplicability.panel_definition_id.is_(None)
+        if panel_definition_id is None
+        else TaskApplicability.panel_definition_id == panel_definition_id
+    )
+    return db.execute(stmt.order_by(TaskApplicability.id)).scalars().first()
+
+
 @router.get("/applicability", response_model=list[TaskApplicabilityRead])
 def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicability]:
     return list(db.execute(select(TaskApplicability).order_by(TaskApplicability.id)).scalars())
@@ -86,6 +120,19 @@ def create_task_applicability(
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Panel definition not found"
+        )
+    existing = _find_task_applicability_scope(
+        db,
+        payload.task_definition_id,
+        payload.house_type_id,
+        payload.sub_type_id,
+        payload.module_number,
+        payload.panel_definition_id,
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Task applicability scope already exists",
         )
     row = TaskApplicability(**payload.model_dump())
     db.add(row)

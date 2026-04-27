@@ -140,7 +140,7 @@ const SEVERITY_LEVELS = [
   { id: 'sev_critica', name: 'Critica', color: 'bg-red-600 text-white' },
 ];
 
-const MAX_VIDEO_DURATION_SECONDS = 60;
+const MAX_VIDEO_DURATION_SECONDS = 120;
 const MAX_VIDEO_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const VIDEO_RECORDING_MIME_TYPES = [
   'video/webm;codecs=vp9',
@@ -683,6 +683,58 @@ const QCExecution: React.FC = () => {
       return;
     }
     recorder.stop();
+  };
+
+  const addEvidenceFiles = (files: File[]) => {
+    const acceptedFiles = files.filter(
+      (file) => file.type.startsWith('image/') || file.type.startsWith('video/')
+    );
+    if (!acceptedFiles.length) {
+      setEvidenceGateError('Seleccione una foto o video valido.');
+      setActionError('Seleccione una foto o video valido.');
+      return;
+    }
+
+    const oversized = acceptedFiles.find((file) => file.size > MAX_VIDEO_EVIDENCE_BYTES);
+    if (oversized) {
+      const message = `"${oversized.name}" excede 50 MB.`;
+      setEvidenceGateError(message);
+      setActionError(message);
+      return;
+    }
+
+    const imageItems: EvidenceItem[] = [];
+    let videoItem: EvidenceItem | null = null;
+
+    for (const file of acceptedFiles) {
+      const type: EvidenceItem['type'] = file.type.startsWith('video/') ? 'video' : 'image';
+      if (type === 'video' && videoItem) {
+        continue;
+      }
+      const url = URL.createObjectURL(file);
+      evidenceUrlsRef.current.add(url);
+      const item = {
+        id: `${file.name}-${file.lastModified}-${file.size}`,
+        url,
+        type,
+        file,
+      };
+      if (type === 'video') {
+        videoItem = item;
+      } else {
+        imageItems.push(item);
+      }
+    }
+
+    setEvidence((prev) => {
+      const next = videoItem ? prev.filter((item) => item.type !== 'video') : [...prev];
+      return [...next, ...imageItems, ...(videoItem ? [videoItem] : [])];
+    });
+    if (videoItem) {
+      setPreviewEvidenceId(videoItem.id);
+    }
+    setEvidenceGateError(null);
+    setActionError(null);
   };
 
   const startVideoRecording = () => {
@@ -1236,6 +1288,22 @@ const QCExecution: React.FC = () => {
                 <span className="inline-block w-2 h-2 rounded-full bg-amber-400" aria-hidden="true" />
               )}
             </button>
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-slate-700 px-3 py-2 text-sm transition-colors hover:bg-slate-600">
+              <Image className="w-4 h-4" />
+              <span className="hidden sm:inline">Galeria</span>
+              <input
+                type="file"
+                accept="image/*,video/*"
+                multiple
+                className="hidden"
+                disabled={isSubmitting}
+                onChange={(event) => {
+                  const files = event.target.files ? Array.from(event.target.files) : [];
+                  event.target.value = '';
+                  addEvidenceFiles(files);
+                }}
+              />
+            </label>
             <button
               onClick={() => setShowNotesModal(true)}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
@@ -1347,6 +1415,21 @@ const QCExecution: React.FC = () => {
               >
                 Abrir camara
               </button>
+              <label className="cursor-pointer rounded-lg bg-slate-700 px-4 py-2 font-semibold text-slate-100 hover:bg-slate-600">
+                Desde galeria
+                <input
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = event.target.files ? Array.from(event.target.files) : [];
+                    event.target.value = '';
+                    addEvidenceFiles(files);
+                    setShowEvidenceRequiredModal(false);
+                  }}
+                />
+              </label>
             </div>
           </div>
         </div>
@@ -1420,27 +1503,27 @@ const QCExecution: React.FC = () => {
             )}
             <canvas ref={canvasRef} className="hidden" />
             {previewEvidence && (
-              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col">
-                <div className="flex-1 flex items-center justify-center p-4">
-                  {previewEvidence.type === 'video' ? (
-                    <video src={previewEvidence.url} controls className="max-h-full max-w-full" />
-                  ) : (
-                    <img src={previewEvidence.url} alt="Registro" className="max-h-full max-w-full" />
-                  )}
-                </div>
-                <div className="p-4 flex items-center justify-between">
+              <div className="absolute inset-0 z-20 grid grid-rows-[auto_minmax(0,1fr)] bg-black/90">
+                <div className="z-10 flex items-center justify-between border-b border-white/10 bg-slate-950/95 px-4 py-3">
                   <button
                     onClick={() => setPreviewEvidenceId(null)}
-                    className="px-4 py-2 text-slate-200 font-semibold hover:bg-slate-800 rounded-lg"
+                    className="rounded-full bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-700"
                   >
                     Volver
                   </button>
                   <button
                     onClick={() => removeEvidenceItem(previewEvidence.id)}
-                    className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-500"
+                    className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
                   >
                     Eliminar
                   </button>
+                </div>
+                <div className="flex min-h-0 items-center justify-center overflow-hidden p-4">
+                  {previewEvidence.type === 'video' ? (
+                    <video src={previewEvidence.url} controls className="max-h-full max-w-full" />
+                  ) : (
+                    <img src={previewEvidence.url} alt="Registro" className="max-h-full max-w-full" />
+                  )}
                 </div>
               </div>
             )}
@@ -1487,7 +1570,7 @@ const QCExecution: React.FC = () => {
                       <>
                         <div>1 video maximo</div>
                         <div className="text-slate-400">
-                          {hasVideoEvidence ? 'Video agregado' : 'Sin audio · 60s max'}
+                          {hasVideoEvidence ? 'Video agregado' : 'Sin audio · 2 min max'}
                         </div>
                       </>
                     ) : (

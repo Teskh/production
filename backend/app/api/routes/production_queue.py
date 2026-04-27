@@ -31,7 +31,10 @@ from app.schemas.production_queue import (
     ProductionQueueReorder,
     ProductionQueueUpdate,
 )
-from app.services.task_applicability import resolve_task_station_sequence
+from app.services.task_applicability import (
+    order_tasks_by_panel_metadata,
+    resolve_task_station_sequence,
+)
 
 router = APIRouter()
 
@@ -83,12 +86,7 @@ def _order_task_definitions(
     task_definitions: list[TaskDefinition],
     panel_task_order: list[int] | None,
 ) -> list[TaskDefinition]:
-    if panel_task_order is None:
-        return sorted(task_definitions, key=lambda task: task.name.lower())
-    order_index = {task_id: idx for idx, task_id in enumerate(panel_task_order)}
-    ordered = [task for task in task_definitions if task.id in order_index]
-    ordered.sort(key=lambda task: order_index[task.id])
-    return ordered
+    return order_tasks_by_panel_metadata(task_definitions, panel_task_order)
 
 
 def _pending_panel_tasks(

@@ -11,6 +11,7 @@ from app.schemas.panels import (
     PanelDefinitionRead,
     PanelDefinitionUpdate,
 )
+from app.services.task_applicability import sync_panel_task_applicability
 
 router = APIRouter()
 
@@ -67,6 +68,8 @@ def create_panel_definition(
             )
     panel_definition = PanelDefinition(**payload.model_dump())
     db.add(panel_definition)
+    db.flush()
+    sync_panel_task_applicability(db, panel_definition)
     db.commit()
     db.refresh(panel_definition)
     return panel_definition
@@ -117,6 +120,8 @@ def update_panel_definition(
             )
     for key, value in updates.items():
         setattr(panel_definition, key, value)
+    if "applicable_task_ids" in updates:
+        sync_panel_task_applicability(db, panel_definition)
     db.commit()
     db.refresh(panel_definition)
     return panel_definition

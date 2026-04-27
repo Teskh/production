@@ -7,7 +7,6 @@ import {
   Loader2,
   LogIn,
   LogOut,
-  MapPin,
   MessageSquare,
   Send,
   Wrench,
@@ -17,6 +16,7 @@ import clsx from 'clsx';
 import QCPhotoCaptureButton from '../components/QCPhotoCaptureButton';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const REFRESH_INTERVAL_MS = 30000;
 
 type Station = {
   id: number;
@@ -408,10 +408,10 @@ const PanelLineSupervisorView: React.FC = () => {
       }
     };
     fetchData();
-    const intervalId = setInterval(fetchData, 30000);
+    const intervalId = window.setInterval(fetchData, REFRESH_INTERVAL_MS);
     return () => {
       isMounted = false;
-      clearInterval(intervalId);
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -441,8 +441,10 @@ const PanelLineSupervisorView: React.FC = () => {
       }
     };
     void loadSupervisorChrome();
+    const intervalId = window.setInterval(loadSupervisorChrome, REFRESH_INTERVAL_MS);
     return () => {
       isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -469,7 +471,7 @@ const PanelLineSupervisorView: React.FC = () => {
       }
     };
     void loadComplaints();
-    const intervalId = window.setInterval(loadComplaints, 30000);
+    const intervalId = window.setInterval(loadComplaints, REFRESH_INTERVAL_MS);
     return () => {
       isMounted = false;
       window.clearInterval(intervalId);
@@ -1006,27 +1008,23 @@ const PanelLineSupervisorView: React.FC = () => {
 
           <div className="flex items-center gap-2">
             {supervisorSession ? (
-              <>
-                <span className="hidden sm:inline-flex rounded-full border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-600">
-                  Supervisor: {fullName(supervisorSession.supervisor)}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSupervisorLogout}
-                  className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Salir
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={handleSupervisorLogout}
+                className="inline-flex max-w-[min(70vw,18rem)] items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                title="Cerrar sesion de supervisor"
+              >
+                <span className="truncate">{fullName(supervisorSession.supervisor)}</span>
+                <LogOut className="h-4 w-4 shrink-0" />
+              </button>
             ) : (
               <button
                 type="button"
                 onClick={() => setLoginOpen(true)}
                 className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
               >
+                <span>Ingresar</span>
                 <LogIn className="h-4 w-4" />
-                Supervisor
               </button>
             )}
           </div>
@@ -1052,14 +1050,14 @@ const PanelLineSupervisorView: React.FC = () => {
                   <table className="w-full text-left border-collapse table-fixed min-w-[800px]">
                     <thead>
                       <tr>
-                        <th className="w-16 pb-4 border-b border-gray-200 font-semibold text-gray-400 text-[10px] uppercase tracking-widest align-bottom">
+                        <th className="w-16 pb-4 text-center border-b border-gray-200 font-semibold text-gray-400 text-[10px] uppercase tracking-widest align-bottom">
                           Est.
                         </th>
                         {assemblyGrid.lines.map((line, lineIdx) => (
                           <th
                             key={line}
                             className={clsx(
-                              'pb-4 pl-4 border-b border-gray-200 font-bold text-gray-900 align-bottom',
+                              'pb-4 px-4 text-center border-b border-gray-200 font-bold text-gray-900 align-bottom',
                               lineIdx > 0 && 'border-l border-gray-200'
                             )}
                           >
@@ -1069,12 +1067,23 @@ const PanelLineSupervisorView: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {assemblyGrid.rows.map(row => {
+                      {assemblyGrid.rows.map((row, rowIdx) => {
                         const rowLabelStation = row.stations.find(Boolean);
+                        const stripeStyle =
+                          rowIdx % 2 === 1
+                            ? { backgroundColor: 'rgba(15, 23, 42, 0.012)' }
+                            : undefined;
 
                         return (
-                        <tr key={row.sequence} className="hover:bg-gray-50/30 transition-colors group">
-                          <td className="py-4 align-top text-xs font-black text-gray-700 pt-5 tracking-wide">
+                        <tr
+                          key={row.sequence}
+                          className="transition-colors group"
+                          style={stripeStyle}
+                        >
+                          <td
+                            className="py-4 align-middle text-center text-xs font-black text-gray-700 tracking-wide"
+                            style={stripeStyle}
+                          >
                             {rowLabelStation ? getStationInitials(rowLabelStation.name) : '-'}
                           </td>
                           {row.stations.map((station, colIdx) => {
@@ -1082,7 +1091,8 @@ const PanelLineSupervisorView: React.FC = () => {
                               return (
                                 <td
                                   key={`empty-${colIdx}`}
-                                  className={clsx('p-4', colIdx > 0 && 'border-l border-gray-200')}
+                                  className={clsx('p-4 align-middle', colIdx > 0 && 'border-l border-gray-200')}
+                                  style={stripeStyle}
                                 />
                               );
                             }
@@ -1093,7 +1103,8 @@ const PanelLineSupervisorView: React.FC = () => {
                             return (
                               <td
                                 key={station.id}
-                                className={clsx('py-4 pl-4 align-top', colIdx > 0 && 'border-l border-gray-200')}
+                                className={clsx('py-4 px-4 align-middle', colIdx > 0 && 'border-l border-gray-200')}
+                                style={stripeStyle}
                               >
                                 <div className="flex flex-col gap-2">
                                   <div className="flex flex-col gap-1.5">

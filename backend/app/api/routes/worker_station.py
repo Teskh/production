@@ -48,7 +48,10 @@ from app.schemas.worker_station import (
     StationTask,
     StationWorkItem,
 )
-from app.services.task_applicability import resolve_task_station_sequence
+from app.services.task_applicability import (
+    order_tasks_by_panel_metadata,
+    resolve_task_station_sequence,
+)
 
 router = APIRouter()
 
@@ -128,15 +131,7 @@ def _build_task_lists(
         for exc in exceptions
         if exc.exception_type == TaskExceptionType.SKIP
     }
-    ordered_tasks = task_definitions
-    if panel_task_order is not None:
-        order_index = {task_id: idx for idx, task_id in enumerate(panel_task_order)}
-        ordered_tasks = sorted(
-            [task for task in task_definitions if task.id in order_index],
-            key=lambda task: order_index[task.id],
-        )
-    else:
-        ordered_tasks = sorted(task_definitions, key=lambda task: task.name.lower())
+    ordered_tasks = order_tasks_by_panel_metadata(task_definitions, panel_task_order)
 
     station_tasks: list[StationTask] = []
     other_tasks: list[StationTask] = []

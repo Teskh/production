@@ -351,7 +351,11 @@ const buildDurationsMap = (panel: PanelDefinition | null, tasks: PanelTask[]) =>
   return durations;
 };
 
-const buildPanelDraft = (panel: PanelDefinition | null, tasks: PanelTask[]): PanelDraft => {
+const buildPanelDraft = (
+  panel: PanelDefinition | null,
+  tasks: PanelTask[],
+  resolvedApplicableTaskIds?: Set<number>
+): PanelDraft => {
   const taskIds = tasks.map((task) => task.id);
   return {
     id: panel?.id,
@@ -360,7 +364,7 @@ const buildPanelDraft = (panel: PanelDefinition | null, tasks: PanelTask[]): Pan
     panel_area: formatOptionalNumber(panel?.panel_area),
     panel_length_m: formatOptionalNumber(panel?.panel_length_m),
     sub_type_id: panel?.sub_type_id ?? null,
-    applicable_task_ids: buildApplicableTaskSet(panel, taskIds),
+    applicable_task_ids: resolvedApplicableTaskIds ?? buildApplicableTaskSet(panel, taskIds),
     task_durations: buildDurationsMap(panel, tasks),
   };
 };
@@ -404,6 +408,101 @@ const groupRowsByTask = <T extends { task_definition_id: number }>(
     map.set(row.task_definition_id, list);
   });
   return map;
+};
+
+const isDefaultApplicabilityScope = (row: TaskApplicability): boolean =>
+  row.house_type_id === null &&
+  row.sub_type_id === null &&
+  row.module_number === null &&
+  row.panel_definition_id === null;
+
+const matchesApplicabilityContext = (
+  row: TaskApplicability,
+  houseTypeId: number,
+  subTypeId: number | null,
+  moduleNumber: number,
+  panelDefinitionId: number | null
+): boolean => {
+  if (row.panel_definition_id !== null && row.panel_definition_id !== panelDefinitionId) {
+    return false;
+  }
+  if (row.house_type_id !== null && row.house_type_id !== houseTypeId) {
+    return false;
+  }
+  if (row.sub_type_id !== null && row.sub_type_id !== subTypeId) {
+    return false;
+  }
+  if (row.module_number !== null && row.module_number !== moduleNumber) {
+    return false;
+  }
+  return true;
+};
+
+const applicabilityRank = (row: TaskApplicability): [number, number, number] => {
+  let level = 4;
+  if (row.panel_definition_id !== null) {
+    level = 0;
+  } else if (row.house_type_id !== null && row.module_number !== null) {
+    level = 1;
+  } else if (row.house_type_id !== null) {
+    level = 2;
+  }
+  const subtypeRank = row.sub_type_id !== null ? 0 : 1;
+  return [level, subtypeRank, row.id];
+};
+
+const compareRank = (left: [number, number, number], right: [number, number, number]) => {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return left[index] - right[index];
+    }
+  }
+  return 0;
+};
+
+const resolveApplicabilityRow = (
+  rows: TaskApplicability[],
+  houseTypeId: number,
+  subTypeId: number | null,
+  moduleNumber: number,
+  panelDefinitionId: number | null
+): TaskApplicability | null => {
+  const matches = rows.filter(
+    (row) =>
+      !isDefaultApplicabilityScope(row) &&
+      matchesApplicabilityContext(
+        row,
+        houseTypeId,
+        subTypeId,
+        moduleNumber,
+        panelDefinitionId
+      )
+  );
+  if (!matches.length) {
+    return null;
+  }
+  return matches.sort((left, right) => compareRank(applicabilityRank(left), applicabilityRank(right)))[0];
+};
+
+const resolvePanelTaskSet = (
+  panel: PanelDefinition,
+  tasks: PanelTask[],
+  applicabilityByTask: Map<number, TaskApplicability[]>
+): Set<number> => {
+  const applies = new Set<number>();
+  tasks.forEach((task) => {
+    const row = resolveApplicabilityRow(
+      applicabilityByTask.get(task.id) ?? [],
+      panel.house_type_id,
+      panel.sub_type_id,
+      panel.module_sequence_number,
+      panel.id
+    );
+    if (!row || row.applies) {
+      applies.add(task.id);
+    }
+  });
+  return applies;
 };
 
 const sortTasks = (list: ModuleTask[]) =>
@@ -1289,7 +1388,13 @@ const HouseConfigurator: React.FC = () => {
   };
 
   const openPanelModal = (panel: PanelDefinition | null) => {
-    setPanelDraft(buildPanelDraft(panel, panelTasks));
+    setPanelDraft(
+      buildPanelDraft(
+        panel,
+        panelTasks,
+        panel ? resolvePanelTaskSet(panel, panelTasks, applicabilityByTask) : undefined
+      )
+    );
     setPanelMessage(null);
     setPanelModalOpen(true);
   };
@@ -1421,6 +1526,7 @@ const HouseConfigurator: React.FC = () => {
         }
         return [...prev, saved];
       });
+      await refreshModuleRules();
       handleClosePanelModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo guardar el panel.';
@@ -1434,7 +1540,7 @@ const HouseConfigurator: React.FC = () => {
     const nextDraft: Record<number, MatrixPanelState> = {};
     filteredPanels.forEach((panel) => {
       nextDraft[panel.id] = {
-        applicable_task_ids: buildApplicableTaskSet(panel, taskIds),
+        applicable_task_ids: resolvePanelTaskSet(panel, panelTasks, applicabilityByTask),
         task_durations: buildDurationsMap(panel, panelTasks),
       };
     });
@@ -1534,6 +1640,7 @@ const HouseConfigurator: React.FC = () => {
       setPanels((prev) =>
         prev.map((panel) => updates.find((updated) => updated.id === panel.id) ?? panel)
       );
+      await refreshModuleRules();
       handleCloseMatrix();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo guardar la matriz.';
