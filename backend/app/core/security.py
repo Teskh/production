@@ -4,6 +4,8 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
+DEFAULT_SESSION_EXPIRY_HOURS = 48
+
 
 def new_session_token() -> str:
     return secrets.token_urlsafe(32)
@@ -17,5 +19,5 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def session_expiry(hours: int = 12) -> datetime:
+def session_expiry(hours: int = DEFAULT_SESSION_EXPIRY_HOURS) -> datetime:
     return utc_now() + timedelta(hours=hours)

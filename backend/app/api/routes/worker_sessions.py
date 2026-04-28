@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import WORKER_SESSION_COOKIE, get_current_worker_session, get_db
-from app.core.security import hash_token, new_session_token, session_expiry, utc_now
+from app.core.security import (
+    DEFAULT_SESSION_EXPIRY_HOURS,
+    hash_token,
+    new_session_token,
+    session_expiry,
+    utc_now,
+)
 from app.models.workers import Worker, WorkerSession
 from app.schemas.worker_sessions import (
     WorkerSessionLoginRequest,
@@ -12,7 +18,7 @@ from app.schemas.worker_sessions import (
 
 router = APIRouter()
 
-_IDLE_TIMEOUT_SECONDS = 45
+_IDLE_TIMEOUT_SECONDS = DEFAULT_SESSION_EXPIRY_HOURS * 60 * 60
 _DEFAULT_PIN = "1111"
 
 
