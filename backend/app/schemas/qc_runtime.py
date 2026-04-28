@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.models.enums import (
+    PanelUnitStatus,
     QCCheckOrigin,
     QCCheckStatus,
     QCExecutionOutcome,
@@ -10,6 +11,7 @@ from app.models.enums import (
     QCSeverityLevel,
     TaskStatus,
     TaskScope,
+    WorkUnitStatus,
 )
 
 
@@ -61,9 +63,36 @@ class QCReworkTaskSummary(BaseModel):
     created_at: datetime
 
 
+class QCPlantPanelSummary(BaseModel):
+    panel_unit_id: int
+    panel_definition_id: int
+    work_unit_id: int
+    current_station_id: int
+    current_station_name: str | None = None
+    status: PanelUnitStatus
+    module_number: int
+    project_name: str | None = None
+    house_type_name: str | None = None
+    house_identifier: str | None = None
+    panel_code: str | None = None
+
+
+class QCPlantModuleSummary(BaseModel):
+    work_unit_id: int
+    current_station_id: int
+    current_station_name: str | None = None
+    status: WorkUnitStatus
+    module_number: int
+    project_name: str | None = None
+    house_type_name: str | None = None
+    house_identifier: str | None = None
+
+
 class QCDashboardResponse(BaseModel):
     pending_checks: list[QCCheckInstanceSummary]
     rework_tasks: list[QCReworkTaskSummary]
+    plant_panels: list[QCPlantPanelSummary] = Field(default_factory=list)
+    plant_modules: list[QCPlantModuleSummary] = Field(default_factory=list)
 
 
 class QCExecutionFailureModeRead(BaseModel):

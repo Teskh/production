@@ -71,9 +71,36 @@ type QCReworkTaskSummary = {
   created_at: string;
 };
 
+type QCPlantPanelSummary = {
+  panel_unit_id: number;
+  panel_definition_id: number;
+  work_unit_id: number;
+  current_station_id: number;
+  current_station_name: string | null;
+  status: 'Planned' | 'InProgress' | 'Completed' | 'Consumed';
+  module_number: number;
+  project_name: string | null;
+  house_type_name: string | null;
+  house_identifier: string | null;
+  panel_code: string | null;
+};
+
+type QCPlantModuleSummary = {
+  work_unit_id: number;
+  current_station_id: number;
+  current_station_name: string | null;
+  status: 'Planned' | 'Panels' | 'Magazine' | 'Assembly' | 'Completed';
+  module_number: number;
+  project_name: string | null;
+  house_type_name: string | null;
+  house_identifier: string | null;
+};
+
 type QCDashboardResponse = {
   pending_checks: QCCheckInstanceSummary[];
   rework_tasks: QCReworkTaskSummary[];
+  plant_panels: QCPlantPanelSummary[];
+  plant_modules: QCPlantModuleSummary[];
 };
 
 type StationSummary = {
@@ -356,6 +383,8 @@ const QCDashboard: React.FC = () => {
   const [dashboard, setDashboard] = useState<QCDashboardResponse>({
     pending_checks: [],
     rework_tasks: [],
+    plant_panels: [],
+    plant_modules: [],
   });
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -412,7 +441,12 @@ const QCDashboard: React.FC = () => {
           return;
         }
         if (response.status === 401) {
-          setDashboard({ pending_checks: [], rework_tasks: [] });
+          setDashboard({
+            pending_checks: [],
+            rework_tasks: [],
+            plant_panels: [],
+            plant_modules: [],
+          });
           setIsUnauthorized(true);
           setErrorMessage(null);
           setLoading(false);
@@ -423,7 +457,11 @@ const QCDashboard: React.FC = () => {
           throw new Error(text || `Solicitud fallida (${response.status})`);
         }
         const data = (await response.json()) as QCDashboardResponse;
-        setDashboard(data);
+        setDashboard({
+          ...data,
+          plant_panels: data.plant_panels ?? [],
+          plant_modules: data.plant_modules ?? [],
+        });
         setIsUnauthorized(false);
         setErrorMessage(null);
         setLastUpdated(new Date());
@@ -627,6 +665,8 @@ const QCDashboard: React.FC = () => {
     });
   }, [pendingChecks, hasStationFilter, selectedStationFilterSet]);
   const reworkTasks = useMemo(() => dashboard.rework_tasks, [dashboard.rework_tasks]);
+  const plantPanels = useMemo(() => dashboard.plant_panels ?? [], [dashboard.plant_panels]);
+  const plantModules = useMemo(() => dashboard.plant_modules ?? [], [dashboard.plant_modules]);
   const activeReworkTasks = useMemo(
     () => reworkTasks.filter((task) => task.current_station_id !== null),
     [reworkTasks]
@@ -665,6 +705,35 @@ const QCDashboard: React.FC = () => {
     });
     return activity;
   }, [filteredPendingChecks, activeReworkTasks]);
+  const plantPanelsByStation = useMemo(() => {
+    const panelsByStation = new Map<number, QCPlantPanelSummary[]>();
+    plantPanels.forEach((panel) => {
+      const current = panelsByStation.get(panel.current_station_id) ?? [];
+      current.push(panel);
+      panelsByStation.set(panel.current_station_id, current);
+    });
+    panelsByStation.forEach((panels) => {
+      panels.sort((a, b) => {
+        if (a.module_number !== b.module_number) {
+          return a.module_number - b.module_number;
+        }
+        return (a.panel_code ?? '').localeCompare(b.panel_code ?? '');
+      });
+    });
+    return panelsByStation;
+  }, [plantPanels]);
+  const plantModulesByStation = useMemo(() => {
+    const modulesByStation = new Map<number, QCPlantModuleSummary[]>();
+    plantModules.forEach((module) => {
+      const current = modulesByStation.get(module.current_station_id) ?? [];
+      current.push(module);
+      modulesByStation.set(module.current_station_id, current);
+    });
+    modulesByStation.forEach((modules) => {
+      modules.sort((a, b) => a.module_number - b.module_number);
+    });
+    return modulesByStation;
+  }, [plantModules]);
   const openObservationCountsByWorkUnit = useMemo(() => {
     const counts = new Map<number, number>();
     observations.forEach((observation) => {
@@ -851,7 +920,58 @@ const QCDashboard: React.FC = () => {
   };
   const getStationSummary = (stationId: number) => {
     const activity = stationActivity.get(stationId);
+    const stationPanels = plantPanelsByStation.get(stationId) ?? [];
+    const primaryPanel = stationPanels[0] ?? null;
+    const stationModules = plantModulesByStation.get(stationId) ?? [];
+    const primaryModule = stationModules[0] ?? null;
+    const moduleFallback = () => {
+      if (!primaryModule) {
+        return null;
+      }
+      const workUnitLabel = buildWorkUnitLabel(
+        primaryModule.project_name,
+        primaryModule.house_type_name,
+        primaryModule.house_identifier
+      );
+      return {
+        moduleLabel:
+          stationModules.length > 1
+            ? `Modulo ${primaryModule.module_number} +${stationModules.length - 1}`
+            : `Modulo ${primaryModule.module_number}`,
+        workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
+        openCheckCount: 0,
+        workUnitId: primaryModule.work_unit_id,
+        moduleNumber: primaryModule.module_number,
+        projectName: primaryModule.project_name,
+        houseTypeName: primaryModule.house_type_name,
+        houseIdentifier: primaryModule.house_identifier,
+      };
+    };
     if (!activity) {
+      if (primaryPanel) {
+        const workUnitLabel = buildWorkUnitLabel(
+          primaryPanel.project_name,
+          primaryPanel.house_type_name,
+          primaryPanel.house_identifier
+        );
+        return {
+          moduleLabel:
+            stationPanels.length > 1
+              ? `${formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code)} +${stationPanels.length - 1}`
+              : formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code),
+          workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
+          openCheckCount: 0,
+          workUnitId: primaryPanel.work_unit_id,
+          moduleNumber: primaryPanel.module_number,
+          projectName: primaryPanel.project_name,
+          houseTypeName: primaryPanel.house_type_name,
+          houseIdentifier: primaryPanel.house_identifier,
+        };
+      }
+      const fallback = moduleFallback();
+      if (fallback) {
+        return fallback;
+      }
       return {
         moduleLabel: 'Sin datos',
         workUnitLabel: '',
@@ -866,6 +986,30 @@ const QCDashboard: React.FC = () => {
     const primary = activity.openChecks[0] ?? activity.reworks[0];
     const openCheckCount = activity.openChecks.length;
     if (!primary) {
+      if (primaryPanel) {
+        const workUnitLabel = buildWorkUnitLabel(
+          primaryPanel.project_name,
+          primaryPanel.house_type_name,
+          primaryPanel.house_identifier
+        );
+        return {
+          moduleLabel:
+            stationPanels.length > 1
+              ? `${formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code)} +${stationPanels.length - 1}`
+              : formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code),
+          workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
+          openCheckCount,
+          workUnitId: primaryPanel.work_unit_id,
+          moduleNumber: primaryPanel.module_number,
+          projectName: primaryPanel.project_name,
+          houseTypeName: primaryPanel.house_type_name,
+          houseIdentifier: primaryPanel.house_identifier,
+        };
+      }
+      const fallback = moduleFallback();
+      if (fallback) {
+        return { ...fallback, openCheckCount };
+      }
       return {
         moduleLabel: 'Sin datos',
         workUnitLabel: '',
@@ -1580,6 +1724,7 @@ const QCDashboard: React.FC = () => {
           const renderStationCard = (station: StationSummary) => {
             const summary = getStationSummary(station.id);
             const hasOpenChecks = summary.openCheckCount > 0;
+            const isEmptyStation = summary.workUnitId === null && !hasOpenChecks;
             const obsCount = summary.workUnitId
               ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
               : 0;
@@ -1595,7 +1740,15 @@ const QCDashboard: React.FC = () => {
                   }
                 : null;
             return (
-              <div key={station.id} className="flex flex-col justify-between rounded-xl border border-black/10 bg-white p-3 shadow-sm transition hover:shadow-md">
+              <div
+                key={station.id}
+                className={clsx(
+                  'flex flex-col justify-between rounded-xl border p-3 shadow-sm transition hover:shadow-md',
+                  isEmptyStation
+                    ? 'border-black/5 bg-slate-100/70 text-[var(--ink-muted)] opacity-75'
+                    : 'border-black/10 bg-white'
+                )}
+              >
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-[var(--ink)]">{station.name}</p>
                   <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">{summary.moduleLabel}</p>

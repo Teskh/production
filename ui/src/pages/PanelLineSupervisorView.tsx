@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -93,6 +93,12 @@ type SupervisorSession = {
   pending_protocol_count: number;
 };
 
+type QCComplaintSupervisor = {
+  id: number;
+  first_name: string;
+  last_name: string;
+};
+
 type QCComplaintSummary = {
   id: number;
   work_unit_id: number;
@@ -108,6 +114,7 @@ type QCComplaintSummary = {
   project_name: string;
   house_type_name: string;
   panel_code: string | null;
+  supervisors: QCComplaintSupervisor[];
 };
 
 type QCComplaintMedia = {
@@ -221,6 +228,9 @@ const isMagazineStatus = (value: string): boolean =>
   value.trim().toLowerCase() === 'magazine';
 
 const fullName = (person: SupervisorSummary): string =>
+  `${person.first_name} ${person.last_name}`.trim();
+
+const supervisorDisplayName = (person: QCComplaintSupervisor): string =>
   `${person.first_name} ${person.last_name}`.trim();
 
 const formatTimestamp = (value: string): string => {
@@ -341,7 +351,7 @@ const PanelLineSupervisorView: React.FC = () => {
   const [complaintDetailError, setComplaintDetailError] = useState<string | null>(null);
   const [complaintDrafts, setComplaintDrafts] = useState<Record<number, string>>({});
   const [complaintFiles, setComplaintFiles] = useState<Record<number, File[]>>({});
-  const [closureFiles, setClosureFiles] = useState<Record<number, File[]>>({});
+  const [closureProposalIds, setClosureProposalIds] = useState<Set<number>>(new Set());
   const [submittingComplaintIds, setSubmittingComplaintIds] = useState<Set<number>>(new Set());
   const [proposingClosureIds, setProposingClosureIds] = useState<Set<number>>(new Set());
   const [mediaPreview, setMediaPreview] = useState<MediaPreview>(null);
@@ -452,7 +462,7 @@ const PanelLineSupervisorView: React.FC = () => {
     let isMounted = true;
     const loadComplaints = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}${supervisorSession ? '/api/qc/supervisor/complaints' : '/api/qc/complaints'}`, {
+        const response = await fetch(`${API_BASE_URL}/api/qc/complaints`, {
           credentials: 'include',
         });
         if (!isMounted) {
@@ -460,9 +470,6 @@ const PanelLineSupervisorView: React.FC = () => {
         }
         if (response.ok) {
           setComplaints(await response.json() as QCComplaintSummary[]);
-        } else if (response.status === 401 && supervisorSession) {
-          setSupervisorSession(null);
-          setComplaints([]);
         }
       } catch {
         if (isMounted) {
@@ -476,7 +483,7 @@ const PanelLineSupervisorView: React.FC = () => {
       isMounted = false;
       window.clearInterval(intervalId);
     };
-  }, [supervisorSession]);
+  }, []);
 
   const visibleStations = useMemo(() => {
     if (activeTab === 'paneles') {
@@ -524,6 +531,15 @@ const PanelLineSupervisorView: React.FC = () => {
       .toUpperCase();
   };
 
+  const isComplaintAssignedToCurrentSupervisor = useCallback(
+    (complaint: QCComplaintSummary): boolean =>
+      Boolean(
+        supervisorSession &&
+          complaint.supervisors.some((supervisor) => supervisor.id === supervisorSession.supervisor.id)
+      ),
+    [supervisorSession]
+  );
+
   const alertsByWorkUnit = useMemo(() => {
     const alerts = new Map<
       number,
@@ -531,6 +547,7 @@ const PanelLineSupervisorView: React.FC = () => {
         failedChecks: number;
         reworks: number;
         complaints: number;
+        assignedComplaints: number;
         maxComplaintSeverity: 'baja' | 'media' | 'critica' | null;
         maxCheckSeverity: 'baja' | 'media' | 'critica' | null;
       }
@@ -544,12 +561,14 @@ const PanelLineSupervisorView: React.FC = () => {
         failedChecks: number;
         reworks: number;
         complaints: number;
+        assignedComplaints: number;
         maxComplaintSeverity: 'baja' | 'media' | 'critica' | null;
         maxCheckSeverity: 'baja' | 'media' | 'critica' | null;
       } = {
         failedChecks: 0,
         reworks: 0,
         complaints: 0,
+        assignedComplaints: 0,
         maxComplaintSeverity: null,
         maxCheckSeverity: null,
       };
@@ -587,6 +606,9 @@ const PanelLineSupervisorView: React.FC = () => {
       .forEach((complaint) => {
         const entry = ensureEntry(complaint.work_unit_id);
         entry.complaints += 1;
+        if (isComplaintAssignedToCurrentSupervisor(complaint)) {
+          entry.assignedComplaints += 1;
+        }
         
         const currentWeight = entry.maxComplaintSeverity ? severityWeights[entry.maxComplaintSeverity] : 0;
         const newWeight = severityWeights[complaint.severity_level] || 0;
@@ -597,7 +619,7 @@ const PanelLineSupervisorView: React.FC = () => {
       });
 
     return alerts;
-  }, [complaints, qcDashboard.rework_tasks]);
+  }, [complaints, isComplaintAssignedToCurrentSupervisor, qcDashboard.rework_tasks]);
 
   const selectedAlertDetails = useMemo(() => {
     if (!alertModal) {
@@ -719,7 +741,10 @@ const PanelLineSupervisorView: React.FC = () => {
     });
     void Promise.all(
       complaintIds.map(async (complaintId) => {
-        const detailPath = supervisorSession
+        const summary = (selectedAlertDetails.items as QCComplaintSummary[]).find(
+          (complaint) => complaint.id === complaintId
+        );
+        const detailPath = summary && isComplaintAssignedToCurrentSupervisor(summary)
           ? `/api/qc/supervisor/complaints/${complaintId}`
           : `/api/qc/complaints/${complaintId}`;
         const response = await fetch(`${API_BASE_URL}${detailPath}`, {
@@ -760,7 +785,7 @@ const PanelLineSupervisorView: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [alertModal, complaintDetails, selectedAlertDetails, supervisorSession]);
+  }, [alertModal, complaintDetails, isComplaintAssignedToCurrentSupervisor, selectedAlertDetails]);
 
   const handleSupervisorLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -807,22 +832,14 @@ const PanelLineSupervisorView: React.FC = () => {
       });
     } finally {
       setSupervisorSession(null);
-      setComplaints([]);
     }
   };
 
   const refreshSupervisorComplaints = async () => {
-    if (!supervisorSession) {
-      return;
-    }
-    const response = await fetch(`${API_BASE_URL}/api/qc/supervisor/complaints`, {
+    const response = await fetch(`${API_BASE_URL}/api/qc/complaints`, {
       credentials: 'include',
     });
     if (!response.ok) {
-      if (response.status === 401) {
-        setSupervisorSession(null);
-        setComplaints([]);
-      }
       return;
     }
     setComplaints(await response.json() as QCComplaintSummary[]);
@@ -867,22 +884,33 @@ const PanelLineSupervisorView: React.FC = () => {
   const handleSupervisorComment = async (complaint: QCComplaintSummary) => {
     const message = complaintDrafts[complaint.id]?.trim() ?? '';
     const files = complaintFiles[complaint.id] ?? [];
-    if (!message && !files.length) {
+    const proposeClosure = closureProposalIds.has(complaint.id);
+    if (!proposeClosure && !message && !files.length) {
       setComplaintDetailError('Escribe un comentario o toma una foto.');
       return;
     }
     setComplaintDetailError(null);
     setSubmittingComplaintIds((current) => new Set(current).add(complaint.id));
+    if (proposeClosure) {
+      setProposingClosureIds((current) => new Set(current).add(complaint.id));
+    }
     try {
-      const response = await fetch(`${API_BASE_URL}/api/qc/supervisor/complaints/${complaint.id}/events`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message || 'Evidencia adjunta' }),
-      });
+      const response = proposeClosure
+        ? await fetch(`${API_BASE_URL}/api/qc/supervisor/complaints/${complaint.id}/propose-closure`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message || null }),
+          })
+        : await fetch(`${API_BASE_URL}/api/qc/supervisor/complaints/${complaint.id}/events`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: message || 'Evidencia adjunta' }),
+          });
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(text || 'No se pudo enviar el comentario.');
+        throw new Error(text || (proposeClosure ? 'No se pudo proponer el cierre.' : 'No se pudo enviar el comentario.'));
       }
       const event = await response.json() as QCComplaintEvent;
       if (files.length) {
@@ -890,44 +918,27 @@ const PanelLineSupervisorView: React.FC = () => {
       }
       setComplaintDrafts((current) => ({ ...current, [complaint.id]: '' }));
       setComplaintFiles((current) => ({ ...current, [complaint.id]: [] }));
+      setClosureProposalIds((current) => {
+        const next = new Set(current);
+        next.delete(complaint.id);
+        return next;
+      });
       await refreshComplaintDetail(complaint.id);
       await refreshSupervisorComplaints();
     } catch (err) {
-      setComplaintDetailError(err instanceof Error ? err.message : 'No se pudo enviar el comentario.');
+      setComplaintDetailError(
+        err instanceof Error
+          ? err.message
+          : proposeClosure
+          ? 'No se pudo proponer el cierre.'
+          : 'No se pudo enviar el comentario.'
+      );
     } finally {
       setSubmittingComplaintIds((current) => {
         const next = new Set(current);
         next.delete(complaint.id);
         return next;
       });
-    }
-  };
-
-  const handleSupervisorProposeClosure = async (complaint: QCComplaintSummary) => {
-    const files = closureFiles[complaint.id] ?? [];
-    setComplaintDetailError(null);
-    setProposingClosureIds((current) => new Set(current).add(complaint.id));
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/qc/supervisor/complaints/${complaint.id}/propose-closure`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: null }),
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'No se pudo proponer el cierre.');
-      }
-      const event = await response.json() as QCComplaintEvent;
-      if (files.length) {
-        await uploadSupervisorComplaintFiles(complaint.id, event.id, files);
-      }
-      setClosureFiles((current) => ({ ...current, [complaint.id]: [] }));
-      await refreshComplaintDetail(complaint.id);
-      await refreshSupervisorComplaints();
-    } catch (err) {
-      setComplaintDetailError(err instanceof Error ? err.message : 'No se pudo proponer el cierre.');
-    } finally {
       setProposingClosureIds((current) => {
         const next = new Set(current);
         next.delete(complaint.id);
@@ -1145,13 +1156,20 @@ const PanelLineSupervisorView: React.FC = () => {
                                                       onClick={() => setAlertModal({ kind: 'complaints', workItem: wu })}
                                                       className={clsx(
                                                         "inline-flex items-center gap-0.5 text-xs font-bold transition-colors",
+                                                        supervisorSession &&
+                                                          alerts.assignedComplaints > 0 &&
+                                                          'rounded-full bg-blue-50 px-1 text-blue-700 ring-1 ring-blue-100',
                                                         alerts.maxComplaintSeverity === 'critica'
                                                           ? 'text-rose-600 hover:text-rose-800'
                                                           : alerts.maxComplaintSeverity === 'media'
                                                           ? 'text-orange-500 hover:text-orange-700'
                                                           : 'text-slate-500 hover:text-slate-700'
                                                       )}
-                                                      title={`Observaciones abiertas asignadas al supervisor (${alerts.maxComplaintSeverity})`}
+                                                      title={
+                                                        supervisorSession && alerts.assignedComplaints > 0
+                                                          ? `${alerts.assignedComplaints} observacion(es) para ti de ${alerts.complaints} abiertas`
+                                                          : `Observaciones abiertas (${severityLabel(alerts.maxComplaintSeverity)})`
+                                                      }
                                                     >
                                                       <MessageSquare className="h-3 w-3" />
                                                       {alerts.complaints}
@@ -1299,13 +1317,22 @@ const PanelLineSupervisorView: React.FC = () => {
                                                   type="button"
                                                   onClick={() => setAlertModal({ kind: 'complaints', workItem: wu })}
                                                   className={
-                                                    alerts.maxComplaintSeverity === 'critica'
-                                                      ? 'text-rose-600 hover:text-rose-800'
-                                                      : alerts.maxComplaintSeverity === 'media'
-                                                      ? 'text-orange-500 hover:text-orange-700'
-                                                      : 'text-slate-500 hover:text-slate-700'
+                                                    clsx(
+                                                      supervisorSession &&
+                                                        alerts.assignedComplaints > 0 &&
+                                                        'rounded-full bg-blue-50 p-0.5 text-blue-700 ring-1 ring-blue-100',
+                                                      alerts.maxComplaintSeverity === 'critica'
+                                                        ? 'text-rose-600 hover:text-rose-800'
+                                                        : alerts.maxComplaintSeverity === 'media'
+                                                        ? 'text-orange-500 hover:text-orange-700'
+                                                        : 'text-slate-500 hover:text-slate-700'
+                                                    )
                                                   }
-                                                  title={`Observaciones abiertas (${severityLabel(alerts.maxComplaintSeverity)})`}
+                                                  title={
+                                                    supervisorSession && alerts.assignedComplaints > 0
+                                                      ? `${alerts.assignedComplaints} observacion(es) para ti de ${alerts.complaints} abiertas`
+                                                      : `Observaciones abiertas (${severityLabel(alerts.maxComplaintSeverity)})`
+                                                  }
                                                 >
                                                   <MessageSquare className="h-2.5 w-2.5" />
                                                 </button>
@@ -1376,17 +1403,41 @@ const PanelLineSupervisorView: React.FC = () => {
                     const detail = complaintDetails[complaint.id];
                     const draft = complaintDrafts[complaint.id] ?? '';
                     const files = complaintFiles[complaint.id] ?? [];
-                    const closeFiles = closureFiles[complaint.id] ?? [];
                     const isSubmitting = submittingComplaintIds.has(complaint.id);
                     const isProposingClosure = proposingClosureIds.has(complaint.id);
-                    const canWrite = Boolean(supervisorSession) && complaint.status !== 'Closed';
+                    const isAssignedToCurrentSupervisor = isComplaintAssignedToCurrentSupervisor(complaint);
+                    const isClosureProposal = closureProposalIds.has(complaint.id);
+                    const canWrite = isAssignedToCurrentSupervisor && complaint.status !== 'Closed';
                     const canProposeClosure = complaint.status === 'Open';
+                    const supervisorNames = complaint.supervisors.map(supervisorDisplayName).filter(Boolean);
 
                     return (
-                      <div key={complaint.id} className="rounded-xl border border-rose-100 bg-white p-4 shadow-sm">
+                      <div
+                        key={complaint.id}
+                        className={clsx(
+                          'rounded-xl border bg-white p-4 shadow-sm',
+                          isAssignedToCurrentSupervisor
+                            ? 'border-blue-200 ring-1 ring-blue-100'
+                            : 'border-rose-100'
+                        )}
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="truncate text-sm font-bold text-gray-900">{complaint.title}</p>
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-bold text-gray-900">{complaint.title}</p>
+                              {supervisorSession ? (
+                                <span
+                                  className={clsx(
+                                    'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase',
+                                    isAssignedToCurrentSupervisor
+                                      ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-100'
+                                      : 'bg-gray-50 text-gray-500 ring-1 ring-gray-200'
+                                  )}
+                                >
+                                  {isAssignedToCurrentSupervisor ? 'Para ti' : 'Otro supervisor'}
+                                </span>
+                              ) : null}
+                            </div>
                             <p className="mt-1 text-sm text-gray-600">{complaint.description}</p>
                           </div>
                           <span
@@ -1402,6 +1453,7 @@ const PanelLineSupervisorView: React.FC = () => {
                           <span>Estado: {complaintStatusLabel(complaint.status)}</span>
                           <span>Actualizada: {formatTimestamp(complaint.updated_at)}</span>
                           {complaint.created_by_name ? <span>Creada por: {complaint.created_by_name}</span> : null}
+                          {supervisorNames.length ? <span>Asignada a: {supervisorNames.join(', ')}</span> : null}
                         </div>
 
                         {loadingComplaintIds.has(complaint.id) ? (
@@ -1452,7 +1504,14 @@ const PanelLineSupervisorView: React.FC = () => {
                             </div>
 
                             {canWrite ? (
-                              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                              <div
+                                className={clsx(
+                                  'rounded-xl border p-3',
+                                  isClosureProposal
+                                    ? 'border-emerald-200 bg-emerald-50'
+                                    : 'border-gray-200 bg-gray-50'
+                                )}
+                              >
                                 <textarea
                                   value={draft}
                                   onChange={(event) =>
@@ -1462,8 +1521,17 @@ const PanelLineSupervisorView: React.FC = () => {
                                     }))
                                   }
                                   rows={2}
-                                  placeholder="Responder a esta observacion"
-                                  className="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500"
+                                  placeholder={
+                                    isClosureProposal
+                                      ? 'Comentario de cierre para Calidad'
+                                      : 'Responder a esta observacion'
+                                  }
+                                  className={clsx(
+                                    'w-full resize-none rounded-lg border bg-white px-3 py-2 text-sm text-gray-900 outline-none',
+                                    isClosureProposal
+                                      ? 'border-emerald-200 focus:border-emerald-500'
+                                      : 'border-gray-200 focus:border-blue-500'
+                                  )}
                                 />
                                 {files.length ? (
                                   <div className="mt-2 flex flex-wrap gap-2">
@@ -1489,7 +1557,11 @@ const PanelLineSupervisorView: React.FC = () => {
                                 ) : null}
                                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                                   <QCPhotoCaptureButton
-                                    fileNamePrefix={`supervisor-observacion-${complaint.id}`}
+                                    fileNamePrefix={
+                                      isClosureProposal
+                                        ? `supervisor-cierre-observacion-${complaint.id}`
+                                        : `supervisor-observacion-${complaint.id}`
+                                    }
                                     buttonLabel="Tomar foto"
                                     watermarkLines={(date) =>
                                       buildObservationWatermarkLines(date, {
@@ -1507,88 +1579,57 @@ const PanelLineSupervisorView: React.FC = () => {
                                       }))
                                     }
                                   />
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleSupervisorComment(complaint)}
-                                    disabled={isSubmitting}
-                                    className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
-                                  >
-                                    {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                                    Enviar
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-
-                            {canWrite ? (
-                              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-sm font-bold text-emerald-900">Proponer cierre</p>
-                                    <p className="mt-1 text-xs text-emerald-700">
-                                      Marca esta observacion como resuelta para revision de Calidad.
-                                    </p>
-                                  </div>
-                                  <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                                    {canProposeClosure ? 'Disponible' : 'En revision'}
-                                  </span>
-                                </div>
-                                {canProposeClosure ? (
-                                  <>
-                                    {closeFiles.length ? (
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {closeFiles.map((file) => (
-                                          <span key={fileKey(file)} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-xs text-gray-600 ring-1 ring-emerald-100">
-                                            {file.name}
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setClosureFiles((current) => ({
-                                                  ...current,
-                                                  [complaint.id]: (current[complaint.id] ?? []).filter(
-                                                    (item) => fileKey(item) !== fileKey(file)
-                                                  ),
-                                                }))
-                                              }
-                                            >
-                                              <X className="h-3 w-3" />
-                                            </button>
-                                          </span>
-                                        ))}
-                                      </div>
-                                    ) : null}
-                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                                      <QCPhotoCaptureButton
-                                        fileNamePrefix={`supervisor-cierre-observacion-${complaint.id}`}
-                                        buttonLabel="Tomar foto"
-                                        watermarkLines={(date) =>
-                                          buildObservationWatermarkLines(date, {
-                                            projectName: complaint.project_name,
-                                            houseIdentifier: complaint.house_identifier,
-                                            moduleNumber: complaint.module_number,
-                                            panelCode: complaint.panel_code,
-                                            title: complaint.title,
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <label
+                                      className={clsx(
+                                        'inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold',
+                                        canProposeClosure
+                                          ? 'cursor-pointer bg-white text-emerald-700'
+                                          : 'cursor-not-allowed bg-gray-100 text-gray-400',
+                                        isClosureProposal && canProposeClosure
+                                          ? 'border-emerald-300 ring-1 ring-emerald-200'
+                                          : 'border-gray-200'
+                                      )}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isClosureProposal}
+                                        disabled={!canProposeClosure}
+                                        onChange={(event) =>
+                                          setClosureProposalIds((current) => {
+                                            const next = new Set(current);
+                                            if (event.target.checked) {
+                                              next.add(complaint.id);
+                                            } else {
+                                              next.delete(complaint.id);
+                                            }
+                                            return next;
                                           })
                                         }
-                                        onCapture={(file) =>
-                                          setClosureFiles((current) => ({
-                                            ...current,
-                                            [complaint.id]: [...(current[complaint.id] ?? []), file],
-                                          }))
-                                        }
+                                        className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
                                       />
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleSupervisorProposeClosure(complaint)}
-                                        disabled={isProposingClosure}
-                                        className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
-                                      >
-                                        {isProposingClosure ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                                        Proponer cierre
-                                      </button>
-                                    </div>
-                                  </>
-                                ) : null}
+                                      Proponer cierre
+                                    </label>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSupervisorComment(complaint)}
+                                      disabled={isSubmitting || isProposingClosure}
+                                      className={clsx(
+                                        'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-white disabled:opacity-60',
+                                        isClosureProposal ? 'bg-emerald-600' : 'bg-blue-600'
+                                      )}
+                                    >
+                                      {isSubmitting || isProposingClosure ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : isClosureProposal ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      ) : (
+                                        <Send className="h-4 w-4" />
+                                      )}
+                                      {isClosureProposal ? 'Enviar cierre' : 'Enviar'}
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
                             ) : null}
                           </div>

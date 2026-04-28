@@ -31,7 +31,7 @@ from app.models.enums import (
     TaskStatus,
     WorkUnitStatus,
 )
-from app.models.house import HouseType
+from app.models.house import HouseType, PanelDefinition
 from app.models.qc import (
     MediaAsset,
     QCApplicability,
@@ -66,6 +66,8 @@ from app.schemas.qc_runtime import (
     QCLibraryWorkUnitSummary,
     QCManualCheckCreate,
     QCNotificationSummary,
+    QCPlantModuleSummary,
+    QCPlantPanelSummary,
     QCTaskInstanceWithWorkersSummary,
     QCTaskParticipantSummary,
     QCReworkPauseRequest,
@@ -566,7 +568,97 @@ def qc_dashboard(
             )
         )
 
-    return QCDashboardResponse(pending_checks=pending_checks, rework_tasks=rework_tasks)
+    plant_panel_rows = list(
+        db.execute(
+            select(
+                PanelUnit,
+                PanelDefinition.panel_code,
+                Station.name,
+                WorkUnit.module_number,
+                WorkOrder.project_name,
+                WorkOrder.house_identifier,
+                HouseType.name,
+            )
+            .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+            .join(Station, PanelUnit.current_station_id == Station.id)
+            .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+            .where(PanelUnit.current_station_id.is_not(None))
+            .where(WorkUnit.status != WorkUnitStatus.COMPLETED)
+            .order_by(Station.sequence_order, WorkUnit.planned_sequence, PanelDefinition.panel_code)
+        )
+    )
+    plant_panels = [
+        QCPlantPanelSummary(
+            panel_unit_id=panel_unit.id,
+            panel_definition_id=panel_unit.panel_definition_id,
+            work_unit_id=panel_unit.work_unit_id,
+            current_station_id=panel_unit.current_station_id,
+            current_station_name=station_name,
+            status=panel_unit.status,
+            module_number=module_number,
+            project_name=project_name,
+            house_type_name=house_type_name,
+            house_identifier=house_identifier,
+            panel_code=panel_code,
+        )
+        for (
+            panel_unit,
+            panel_code,
+            station_name,
+            module_number,
+            project_name,
+            house_identifier,
+            house_type_name,
+        ) in plant_panel_rows
+        if panel_unit.current_station_id is not None
+    ]
+
+    plant_module_rows = list(
+        db.execute(
+            select(
+                WorkUnit,
+                Station.name,
+                WorkOrder.project_name,
+                WorkOrder.house_identifier,
+                HouseType.name,
+            )
+            .join(Station, WorkUnit.current_station_id == Station.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+            .where(WorkUnit.current_station_id.is_not(None))
+            .where(WorkUnit.status != WorkUnitStatus.COMPLETED)
+            .order_by(Station.sequence_order, WorkUnit.planned_sequence, WorkUnit.id)
+        )
+    )
+    plant_modules = [
+        QCPlantModuleSummary(
+            work_unit_id=work_unit.id,
+            current_station_id=work_unit.current_station_id,
+            current_station_name=station_name,
+            status=work_unit.status,
+            module_number=work_unit.module_number,
+            project_name=project_name,
+            house_type_name=house_type_name,
+            house_identifier=house_identifier,
+        )
+        for (
+            work_unit,
+            station_name,
+            project_name,
+            house_identifier,
+            house_type_name,
+        ) in plant_module_rows
+        if work_unit.current_station_id is not None
+    ]
+
+    return QCDashboardResponse(
+        pending_checks=pending_checks,
+        rework_tasks=rework_tasks,
+        plant_panels=plant_panels,
+        plant_modules=plant_modules,
+    )
 
 
 @router.get("/dashboard/export.xlsx")
