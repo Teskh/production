@@ -7,6 +7,8 @@ from app.models.enums import TaskScope
 from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability, TaskDefinition
 
+PanelApplicabilityIndex = dict[int, dict[int, TaskApplicability]]
+
 
 def _is_default_scope(row: TaskApplicability) -> bool:
     return (
@@ -55,15 +57,22 @@ def _resolve_applicability(
     module_number: int,
     panel_definition_id: int | None,
 ) -> TaskApplicability | None:
-    scoped_rows = [row for row in rows if not _is_default_scope(row)]
-    matches = [
-        row
-        for row in scoped_rows
-        if _matches_applicability(row, house_type_id, sub_type_id, module_number, panel_definition_id)
-    ]
-    if not matches:
-        return None
-    return min(matches, key=_applicability_rank)
+    best: TaskApplicability | None = None
+    best_rank: tuple[int, int, int] | None = None
+    for row in rows:
+        if _is_default_scope(row):
+            continue
+        if not _matches_applicability(
+            row, house_type_id, sub_type_id, module_number, panel_definition_id
+        ):
+            continue
+        if row.panel_definition_id is not None:
+            return row
+        rank = _applicability_rank(row)
+        if best_rank is None or rank < best_rank:
+            best = row
+            best_rank = rank
+    return best
 
 
 def resolve_task_station_sequence(
@@ -121,6 +130,20 @@ def order_tasks_by_panel_metadata(
             task.name.lower(),
         ),
     )
+
+
+def build_panel_applicability_index(
+    rows: list[TaskApplicability],
+) -> PanelApplicabilityIndex:
+    index: PanelApplicabilityIndex = {}
+    for row in rows:
+        if row.panel_definition_id is None:
+            continue
+        panel_rows = index.setdefault(row.panel_definition_id, {})
+        existing = panel_rows.get(row.task_definition_id)
+        if existing is None or row.id < existing.id:
+            panel_rows[row.task_definition_id] = row
+    return index
 
 
 def _panel_task_ids_from_metadata(

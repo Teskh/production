@@ -11,6 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.models.enums import TaskScope
 from app.models.tasks import TaskApplicability, TaskDefinition
 from app.services.task_applicability import (
+    build_panel_applicability_index,
     order_tasks_by_panel_metadata,
     resolve_task_station_sequence,
 )
@@ -78,6 +79,34 @@ class TaskApplicabilityTests(unittest.TestCase):
 
         self.assertTrue(applies)
         self.assertEqual(station_sequence, 1)
+
+    def test_panel_applicability_index_keeps_first_row_per_panel_task(self) -> None:
+        first = TaskApplicability(
+            id=1,
+            task_definition_id=10,
+            panel_definition_id=100,
+            applies=True,
+            station_sequence_order=1,
+        )
+        duplicate = TaskApplicability(
+            id=2,
+            task_definition_id=10,
+            panel_definition_id=100,
+            applies=False,
+            station_sequence_order=1,
+        )
+        module_row = TaskApplicability(
+            id=3,
+            task_definition_id=10,
+            house_type_id=1,
+            module_number=1,
+            applies=True,
+            station_sequence_order=1,
+        )
+
+        index = build_panel_applicability_index([duplicate, module_row, first])
+
+        self.assertIs(index[100][10], first)
 
 
 if __name__ == "__main__":

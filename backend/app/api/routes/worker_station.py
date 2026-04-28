@@ -49,6 +49,8 @@ from app.schemas.worker_station import (
     StationWorkItem,
 )
 from app.services.task_applicability import (
+    PanelApplicabilityIndex,
+    build_panel_applicability_index,
     order_tasks_by_panel_metadata,
     resolve_task_station_sequence,
 )
@@ -120,6 +122,7 @@ def _build_task_lists(
     dependency_name_map: dict[int, str],
     worker_id: int | None,
     current_station_sequence_order: int | None,
+    panel_applicability_index: PanelApplicabilityIndex | None = None,
 ) -> tuple[list[StationTask], list[StationTask], list[StationTask]]:
     instance_map: dict[int, TaskInstance] = {}
     for instance in instances:
@@ -131,6 +134,16 @@ def _build_task_lists(
         for exc in exceptions
         if exc.exception_type == TaskExceptionType.SKIP
     }
+    panel_rows: dict[int, TaskApplicability] | None = None
+    if panel_definition_id is not None and panel_applicability_index is not None:
+        candidate_ids = {task.id for task in task_definitions}
+        candidate_panel_rows = panel_applicability_index.get(panel_definition_id)
+        if candidate_panel_rows and candidate_ids.issubset(candidate_panel_rows.keys()):
+            panel_rows = candidate_panel_rows
+            task_definitions = [
+                task for task in task_definitions if candidate_panel_rows[task.id].applies
+            ]
+
     ordered_tasks = order_tasks_by_panel_metadata(task_definitions, panel_task_order)
 
     station_tasks: list[StationTask] = []
@@ -138,16 +151,19 @@ def _build_task_lists(
     backlog_tasks: list[StationTask] = []
 
     for task in ordered_tasks:
-        applies, station_sequence_order = resolve_task_station_sequence(
-            task,
-            applicability_map.get(task.id, []),
-            house_type_id,
-            sub_type_id,
-            module_number,
-            panel_definition_id,
-        )
-        if not applies:
-            continue
+        if panel_rows is not None:
+            station_sequence_order = panel_rows[task.id].station_sequence_order
+        else:
+            applies, station_sequence_order = resolve_task_station_sequence(
+                task,
+                applicability_map.get(task.id, []),
+                house_type_id,
+                sub_type_id,
+                module_number,
+                panel_definition_id,
+            )
+            if not applies:
+                continue
         is_aux_station = station.role == StationRole.AUX
         is_station_task = (
             station_sequence_order is not None
@@ -461,6 +477,7 @@ def station_snapshot(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    panel_applicability_index = build_panel_applicability_index(applicability_rows)
     allowed_worker_map: dict[int, set[int]] = {}
     allowed_worker_name_map: dict[int, list[str]] = {}
     if task_definition_by_id:
@@ -576,6 +593,7 @@ def station_snapshot(
                 dependency_name_map,
                 _worker.id if _worker else None,
                 station.sequence_order,
+                panel_applicability_index,
             )
             work_items.append(
                 StationWorkItem(
@@ -732,6 +750,7 @@ def station_snapshot(
                             dependency_name_map,
                             _worker.id if _worker else None,
                             station.sequence_order,
+                            panel_applicability_index,
                         )
                         planned_items.append(
                             StationWorkItem(
