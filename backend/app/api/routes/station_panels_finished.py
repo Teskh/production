@@ -169,6 +169,32 @@ def _resolve_passed_at(
     return latest
 
 
+def _load_panel_task_applicability(
+    db: Session,
+) -> tuple[list[TaskDefinition], dict[int, list[TaskApplicability]]]:
+    active_panel_tasks = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.scope == TaskScope.PANEL)
+            .where(TaskDefinition.active == True)
+        ).scalars()
+    )
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    if active_panel_tasks:
+        applicability_rows = list(
+            db.execute(
+                select(TaskApplicability).where(
+                    TaskApplicability.task_definition_id.in_(
+                        [task.id for task in active_panel_tasks]
+                    )
+                )
+            ).scalars()
+        )
+        for row in applicability_rows:
+            applicability_map.setdefault(row.task_definition_id, []).append(row)
+    return active_panel_tasks, applicability_map
+
+
 def _build_panel_expected_map(
     panel_definition: PanelDefinition, panel_tasks: list[TaskDefinition]
 ) -> dict[int, float]:
@@ -338,6 +364,292 @@ def _mask_query_bounds(
     return min_dt.date(), max_dt.date()
 
 
+def _station_panels_finished_summary(
+    db: Session,
+    station: Station,
+    station_id: int,
+    start_dt: datetime | None,
+    end_dt: datetime | None,
+    house_type_id: int | None,
+    sub_type_id: int | None,
+) -> StationPanelsFinishedResponse:
+    active_panel_tasks, applicability_map = _load_panel_task_applicability(db)
+
+    instance_stmt = (
+        select(
+            PanelUnit.id.label("panel_unit_id"),
+            WorkUnit.id.label("work_unit_id"),
+            WorkUnit.module_number,
+            WorkOrder.house_type_id,
+            WorkOrder.sub_type_id,
+            WorkOrder.house_identifier,
+            PanelDefinition.id.label("panel_definition_id"),
+            PanelDefinition.panel_code,
+            PanelDefinition.panel_area,
+            TaskInstance.task_definition_id,
+            TaskInstance.completed_at.label("satisfied_at"),
+        )
+        .join(PanelUnit, TaskInstance.panel_unit_id == PanelUnit.id)
+        .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+        .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .where(TaskInstance.scope == TaskScope.PANEL)
+        .where(TaskInstance.status == TaskStatus.COMPLETED)
+        .where(TaskInstance.station_id == station_id)
+        .where(TaskInstance.completed_at.is_not(None))
+    )
+    if start_dt is not None:
+        instance_stmt = instance_stmt.where(TaskInstance.completed_at >= start_dt)
+    if end_dt is not None:
+        instance_stmt = instance_stmt.where(TaskInstance.completed_at <= end_dt)
+    if house_type_id is not None:
+        instance_stmt = instance_stmt.where(WorkOrder.house_type_id == house_type_id)
+    if sub_type_id is not None:
+        instance_stmt = instance_stmt.where(WorkOrder.sub_type_id == sub_type_id)
+
+    exception_stmt = (
+        select(
+            PanelUnit.id.label("panel_unit_id"),
+            WorkUnit.id.label("work_unit_id"),
+            WorkUnit.module_number,
+            WorkOrder.house_type_id,
+            WorkOrder.sub_type_id,
+            WorkOrder.house_identifier,
+            PanelDefinition.id.label("panel_definition_id"),
+            PanelDefinition.panel_code,
+            PanelDefinition.panel_area,
+            TaskException.task_definition_id,
+            TaskException.created_at.label("satisfied_at"),
+        )
+        .join(PanelUnit, TaskException.panel_unit_id == PanelUnit.id)
+        .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+        .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .where(TaskException.scope == TaskScope.PANEL)
+        .where(TaskException.exception_type == TaskExceptionType.SKIP)
+        .where(TaskException.station_id == station_id)
+    )
+    if start_dt is not None:
+        exception_stmt = exception_stmt.where(TaskException.created_at >= start_dt)
+    if end_dt is not None:
+        exception_stmt = exception_stmt.where(TaskException.created_at <= end_dt)
+    if house_type_id is not None:
+        exception_stmt = exception_stmt.where(WorkOrder.house_type_id == house_type_id)
+    if sub_type_id is not None:
+        exception_stmt = exception_stmt.where(WorkOrder.sub_type_id == sub_type_id)
+
+    event_rows = list(db.execute(instance_stmt).all())
+    event_rows.extend(db.execute(exception_stmt).all())
+
+    panel_contexts: dict[int, object] = {}
+    satisfied_at_map: dict[int, dict[int, datetime]] = {}
+    for row in event_rows:
+        panel_contexts[row.panel_unit_id] = row
+        _update_latest(
+            satisfied_at_map,
+            row.panel_unit_id,
+            row.task_definition_id,
+            row.satisfied_at,
+        )
+
+    summaries: list[StationPanelsFinishedPanelSummary] = []
+    summary_keys: set[str] = set()
+    for panel_unit_id, row in panel_contexts.items():
+        required_task_ids = _required_panel_task_ids(
+            active_panel_tasks,
+            applicability_map,
+            row.house_type_id,
+            row.sub_type_id,
+            row.module_number,
+            row.panel_definition_id,
+            None,
+            station.sequence_order,
+        )
+        passed_at = _resolve_passed_at(
+            required_task_ids,
+            satisfied_at_map.get(panel_unit_id, {}),
+            None,
+        )
+        if not _within_range(passed_at, start_dt, end_dt):
+            continue
+        summary_key = f"{row.work_unit_id}-{row.panel_definition_id}"
+        if summary_key in summary_keys:
+            continue
+        summary_keys.add(summary_key)
+        summaries.append(
+            StationPanelsFinishedPanelSummary(
+                plan_id=row.work_unit_id,
+                panel_definition_id=row.panel_definition_id,
+                panel_code=row.panel_code,
+                house_identifier=row.house_identifier or f"WO-{row.work_unit_id}",
+                module_number=row.module_number,
+                panel_area=(
+                    float(row.panel_area) if row.panel_area is not None else None
+                ),
+                satisfied_at=passed_at,
+            )
+        )
+
+    if (
+        station.role == StationRole.PANELS
+        and station.sequence_order is not None
+        and station.sequence_order > 1
+        and start_dt is not None
+        and end_dt is not None
+    ):
+        panel_definition_rows = list(
+            db.execute(
+                select(
+                    PanelDefinition.id,
+                    PanelDefinition.house_type_id,
+                    PanelDefinition.module_sequence_number,
+                    PanelDefinition.sub_type_id,
+                )
+            ).all()
+        )
+        no_required_panel_definition_ids = [
+            row.id
+            for row in panel_definition_rows
+            if not _required_panel_task_ids(
+                active_panel_tasks,
+                applicability_map,
+                row.house_type_id,
+                row.sub_type_id,
+                row.module_sequence_number,
+                row.id,
+                None,
+                station.sequence_order,
+            )
+        ]
+        if not no_required_panel_definition_ids:
+            summaries = [summary for summary in summaries if summary.satisfied_at]
+            summaries.sort(key=lambda panel: (panel.satisfied_at, panel.panel_code or ""))
+            area_total = sum(float(summary.panel_area or 0) for summary in summaries)
+            return StationPanelsFinishedResponse(
+                total_panels_finished=len(summaries),
+                houses=[],
+                panels_passed_today_count=len(summaries),
+                panels_passed_today_list=summaries,
+                panels_passed_today_area_sum=round(area_total, 2),
+            )
+
+        panel_unit_ids = set(panel_contexts)
+        next_station_ids = list(
+            db.execute(
+                select(Station.id)
+                .where(Station.role == StationRole.PANELS)
+                .where(Station.sequence_order > station.sequence_order)
+            ).scalars()
+        )
+        candidate_stmt = (
+            select(
+                PanelUnit.id.label("panel_unit_id"),
+                WorkUnit.id.label("work_unit_id"),
+                WorkUnit.module_number,
+                WorkOrder.house_type_id,
+                WorkOrder.sub_type_id,
+                WorkOrder.house_identifier,
+                PanelDefinition.id.label("panel_definition_id"),
+                PanelDefinition.panel_code,
+                PanelDefinition.panel_area,
+            )
+            .join(WorkUnit, PanelUnit.work_unit_id == WorkUnit.id)
+            .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+            .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+            .where(PanelUnit.status != PanelUnitStatus.PLANNED)
+            .where(PanelUnit.panel_definition_id.in_(no_required_panel_definition_ids))
+        )
+        if next_station_ids:
+            candidate_stmt = candidate_stmt.where(
+                or_(
+                    PanelUnit.current_station_id.is_(None),
+                    PanelUnit.current_station_id.in_(next_station_ids),
+                )
+            )
+        else:
+            candidate_stmt = candidate_stmt.where(PanelUnit.current_station_id.is_(None))
+        if panel_unit_ids:
+            candidate_stmt = candidate_stmt.where(~PanelUnit.id.in_(panel_unit_ids))
+        if house_type_id is not None:
+            candidate_stmt = candidate_stmt.where(WorkOrder.house_type_id == house_type_id)
+        if sub_type_id is not None:
+            candidate_stmt = candidate_stmt.where(WorkOrder.sub_type_id == sub_type_id)
+
+        candidate_rows = list(db.execute(candidate_stmt).all())
+        if candidate_rows:
+            candidate_ids = [row.panel_unit_id for row in candidate_rows]
+            prev_completion_map: dict[int, datetime] = {}
+            prev_instance_rows = list(
+                db.execute(
+                    select(TaskInstance.panel_unit_id, func.max(TaskInstance.completed_at))
+                    .join(Station, TaskInstance.station_id == Station.id)
+                    .where(TaskInstance.panel_unit_id.in_(candidate_ids))
+                    .where(TaskInstance.scope == TaskScope.PANEL)
+                    .where(TaskInstance.completed_at.is_not(None))
+                    .where(Station.role == StationRole.PANELS)
+                    .where(Station.sequence_order < station.sequence_order)
+                    .group_by(TaskInstance.panel_unit_id)
+                ).all()
+            )
+            for panel_unit_id, completed_at in prev_instance_rows:
+                if completed_at:
+                    prev_completion_map[int(panel_unit_id)] = completed_at
+
+            prev_exception_rows = list(
+                db.execute(
+                    select(TaskException.panel_unit_id, func.max(TaskException.created_at))
+                    .join(Station, TaskException.station_id == Station.id)
+                    .where(TaskException.panel_unit_id.in_(candidate_ids))
+                    .where(TaskException.scope == TaskScope.PANEL)
+                    .where(TaskException.exception_type == TaskExceptionType.SKIP)
+                    .where(Station.role == StationRole.PANELS)
+                    .where(Station.sequence_order < station.sequence_order)
+                    .group_by(TaskException.panel_unit_id)
+                ).all()
+            )
+            for panel_unit_id, created_at in prev_exception_rows:
+                if not created_at:
+                    continue
+                existing = prev_completion_map.get(int(panel_unit_id))
+                if existing is None or created_at > existing:
+                    prev_completion_map[int(panel_unit_id)] = created_at
+
+            for row in candidate_rows:
+                passed_at = prev_completion_map.get(row.panel_unit_id)
+                if not _within_range(passed_at, start_dt, end_dt):
+                    continue
+                summary_key = f"{row.work_unit_id}-{row.panel_definition_id}"
+                if summary_key in summary_keys:
+                    continue
+                summary_keys.add(summary_key)
+                summaries.append(
+                    StationPanelsFinishedPanelSummary(
+                        plan_id=row.work_unit_id,
+                        panel_definition_id=row.panel_definition_id,
+                        panel_code=row.panel_code,
+                        house_identifier=row.house_identifier or f"WO-{row.work_unit_id}",
+                        module_number=row.module_number,
+                        panel_area=(
+                            float(row.panel_area)
+                            if row.panel_area is not None
+                            else None
+                        ),
+                        satisfied_at=passed_at,
+                    )
+                )
+
+    summaries = [summary for summary in summaries if summary.satisfied_at]
+    summaries.sort(key=lambda panel: (panel.satisfied_at, panel.panel_code or ""))
+    area_total = sum(float(summary.panel_area or 0) for summary in summaries)
+    return StationPanelsFinishedResponse(
+        total_panels_finished=len(summaries),
+        houses=[],
+        panels_passed_today_count=len(summaries),
+        panels_passed_today_list=summaries,
+        panels_passed_today_area_sum=round(area_total, 2),
+    )
+
+
 @router.get("", response_model=StationPanelsFinishedResponse)
 def get_station_panels_finished(
     station_id: int,
@@ -346,6 +658,7 @@ def get_station_panels_finished(
     to_date: str | None = None,
     house_type_id: int | None = None,
     sub_type_id: int | None = None,
+    summary_only: bool = False,
     db: Session = Depends(get_db),
 ) -> StationPanelsFinishedResponse:
     station = db.get(Station, station_id)
@@ -361,6 +674,17 @@ def get_station_panels_finished(
         end_dt = to_dt
         if start_dt is not None and end_dt is not None and start_dt > end_dt:
             start_dt, end_dt = end_dt, start_dt
+
+    if summary_only:
+        return _station_panels_finished_summary(
+            db,
+            station,
+            station_id,
+            start_dt,
+            end_dt,
+            house_type_id,
+            sub_type_id,
+        )
 
     stmt = (
         select(
@@ -433,20 +757,7 @@ def get_station_panels_finished(
     panel_tasks = list(
         db.execute(select(TaskDefinition).where(TaskDefinition.scope == TaskScope.PANEL)).scalars()
     )
-    active_panel_tasks = [task for task in panel_tasks if task.active]
-    applicability_map: dict[int, list[TaskApplicability]] = {}
-    if active_panel_tasks:
-        applicability_rows = list(
-            db.execute(
-                select(TaskApplicability).where(
-                    TaskApplicability.task_definition_id.in_(
-                        [task.id for task in active_panel_tasks]
-                    )
-                )
-            ).scalars()
-        )
-        for row in applicability_rows:
-            applicability_map.setdefault(row.task_definition_id, []).append(row)
+    active_panel_tasks, applicability_map = _load_panel_task_applicability(db)
     panel_definitions: dict[int, PanelDefinition] = {}
     task_definitions: dict[int, TaskDefinition] = {}
 

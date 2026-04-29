@@ -113,6 +113,7 @@ const PanelStationGoalPanel: React.FC<PanelStationGoalPanelProps> = ({
         const params = new URLSearchParams();
         params.set('station_id', String(stationId));
         params.set('date', todayToken);
+        params.set('summary_only', 'true');
         const data = await apiRequest<StationPanelsPassedResponse>(
           `/api/station-panels-finished?${params.toString()}`
         );
