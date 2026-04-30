@@ -452,6 +452,64 @@ def _station_panels_finished_summary(
             row.satisfied_at,
         )
 
+    event_panel_unit_ids = list(panel_contexts.keys())
+    available_map: dict[int, datetime] = {}
+    if (
+        station.role == StationRole.PANELS
+        and station.sequence_order is not None
+        and event_panel_unit_ids
+    ):
+        prev_stmt = (
+            select(TaskInstance.panel_unit_id, func.max(TaskInstance.completed_at))
+            .join(Station, TaskInstance.station_id == Station.id)
+            .where(TaskInstance.panel_unit_id.in_(event_panel_unit_ids))
+            .where(TaskInstance.completed_at.is_not(None))
+            .where(Station.role == StationRole.PANELS)
+            .where(Station.sequence_order < station.sequence_order)
+            .group_by(TaskInstance.panel_unit_id)
+        )
+        for panel_unit_id, completed_at in db.execute(prev_stmt).all():
+            if completed_at:
+                available_map[int(panel_unit_id)] = completed_at
+
+    if event_panel_unit_ids:
+        instance_rows_all = list(
+            db.execute(
+                select(
+                    TaskInstance.panel_unit_id,
+                    TaskInstance.task_definition_id,
+                    TaskInstance.completed_at,
+                )
+                .where(TaskInstance.panel_unit_id.in_(event_panel_unit_ids))
+                .where(TaskInstance.station_id == station.id)
+                .where(TaskInstance.scope == TaskScope.PANEL)
+                .where(TaskInstance.status == TaskStatus.COMPLETED)
+                .where(TaskInstance.completed_at.is_not(None))
+            ).all()
+        )
+        for panel_unit_id, task_definition_id, completed_at in instance_rows_all:
+            _update_latest(
+                satisfied_at_map, panel_unit_id, task_definition_id, completed_at
+            )
+
+        exception_rows_all = list(
+            db.execute(
+                select(
+                    TaskException.panel_unit_id,
+                    TaskException.task_definition_id,
+                    TaskException.created_at,
+                )
+                .where(TaskException.panel_unit_id.in_(event_panel_unit_ids))
+                .where(TaskException.station_id == station.id)
+                .where(TaskException.scope == TaskScope.PANEL)
+                .where(TaskException.exception_type == TaskExceptionType.SKIP)
+            ).all()
+        )
+        for panel_unit_id, task_definition_id, created_at in exception_rows_all:
+            _update_latest(
+                satisfied_at_map, panel_unit_id, task_definition_id, created_at
+            )
+
     summaries: list[StationPanelsFinishedPanelSummary] = []
     summary_keys: set[str] = set()
     for panel_unit_id, row in panel_contexts.items():
@@ -468,7 +526,7 @@ def _station_panels_finished_summary(
         passed_at = _resolve_passed_at(
             required_task_ids,
             satisfied_at_map.get(panel_unit_id, {}),
-            None,
+            available_map.get(panel_unit_id),
         )
         if not _within_range(passed_at, start_dt, end_dt):
             continue

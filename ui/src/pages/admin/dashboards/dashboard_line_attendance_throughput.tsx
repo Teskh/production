@@ -1171,6 +1171,13 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
       ),
     [data?.buk_cost_centers, effectiveDashboard?.sanitizedMap],
   );
+  const fteEligibleCostCenters = useMemo(
+    () =>
+      visibleCostCenters.filter(
+        (item) => typeof effectiveDashboard?.sanitizedMap[item.cost_center_code] === 'number',
+      ),
+    [effectiveDashboard?.sanitizedMap, visibleCostCenters],
+  );
 
   const cohortOptions = useMemo<CohortOption[]>(() => {
     const visibleCodes = visibleCostCenters.map((item) => item.cost_center_code);
@@ -1250,13 +1257,20 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
     () => [...new Set(selectedCohortOption?.costCenterCodes ?? [])].sort(),
     [selectedCohortOption],
   );
+  const selectedFteCostCenterCodes = useMemo(
+    () =>
+      selectedCostCenterCodes.filter(
+        (code) => typeof effectiveDashboard?.sanitizedMap[code] === 'number',
+      ),
+    [effectiveDashboard?.sanitizedMap, selectedCostCenterCodes],
+  );
   const selectedCostCenterCodeSet = useMemo(
     () => new Set(selectedCostCenterCodes),
     [selectedCostCenterCodes],
   );
   useEffect(() => {
-    setFteCostCenterCodes(selectedCostCenterCodes);
-  }, [selectedCostCenterCodes]);
+    setFteCostCenterCodes(selectedFteCostCenterCodes);
+  }, [selectedFteCostCenterCodes]);
 
   const requestedAttendanceCostCenterCodes = useMemo(
     () => [...new Set([...selectedCostCenterCodes, ...fteCostCenterCodes])].sort(),
@@ -2027,7 +2041,7 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
-          {visibleCostCenters.map((item) => {
+          {fteEligibleCostCenters.map((item) => {
             const selected = fteCostCenterCodeSet.has(item.cost_center_code);
             return (
               <button
@@ -2050,6 +2064,11 @@ const DashboardLineAttendanceThroughput: React.FC = () => {
               </button>
             );
           })}
+          {fteEligibleCostCenters.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white/70 px-4 py-3 text-sm text-[var(--ink-muted)]">
+              Asigna un supervisor local a un CECO para incluirlo en FTE.
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-6">
