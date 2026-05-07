@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Plus, Search, Settings2, Trash2 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -98,6 +102,11 @@ type StationGroup = {
 
 const NoteDefs: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [templates, setTemplates] = useState<CommentTemplate[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
@@ -126,8 +135,8 @@ const NoteDefs: React.FC = () => {
       setStatusMessage(null);
       try {
         const [templateData, stationData] = await Promise.all([
-          apiRequest<CommentTemplate[]>('/api/comment-templates'),
-          apiRequest<Station[]>('/api/stations'),
+          pageApiRequest<CommentTemplate[]>('/api/comment-templates'),
+          pageApiRequest<Station[]>('/api/stations'),
         ]);
         if (!active) {
           return;
@@ -357,7 +366,7 @@ const NoteDefs: React.FC = () => {
       const payload = buildPayload(draft);
       let saved: CommentTemplate;
       if (draft.id) {
-        saved = await apiRequest<CommentTemplate>(`/api/comment-templates/${draft.id}`, {
+        saved = await pageApiRequest<CommentTemplate>(`/api/comment-templates/${draft.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
@@ -365,7 +374,7 @@ const NoteDefs: React.FC = () => {
           sortTemplates(prev.map((template) => (template.id === saved.id ? saved : template)))
         );
       } else {
-        saved = await apiRequest<CommentTemplate>('/api/comment-templates', {
+        saved = await pageApiRequest<CommentTemplate>('/api/comment-templates', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -390,7 +399,7 @@ const NoteDefs: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/comment-templates/${draft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/comment-templates/${draft.id}`, { method: 'DELETE' });
       const updated = templates.filter((template) => template.id !== draft.id);
       setTemplates(updated);
       if (updated.length > 0) {

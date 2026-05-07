@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Users,
@@ -12,12 +12,20 @@ import {
   Layers,
   Database,
   BarChart3,
+  Save,
+  ShieldCheck,
 } from 'lucide-react';
 import clsx from 'clsx';
 import {
   AdminHeaderContext,
+  AdminPageAccessContext,
   AdminSessionContext,
+  canEditAdminPage,
+  canViewAdminPage,
   isSysadminUser,
+  pagePermissionsToMap,
+  type AdminPagePermission,
+  type AdminPagePermissionRole,
   type AdminHeaderState,
   type AdminSession,
 } from './AdminLayoutContext';
@@ -28,49 +36,151 @@ const defaultHeader: AdminHeaderState = {
   title: 'Area de Administracion',
 };
 
+const FALLBACK_ADMIN_ROLES = ['Supervisor', 'Admin', 'SysAdmin', 'QC', 'Prevencionista'];
+const ADMIN_PAGE_PATH_ALIASES: Record<string, string> = {
+  '/admin/specialties': 'workers',
+  '/admin/admin-users': 'workers',
+};
+
+type AdminMenuItem = {
+  id: string;
+  name: string;
+  path: string;
+  icon: React.ElementType;
+  sysadminOnly?: boolean;
+};
+
+type AdminMenuGroup = {
+  title: string;
+  items: AdminMenuItem[];
+};
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const adminApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
 const AdminLayout: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [header, setHeader] = useState<AdminHeaderState>(defaultHeader);
   const [admin, setAdmin] = useState<AdminSession | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [roleOptions, setRoleOptions] = useState<string[]>([]);
+  const [pagePermissions, setPagePermissions] = useState<AdminPagePermission[]>([]);
+  const [pagePermissionsLoading, setPagePermissionsLoading] = useState(true);
+  const [permissionDialogId, setPermissionDialogId] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<AdminPagePermissionRole[]>([]);
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
   const lastTapRef = useRef(0);
   const location = useLocation();
   const navigate = useNavigate();
 
   const isSysadmin = admin ? isSysadminUser(admin) : false;
-  const menuItems = [
+  const permissionMap = useMemo(() => pagePermissionsToMap(pagePermissions), [pagePermissions]);
+  const baseMenuItems: AdminMenuGroup[] = [
     {
       title: 'Analitica',
-      items: [{ name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
+      items: [{ id: 'dashboards', name: 'Dashboards', path: '/admin/dashboards', icon: BarChart3 }],
     },
     {
       title: 'Equipo',
       items: [
-        { name: 'Personal', path: '/admin/workers', icon: Users },
+        { id: 'workers', name: 'Personal', path: '/admin/workers', icon: Users },
       ],
     },
     {
       title: 'Planeacion y Produccion',
-      items: [{ name: 'Plan de Produccion', path: '/admin/production-queue', icon: Layers }],
+      items: [
+        {
+          id: 'production-queue',
+          name: 'Plan de Produccion',
+          path: '/admin/production-queue',
+          icon: Layers,
+        },
+      ],
     },
     {
       title: 'Definicion de Producto',
       items: [
-        { name: 'Casa/Panel/Módulo', path: '/admin/house-config', icon: Home },
-        { name: 'Parametros', path: '/admin/house-params', icon: Settings, sysadminOnly: true },
-      ].filter((item) => !item.sysadminOnly || isSysadmin),
+        { id: 'house-config', name: 'Casa/Panel/Módulo', path: '/admin/house-config', icon: Home },
+        {
+          id: 'house-params',
+          name: 'Parametros',
+          path: '/admin/house-params',
+          icon: Settings,
+          sysadminOnly: true,
+        },
+      ],
     },
     {
       title: 'Configuracion',
       items: [
-        { name: 'Estaciones', path: '/admin/stations', icon: Settings, sysadminOnly: true },
-        { name: 'Tareas', path: '/admin/task-defs', icon: ClipboardList },
-        { name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
-        { name: 'Respaldos', path: '/admin/backups', icon: Database, sysadminOnly: true },
-      ].filter((item) => !item.sysadminOnly || isSysadmin),
+        { id: 'stations', name: 'Estaciones', path: '/admin/stations', icon: Settings, sysadminOnly: true },
+        { id: 'task-defs', name: 'Tareas', path: '/admin/task-defs', icon: ClipboardList },
+        { id: 'pause-note-defs', name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
+        { id: 'backups', name: 'Respaldos', path: '/admin/backups', icon: Database, sysadminOnly: true },
+      ],
     },
   ];
+
+  const allMenuItems = useMemo(() => baseMenuItems.flatMap((group) => group.items), [baseMenuItems]);
+  const currentPage = useMemo(
+    () => {
+      const aliasPageId = Object.entries(ADMIN_PAGE_PATH_ALIASES).find(
+        ([path]) => location.pathname === path || location.pathname.startsWith(`${path}/`),
+      )?.[1];
+      if (aliasPageId) {
+        return allMenuItems.find((item) => item.id === aliasPageId) ?? null;
+      }
+      return allMenuItems.find(
+        (item) => location.pathname === item.path || location.pathname.startsWith(`${item.path}/`),
+      ) ?? null;
+    },
+    [allMenuItems, location.pathname],
+  );
+  const canEditCurrentPage = admin
+    ? canEditAdminPage(admin, currentPage?.id ?? null, permissionMap)
+    : true;
+  const menuItems = useMemo(
+    () =>
+      baseMenuItems
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) => {
+            if (item.sysadminOnly && !isSysadmin) {
+              return false;
+            }
+            return !admin || canViewAdminPage(admin, item.id, permissionMap);
+          }),
+        }))
+        .filter((group) => group.items.length > 0),
+    [admin, baseMenuItems, isSysadmin, permissionMap],
+  );
+  const permissionDialogPage = useMemo(
+    () => allMenuItems.find((item) => item.id === permissionDialogId) ?? null,
+    [allMenuItems, permissionDialogId],
+  );
 
   useEffect(() => {
     let active = true;
@@ -108,6 +218,68 @@ const AdminLayout: React.FC = () => {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    if (!admin) {
+      return;
+    }
+    let active = true;
+    const loadPermissions = async () => {
+      setPagePermissionsLoading(true);
+      setPermissionError(null);
+      try {
+        const [permissionResult, roleResult] = await Promise.allSettled([
+          adminApiRequest<AdminPagePermission[]>('/api/admin/page-permissions'),
+          adminApiRequest<string[]>('/api/admin/roles'),
+        ]);
+        if (!active) {
+          return;
+        }
+        if (permissionResult.status === 'fulfilled') {
+          setPagePermissions(permissionResult.value);
+        } else {
+          setPagePermissions([]);
+          setPermissionError(
+            permissionResult.reason instanceof Error
+              ? permissionResult.reason.message
+              : 'No se pudo cargar permisos.',
+          );
+        }
+        if (roleResult.status === 'fulfilled') {
+          setRoleOptions(roleResult.value?.length ? roleResult.value : FALLBACK_ADMIN_ROLES);
+        } else {
+          setRoleOptions(FALLBACK_ADMIN_ROLES);
+          setPermissionError(
+            roleResult.reason instanceof Error
+              ? roleResult.reason.message
+              : 'No se pudieron cargar los roles admin.',
+          );
+        }
+      } finally {
+        if (active) {
+          setPagePermissionsLoading(false);
+        }
+      }
+    };
+    void loadPermissions();
+    return () => {
+      active = false;
+    };
+  }, [admin]);
+
+  useEffect(() => {
+    if (!admin || pagePermissionsLoading || !currentPage) {
+      return;
+    }
+    if (currentPage.sysadminOnly && !isSysadmin) {
+      navigate('/admin/dashboards', { replace: true });
+      return;
+    }
+    if (!canViewAdminPage(admin, currentPage.id, permissionMap)) {
+      const firstVisible = menuItems.flatMap((group) => group.items)[0];
+      navigate(firstVisible?.path ?? '/admin/dashboards', { replace: true });
+    }
+  }, [admin, currentPage, isSysadmin, menuItems, navigate, pagePermissionsLoading, permissionMap]);
+
   const handleLogout = async () => {
     setLogoutLoading(true);
     try {
@@ -120,6 +292,79 @@ const AdminLayout: React.FC = () => {
     } finally {
       navigate('/login', { replace: true });
     }
+  };
+
+  const openPermissionDialog = (item: AdminMenuItem) => {
+    const existing = permissionMap[item.id] ?? [];
+    setPermissionDialogId(item.id);
+    setPermissionDraft(
+      (roleOptions.length ? roleOptions : FALLBACK_ADMIN_ROLES).map((role) => {
+        const found = existing.find((permission) => permission.role === role);
+        return found ?? { role, can_view: true, can_edit: true };
+      }),
+    );
+    setPermissionError(null);
+  };
+
+  const updateDraftRole = (
+    role: string,
+    key: 'can_view' | 'can_edit',
+    value: boolean,
+  ) => {
+    setPermissionDraft((prev) =>
+      prev.map((permission) => {
+        if (permission.role !== role) {
+          return permission;
+        }
+        if (key === 'can_view') {
+          return {
+            ...permission,
+            can_view: value,
+            can_edit: value ? permission.can_edit : false,
+          };
+        }
+        return {
+          ...permission,
+          can_view: value ? true : permission.can_view,
+          can_edit: value,
+        };
+      }),
+    );
+  };
+
+  const savePermissionDraft = async () => {
+    if (!permissionDialogId) {
+      return;
+    }
+    setPermissionsSaving(true);
+    setPermissionError(null);
+    try {
+      const updated = await adminApiRequest<AdminPagePermission>(
+        `/api/admin/page-permissions/${encodeURIComponent(permissionDialogId)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ permissions: permissionDraft }),
+        },
+      );
+      setPagePermissions((prev) => {
+        const next = prev.filter((item) => item.page_id !== permissionDialogId);
+        next.push(updated);
+        return next;
+      });
+      setPermissionDialogId(null);
+    } catch (error) {
+      setPermissionError(error instanceof Error ? error.message : 'No se pudo guardar permisos.');
+    } finally {
+      setPermissionsSaving(false);
+    }
+  };
+
+  const handleReadOnlySubmit = (event: React.SyntheticEvent<HTMLElement>) => {
+    if (canEditCurrentPage) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   if (authLoading) {
@@ -159,6 +404,9 @@ const AdminLayout: React.FC = () => {
   return (
     <AdminHeaderContext.Provider value={{ header, setHeader }}>
       <AdminSessionContext.Provider value={admin}>
+        <AdminPageAccessContext.Provider
+          value={{ pageId: currentPage?.id ?? null, canEdit: canEditCurrentPage }}
+        >
         <div
           className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef9f2,_#f2ede1_45%,_#e7e2d8_100%)]"
           onTouchEnd={handleTouchEnd}
@@ -204,20 +452,32 @@ const AdminLayout: React.FC = () => {
                       </h3>
                       <div className="space-y-1">
                         {group.items.map((item) => (
-                          <Link
-                            key={item.path}
-                            to={item.path}
-                            className={clsx(
-                              "flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors",
-                              location.pathname === item.path ||
-                                location.pathname.startsWith(`${item.path}/`)
-                                ? "bg-white/15 text-white"
-                                : "text-white/70 hover:bg-white/10 hover:text-white"
+                          <div key={item.path} className="flex items-center gap-1">
+                            <Link
+                              to={item.path}
+                              className={clsx(
+                                "flex min-w-0 flex-1 items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors",
+                                location.pathname === item.path ||
+                                  location.pathname.startsWith(`${item.path}/`)
+                                  ? "bg-white/15 text-white"
+                                  : "text-white/70 hover:bg-white/10 hover:text-white"
+                              )}
+                            >
+                              <item.icon size={18} className="mr-3 shrink-0" />
+                              <span className="truncate">{item.name}</span>
+                            </Link>
+                            {isSysadmin && (
+                              <button
+                                type="button"
+                                onClick={() => openPermissionDialog(item)}
+                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/50 transition hover:bg-white/10 hover:text-white"
+                                aria-label={`Configurar permisos de ${item.name}`}
+                                title="Configurar permisos"
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+                              </button>
                             )}
-                          >
-                            <item.icon size={18} className="mr-3" />
-                            {item.name}
-                          </Link>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -261,12 +521,115 @@ const AdminLayout: React.FC = () => {
                   </button>
                 </div>
               </header>
-              <main className="flex-1 overflow-auto px-6 py-8">
+              <main
+                className="flex-1 overflow-auto px-6 py-8"
+                onSubmitCapture={handleReadOnlySubmit}
+              >
+                {!canEditCurrentPage && (
+                  <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Tienes acceso de solo lectura en esta pagina.
+                  </div>
+                )}
                 <Outlet />
               </main>
             </div>
           </div>
+          {permissionDialogPage && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-8"
+              role="dialog"
+              aria-modal="true"
+            >
+              <div className="w-full max-w-xl rounded-2xl border border-black/10 bg-white p-5 shadow-xl">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">
+                      Permisos de pagina
+                    </p>
+                    <h2 className="mt-1 text-lg font-semibold text-[var(--ink)]">
+                      {permissionDialogPage.name}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPermissionDialogId(null)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--ink)]"
+                    aria-label="Cerrar"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-5 overflow-hidden rounded-xl border border-black/10">
+                  <div className="grid grid-cols-[1fr_90px_90px] bg-black/[0.03] px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ink-muted)]">
+                    <span>Rol</span>
+                    <span className="text-center">Ver</span>
+                    <span className="text-center">Editar</span>
+                  </div>
+                  {permissionDraft.map((permission) => (
+                    <div
+                      key={permission.role}
+                      className="grid grid-cols-[1fr_90px_90px] items-center border-t border-black/10 px-3 py-2 text-sm text-[var(--ink)]"
+                    >
+                      <span>{permission.role}</span>
+                      <label className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={permission.can_view}
+                          onChange={(event) =>
+                            updateDraftRole(permission.role, 'can_view', event.target.checked)
+                          }
+                          className="h-4 w-4 accent-[var(--accent)]"
+                        />
+                      </label>
+                      <label className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={permission.can_edit}
+                          onChange={(event) =>
+                            updateDraftRole(permission.role, 'can_edit', event.target.checked)
+                          }
+                          className="h-4 w-4 accent-[var(--accent)]"
+                        />
+                      </label>
+                    </div>
+                  ))}
+                  {permissionDraft.length === 0 && (
+                    <div className="px-3 py-4 text-sm text-[var(--ink-muted)]">
+                      No hay roles admin disponibles para configurar.
+                    </div>
+                  )}
+                </div>
+
+                {permissionError && (
+                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {permissionError}
+                  </div>
+                )}
+
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPermissionDialogId(null)}
+                    className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)]"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={savePermissionDraft}
+                    disabled={permissionsSaving}
+                    className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Save className="h-4 w-4" />
+                    {permissionsSaving ? 'Guardando...' : 'Guardar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
+        </AdminPageAccessContext.Provider>
       </AdminSessionContext.Provider>
     </AdminHeaderContext.Provider>
   );

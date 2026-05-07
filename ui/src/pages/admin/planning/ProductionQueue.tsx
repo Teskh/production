@@ -16,6 +16,7 @@ import {
 import {
   canManageProductionQueue,
   useAdminHeader,
+  useAdminPageAccess,
   useAdminSession,
 } from '../../../layouts/AdminLayoutContext';
 
@@ -397,7 +398,8 @@ const SubTypeSelector: React.FC<{
 const ProductionQueue: React.FC = () => {
   const admin = useAdminSession();
   const { setHeader } = useAdminHeader();
-  const canManageQueue = canManageProductionQueue(admin);
+  const { canEdit } = useAdminPageAccess();
+  const canManageQueue = canManageProductionQueue(admin) && canEdit;
   const pageSize = 20;
   const [items, setItems] = useState<QueueItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -1366,7 +1368,7 @@ const ProductionQueue: React.FC = () => {
 
         {!canManageQueue && (
           <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Vista solo lectura. Solo Admin y MC Senior pueden agregar o editar la cola.
+            Vista solo lectura. No tienes permisos para agregar o editar la cola.
           </div>
         )}
 

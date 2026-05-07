@@ -82,6 +82,7 @@ class QCPlantModuleSummary(BaseModel):
     current_station_id: int
     current_station_name: str | None = None
     status: WorkUnitStatus
+    can_mark_completed: bool = False
     module_number: int
     project_name: str | None = None
     house_type_name: str | None = None

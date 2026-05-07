@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Edit3, Plus, Trash2 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -102,6 +106,11 @@ const parseNumberInput = (value: string): number | 'invalid' => {
 
 const HouseParams: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [parameters, setParameters] = useState<HouseParameter[]>([]);
   const [parameterDraft, setParameterDraft] = useState<ParameterDraft>(emptyDraft());
   const [selectedParameterId, setSelectedParameterId] = useState<number | null>(null);
@@ -133,8 +142,8 @@ const HouseParams: React.FC = () => {
       setStatusMessage(null);
       try {
         const [parameterData, houseTypeData] = await Promise.all([
-          apiRequest<HouseParameter[]>('/api/house-parameters'),
-          apiRequest<HouseType[]>('/api/house-types'),
+          pageApiRequest<HouseParameter[]>('/api/house-parameters'),
+          pageApiRequest<HouseType[]>('/api/house-types'),
         ]);
         if (!active) {
           return;
@@ -173,7 +182,7 @@ const HouseParams: React.FC = () => {
     setLoadingSubtypes(true);
     setValueMessage(null);
     try {
-      const data = await apiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
+      const data = await pageApiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
       setSubtypesByType((prev) => ({ ...prev, [houseTypeId]: sortSubtypes(data) }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudieron cargar los subtipos.';
@@ -203,7 +212,7 @@ const HouseParams: React.FC = () => {
       setLoadingValues(true);
       setValueMessage(null);
       try {
-        const data = await apiRequest<HouseParameterValue[]>(
+        const data = await pageApiRequest<HouseParameterValue[]>(
           `/api/house-parameters/${selectedParameterId}/values`
         );
         if (!active) {
@@ -354,7 +363,7 @@ const HouseParams: React.FC = () => {
       if (!trimmed) {
         if (existing) {
           operations.push(
-            apiRequest<void>(`/api/house-parameters/values/${existing.id}`, { method: 'DELETE' })
+            pageApiRequest<void>(`/api/house-parameters/values/${existing.id}`, { method: 'DELETE' })
           );
         }
         continue;
@@ -366,7 +375,7 @@ const HouseParams: React.FC = () => {
       if (existing) {
         if (Number(existing.value) !== parsed) {
           operations.push(
-            apiRequest<HouseParameterValue>(`/api/house-parameters/values/${existing.id}`, {
+            pageApiRequest<HouseParameterValue>(`/api/house-parameters/values/${existing.id}`, {
               method: 'PUT',
               body: JSON.stringify({ value: parsed }),
             })
@@ -375,7 +384,7 @@ const HouseParams: React.FC = () => {
         continue;
       }
       operations.push(
-        apiRequest<HouseParameterValue>(`/api/house-parameters/${parameterId}/values`, {
+        pageApiRequest<HouseParameterValue>(`/api/house-parameters/${parameterId}/values`, {
           method: 'POST',
           body: JSON.stringify({
             house_type_id: selectedHouseType.id,
@@ -392,7 +401,7 @@ const HouseParams: React.FC = () => {
       return;
     }
     await Promise.all(operations);
-    const refreshed = await apiRequest<HouseParameterValue[]>(
+    const refreshed = await pageApiRequest<HouseParameterValue[]>(
       `/api/house-parameters/${parameterId}/values`
     );
     setParameterValues(refreshed);
@@ -407,7 +416,7 @@ const HouseParams: React.FC = () => {
       const payload = buildParameterPayload(parameterDraft);
       let saved: HouseParameter;
       if (parameterDraft.id) {
-        saved = await apiRequest<HouseParameter>(`/api/house-parameters/${parameterDraft.id}`, {
+        saved = await pageApiRequest<HouseParameter>(`/api/house-parameters/${parameterDraft.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
@@ -415,7 +424,7 @@ const HouseParams: React.FC = () => {
           sortParameters(prev.map((item) => (item.id === saved.id ? saved : item)))
         );
       } else {
-        saved = await apiRequest<HouseParameter>('/api/house-parameters', {
+        saved = await pageApiRequest<HouseParameter>('/api/house-parameters', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -445,7 +454,7 @@ const HouseParams: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/house-parameters/${parameterDraft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/house-parameters/${parameterDraft.id}`, { method: 'DELETE' });
       const remaining = sortParameters(
         parameters.filter((parameter) => parameter.id !== parameterDraft.id)
       );

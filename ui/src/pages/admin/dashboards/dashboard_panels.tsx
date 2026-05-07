@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, Filter, RefreshCcw } from 'lucide-react';
+import { Download, Eye, EyeOff, Filter, RefreshCcw } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesWithUnit } from '../../../utils/timeUtils';
 
@@ -168,6 +168,7 @@ const DashboardPanels: React.FC = () => {
   const [maxMultiplier, setMaxMultiplier] = useState(String(DEFAULT_MAX_MULTIPLIER));
 
   const [tableData, setTableData] = useState<PanelLinearMetersResponse | null>(null);
+  const [excludedRowIds, setExcludedRowIds] = useState<Set<number>>(() => new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -367,14 +368,47 @@ const DashboardPanels: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveDateRange.from, effectiveDateRange.to, selectedHouseTypeId, panelStations]);
 
-  const processedRows = useMemo(() => {
+  const allRows = useMemo(() => {
     if (!tableData?.rows) return [];
     return tableData.rows;
   }, [tableData]);
 
+  useEffect(() => {
+    if (!tableData?.rows) {
+      setExcludedRowIds(new Set());
+      return;
+    }
+
+    const currentRowIds = new Set(tableData.rows.map((row) => row.panel_definition_id));
+    setExcludedRowIds((previous) => {
+      const next = new Set<number>();
+      previous.forEach((rowId) => {
+        if (currentRowIds.has(rowId)) next.add(rowId);
+      });
+      return next.size === previous.size ? previous : next;
+    });
+  }, [tableData?.rows]);
+
+  const processedRows = useMemo(() => {
+    if (!allRows.length) return [];
+    return allRows.filter((row) => !excludedRowIds.has(row.panel_definition_id));
+  }, [allRows, excludedRowIds]);
+
+  const toggleRowIncluded = (panelDefinitionId: number) => {
+    setExcludedRowIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(panelDefinitionId)) {
+        next.delete(panelDefinitionId);
+      } else {
+        next.add(panelDefinitionId);
+      }
+      return next;
+    });
+  };
+
   const stationsWithData = useMemo(() => {
     const stationIds = new Set<string>();
-    processedRows.forEach((row) => {
+    allRows.forEach((row) => {
       if (!row?.stations) return;
       Object.entries(row.stations).forEach(([stationId, data]) => {
         if (data?.avg_time_minutes != null && Number(data.avg_time_minutes) > 0) {
@@ -390,7 +424,7 @@ const DashboardPanels: React.FC = () => {
       return Number(a) - Number(b);
     });
     return sorted;
-  }, [processedRows, stationOrderById]);
+  }, [allRows, stationOrderById]);
 
   const averagesByStation = useMemo(() => {
     const averages: Record<string, { avg_time_minutes: number | null; lm_per_minute: number | null }> = {};
@@ -533,7 +567,7 @@ const DashboardPanels: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 rounded-full border border-[var(--accent-soft)] bg-white/80 px-4 py-2 text-xs text-[var(--ink)]">
             <Filter className="h-4 w-4 text-[var(--accent)]" />
-            {processedRows.length} filas activas
+            {processedRows.length} de {allRows.length} filas activas
           </div>
         </div>
       </div>
@@ -652,7 +686,10 @@ const DashboardPanels: React.FC = () => {
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-[var(--ink-muted)]">
             <span className="rounded-full border border-black/10 bg-white px-3 py-1">
-              Total paneles: {tableData?.total_panels ?? processedRows.length}
+              Total paneles: {tableData?.total_panels ?? allRows.length}
+            </span>
+            <span className="rounded-full border border-black/10 bg-white px-3 py-1">
+              Incluidos: {processedRows.length}
             </span>
             <span className="rounded-full border border-black/10 bg-white px-3 py-1">
               ML promedio: {averagePanelLength != null ? formatPanelLengthMeters(averagePanelLength) : '-'}
@@ -663,17 +700,22 @@ const DashboardPanels: React.FC = () => {
         <div className="mt-4 overflow-x-auto border rounded-xl border-black/5 bg-white/50">
           {loading && <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">Cargando datos...</div>}
 
-          {!loading && processedRows.length === 0 && (
+          {!loading && allRows.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
               No hay datos disponibles para el periodo seleccionado.
             </div>
           )}
 
-          {!loading && processedRows.length > 0 && (
+          {!loading && allRows.length > 0 && (
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr className="text-left text-[11px] font-bold uppercase tracking-wider text-[var(--ink-muted)] border-b border-black/10 bg-black/[0.02]">
-                  <th className="px-2 py-3">Tipo vivienda</th>
+                  <th className="px-2 py-3">
+                    <span className="inline-flex items-center gap-2">
+                      <Eye className="h-3.5 w-3.5" />
+                      Tipo vivienda
+                    </span>
+                  </th>
                   <th className="px-2 py-3 text-center">Modulo</th>
                   <th className="px-2 py-3 text-center">ML</th>
                   <th className="px-2 py-3">Panel</th>
@@ -690,58 +732,89 @@ const DashboardPanels: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {processedRows.map((row) => (
-                  <tr key={row.panel_definition_id} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
-                    <td className="px-2 py-1.5 font-medium text-[var(--ink)]">
-                      {row.house_type_name || '-'}
-                    </td>
-                    <td className="px-2 py-1.5 text-center text-[var(--ink)] tabular-nums">{row.module_sequence_number ?? '-'}</td>
-                    <td className="px-2 py-1.5 text-center text-[var(--ink)] tabular-nums">
-                      {formatPanelLengthMeters(row.panel_length_m ?? null)}
-                    </td>
-                    <td className="px-2 py-1.5 text-[var(--ink)]">{row.panel_code || '-'}</td>
-                    {stationsWithData.map((stationId) => {
-                      const stationData = row.stations?.[stationId];
-                      const avgTime = stationData?.avg_time_minutes;
-                      const avgRatio = stationData?.avg_ratio;
-                      const expectedAvg = stationData?.expected_avg_minutes;
-                      const lmPerMin = stationData?.lm_per_minute;
-                      const sampleCount = stationData?.sample_count || 0;
-                      const tooltipLines = [] as string[];
-                      if (sampleCount > 0) tooltipLines.push(`Muestras: ${sampleCount}`);
-                      if (expectedAvg != null) tooltipLines.push(`Esperado prom.: ${formatMinutesWithUnit(expectedAvg)}`);
-                      if (avgRatio != null) tooltipLines.push(`Ratio prom.: ${avgRatio.toFixed(2)}x`);
-                      const tooltip = tooltipLines.length ? tooltipLines.join(' | ') : 'Sin datos';
-                      const avgTimeBg = ratioToBackgroundColor(avgRatio ?? null);
+                {allRows.map((row) => {
+                  const isIncluded = !excludedRowIds.has(row.panel_definition_id);
 
-                      return (
-                        <React.Fragment key={stationId}>
-                          <td
-                            className="px-2 py-1.5 text-center tabular-nums border-l border-black/[0.03]"
-                            style={{
-                              backgroundColor: avgTimeBg || undefined,
-                              color: avgTime != null ? 'var(--ink)' : 'var(--ink-muted)',
-                            }}
-                            title={tooltip}
+                  return (
+                    <tr
+                      key={row.panel_definition_id}
+                      className={`border-b border-black/5 transition-colors ${
+                        isIncluded ? 'hover:bg-black/[0.02]' : 'bg-black/[0.035] text-[var(--ink-muted)]'
+                      }`}
+                    >
+                      <td className="px-2 py-1.5 font-medium text-[var(--ink)]">
+                        <div className="flex min-w-[180px] items-center gap-2">
+                          <button
+                            type="button"
+                            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+                              isIncluded
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                : 'border-black/10 bg-white text-[var(--ink-muted)] hover:bg-black/[0.04]'
+                            }`}
+                            onClick={() => toggleRowIncluded(row.panel_definition_id)}
+                            aria-label={
+                              isIncluded
+                                ? `Excluir ${row.house_type_name || row.panel_code || 'panel'} de los calculos`
+                                : `Incluir ${row.house_type_name || row.panel_code || 'panel'} en los calculos`
+                            }
+                            aria-pressed={isIncluded}
+                            title={isIncluded ? 'Incluido en calculos' : 'Excluido de calculos'}
                           >
-                            {avgTime != null ? formatMinutesWithUnit(avgTime) : '-'}
-                          </td>
-                          <td
-                            className="px-2 py-1.5 text-center tabular-nums border-l border-black/[0.03]"
-                            style={{
-                              color: lmPerMin != null && Number.isFinite(Number(lmPerMin)) && Number(lmPerMin) > 0
-                                ? 'var(--ink)'
-                                : 'var(--ink-muted)',
-                            }}
-                            title={tooltip}
-                          >
-                            {formatLmPerMinute(lmPerMin ?? null)}
-                          </td>
-                        </React.Fragment>
-                      );
-                    })}
-                  </tr>
-                ))}
+                            {isIncluded ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          </button>
+                          <span className={isIncluded ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)] line-through decoration-black/30'}>
+                            {row.house_type_name || '-'}
+                          </span>
+                        </div>
+                      </td>
+                      <td className={`px-2 py-1.5 text-center tabular-nums ${isIncluded ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]'}`}>{row.module_sequence_number ?? '-'}</td>
+                      <td className={`px-2 py-1.5 text-center tabular-nums ${isIncluded ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]'}`}>
+                        {formatPanelLengthMeters(row.panel_length_m ?? null)}
+                      </td>
+                      <td className={`px-2 py-1.5 ${isIncluded ? 'text-[var(--ink)]' : 'text-[var(--ink-muted)]'}`}>{row.panel_code || '-'}</td>
+                      {stationsWithData.map((stationId) => {
+                        const stationData = row.stations?.[stationId];
+                        const avgTime = stationData?.avg_time_minutes;
+                        const avgRatio = stationData?.avg_ratio;
+                        const expectedAvg = stationData?.expected_avg_minutes;
+                        const lmPerMin = stationData?.lm_per_minute;
+                        const sampleCount = stationData?.sample_count || 0;
+                        const tooltipLines = [] as string[];
+                        if (sampleCount > 0) tooltipLines.push(`Muestras: ${sampleCount}`);
+                        if (expectedAvg != null) tooltipLines.push(`Esperado prom.: ${formatMinutesWithUnit(expectedAvg)}`);
+                        if (avgRatio != null) tooltipLines.push(`Ratio prom.: ${avgRatio.toFixed(2)}x`);
+                        const tooltip = tooltipLines.length ? tooltipLines.join(' | ') : 'Sin datos';
+                        const avgTimeBg = ratioToBackgroundColor(avgRatio ?? null);
+
+                        return (
+                          <React.Fragment key={stationId}>
+                            <td
+                              className="px-2 py-1.5 text-center tabular-nums border-l border-black/[0.03]"
+                              style={{
+                                backgroundColor: isIncluded ? avgTimeBg || undefined : undefined,
+                                color: isIncluded && avgTime != null ? 'var(--ink)' : 'var(--ink-muted)',
+                              }}
+                              title={tooltip}
+                            >
+                              {avgTime != null ? formatMinutesWithUnit(avgTime) : '-'}
+                            </td>
+                            <td
+                              className="px-2 py-1.5 text-center tabular-nums border-l border-black/[0.03]"
+                              style={{
+                                color: isIncluded && lmPerMin != null && Number.isFinite(Number(lmPerMin)) && Number(lmPerMin) > 0
+                                  ? 'var(--ink)'
+                                  : 'var(--ink-muted)',
+                              }}
+                              title={tooltip}
+                            >
+                              {formatLmPerMinute(lmPerMin ?? null)}
+                            </td>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
 
                 <tr className="bg-black/[0.03] font-semibold">
                   <td className="px-2 py-2 text-[var(--ink)]">

@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import { useAdminHeader, useAdminPageAccess } from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -517,6 +517,14 @@ const sortTasks = (list: ModuleTask[]) =>
 
 const HouseConfigurator: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    const method = (options.method ?? 'GET').toUpperCase();
+    if (!canEdit && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      throw new Error('Tienes acceso de solo lectura en esta pagina.');
+    }
+    return apiRequest<T>(path, options);
+  };
   const [activeTab, setActiveTab] = useState<'house-types' | 'panels' | 'module-tasks'>(
     'house-types'
   );
@@ -585,12 +593,12 @@ const HouseConfigurator: React.FC = () => {
           durationResult,
           stationResult,
         ] = (await Promise.allSettled([
-          apiRequest<HouseType[]>('/api/house-types'),
-          apiRequest<PanelDefinition[]>('/api/panel-definitions'),
-          apiRequest<TaskDefinition[]>('/api/task-definitions'),
-          apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
-          apiRequest<TaskExpectedDuration[]>('/api/task-rules/durations'),
-          apiRequest<Station[]>('/api/stations'),
+          pageApiRequest<HouseType[]>('/api/house-types'),
+          pageApiRequest<PanelDefinition[]>('/api/panel-definitions'),
+          pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
+          pageApiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
+          pageApiRequest<TaskExpectedDuration[]>('/api/task-rules/durations'),
+          pageApiRequest<Station[]>('/api/stations'),
         ])) as [
           PromiseSettledResult<HouseType[]>,
           PromiseSettledResult<PanelDefinition[]>,
@@ -622,7 +630,7 @@ const HouseConfigurator: React.FC = () => {
           const results = await Promise.allSettled(
             sorted.map(async (houseType) => ({
               id: houseType.id,
-              subtypes: await apiRequest<HouseSubType[]>(
+              subtypes: await pageApiRequest<HouseSubType[]>(
                 `/api/house-types/${houseType.id}/subtypes`
               ),
             }))
@@ -1093,7 +1101,7 @@ const HouseConfigurator: React.FC = () => {
     setLoadingSubtypes(true);
     setSubtypeMessage(null);
     try {
-      const data = await apiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
+      const data = await pageApiRequest<HouseSubType[]>(`/api/house-types/${houseTypeId}/subtypes`);
       setSubtypesByType((prev) => ({ ...prev, [houseTypeId]: sortSubtypes(data) }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudieron cargar los subtipos.';
@@ -1176,7 +1184,7 @@ const HouseConfigurator: React.FC = () => {
       const payload = buildHousePayload(draft);
       let saved: HouseType;
       if (draft.id) {
-        saved = await apiRequest<HouseType>(`/api/house-types/${draft.id}`, {
+        saved = await pageApiRequest<HouseType>(`/api/house-types/${draft.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
@@ -1184,7 +1192,7 @@ const HouseConfigurator: React.FC = () => {
           sortHouseTypes(prev.map((item) => (item.id === saved.id ? saved : item)))
         );
       } else {
-        saved = await apiRequest<HouseType>('/api/house-types', {
+        saved = await pageApiRequest<HouseType>('/api/house-types', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -1218,7 +1226,7 @@ const HouseConfigurator: React.FC = () => {
     setSavingType(true);
     setTypeStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/house-types/${draft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/house-types/${draft.id}`, { method: 'DELETE' });
       const remaining = sortHouseTypes(houseTypes.filter((item) => item.id !== draft.id));
       setHouseTypes(remaining);
       setSubtypesByType((prev) => {
@@ -1255,7 +1263,7 @@ const HouseConfigurator: React.FC = () => {
           return;
         }
         try {
-          await apiRequest<void>(`/api/house-types/${draft.id}?force=true`, {
+          await pageApiRequest<void>(`/api/house-types/${draft.id}?force=true`, {
             method: 'DELETE',
           });
           const remaining = sortHouseTypes(houseTypes.filter((item) => item.id !== draft.id));
@@ -1305,7 +1313,7 @@ const HouseConfigurator: React.FC = () => {
     setSavingSubtype(true);
     setSubtypeMessage(null);
     try {
-      const created = await apiRequest<HouseSubType>(`/api/house-types/${selectedTypeId}/subtypes`, {
+      const created = await pageApiRequest<HouseSubType>(`/api/house-types/${selectedTypeId}/subtypes`, {
         method: 'POST',
         body: JSON.stringify({ name }),
       });
@@ -1335,7 +1343,7 @@ const HouseConfigurator: React.FC = () => {
     setSavingSubtype(true);
     setSubtypeMessage(null);
     try {
-      const updated = await apiRequest<HouseSubType>(`/api/house-types/subtypes/${subtype.id}`, {
+      const updated = await pageApiRequest<HouseSubType>(`/api/house-types/subtypes/${subtype.id}`, {
         method: 'PUT',
         body: JSON.stringify({ name: draftName }),
       });
@@ -1366,7 +1374,7 @@ const HouseConfigurator: React.FC = () => {
     setSavingSubtype(true);
     setSubtypeMessage(null);
     try {
-      await apiRequest<void>(`/api/house-types/subtypes/${subtype.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/house-types/subtypes/${subtype.id}`, { method: 'DELETE' });
       setSubtypesByType((prev) => ({
         ...prev,
         [subtype.house_type_id]: (prev[subtype.house_type_id] ?? []).filter(
@@ -1421,7 +1429,7 @@ const HouseConfigurator: React.FC = () => {
       return;
     }
     try {
-      await apiRequest<void>(`/api/panel-definitions/${panel.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/panel-definitions/${panel.id}`, { method: 'DELETE' });
       setPanels((prev) => prev.filter((item) => item.id !== panel.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo eliminar el panel.';
@@ -1510,11 +1518,11 @@ const HouseConfigurator: React.FC = () => {
 
     try {
       const saved = panelDraft.id
-        ? await apiRequest<PanelDefinition>(`/api/panel-definitions/${panelDraft.id}`, {
+        ? await pageApiRequest<PanelDefinition>(`/api/panel-definitions/${panelDraft.id}`, {
             method: 'PUT',
             body: JSON.stringify(payload),
           })
-        : await apiRequest<PanelDefinition>('/api/panel-definitions', {
+        : await pageApiRequest<PanelDefinition>('/api/panel-definitions', {
             method: 'POST',
             body: JSON.stringify(payload),
           });
@@ -1627,7 +1635,7 @@ const HouseConfigurator: React.FC = () => {
             return panel;
           }
 
-          return apiRequest<PanelDefinition>(`/api/panel-definitions/${panel.id}`, {
+          return pageApiRequest<PanelDefinition>(`/api/panel-definitions/${panel.id}`, {
             method: 'PUT',
             body: JSON.stringify({
               applicable_task_ids: payload.applicable_task_ids,
@@ -1700,7 +1708,7 @@ const HouseConfigurator: React.FC = () => {
           if (panel.panel_sequence_number === nextOrder) {
             return panel;
           }
-          return apiRequest<PanelDefinition>(`/api/panel-definitions/${panel.id}`, {
+          return pageApiRequest<PanelDefinition>(`/api/panel-definitions/${panel.id}`, {
             method: 'PUT',
             body: JSON.stringify({ panel_sequence_number: nextOrder }),
           });
@@ -1733,8 +1741,8 @@ const HouseConfigurator: React.FC = () => {
 
   const refreshModuleRules = async () => {
     const [applicabilityData, durationData] = await Promise.all([
-      apiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
-      apiRequest<TaskExpectedDuration[]>('/api/task-rules/durations'),
+      pageApiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
+      pageApiRequest<TaskExpectedDuration[]>('/api/task-rules/durations'),
     ]);
     setApplicabilityRows(applicabilityData);
     setDurationRows(durationData);
@@ -1889,7 +1897,7 @@ const HouseConfigurator: React.FC = () => {
         const existing = moduleApplicability.get(task.id);
         if (existing) {
           requests.push(
-            apiRequest(`/api/task-rules/applicability/${existing.id}`, {
+            pageApiRequest(`/api/task-rules/applicability/${existing.id}`, {
               method: 'PUT',
               body: JSON.stringify({
                 applies: draftState.applies,
@@ -1899,7 +1907,7 @@ const HouseConfigurator: React.FC = () => {
           );
         } else {
           requests.push(
-            apiRequest('/api/task-rules/applicability', {
+            pageApiRequest('/api/task-rules/applicability', {
               method: 'POST',
               body: JSON.stringify({
                 task_definition_id: task.id,
@@ -1944,7 +1952,7 @@ const HouseConfigurator: React.FC = () => {
       if (parsedMinutes === null && parsedHeadcount === null) {
         if (existingDuration) {
           requests.push(
-            apiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
+            pageApiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
               method: 'DELETE',
             })
           );
@@ -1953,7 +1961,7 @@ const HouseConfigurator: React.FC = () => {
       }
       if (existingDuration) {
         requests.push(
-          apiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
+          pageApiRequest(`/api/task-rules/durations/${existingDuration.id}`, {
             method: 'PUT',
             body: JSON.stringify({
               expected_minutes: parsedMinutes,
@@ -1963,7 +1971,7 @@ const HouseConfigurator: React.FC = () => {
         );
       } else {
         requests.push(
-          apiRequest('/api/task-rules/durations', {
+          pageApiRequest('/api/task-rules/durations', {
             method: 'POST',
             body: JSON.stringify({
               task_definition_id: task.id,

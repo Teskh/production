@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     admin_auth,
     admin_dashboard_permissions,
+    admin_page_permissions,
     admin_users,
     backups,
     camera_feed,
@@ -45,6 +46,11 @@ api_router.include_router(
     admin_dashboard_permissions.router,
     prefix="/admin",
     tags=["admin-dashboard-permissions"],
+)
+api_router.include_router(
+    admin_page_permissions.router,
+    prefix="/admin",
+    tags=["admin-page-permissions"],
 )
 api_router.include_router(admin_users.router, prefix="/admin", tags=["admin-users"])
 api_router.include_router(backups.router, prefix="/backups", tags=["backups"])

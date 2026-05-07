@@ -20,6 +20,8 @@ from app.core.config import BASE_DIR
 from app.core.security import utc_now
 from app.models.admin import AdminUser
 from app.models.enums import (
+    AdminRole,
+    PanelUnitStatus,
     QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
@@ -27,6 +29,7 @@ from app.models.enums import (
     QCNotificationStatus,
     QCReworkStatus,
     QCTriggerEventType,
+    StationRole,
     TaskScope,
     TaskStatus,
     WorkUnitStatus,
@@ -47,7 +50,13 @@ from app.models.qc import (
     QCTrigger,
 )
 from app.models.stations import Station
-from app.models.tasks import TaskDefinition, TaskInstance, TaskParticipation, TaskPause
+from app.models.tasks import (
+    TaskApplicability,
+    TaskDefinition,
+    TaskInstance,
+    TaskParticipation,
+    TaskPause,
+)
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import Worker
 from app.schemas.qc_runtime import (
@@ -82,6 +91,7 @@ from app.services.qc_runtime import (
     update_sampling_from_execution,
 )
 from app.services.qc_excel_report import build_qc_dashboard_excel_report
+from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
@@ -96,6 +106,15 @@ def _require_qc_admin(admin: AdminUser) -> AdminUser:
     if admin.role not in QC_ROLE_VALUES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="QC role required"
+        )
+    return admin
+
+
+def _require_qc_or_admin(admin: AdminUser) -> AdminUser:
+    allowed_roles = QC_ROLE_VALUES | {AdminRole.ADMIN.value, AdminRole.SYSADMIN.value}
+    if admin.role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="QC or admin role required"
         )
     return admin
 
@@ -232,6 +251,51 @@ def _resolve_definition_locked_station_id(
             detail="Multiple stations share trigger task sequence; cannot lock manual station",
         )
     return station_ids[0]
+
+
+def _module_has_later_applicable_station(
+    db: Session,
+    station: Station,
+    work_unit: WorkUnit,
+    work_order: WorkOrder,
+) -> bool:
+    if station.role != StationRole.ASSEMBLY or station.sequence_order is None:
+        return False
+    task_definitions = list(
+        db.execute(
+            select(TaskDefinition)
+            .where(TaskDefinition.active == True)
+            .where(TaskDefinition.scope == TaskScope.MODULE)
+            .where(TaskDefinition.is_rework == False)
+        ).scalars()
+    )
+    if not task_definitions:
+        return False
+    task_def_ids = [task.id for task in task_definitions]
+    applicability_rows = list(
+        db.execute(
+            select(TaskApplicability).where(TaskApplicability.task_definition_id.in_(task_def_ids))
+        ).scalars()
+    )
+    applicability_map: dict[int, list[TaskApplicability]] = {}
+    for row in applicability_rows:
+        applicability_map.setdefault(row.task_definition_id, []).append(row)
+    for task in task_definitions:
+        applies, station_sequence_order = resolve_task_station_sequence(
+            task,
+            applicability_map.get(task.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            work_unit.module_number,
+            None,
+        )
+        if (
+            applies
+            and station_sequence_order is not None
+            and station_sequence_order > station.sequence_order
+        ):
+            return True
+    return False
 
 
 def _build_check_summary(
@@ -619,9 +683,8 @@ def qc_dashboard(
         db.execute(
             select(
                 WorkUnit,
-                Station.name,
-                WorkOrder.project_name,
-                WorkOrder.house_identifier,
+                Station,
+                WorkOrder,
                 HouseType.name,
             )
             .join(Station, WorkUnit.current_station_id == Station.id)
@@ -636,18 +699,22 @@ def qc_dashboard(
         QCPlantModuleSummary(
             work_unit_id=work_unit.id,
             current_station_id=work_unit.current_station_id,
-            current_station_name=station_name,
+            current_station_name=station.name,
             status=work_unit.status,
+            can_mark_completed=(
+                work_unit.status == WorkUnitStatus.ASSEMBLY
+                and station.role == StationRole.ASSEMBLY
+                and not _module_has_later_applicable_station(db, station, work_unit, work_order)
+            ),
             module_number=work_unit.module_number,
-            project_name=project_name,
+            project_name=work_order.project_name,
             house_type_name=house_type_name,
-            house_identifier=house_identifier,
+            house_identifier=work_order.house_identifier,
         )
         for (
             work_unit,
-            station_name,
-            project_name,
-            house_identifier,
+            station,
+            work_order,
             house_type_name,
         ) in plant_module_rows
         if work_unit.current_station_id is not None
@@ -659,6 +726,29 @@ def qc_dashboard(
         plant_panels=plant_panels,
         plant_modules=plant_modules,
     )
+
+
+@router.post("/work-units/{work_unit_id}/complete", status_code=status.HTTP_204_NO_CONTENT)
+def mark_work_unit_completed(
+    work_unit_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    _require_qc_or_admin(admin)
+    work_unit = db.get(WorkUnit, work_unit_id)
+    if not work_unit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
+    if work_unit.status == WorkUnitStatus.COMPLETED:
+        return
+    work_unit.status = WorkUnitStatus.COMPLETED
+    work_unit.current_station_id = None
+    panels = list(
+        db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
+    )
+    for panel in panels:
+        panel.status = PanelUnitStatus.CONSUMED
+        panel.current_station_id = None
+    db.commit()
 
 
 @router.get("/dashboard/export.xlsx")

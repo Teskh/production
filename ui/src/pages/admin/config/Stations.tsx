@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Camera, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 import DashboardShiftEstimation from './dashboard_shift_estimation';
 import {
   readStationChangeProtectionEnabled,
@@ -76,6 +80,11 @@ const normalizeSearch = (value: string): string =>
 
 const Stations: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
   const [draft, setDraft] = useState<StationDraft | null>(null);
@@ -102,7 +111,7 @@ const Stations: React.FC = () => {
       setLoading(true);
       setStatusMessage(null);
       try {
-        const data = await apiRequest<Station[]>('/api/stations');
+        const data = await pageApiRequest<Station[]>('/api/stations');
         if (!active) {
           return;
         }
@@ -295,13 +304,13 @@ const Stations: React.FC = () => {
       const payload = buildPayload(draft);
       let saved: Station;
       if (draft.id) {
-        saved = await apiRequest<Station>(`/api/stations/${draft.id}`, {
+        saved = await pageApiRequest<Station>(`/api/stations/${draft.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
         setStations((prev) => prev.map((station) => (station.id === saved.id ? saved : station)));
       } else {
-        saved = await apiRequest<Station>('/api/stations', {
+        saved = await pageApiRequest<Station>('/api/stations', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -325,7 +334,7 @@ const Stations: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/stations/${draft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/stations/${draft.id}`, { method: 'DELETE' });
       setStations((prev) => prev.filter((station) => station.id !== draft.id));
       const next = stations.find((station) => station.id !== draft.id) ?? null;
       if (next) {

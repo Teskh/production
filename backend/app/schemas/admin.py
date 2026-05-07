@@ -40,3 +40,18 @@ class AdminDashboardPermissionRead(BaseModel):
 
 class AdminDashboardPermissionUpdate(BaseModel):
     roles: list[str]
+
+
+class AdminPagePermissionRole(BaseModel):
+    role: str
+    can_view: bool = True
+    can_edit: bool = True
+
+
+class AdminPagePermissionRead(BaseModel):
+    page_id: str
+    permissions: list[AdminPagePermissionRole]
+
+
+class AdminPagePermissionUpdate(BaseModel):
+    permissions: list[AdminPagePermissionRole]

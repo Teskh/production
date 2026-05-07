@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Clock, CloudUpload, Database, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -84,6 +88,11 @@ const formatDate = (value: string | null): string => {
 
 const Backups: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [settings, setSettings] = useState<BackupSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<BackupSettings | null>(null);
   const [backups, setBackups] = useState<BackupRecord[]>([]);
@@ -109,8 +118,8 @@ const Backups: React.FC = () => {
     setStatusMessage(null);
     try {
       const [settingsData, backupsData] = await Promise.all([
-        apiRequest<BackupSettings>('/api/backups/settings'),
-        apiRequest<BackupRecord[]>('/api/backups'),
+        pageApiRequest<BackupSettings>('/api/backups/settings'),
+        pageApiRequest<BackupRecord[]>('/api/backups'),
       ]);
       setSettings(settingsData);
       setSettingsDraft(settingsData);
@@ -153,7 +162,7 @@ const Backups: React.FC = () => {
     setCreating(true);
     setStatusMessage(null);
     try {
-      const response = await apiRequest<BackupCreateResponse>('/api/backups', {
+      const response = await pageApiRequest<BackupCreateResponse>('/api/backups', {
         method: 'POST',
         body: JSON.stringify({ label: backupLabel.trim() || null }),
       });
@@ -190,7 +199,7 @@ const Backups: React.FC = () => {
     setRestoring(backup.filename);
     setStatusMessage(null);
     try {
-      const response = await apiRequest<BackupRestoreResponse>('/api/backups/restore', {
+      const response = await pageApiRequest<BackupRestoreResponse>('/api/backups/restore', {
         method: 'POST',
         body: JSON.stringify({ filename: backup.filename, force_disconnect: true }),
       });
@@ -214,7 +223,7 @@ const Backups: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      const updated = await apiRequest<BackupSettings>('/api/backups/settings', {
+      const updated = await pageApiRequest<BackupSettings>('/api/backups/settings', {
         method: 'PUT',
         body: JSON.stringify({
           enabled: settingsDraft.enabled,

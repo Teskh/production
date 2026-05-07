@@ -42,6 +42,19 @@ class AdminDashboardPermission(Base):
     role: Mapped[str] = mapped_column(String(50), index=True)
 
 
+class AdminPagePermission(Base):
+    __tablename__ = "admin_page_permissions"
+    __table_args__ = (
+        UniqueConstraint("page_id", "role", name="uq_admin_page_permissions_page_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    page_id: Mapped[str] = mapped_column(String(100), index=True)
+    role: Mapped[str] = mapped_column(String(50), index=True)
+    can_view: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_edit: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class PauseReason(Base):
     __tablename__ = "pause_reasons"
 

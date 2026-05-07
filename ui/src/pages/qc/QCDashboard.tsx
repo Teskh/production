@@ -22,6 +22,7 @@ import { useOptionalQCSession, useQCLayoutStatus } from '../../layouts/QCLayoutC
 const REFRESH_INTERVAL_MS = 20000;
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
+const COMPLETION_ROLE_VALUES = new Set(['Calidad', 'QC', 'Admin', 'SysAdmin']);
 const OPEN_CHECK_STATION_FILTER_STORAGE_KEY = 'qcDashboardOpenCheckStationFilter';
 
 type QCCheckOrigin = 'triggered' | 'manual';
@@ -90,6 +91,7 @@ type QCPlantModuleSummary = {
   current_station_id: number;
   current_station_name: string | null;
   status: 'Planned' | 'Panels' | 'Magazine' | 'Assembly' | 'Completed';
+  can_mark_completed: boolean;
   module_number: number;
   project_name: string | null;
   house_type_name: string | null;
@@ -422,9 +424,13 @@ const QCDashboard: React.FC = () => {
   const stationFilterRef = useRef<HTMLDivElement | null>(null);
   const [activeTaskTab, setActiveTaskTab] = useState<'checks' | 'observations' | 'reworks'>('checks');
   const [activePlantTab, setActivePlantTab] = useState<'panels' | 'armado'>('panels');
+  const [completingWorkUnitIds, setCompletingWorkUnitIds] = useState<Set<number>>(new Set());
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
   const canExecuteChecks = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
+  const canMarkModulesComplete = Boolean(
+    qcSession?.role && COMPLETION_ROLE_VALUES.has(qcSession.role)
+  );
   const blockedMessage =
     location.state?.blocked === 'qc-auth'
       ? 'Inicia sesion para ejecutar inspecciones QC.'
@@ -945,6 +951,7 @@ const QCDashboard: React.FC = () => {
         projectName: primaryModule.project_name,
         houseTypeName: primaryModule.house_type_name,
         houseIdentifier: primaryModule.house_identifier,
+        canMarkCompleted: primaryModule.can_mark_completed,
       };
     };
     if (!activity) {
@@ -966,6 +973,7 @@ const QCDashboard: React.FC = () => {
           projectName: primaryPanel.project_name,
           houseTypeName: primaryPanel.house_type_name,
           houseIdentifier: primaryPanel.house_identifier,
+          canMarkCompleted: false,
         };
       }
       const fallback = moduleFallback();
@@ -981,6 +989,7 @@ const QCDashboard: React.FC = () => {
         projectName: null as string | null,
         houseTypeName: null as string | null,
         houseIdentifier: null as string | null,
+        canMarkCompleted: false,
       };
     }
     const primary = activity.openChecks[0] ?? activity.reworks[0];
@@ -1004,6 +1013,7 @@ const QCDashboard: React.FC = () => {
           projectName: primaryPanel.project_name,
           houseTypeName: primaryPanel.house_type_name,
           houseIdentifier: primaryPanel.house_identifier,
+          canMarkCompleted: false,
         };
       }
       const fallback = moduleFallback();
@@ -1019,6 +1029,7 @@ const QCDashboard: React.FC = () => {
         projectName: null as string | null,
         houseTypeName: null as string | null,
         houseIdentifier: null as string | null,
+        canMarkCompleted: false,
       };
     }
     const workUnitLabel = buildWorkUnitLabel(
@@ -1026,6 +1037,7 @@ const QCDashboard: React.FC = () => {
       primary.house_type_name,
       primary.house_identifier
     );
+    const matchingModule = plantModules.find((module) => module.work_unit_id === primary.work_unit_id);
     return {
       moduleLabel: formatModulePanelLabel(primary.module_number, primary.panel_code),
       workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
@@ -1035,6 +1047,7 @@ const QCDashboard: React.FC = () => {
       projectName: primary.project_name,
       houseTypeName: primary.house_type_name,
       houseIdentifier: primary.house_identifier,
+      canMarkCompleted: matchingModule?.can_mark_completed ?? false,
     };
   };
   const openStationChecks = (station: StationSummary) => {
@@ -1058,6 +1071,50 @@ const QCDashboard: React.FC = () => {
   const handleSelectCheck = (check: QCCheckInstanceSummary) => {
     setStationSelection(null);
     navigate(`/qc/execute?check=${check.id}`, { state: { checkId: check.id } });
+  };
+  const handleMarkModuleCompleted = async (module: {
+    workUnitId: number;
+    moduleNumber: number;
+  }) => {
+    if (!canMarkModulesComplete || completingWorkUnitIds.has(module.workUnitId)) {
+      return;
+    }
+    const confirmed = window.confirm(`Marcar modulo ${module.moduleNumber} como terminado?`);
+    if (!confirmed) {
+      return;
+    }
+    setCompletingWorkUnitIds((current) => new Set(current).add(module.workUnitId));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/work-units/${module.workUnitId}/complete`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Solicitud fallida (${response.status})`);
+      }
+      setDashboard((current) => ({
+        ...current,
+        plant_modules: current.plant_modules.filter(
+          (item) => item.work_unit_id !== module.workUnitId
+        ),
+        plant_panels: current.plant_panels.filter(
+          (item) => item.work_unit_id !== module.workUnitId
+        ),
+      }));
+      setLastUpdated(new Date());
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo marcar el modulo como terminado.'
+      );
+    } finally {
+      setCompletingWorkUnitIds((current) => {
+        const next = new Set(current);
+        next.delete(module.workUnitId);
+        return next;
+      });
+    }
   };
   const closeObservationModal = () => {
     setObservationSelection(null);
@@ -1729,6 +1786,14 @@ const QCDashboard: React.FC = () => {
               ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
               : 0;
             const canOpenObservations = canExecuteChecks && summary.workUnitId !== null;
+            const canMarkStationModuleCompleted =
+              activePlantTab === 'armado' &&
+              canMarkModulesComplete &&
+              summary.canMarkCompleted &&
+              summary.workUnitId !== null &&
+              summary.moduleNumber !== null;
+            const isCompletingModule =
+              summary.workUnitId !== null && completingWorkUnitIds.has(summary.workUnitId);
             const observationSelectionForStation =
               summary.workUnitId !== null && summary.moduleNumber !== null
                 ? {
@@ -1798,6 +1863,28 @@ const QCDashboard: React.FC = () => {
                     {obsCount} Obs.
                   </button>
                 </div>
+                {canMarkStationModuleCompleted ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (summary.workUnitId !== null && summary.moduleNumber !== null) {
+                        void handleMarkModuleCompleted({
+                          workUnitId: summary.workUnitId,
+                          moduleNumber: summary.moduleNumber,
+                        });
+                      }
+                    }}
+                    disabled={isCompletingModule}
+                    className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 py-1.5 text-[10px] font-semibold text-emerald-800 transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isCompletingModule ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
+                    Marcar terminado
+                  </button>
+                ) : null}
               </div>
             );
           };

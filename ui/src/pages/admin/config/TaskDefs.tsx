@@ -10,7 +10,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -170,6 +174,11 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 
 const TaskDefs: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -203,7 +212,7 @@ const TaskDefs: React.FC = () => {
   }, [setHeader]);
 
   const loadTasks = async () => {
-    const taskData = await apiRequest<TaskDefinition[]>('/api/task-definitions');
+    const taskData = await pageApiRequest<TaskDefinition[]>('/api/task-definitions');
     const sorted = sortTasks(taskData);
     setTasks(sorted);
     if (!sorted.length) {
@@ -226,11 +235,11 @@ const TaskDefs: React.FC = () => {
       try {
         const [taskData, skillData, workerData, stationData, assignmentData] =
           await Promise.all([
-            apiRequest<TaskDefinition[]>('/api/task-definitions'),
-            apiRequest<Skill[]>('/api/workers/skills'),
-            apiRequest<Worker[]>('/api/workers'),
-            apiRequest<Station[]>('/api/stations'),
-            apiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
+            pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
+            pageApiRequest<Skill[]>('/api/workers/skills'),
+            pageApiRequest<Worker[]>('/api/workers'),
+            pageApiRequest<Station[]>('/api/stations'),
+            pageApiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
           ]);
         if (!active) {
           return;
@@ -302,11 +311,11 @@ const TaskDefs: React.FC = () => {
       setStatusMessage(null);
       try {
         const [specialtyData, allowedData, crewData] = await Promise.all([
-          apiRequest<TaskSpecialty>(`/api/task-definitions/${selectedTaskId}/specialty`),
-          apiRequest<TaskAllowedWorkers>(
+          pageApiRequest<TaskSpecialty>(`/api/task-definitions/${selectedTaskId}/specialty`),
+          pageApiRequest<TaskAllowedWorkers>(
             `/api/task-definitions/${selectedTaskId}/allowed-workers`
           ),
-          apiRequest<TaskRegularCrew>(`/api/task-definitions/${selectedTaskId}/regular-crew`),
+          pageApiRequest<TaskRegularCrew>(`/api/task-definitions/${selectedTaskId}/regular-crew`),
         ]);
         if (!active) {
           return;
@@ -908,26 +917,26 @@ const TaskDefs: React.FC = () => {
     setStatusMessage(null);
     try {
       const saved = draft.id
-        ? await apiRequest<TaskDefinition>(`/api/task-definitions/${draft.id}`, {
+        ? await pageApiRequest<TaskDefinition>(`/api/task-definitions/${draft.id}`, {
             method: 'PUT',
             body: JSON.stringify(payload),
           })
-        : await apiRequest<TaskDefinition>('/api/task-definitions', {
+        : await pageApiRequest<TaskDefinition>('/api/task-definitions', {
             method: 'POST',
             body: JSON.stringify(payload),
           });
 
       const allowedWorkerIds = draft.allow_all_workers ? null : draft.allowed_worker_ids;
       await Promise.all([
-        apiRequest<TaskSpecialty>(`/api/task-definitions/${saved.id}/specialty`, {
+        pageApiRequest<TaskSpecialty>(`/api/task-definitions/${saved.id}/specialty`, {
           method: 'PUT',
           body: JSON.stringify({ skill_id: draft.skill_id }),
         }),
-        apiRequest<TaskAllowedWorkers>(`/api/task-definitions/${saved.id}/allowed-workers`, {
+        pageApiRequest<TaskAllowedWorkers>(`/api/task-definitions/${saved.id}/allowed-workers`, {
           method: 'PUT',
           body: JSON.stringify({ worker_ids: allowedWorkerIds }),
         }),
-        apiRequest<TaskRegularCrew>(`/api/task-definitions/${saved.id}/regular-crew`, {
+        pageApiRequest<TaskRegularCrew>(`/api/task-definitions/${saved.id}/regular-crew`, {
           method: 'PUT',
           body: JSON.stringify({ worker_ids: draft.regular_crew_worker_ids }),
         }),
@@ -955,7 +964,7 @@ const TaskDefs: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/task-definitions/${draft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/task-definitions/${draft.id}`, { method: 'DELETE' });
       await loadTasks();
       setStatusMessage('Eliminada.');
     } catch (error) {

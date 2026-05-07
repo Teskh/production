@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Plus, Search, Settings, Trash2 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -70,6 +74,11 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
 
 const Specialties: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [skills, setSkills] = useState<Skill[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [assignments, setAssignments] = useState<WorkerSkillAssignment[]>([]);
@@ -88,9 +97,9 @@ const Specialties: React.FC = () => {
       setStatusMessage(null);
       try {
         const [skillData, workerData, assignmentData] = await Promise.all([
-          apiRequest<Skill[]>('/api/workers/skills'),
-          apiRequest<Worker[]>('/api/workers'),
-          apiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
+          pageApiRequest<Skill[]>('/api/workers/skills'),
+          pageApiRequest<Worker[]>('/api/workers'),
+          pageApiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
         ]);
         if (!active) {
           return;
@@ -207,15 +216,15 @@ const Specialties: React.FC = () => {
     setStatusMessage(null);
     try {
       const savedSkill = draft.id
-        ? await apiRequest<Skill>(`/api/workers/skills/${draft.id}`, {
+        ? await pageApiRequest<Skill>(`/api/workers/skills/${draft.id}`, {
             method: 'PUT',
             body: JSON.stringify({ name }),
           })
-        : await apiRequest<Skill>('/api/workers/skills', {
+        : await pageApiRequest<Skill>('/api/workers/skills', {
             method: 'POST',
             body: JSON.stringify({ name }),
           });
-      const assigned = await apiRequest<Worker[]>(
+      const assigned = await pageApiRequest<Worker[]>(
         `/api/workers/skills/${savedSkill.id}/workers`,
         {
           method: 'PUT',
@@ -258,7 +267,7 @@ const Specialties: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/workers/skills/${draft.id}`, {
+      await pageApiRequest<void>(`/api/workers/skills/${draft.id}`, {
         method: 'DELETE',
       });
       setSkills((prev) => prev.filter((skill) => skill.id !== draft.id));

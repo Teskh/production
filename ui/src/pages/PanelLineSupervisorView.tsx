@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Clock3,
   Loader2,
   LogIn,
   LogOut,
@@ -28,13 +29,40 @@ type Station = {
 
 type StationWorkItem = {
   id: string;
+  scope: 'panel' | 'module' | 'aux';
   work_unit_id: number;
+  panel_unit_id: number | null;
+  panel_definition_id: number | null;
   project_name: string;
   house_identifier: string;
   house_type_name: string;
+  sub_type_name: string | null;
   module_number: number;
   panel_code: string | null;
   status: string;
+  backlog_tasks: StationTask[];
+};
+
+type StationTask = {
+  task_definition_id: number;
+  task_instance_id: number | null;
+  name: string;
+  scope: 'panel' | 'module' | 'aux';
+  station_sequence_order: number | null;
+  status: 'NotStarted' | 'InProgress' | 'Paused' | 'Completed' | 'Skipped';
+  skippable: boolean;
+  concurrent_allowed: boolean;
+  advance_trigger: boolean;
+  dependencies_satisfied: boolean;
+  dependencies_missing_names: string[];
+  worker_allowed: boolean;
+  allowed_worker_names: string[];
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  current_worker_participating: boolean;
+  active_participant_count: number;
+  backlog: boolean;
 };
 
 type StationSnapshot = {
@@ -199,9 +227,15 @@ type QCCheckInstanceDetail = {
 };
 
 type AlertModalState = {
-  kind: 'reworks' | 'complaints' | 'failedChecks';
+  kind: 'reworks' | 'complaints' | 'failedChecks' | 'lateTasks';
   workItem: StationWorkItem;
+  lateTaskDetails?: LateTaskDetail[];
 } | null;
+
+type LateTaskDetail = {
+  task: StationTask;
+  workItem: StationWorkItem;
+};
 
 type MediaPreview = {
   uri: string;
@@ -287,6 +321,15 @@ const complaintEventLabel = (value: QCComplaintEvent['event_type']): string => {
   if (value === 'closure_rejected') return 'Rechazo cierre';
   if (value === 'media_added') return 'Agrego evidencia';
   return 'Comento';
+};
+
+const taskStatusLabel = (value: StationTask['status']): string => {
+  if (value === 'NotStarted') return 'No iniciada';
+  if (value === 'InProgress') return 'En curso';
+  if (value === 'Paused') return 'Pausada';
+  if (value === 'Completed') return 'Completada';
+  if (value === 'Skipped') return 'Omitida';
+  return value;
 };
 
 const fileKey = (file: File) => `${file.name}-${file.lastModified}-${file.size}`;
@@ -521,6 +564,29 @@ const PanelLineSupervisorView: React.FC = () => {
     return { lines, rows };
   }, [visibleStations, activeTab]);
 
+  const plannedStationLabel = useCallback(
+    (task: StationTask): string => {
+      if (task.station_sequence_order === null) {
+        return task.scope === 'aux' ? 'Estacion auxiliar' : 'Sin estacion planificada';
+      }
+      const role = task.scope === 'panel' ? 'Panels' : task.scope === 'module' ? 'Assembly' : 'AUX';
+      const matches = stations
+        .filter(
+          (station) =>
+            station.role === role && station.sequence_order === task.station_sequence_order
+        )
+        .sort((a, b) => (a.line_type ?? '').localeCompare(b.line_type ?? ''));
+      if (!matches.length) {
+        return `Secuencia ${task.station_sequence_order}`;
+      }
+      if (matches.length === 1) {
+        return matches[0].name;
+      }
+      return matches[0].name;
+    },
+    [stations]
+  );
+
   const formatProjectInitials = (name: string) => {
     if (!name) return '';
     return name
@@ -647,6 +713,17 @@ const PanelLineSupervisorView: React.FC = () => {
         ),
       };
     }
+    if (alertModal.kind === 'lateTasks') {
+      return {
+        title: 'Tareas atrasadas',
+        items:
+          alertModal.lateTaskDetails ??
+          alertModal.workItem.backlog_tasks.map((task) => ({
+            task,
+            workItem: alertModal.workItem,
+          })),
+      };
+    }
     return {
       title: 'Observaciones abiertas',
       items: complaints.filter(
@@ -656,7 +733,11 @@ const PanelLineSupervisorView: React.FC = () => {
   }, [alertModal, complaints, qcDashboard.rework_tasks]);
 
   useEffect(() => {
-    if (!alertModal || alertModal.kind === 'complaints' || !selectedAlertDetails) {
+    if (
+      !alertModal ||
+      (alertModal.kind !== 'reworks' && alertModal.kind !== 'failedChecks') ||
+      !selectedAlertDetails
+    ) {
       return;
     }
     const checkIds = Array.from(
@@ -1120,7 +1201,9 @@ const PanelLineSupervisorView: React.FC = () => {
                                 <div className="flex flex-col gap-2">
                                   <div className="flex flex-col gap-1.5">
                                     {workItems.length > 0 ? (
-                                      workItems.map(wu => (
+                                      workItems.map(wu => {
+                                        const lateTasks = wu.backlog_tasks ?? [];
+                                        return (
                                         <div key={wu.id} className="group/item">
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="font-bold text-gray-950 tabular-nums">
@@ -1129,6 +1212,23 @@ const PanelLineSupervisorView: React.FC = () => {
                                             <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
                                               M{wu.module_number}
                                             </span>
+                                            {lateTasks.length > 0 ? (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setAlertModal({
+                                                    kind: 'lateTasks',
+                                                    workItem: wu,
+                                                    lateTaskDetails: lateTasks.map((task) => ({ task, workItem: wu })),
+                                                  })
+                                                }
+                                                className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100 transition hover:bg-amber-100 hover:text-amber-900"
+                                                title={`${lateTasks.length} tarea(s) atrasada(s)`}
+                                              >
+                                                <Clock3 className="h-3 w-3" />
+                                                {lateTasks.length}
+                                              </button>
+                                            ) : null}
                                             {(() => {
                                               const alerts = alertsByWorkUnit.get(wu.work_unit_id);
                                               if (!alerts) {
@@ -1202,7 +1302,8 @@ const PanelLineSupervisorView: React.FC = () => {
                                             </span>
                                           </div>
                                         </div>
-                                      ))
+                                        );
+                                      })
                                     ) : (
                                       <span className="text-gray-300 text-sm font-light">—</span>
                                     )}
@@ -1264,7 +1365,11 @@ const PanelLineSupervisorView: React.FC = () => {
 
                           <div className="flex-1 flex flex-col gap-0 divide-y divide-gray-100 border-t border-gray-100">
                             {groupedWorkItems.length > 0 ? (
-                              groupedWorkItems.map(group => (
+                              groupedWorkItems.map(group => {
+                                const lateTaskDetails = group.panels.flatMap((wu) =>
+                                  (wu.backlog_tasks ?? []).map((task) => ({ task, workItem: wu }))
+                                );
+                                return (
                                 <div key={group.id} className="py-2.5 flex flex-col gap-1 group/house">
                                   <div className="flex items-center gap-1 min-w-0 text-xs text-gray-500">
                                     <span className="font-bold text-gray-950 tabular-nums">
@@ -1273,6 +1378,23 @@ const PanelLineSupervisorView: React.FC = () => {
                                     <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1 py-0.5 rounded shrink-0">
                                       M{group.module_number}
                                     </span>
+                                    {lateTaskDetails.length > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setAlertModal({
+                                            kind: 'lateTasks',
+                                            workItem: lateTaskDetails[0].workItem,
+                                            lateTaskDetails,
+                                          })
+                                        }
+                                        className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100 transition hover:bg-amber-100 hover:text-amber-900"
+                                        title={`${lateTaskDetails.length} tarea(s) atrasada(s)`}
+                                      >
+                                        <Clock3 className="h-2.5 w-2.5" />
+                                        {lateTaskDetails.length}
+                                      </button>
+                                    ) : null}
                                     <span className="flex-none text-[10px] font-bold text-gray-500 bg-gray-100 px-1 py-0.5 rounded">
                                       {formatProjectInitials(group.project_name)}
                                     </span>
@@ -1354,7 +1476,8 @@ const PanelLineSupervisorView: React.FC = () => {
                                     })}
                                   </div>
                                 </div>
-                              ))
+                                );
+                              })
                             ) : (
                               <div className="py-6 flex items-center justify-center text-gray-300 text-xs font-medium">
                                 Sin paneles en estación
@@ -1398,7 +1521,46 @@ const PanelLineSupervisorView: React.FC = () => {
                 </div>
               ) : null}
 
-              {alertModal.kind === 'complaints'
+              {alertModal.kind === 'lateTasks'
+                ? (selectedAlertDetails.items as LateTaskDetail[]).map(({ task, workItem }) => (
+                    <div
+                      key={`${workItem.id}-${task.task_definition_id}-${task.task_instance_id ?? 'pending'}`}
+                      className="rounded-xl border border-amber-100 bg-amber-50/40 p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-gray-900">
+                            {task.name}
+                          </p>
+                          <p className="mt-1 text-sm text-gray-600">
+                            Planificada para {plannedStationLabel(task)}
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-100">
+                          {taskStatusLabel(task.status)}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+                        {workItem.panel_code ? <span>Panel: {workItem.panel_code}</span> : null}
+                        {workItem.sub_type_name ? <span>Subtipo: {workItem.sub_type_name}</span> : null}
+                        {task.started_at ? <span>Inicio: {formatTimestamp(task.started_at)}</span> : null}
+                      </div>
+
+                      {!task.dependencies_satisfied && task.dependencies_missing_names.length ? (
+                        <div className="mt-3 rounded-lg border border-amber-100 bg-white/70 px-3 py-2 text-xs text-amber-800">
+                          Dependencias pendientes: {task.dependencies_missing_names.join(', ')}
+                        </div>
+                      ) : null}
+
+                      {task.notes ? (
+                        <div className="mt-3 rounded-lg border border-white/80 bg-white/70 px-3 py-2 text-sm text-gray-700">
+                          {task.notes}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))
+                : alertModal.kind === 'complaints'
                 ? (selectedAlertDetails.items as QCComplaintSummary[]).map((complaint) => {
                     const detail = complaintDetails[complaint.id];
                     const draft = complaintDrafts[complaint.id] ?? '';

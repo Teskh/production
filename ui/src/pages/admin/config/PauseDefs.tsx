@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Plus, Search, Settings2, Trash2 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -98,6 +102,11 @@ type StationGroup = {
 
 const PauseDefs: React.FC = () => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [reasons, setReasons] = useState<PauseReason[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [selectedReasonId, setSelectedReasonId] = useState<number | null>(null);
@@ -126,8 +135,8 @@ const PauseDefs: React.FC = () => {
       setStatusMessage(null);
       try {
         const [reasonData, stationData] = await Promise.all([
-          apiRequest<PauseReason[]>('/api/pause-reasons'),
-          apiRequest<Station[]>('/api/stations'),
+          pageApiRequest<PauseReason[]>('/api/pause-reasons'),
+          pageApiRequest<Station[]>('/api/stations'),
         ]);
         if (!active) {
           return;
@@ -355,7 +364,7 @@ const PauseDefs: React.FC = () => {
       const payload = buildPayload(draft);
       let saved: PauseReason;
       if (draft.id) {
-        saved = await apiRequest<PauseReason>(`/api/pause-reasons/${draft.id}`, {
+        saved = await pageApiRequest<PauseReason>(`/api/pause-reasons/${draft.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
@@ -363,7 +372,7 @@ const PauseDefs: React.FC = () => {
           sortReasons(prev.map((reason) => (reason.id === saved.id ? saved : reason)))
         );
       } else {
-        saved = await apiRequest<PauseReason>('/api/pause-reasons', {
+        saved = await pageApiRequest<PauseReason>('/api/pause-reasons', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -388,7 +397,7 @@ const PauseDefs: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/pause-reasons/${draft.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/pause-reasons/${draft.id}`, { method: 'DELETE' });
       const updated = reasons.filter((reason) => reason.id !== draft.id);
       setReasons(updated);
       if (updated.length > 0) {

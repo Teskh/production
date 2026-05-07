@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Save, Shield, Trash2 } from 'lucide-react';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -68,6 +72,11 @@ type Props = {
 };
 
 const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -99,8 +108,8 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
     setStatusMessage(null);
     try {
       const [users, roles] = await Promise.all([
-        apiRequest<AdminUser[]>('/api/admin/users'),
-        apiRequest<string[]>('/api/admin/roles'),
+        pageApiRequest<AdminUser[]>('/api/admin/users'),
+        pageApiRequest<string[]>('/api/admin/roles'),
       ]);
       const sorted = [...users].sort((a, b) => {
         const lastCompare = a.last_name.localeCompare(b.last_name);
@@ -187,7 +196,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
     setStatusMessage(null);
     try {
       if (draft.id) {
-        await apiRequest<AdminUser>(`/api/admin/users/${draft.id}`, {
+        await pageApiRequest<AdminUser>(`/api/admin/users/${draft.id}`, {
           method: 'PUT',
           body: JSON.stringify({
             first_name: firstName,
@@ -200,7 +209,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
         await refresh(draft.id);
         setStatusMessage('Admin actualizado.');
       } else {
-        const created = await apiRequest<AdminUser>('/api/admin/users', {
+        const created = await pageApiRequest<AdminUser>('/api/admin/users', {
           method: 'POST',
           body: JSON.stringify({
             first_name: firstName,
@@ -234,7 +243,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
     setSaving(true);
     setStatusMessage(null);
     try {
-      await apiRequest<void>(`/api/admin/users/${selectedUser.id}`, { method: 'DELETE' });
+      await pageApiRequest<void>(`/api/admin/users/${selectedUser.id}`, { method: 'DELETE' });
       await refresh(null);
       setStatusMessage('Admin eliminado.');
     } catch (error) {

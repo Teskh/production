@@ -9,7 +9,11 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
+import {
+  assertAdminPageMutationAllowed,
+  useAdminHeader,
+  useAdminPageAccess,
+} from '../../../layouts/AdminLayoutContext';
 import WorkerBadgePrinter from '../../../components/WorkerBadgePrinter';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -245,6 +249,11 @@ const Workers: React.FC<WorkersProps> = ({
   hideRosterTabs = false,
 }) => {
   const { setHeader } = useAdminHeader();
+  const { canEdit } = useAdminPageAccess();
+  const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    assertAdminPageMutationAllowed(canEdit, options);
+    return apiRequest<T>(path, options);
+  };
   const [rosterMode, setRosterMode] = useState<RosterMode>(initialRosterMode);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [supervisors, setSupervisors] = useState<WorkerSupervisor[]>([]);
@@ -310,10 +319,10 @@ const Workers: React.FC<WorkersProps> = ({
       try {
         const [workerData, stationData, skillData, supervisorData] =
           await Promise.all([
-            apiRequest<Worker[]>('/api/workers'),
-            apiRequest<Station[]>('/api/stations'),
-            apiRequest<Skill[]>('/api/workers/skills'),
-            apiRequest<WorkerSupervisor[]>('/api/workers/supervisors'),
+            pageApiRequest<Worker[]>('/api/workers'),
+            pageApiRequest<Station[]>('/api/stations'),
+            pageApiRequest<Skill[]>('/api/workers/skills'),
+            pageApiRequest<WorkerSupervisor[]>('/api/workers/supervisors'),
           ]);
         if (!active) {
           return;
@@ -354,7 +363,7 @@ const Workers: React.FC<WorkersProps> = ({
       await Promise.all(
         workers.map(async (worker) => {
           try {
-            const workerSkills = await apiRequest<Skill[]>(`/api/workers/${worker.id}/skills`);
+            const workerSkills = await pageApiRequest<Skill[]>(`/api/workers/${worker.id}/skills`);
             if (active) {
               skillsMap.set(worker.id, workerSkills.map((s) => s.id));
             }
@@ -379,7 +388,7 @@ const Workers: React.FC<WorkersProps> = ({
       setGeoLoading(true);
       setGeoError(null);
       try {
-        const results = await apiRequest<GeoVictoriaWorker[]>(
+        const results = await pageApiRequest<GeoVictoriaWorker[]>(
           '/api/geovictoria/workers/active'
         );
         if (active) {
@@ -448,7 +457,7 @@ const Workers: React.FC<WorkersProps> = ({
       setGeoSearchLoading(true);
       setGeoError(null);
       try {
-        const results = await apiRequest<GeoVictoriaWorker[]>(
+        const results = await pageApiRequest<GeoVictoriaWorker[]>(
           `/api/geovictoria/workers?query=${encodeURIComponent(query)}`
         );
         if (active) {
@@ -502,7 +511,7 @@ const Workers: React.FC<WorkersProps> = ({
     let active = true;
     const loadSkills = async () => {
       try {
-        const workerSkills = await apiRequest<Skill[]>(
+        const workerSkills = await pageApiRequest<Skill[]>(
           `/api/workers/${worker.id}/skills`
         );
         if (active) {
@@ -878,15 +887,15 @@ const Workers: React.FC<WorkersProps> = ({
     };
     try {
       const savedWorker = working.id
-        ? await apiRequest<Worker>(`/api/workers/${working.id}`, {
+        ? await pageApiRequest<Worker>(`/api/workers/${working.id}`, {
             method: 'PUT',
             body: JSON.stringify(payload),
           })
-        : await apiRequest<Worker>('/api/workers', {
+        : await pageApiRequest<Worker>('/api/workers', {
             method: 'POST',
             body: JSON.stringify(payload),
           });
-      await apiRequest<Skill[]>(`/api/workers/${savedWorker.id}/skills`, {
+      await pageApiRequest<Skill[]>(`/api/workers/${savedWorker.id}/skills`, {
         method: 'PUT',
         body: JSON.stringify({ skill_ids: working.skill_ids }),
       });
@@ -934,14 +943,14 @@ const Workers: React.FC<WorkersProps> = ({
     };
     try {
       const savedSupervisor = working.id
-        ? await apiRequest<WorkerSupervisor>(
+        ? await pageApiRequest<WorkerSupervisor>(
             `/api/workers/supervisors/${working.id}`,
             {
               method: 'PUT',
               body: JSON.stringify(payload),
             }
           )
-        : await apiRequest<WorkerSupervisor>('/api/workers/supervisors', {
+        : await pageApiRequest<WorkerSupervisor>('/api/workers/supervisors', {
             method: 'POST',
             body: JSON.stringify(payload),
           });

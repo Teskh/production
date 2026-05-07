@@ -942,22 +942,6 @@ def complete_task(
                     work_unit.current_station_id = next_station.id
                     if work_unit.status != WorkUnitStatus.ASSEMBLY:
                         work_unit.status = WorkUnitStatus.ASSEMBLY
-                else:
-                    work_unit.current_station_id = None
-                    work_unit.status = WorkUnitStatus.COMPLETED
-                    panels = list(
-                        db.execute(
-                            select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)
-                        ).scalars()
-                    )
-                    for panel in panels:
-                        panel.status = PanelUnitStatus.CONSUMED
-                        panel.current_station_id = None
-                    auto_completed_instances = _auto_complete_open_module_tasks_for_work_unit(
-                        db,
-                        work_unit.id,
-                        "término automatico por salida de módulo",
-                    )
 
     if instance.status == TaskStatus.COMPLETED:
         open_qc_checks_for_task_completion(db, instance)
