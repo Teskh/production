@@ -872,7 +872,11 @@ const TaskDefs: React.FC = () => {
   const parseStationSequence = () => {
     const trimmed = draft.station_sequence_order.trim();
     if (!trimmed) {
-      return null;
+      throw new Error(
+        draft.scope === 'aux'
+          ? 'Seleccione una estacion AUX para la tarea.'
+          : 'Seleccione una secuencia de estacion para la tarea.'
+      );
     }
     const parsed = parseSequenceValue(trimmed);
     if (parsed === null) {
@@ -1250,7 +1254,11 @@ const TaskDefs: React.FC = () => {
                           updateDraft({ station_sequence_order: event.target.value })
                         }
                       >
-                        <option value="">Sin asignar</option>
+                        <option value="" disabled>
+                          {draft.scope === 'aux'
+                            ? 'Seleccione una estacion AUX'
+                            : 'Seleccione una secuencia'}
+                        </option>
                         {stationSequenceChoices.map((option) => (
                           <option key={option.sequence} value={String(option.sequence)}>
                             {draft.scope === 'aux'

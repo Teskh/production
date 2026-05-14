@@ -227,17 +227,6 @@ def _set_blocked(context: _CorrectionContext, reason: str) -> _CorrectionContext
     return context
 
 
-def _other_distinct_worker_count(db: Session, task_instance_id: int) -> int:
-    worker_ids = set(
-        db.execute(
-            select(TaskParticipation.worker_id).where(
-                TaskParticipation.task_instance_id == task_instance_id
-            )
-        ).scalars()
-    )
-    return len(worker_ids)
-
-
 def _module_has_other_activity(db: Session, instance: TaskInstance) -> bool:
     other_ids = list(
         db.execute(
@@ -327,12 +316,6 @@ def _plan_correction(db: Session, context: _CorrectionContext) -> _CorrectionCon
         return _set_blocked(
             context,
             f"Task corrections are limited to the last {_correction_window_minutes()} minutes",
-        )
-
-    if _other_distinct_worker_count(db, instance.id) > 1:
-        return _set_blocked(
-            context,
-            "Tasks with multiple participating workers must be corrected manually",
         )
 
     if context.delete_counts.qc_executions > 0 or context.delete_counts.qc_rework_tasks > 0:
