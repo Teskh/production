@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Flashlight,
   Image,
 } from 'lucide-react';
 
@@ -81,6 +82,14 @@ type QCStep = {
   desc: string;
   required: boolean;
   image?: string | null;
+};
+
+type TorchMediaTrackCapabilities = MediaTrackCapabilities & {
+  torch?: boolean;
+};
+
+type TorchMediaTrackConstraintSet = MediaTrackConstraintSet & {
+  torch?: boolean;
 };
 
 const apiRequest = async <T,>(path: string): Promise<T> => {
@@ -212,6 +221,9 @@ const QCExecution: React.FC = () => {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [captureFlash, setCaptureFlash] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [torchError, setTorchError] = useState<string | null>(null);
   const refTouchState = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null);
   const guideTouchState = useRef<{ startX: number; startY: number; tracking: boolean } | null>(null);
   const [workUnitMeta, setWorkUnitMeta] = useState<ProductionQueueItemSummary | null>(null);
@@ -533,6 +545,35 @@ const QCExecution: React.FC = () => {
     }
   };
 
+  const getCameraVideoTrack = () => cameraStreamRef.current?.getVideoTracks()[0] ?? null;
+
+  const canUseTorch = (track: MediaStreamTrack | null) => {
+    const capabilities = track?.getCapabilities?.() as TorchMediaTrackCapabilities | undefined;
+    return Boolean(capabilities?.torch);
+  };
+
+  const applyTorch = async (enabled: boolean) => {
+    const track = getCameraVideoTrack();
+    if (!track || !canUseTorch(track)) {
+      setTorchSupported(false);
+      setTorchEnabled(false);
+      setTorchError('Linterna no disponible en este dispositivo.');
+      return;
+    }
+
+    try {
+      await track.applyConstraints({
+        advanced: [{ torch: enabled } as TorchMediaTrackConstraintSet],
+      });
+      setTorchSupported(true);
+      setTorchEnabled(enabled);
+      setTorchError(null);
+    } catch {
+      setTorchEnabled(false);
+      setTorchError('No se pudo cambiar la linterna.');
+    }
+  };
+
   const stopCamera = (discardRecording = false) => {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
@@ -546,9 +587,18 @@ const QCExecution: React.FC = () => {
     setIsRecording(false);
     setRecordingSeconds(0);
     if (cameraStreamRef.current) {
+      const track = getCameraVideoTrack();
+      if (canUseTorch(track)) {
+        void track?.applyConstraints({
+          advanced: [{ torch: false } as TorchMediaTrackConstraintSet],
+        });
+      }
       cameraStreamRef.current.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
     }
+    setTorchSupported(false);
+    setTorchEnabled(false);
+    setTorchError(null);
   };
 
   useEffect(() => {
@@ -583,6 +633,10 @@ const QCExecution: React.FC = () => {
         }
         stopCamera();
         cameraStreamRef.current = stream;
+        const track = stream.getVideoTracks()[0] ?? null;
+        setTorchSupported(canUseTorch(track));
+        setTorchEnabled(false);
+        setTorchError(null);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => undefined);
@@ -1465,6 +1519,26 @@ const QCExecution: React.FC = () => {
               >
                 Video
               </button>
+              <button
+                type="button"
+                onClick={() => void applyTorch(!torchEnabled)}
+                disabled={!cameraReady || !torchSupported}
+                title={
+                  torchSupported
+                    ? torchEnabled
+                      ? 'Apagar linterna'
+                      : 'Encender linterna'
+                    : 'Linterna no disponible'
+                }
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  torchEnabled
+                    ? 'bg-amber-300 text-slate-950'
+                    : 'bg-slate-800 text-slate-300'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <Flashlight className="h-3.5 w-3.5" />
+                Linterna
+              </button>
             </div>
           </div>
           <div className="flex-1 relative bg-slate-950">
@@ -1496,6 +1570,11 @@ const QCExecution: React.FC = () => {
                       {isRecording
                         ? `Grabando ${formatDuration(recordingSeconds)} / ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`
                         : `Max ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`}
+                    </div>
+                  )}
+                  {torchError && (
+                    <div className="absolute top-3 left-3 rounded-full bg-black/70 px-3 py-1 text-[11px] font-semibold text-amber-100">
+                      {torchError}
                     </div>
                   )}
                 </div>
