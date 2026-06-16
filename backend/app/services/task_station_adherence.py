@@ -13,6 +13,7 @@ from app.models.tasks import (
     TaskStationAdherenceFact,
 )
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
+from app.services.conditions import load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 
@@ -175,6 +176,7 @@ def capture_task_station_adherence_fact(
             )
         ).scalars()
     )
+    condition_ctx = load_condition_context(db, [task_definition.id], [work_unit.id])
     applies, planned_sequence = resolve_task_station_sequence(
         task_definition,
         applicability_rows,
@@ -182,6 +184,8 @@ def capture_task_station_adherence_fact(
         work_order.sub_type_id,
         work_unit.module_number,
         panel_definition_id,
+        condition_requirements=condition_ctx.requirements_for(task_definition.id),
+        unit_condition_value_ids=condition_ctx.values_for(work_unit.id),
     )
 
     planned_line_type = (

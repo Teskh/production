@@ -91,6 +91,7 @@ from app.services.qc_runtime import (
     update_sampling_from_execution,
 )
 from app.services.qc_excel_report import build_qc_dashboard_excel_report
+from app.services.conditions import load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -280,6 +281,8 @@ def _module_has_later_applicable_station(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(db, task_def_ids, [work_unit.id])
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
     for task in task_definitions:
         applies, station_sequence_order = resolve_task_station_sequence(
             task,
@@ -288,6 +291,8 @@ def _module_has_later_applicable_station(
             work_order.sub_type_id,
             work_unit.module_number,
             None,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if (
             applies

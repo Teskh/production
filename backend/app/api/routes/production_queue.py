@@ -18,6 +18,7 @@ from app.models.enums import (
     TaskStatus,
     WorkUnitStatus,
 )
+from app.models.conditions import ConditionValue, WorkUnitCondition
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.stations import Station
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
@@ -29,8 +30,10 @@ from app.schemas.production_queue import (
     ProductionQueueItem,
     ProductionQueueModuleStatus,
     ProductionQueueReorder,
+    ProductionQueueSequenceUpdate,
     ProductionQueueUpdate,
 )
+from app.services.conditions import ConditionContext, load_condition_context
 from app.services.task_applicability import (
     order_tasks_by_panel_metadata,
     resolve_task_station_sequence,
@@ -100,6 +103,8 @@ def _pending_panel_tasks(
     module_number: int,
     panel_definition_id: int,
     panel_task_order: list[int] | None,
+    condition_ctx: ConditionContext,
+    work_unit_id: int,
 ) -> list[dict[str, object]]:
     instance_map: dict[int, TaskInstance] = {}
     for instance in instances:
@@ -112,6 +117,7 @@ def _pending_panel_tasks(
         if exc.exception_type == TaskExceptionType.SKIP
     }
     ordered_tasks = _order_task_definitions(task_definitions, panel_task_order)
+    unit_condition_value_ids = condition_ctx.values_for(work_unit_id)
     pending: list[dict[str, object]] = []
     for task in ordered_tasks:
         applies, station_sequence = resolve_task_station_sequence(
@@ -121,6 +127,8 @@ def _pending_panel_tasks(
             sub_type_id,
             module_number,
             panel_definition_id,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if not applies:
             continue
@@ -195,9 +203,11 @@ def _station_has_module_tasks(
     applicability_map: dict[int, list[TaskApplicability]],
     work_order: WorkOrder,
     work_unit: WorkUnit,
+    condition_ctx: ConditionContext,
 ) -> bool:
     if station.sequence_order is None:
         return False
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
     for task in task_definitions:
         applies, station_sequence_order = resolve_task_station_sequence(
             task,
@@ -206,6 +216,8 @@ def _station_has_module_tasks(
             work_order.sub_type_id,
             work_unit.module_number,
             None,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if applies and station_sequence_order == station.sequence_order:
             return True
@@ -250,10 +262,13 @@ def _first_applicable_assembly_station(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(
+        db, [task.id for task in task_definitions], [work_unit.id]
+    )
 
     for station in line_stations:
         if _station_has_module_tasks(
-            station, task_definitions, applicability_map, work_order, work_unit
+            station, task_definitions, applicability_map, work_order, work_unit, condition_ctx
         ):
             return station
     return line_stations[0]
@@ -316,6 +331,13 @@ def _build_module_progress_summary(
             continue
         panel_skips_by_unit.setdefault(exc.panel_unit_id, set()).add(exc.task_definition_id)
 
+    condition_ctx = load_condition_context(
+        db,
+        [task.id for task in panel_task_definitions],
+        [work_unit.id],
+    )
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
+
     panel_tasks_total = 0
     panel_tasks_completed = 0
     panel_tasks_skipped = 0
@@ -335,6 +357,8 @@ def _build_module_progress_summary(
                 work_order.sub_type_id,
                 work_unit.module_number,
                 panel_def.id,
+                condition_requirements=condition_ctx.requirements_for(task.id),
+                unit_condition_value_ids=unit_condition_value_ids,
             )
             if not applies:
                 continue
@@ -385,6 +409,12 @@ def _build_module_progress_summary(
         ).scalars()
     )
 
+    module_condition_ctx = load_condition_context(
+        db,
+        [task.id for task in module_task_definitions],
+        [work_unit.id],
+    )
+
     module_tasks_total = 0
     module_tasks_completed = 0
     module_tasks_skipped = 0
@@ -396,6 +426,8 @@ def _build_module_progress_summary(
             work_order.sub_type_id,
             work_unit.module_number,
             None,
+            condition_requirements=module_condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=module_condition_ctx.values_for(work_unit.id),
         )
         if not applies:
             continue
@@ -459,7 +491,26 @@ def _queue_item_select() -> tuple:
     )
 
 
-def _build_queue_items(rows: list[tuple]) -> list[ProductionQueueItem]:
+def _load_condition_value_ids_by_work_unit(
+    db: Session, work_unit_ids: list[int]
+) -> dict[int, list[int]]:
+    if not work_unit_ids:
+        return {}
+    assignment_rows = db.execute(
+        select(WorkUnitCondition.work_unit_id, WorkUnitCondition.condition_value_id)
+        .where(WorkUnitCondition.work_unit_id.in_(work_unit_ids))
+        .order_by(WorkUnitCondition.condition_value_id)
+    ).all()
+    values_by_unit: dict[int, list[int]] = {}
+    for work_unit_id, condition_value_id in assignment_rows:
+        values_by_unit.setdefault(work_unit_id, []).append(condition_value_id)
+    return values_by_unit
+
+
+def _build_queue_items(db: Session, rows: list[tuple]) -> list[ProductionQueueItem]:
+    condition_values_by_unit = _load_condition_value_ids_by_work_unit(
+        db, [row[0] for row in rows]
+    )
     items = []
     for row in rows:
         (
@@ -492,6 +543,7 @@ def _build_queue_items(rows: list[tuple]) -> list[ProductionQueueItem]:
                 planned_start_datetime=planned_start_datetime,
                 planned_assembly_line=_coerce_line(planned_assembly_line),
                 status=status_value,
+                condition_value_ids=condition_values_by_unit.get(work_unit_id, []),
             )
         )
     return items
@@ -508,7 +560,17 @@ def _fetch_queue_items(db: Session, include_completed: bool) -> list[ProductionQ
         stmt = stmt.where(WorkUnit.status != WorkUnitStatus.COMPLETED)
     stmt = stmt.order_by(WorkUnit.planned_sequence.nulls_last(), WorkUnit.id)
     rows = list(db.execute(stmt).all())
-    return _build_queue_items(rows)
+    return _build_queue_items(db, rows)
+
+
+def _find_project_sequence_conflicts(
+    entries: list[tuple[int, str, int]]
+) -> dict[tuple[str, int], list[int]]:
+    buckets: dict[tuple[str, int], list[int]] = {}
+    for work_unit_id, project_name, planned_sequence in entries:
+        key = (project_name, planned_sequence)
+        buckets.setdefault(key, []).append(work_unit_id)
+    return {key: ids for key, ids in buckets.items() if len(ids) > 1}
 
 
 @router.get("", response_model=list[ProductionQueueItem])
@@ -585,6 +647,9 @@ def module_status(
             )
             for row in applicability_rows:
                 applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(
+        db, [task.id for task in task_definitions], [work_unit.id]
+    )
 
     task_instances: list[TaskInstance] = []
     task_exceptions: list[TaskException] = []
@@ -644,6 +709,8 @@ def module_status(
                 work_unit.module_number,
                 panel_def.id,
                 panel_def.applicable_task_ids,
+                condition_ctx,
+                work_unit.id,
             )
         panels.append(
             {
@@ -786,7 +853,7 @@ def create_batch(
         .order_by(WorkUnit.planned_sequence)
     )
     rows = list(db.execute(stmt).all())
-    return _build_queue_items(rows)
+    return _build_queue_items(db, rows)
 
 
 @router.put("/reorder", response_model=list[ProductionQueueItem])
@@ -822,6 +889,63 @@ def reorder_queue(
 
     for index, unit in enumerate(ordered_units, start=1):
         unit.planned_sequence = index
+
+    db.commit()
+    return _fetch_queue_items(db, include_completed=True)
+
+
+@router.put("/sequences", response_model=list[ProductionQueueItem])
+def update_queue_sequences(
+    payload: ProductionQueueSequenceUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_queue_manager),
+) -> list[ProductionQueueItem]:
+    if not payload.updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No sequence updates provided"
+        )
+    update_ids = [item.work_unit_id for item in payload.updates]
+    if len(update_ids) != len(set(update_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Duplicate queue item in update"
+        )
+    updates_by_id = {item.work_unit_id: item.planned_sequence for item in payload.updates}
+    if any(sequence < 1 for sequence in updates_by_id.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sequence numbers must be positive integers",
+        )
+
+    units = list(db.execute(select(WorkUnit).where(WorkUnit.id.in_(update_ids))).scalars())
+    if len(units) != len(update_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue item not found")
+
+    sequence_rows = db.execute(
+        select(WorkUnit.id, WorkOrder.project_name, WorkUnit.planned_sequence)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .order_by(WorkOrder.project_name, WorkUnit.planned_sequence, WorkUnit.id)
+    ).all()
+    projected_entries = [
+        (
+            work_unit_id,
+            project_name,
+            updates_by_id.get(work_unit_id, planned_sequence),
+        )
+        for work_unit_id, project_name, planned_sequence in sequence_rows
+    ]
+    conflicts = _find_project_sequence_conflicts(projected_entries)
+    if conflicts:
+        project_name, planned_sequence = next(iter(conflicts))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Sequence number conflict for project "
+                f"{project_name}: {planned_sequence}"
+            ),
+        )
+
+    for unit in units:
+        unit.planned_sequence = updates_by_id[unit.id]
 
     db.commit()
     return _fetch_queue_items(db, include_completed=True)
@@ -1024,6 +1148,40 @@ def _apply_queue_updates(
                 if "sub_type_id" not in updates:
                     order.sub_type_id = None
 
+    if "condition_value_ids" in updates and updates["condition_value_ids"] is not None:
+        requested_value_ids = list(dict.fromkeys(updates["condition_value_ids"]))
+        if requested_value_ids:
+            found_ids = set(
+                db.execute(
+                    select(ConditionValue.id).where(
+                        ConditionValue.id.in_(requested_value_ids)
+                    )
+                ).scalars()
+            )
+            if len(found_ids) != len(requested_value_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Condition value not found",
+                )
+        unit_ids = [unit.id for unit in work_units]
+        existing_rows = list(
+            db.execute(
+                select(WorkUnitCondition).where(
+                    WorkUnitCondition.work_unit_id.in_(unit_ids)
+                )
+            ).scalars()
+        )
+        for row in existing_rows:
+            db.delete(row)
+        db.flush()
+        for unit in work_units:
+            for value_id in requested_value_ids:
+                db.add(
+                    WorkUnitCondition(
+                        work_unit_id=unit.id, condition_value_id=value_id
+                    )
+                )
+
     if "sub_type_id" in updates:
         new_subtype_id = updates["sub_type_id"]
         subtype = None
@@ -1091,7 +1249,7 @@ def bulk_update_queue(
         .where(WorkUnit.id.in_(payload.work_unit_ids))
     )
     rows = list(db.execute(stmt).all())
-    return _build_queue_items(rows)
+    return _build_queue_items(db, rows)
 
 
 @router.delete("/items/{work_unit_id}", status_code=status.HTTP_204_NO_CONTENT)

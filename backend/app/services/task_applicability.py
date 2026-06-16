@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.enums import TaskScope
 from app.models.house import PanelDefinition
 from app.models.tasks import TaskApplicability, TaskDefinition
+from app.services.conditions import TaskConditionRules, conditions_met
 
 PanelApplicabilityIndex = dict[int, dict[int, TaskApplicability]]
 
@@ -82,7 +85,12 @@ def resolve_task_station_sequence(
     sub_type_id: int | None,
     module_number: int,
     panel_definition_id: int | None,
+    *,
+    condition_requirements: TaskConditionRules | None = None,
+    unit_condition_value_ids: AbstractSet[int] = frozenset(),
 ) -> tuple[bool, int | None]:
+    if not conditions_met(condition_requirements, unit_condition_value_ids, house_type_id):
+        return False, None
     applicability = _resolve_applicability(
         rows,
         house_type_id,

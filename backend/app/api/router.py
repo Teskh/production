@@ -8,6 +8,7 @@ from app.api.routes import (
     backups,
     camera_feed,
     comment_templates,
+    conditions,
     geovictoria,
     house_params,
     house_types,
@@ -65,6 +66,7 @@ api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
 api_router.include_router(stations.router, prefix="/stations", tags=["stations"])
 api_router.include_router(pause_reasons.router, prefix="/pause-reasons", tags=["pause-reasons"])
 api_router.include_router(comment_templates.router, prefix="/comment-templates", tags=["comment-templates"])
+api_router.include_router(conditions.router, prefix="/conditions", tags=["conditions"])
 api_router.include_router(qc_config.router, prefix="/qc", tags=["qc-config"])
 api_router.include_router(qc_complaints.router, prefix="/qc", tags=["qc-complaints"])
 api_router.include_router(qc_runtime.router, prefix="/qc", tags=["qc-runtime"])

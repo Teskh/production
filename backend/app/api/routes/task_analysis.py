@@ -31,6 +31,7 @@ from app.schemas.analytics import (
     TaskAnalysisWorkerOption,
 )
 from app.services.shift_masks import ShiftMaskResolver
+from app.services.conditions import load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -775,6 +776,9 @@ def get_task_analysis(
             )
             for row in applicability_rows:
                 applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(
+        db, [task.id for task in scope_tasks], None
+    )
 
     expected_map: dict[int, float] = {}
     module_duration_map: dict[int, list[TaskExpectedDuration]] = {}
@@ -1015,18 +1019,21 @@ def get_task_analysis(
             group["breakdown"].append(breakdown)
 
         required_expected_cache: dict[
-            tuple[int, int | None, int, int | None], dict[int, float] | None
+            tuple[int, int | None, int, int | None, frozenset[int]],
+            dict[int, float] | None,
         ] = {}
 
         def resolve_required_expected_by_task(
             work_order: WorkOrder,
             work_unit: WorkUnit,
         ) -> dict[int, float] | None:
+            unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
             context_key = (
                 work_order.house_type_id,
                 work_order.sub_type_id,
                 work_unit.module_number,
                 panel_definition_id if scope == TaskScope.PANEL else None,
+                unit_condition_value_ids,
             )
             if context_key in required_expected_cache:
                 return required_expected_cache[context_key]
@@ -1043,6 +1050,8 @@ def get_task_analysis(
                     work_order.sub_type_id,
                     work_unit.module_number,
                     panel_definition_id if scope == TaskScope.PANEL else None,
+                    condition_requirements=condition_ctx.requirements_for(task.id),
+                    unit_condition_value_ids=unit_condition_value_ids,
                 )
                 if not applies or station_sequence is None or station_sequence != selected_station_sequence:
                     continue

@@ -45,6 +45,35 @@ type TaskRegularCrew = {
   worker_ids: number[] | null;
 };
 
+type ConditionValue = {
+  id: number;
+  condition_type_id: number;
+  name: string;
+};
+
+type ConditionType = {
+  id: number;
+  name: string;
+  active: boolean;
+  values: ConditionValue[];
+};
+
+type ConditionRuleMode = 'is' | 'is_not';
+
+type TaskConditionRule = {
+  id?: number;
+  task_definition_id?: number;
+  condition_type_id: number;
+  house_type_id: number | null;
+  mode: ConditionRuleMode;
+  condition_value_ids: number[];
+};
+
+type HouseTypeOption = {
+  id: number;
+  name: string;
+};
+
 type Skill = {
   id: number;
   name: string;
@@ -85,6 +114,7 @@ type TaskDraft = {
   allow_all_workers: boolean;
   allowed_worker_ids: number[];
   regular_crew_worker_ids: number[];
+  condition_rules: TaskConditionRule[];
 };
 
 const emptyTaskDraft = (): TaskDraft => ({
@@ -100,6 +130,7 @@ const emptyTaskDraft = (): TaskDraft => ({
   allow_all_workers: true,
   allowed_worker_ids: [],
   regular_crew_worker_ids: [],
+  condition_rules: [],
 });
 
 const sortTasks = (list: TaskDefinition[]) =>
@@ -184,6 +215,10 @@ const TaskDefs: React.FC = () => {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [skillAssignments, setSkillAssignments] = useState<WorkerSkillAssignment[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
+  const [conditionTypes, setConditionTypes] = useState<ConditionType[]>([]);
+  const [conditionRules, setConditionRules] = useState<TaskConditionRule[]>([]);
+  const [houseTypeOptions, setHouseTypeOptions] = useState<HouseTypeOption[]>([]);
+  const [isConditionModalOpen, setIsConditionModalOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(emptyTaskDraft());
   const [query, setQuery] = useState('');
@@ -233,14 +268,25 @@ const TaskDefs: React.FC = () => {
       setLoading(true);
       setStatusMessage(null);
       try {
-        const [taskData, skillData, workerData, stationData, assignmentData] =
-          await Promise.all([
-            pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
-            pageApiRequest<Skill[]>('/api/workers/skills'),
-            pageApiRequest<Worker[]>('/api/workers'),
-            pageApiRequest<Station[]>('/api/stations'),
-            pageApiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
-          ]);
+        const [
+          taskData,
+          skillData,
+          workerData,
+          stationData,
+          assignmentData,
+          conditionTypeData,
+          ruleData,
+          houseTypeData,
+        ] = await Promise.all([
+          pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
+          pageApiRequest<Skill[]>('/api/workers/skills'),
+          pageApiRequest<Worker[]>('/api/workers'),
+          pageApiRequest<Station[]>('/api/stations'),
+          pageApiRequest<WorkerSkillAssignment[]>('/api/workers/skills/assignments'),
+          pageApiRequest<ConditionType[]>('/api/conditions/types'),
+          pageApiRequest<TaskConditionRule[]>('/api/conditions/task-requirements'),
+          pageApiRequest<HouseTypeOption[]>('/api/house-types'),
+        ]);
         if (!active) {
           return;
         }
@@ -250,6 +296,9 @@ const TaskDefs: React.FC = () => {
         setWorkers(sortWorkers(workerData));
         setStations(stationData);
         setSkillAssignments(assignmentData);
+        setConditionTypes(conditionTypeData);
+        setConditionRules(ruleData);
+        setHouseTypeOptions(houseTypeData);
         setSelectedTaskId(null);
       } catch (error) {
         if (active) {
@@ -298,8 +347,11 @@ const TaskDefs: React.FC = () => {
       allow_all_workers: true,
       allowed_worker_ids: [],
       regular_crew_worker_ids: [],
+      condition_rules: conditionRules
+        .filter((conditionRule) => conditionRule.task_definition_id === selectedTask.id)
+        .map((conditionRule) => ({ ...conditionRule })),
     });
-  }, [selectedTask]);
+  }, [selectedTask, conditionRules]);
 
   useEffect(() => {
     if (!selectedTaskId) {
@@ -823,6 +875,103 @@ const TaskDefs: React.FC = () => {
     });
   };
 
+  const activeConditionTypes = useMemo(
+    () =>
+      conditionTypes.filter(
+        (conditionType) => conditionType.active && conditionType.values.length > 0
+      ),
+    [conditionTypes]
+  );
+
+  const conditionTypeById = useMemo(() => {
+    const map = new Map<number, ConditionType>();
+    conditionTypes.forEach((conditionType) => map.set(conditionType.id, conditionType));
+    return map;
+  }, [conditionTypes]);
+
+  const conditionValueNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    conditionTypes.forEach((conditionType) => {
+      conditionType.values.forEach((value) => map.set(value.id, value.name));
+    });
+    return map;
+  }, [conditionTypes]);
+
+  const houseTypeNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    houseTypeOptions.forEach((houseType) => map.set(houseType.id, houseType.name));
+    return map;
+  }, [houseTypeOptions]);
+
+  const describeConditionRule = (conditionRule: TaskConditionRule): string => {
+    const typeName =
+      conditionTypeById.get(conditionRule.condition_type_id)?.name ??
+      `Condicion ${conditionRule.condition_type_id}`;
+    const valueNames = conditionRule.condition_value_ids
+      .map((valueId) => conditionValueNameById.get(valueId) ?? `#${valueId}`)
+      .join(' o ');
+    const modeLabel = conditionRule.mode === 'is_not' ? 'NO ES' : 'ES';
+    const scopeLabel =
+      conditionRule.house_type_id === null
+        ? 'todas las casas'
+        : houseTypeNameById.get(conditionRule.house_type_id) ??
+          `casa ${conditionRule.house_type_id}`;
+    return `${typeName} ${modeLabel} ${valueNames || '(sin valores)'} · ${scopeLabel}`;
+  };
+
+  const addConditionRule = () => {
+    const firstType = activeConditionTypes[0];
+    if (!firstType) {
+      return;
+    }
+    setDraft((prev) => ({
+      ...prev,
+      condition_rules: [
+        ...prev.condition_rules,
+        {
+          condition_type_id: firstType.id,
+          house_type_id: null,
+          mode: 'is',
+          condition_value_ids: [],
+        },
+      ],
+    }));
+  };
+
+  const updateConditionRule = (index: number, patch: Partial<TaskConditionRule>) => {
+    setDraft((prev) => ({
+      ...prev,
+      condition_rules: prev.condition_rules.map((conditionRule, ruleIndex) =>
+        ruleIndex === index ? { ...conditionRule, ...patch } : conditionRule
+      ),
+    }));
+  };
+
+  const removeConditionRule = (index: number) => {
+    setDraft((prev) => ({
+      ...prev,
+      condition_rules: prev.condition_rules.filter((_, ruleIndex) => ruleIndex !== index),
+    }));
+  };
+
+  const toggleConditionRuleValue = (index: number, valueId: number) => {
+    setDraft((prev) => ({
+      ...prev,
+      condition_rules: prev.condition_rules.map((conditionRule, ruleIndex) => {
+        if (ruleIndex !== index) {
+          return conditionRule;
+        }
+        const next = new Set(conditionRule.condition_value_ids);
+        if (next.has(valueId)) {
+          next.delete(valueId);
+        } else {
+          next.add(valueId);
+        }
+        return { ...conditionRule, condition_value_ids: Array.from(next) };
+      }),
+    }));
+  };
+
   const toggleAllowedWorker = (workerId: number) => {
     setDraft((prev) => {
       const next = new Set(prev.allowed_worker_ids);
@@ -943,6 +1092,27 @@ const TaskDefs: React.FC = () => {
         pageApiRequest<TaskRegularCrew>(`/api/task-definitions/${saved.id}/regular-crew`, {
           method: 'PUT',
           body: JSON.stringify({ worker_ids: draft.regular_crew_worker_ids }),
+        }),
+        pageApiRequest<TaskConditionRule[]>(
+          `/api/conditions/task-requirements/${saved.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({
+              rules: draft.condition_rules
+                .filter((conditionRule) => conditionRule.condition_value_ids.length > 0)
+                .map((conditionRule) => ({
+                  condition_type_id: conditionRule.condition_type_id,
+                  house_type_id: conditionRule.house_type_id,
+                  mode: conditionRule.mode,
+                  condition_value_ids: conditionRule.condition_value_ids,
+                })),
+            }),
+          }
+        ).then((savedRules) => {
+          setConditionRules((prev) => [
+            ...prev.filter((conditionRule) => conditionRule.task_definition_id !== saved.id),
+            ...savedRules,
+          ]);
         }),
       ]);
 
@@ -1415,6 +1585,43 @@ const TaskDefs: React.FC = () => {
               </div>
 
               <div className="rounded-2xl border border-black/5 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                    Condiciones requeridas
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsConditionModalOpen(true)}
+                    disabled={activeConditionTypes.length === 0}
+                    className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] hover:bg-black/5 disabled:opacity-50"
+                  >
+                    Configurar condiciones
+                  </button>
+                </div>
+                {activeConditionTypes.length === 0 ? (
+                  <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                    No hay condiciones activas definidas. Configure condiciones en la pagina
+                    Condiciones.
+                  </p>
+                ) : draft.condition_rules.length === 0 ? (
+                  <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                    Sin reglas: la tarea aplica normalmente segun su alcance.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-1.5">
+                    {draft.condition_rules.map((conditionRule, index) => (
+                      <li
+                        key={index}
+                        className="rounded-xl border border-black/5 bg-[rgba(201,215,245,0.15)] px-3 py-1.5 text-xs text-[var(--ink)]"
+                      >
+                        {describeConditionRule(conditionRule)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-black/5 bg-white p-4">
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
                   Control de acceso
                 </p>
@@ -1596,6 +1803,158 @@ const TaskDefs: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setCrewModalOpen(false)}
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConditionModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[2px]">
+          <div className="max-h-[85vh] w-[640px] overflow-y-auto rounded-[2rem] border border-black/5 bg-white p-8 shadow-2xl animate-rise">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Condiciones
+                </p>
+                <h2 className="text-xl font-display text-[var(--ink)]">
+                  Reglas de condicion de la tarea
+                </h2>
+                <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                  La tarea aplica solo si pasa todas las reglas que correspondan al tipo de casa
+                  del modulo. "ES" exige que el modulo tenga alguno de los valores; "NO ES" exige
+                  que no tenga ninguno. Los cambios se guardan al guardar la tarea.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsConditionModalOpen(false)}
+                className="rounded-full p-2 text-[var(--ink-muted)] transition-colors hover:bg-black/5"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {draft.condition_rules.length === 0 && (
+                <p className="rounded-2xl border border-dashed border-black/10 px-4 py-5 text-sm text-[var(--ink-muted)]">
+                  Sin reglas: la tarea aplica normalmente segun su alcance.
+                </p>
+              )}
+              {draft.condition_rules.map((conditionRule, index) => {
+                const ruleType = conditionTypeById.get(conditionRule.condition_type_id);
+                return (
+                  <div
+                    key={index}
+                    className="rounded-2xl border border-black/10 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={conditionRule.condition_type_id}
+                        onChange={(event) =>
+                          updateConditionRule(index, {
+                            condition_type_id: Number(event.target.value),
+                            condition_value_ids: [],
+                          })
+                        }
+                        className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                      >
+                        {activeConditionTypes.map((conditionType) => (
+                          <option key={conditionType.id} value={conditionType.id}>
+                            {conditionType.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={conditionRule.mode}
+                        onChange={(event) =>
+                          updateConditionRule(index, {
+                            mode: event.target.value as ConditionRuleMode,
+                          })
+                        }
+                        className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold"
+                      >
+                        <option value="is">ES</option>
+                        <option value="is_not">NO ES</option>
+                      </select>
+                      <span className="text-xs text-[var(--ink-muted)]">en</span>
+                      <select
+                        value={conditionRule.house_type_id ?? 'all'}
+                        onChange={(event) =>
+                          updateConditionRule(index, {
+                            house_type_id:
+                              event.target.value === 'all'
+                                ? null
+                                : Number(event.target.value),
+                          })
+                        }
+                        className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="all">Todas las casas</option>
+                        {houseTypeOptions.map((houseType) => (
+                          <option key={houseType.id} value={houseType.id}>
+                            {houseType.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => removeConditionRule(index)}
+                        className="ml-auto rounded-full p-2 text-[var(--ink-muted)] transition-colors hover:bg-red-50 hover:text-red-600"
+                        title="Eliminar regla"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {(ruleType?.values ?? []).map((value) => {
+                        const checked = conditionRule.condition_value_ids.includes(value.id);
+                        return (
+                          <label
+                            key={value.id}
+                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${
+                              checked
+                                ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                                : 'border-black/10 bg-white text-[var(--ink-muted)]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-3.5 w-3.5"
+                              checked={checked}
+                              onChange={() => toggleConditionRuleValue(index, value.id)}
+                            />
+                            {value.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {conditionRule.condition_value_ids.length === 0 && (
+                      <p className="mt-2 text-[11px] text-amber-700">
+                        Seleccione al menos un valor; las reglas sin valores se descartan al
+                        guardar.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={addConditionRule}
+                disabled={activeConditionTypes.length === 0}
+                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" /> Agregar regla
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsConditionModalOpen(false)}
                 className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
               >
                 Listo

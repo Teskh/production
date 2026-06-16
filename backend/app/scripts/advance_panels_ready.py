@@ -27,6 +27,7 @@ from app.models.house import PanelDefinition
 from app.models.stations import Station
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
+from app.services.conditions import ConditionContext, load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 
@@ -61,9 +62,11 @@ def _required_panel_task_ids(
     work_unit: WorkUnit,
     work_order: WorkOrder,
     panel_definition: PanelDefinition,
+    condition_ctx: ConditionContext,
 ) -> set[int]:
     if not task_defs:
         return set()
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
     required_ids: set[int] = set()
     for task in task_defs:
         applies, station_sequence_order = resolve_task_station_sequence(
@@ -73,6 +76,8 @@ def _required_panel_task_ids(
             work_order.sub_type_id,
             work_unit.module_number,
             panel_definition.id,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if not applies:
             continue
@@ -137,6 +142,7 @@ def _next_panel_station(
     work_unit: WorkUnit,
     work_order: WorkOrder,
     panel_definition: PanelDefinition,
+    condition_ctx: ConditionContext,
 ) -> Station | None:
     if current_station.sequence_order is None:
         return None
@@ -152,6 +158,7 @@ def _next_panel_station(
             work_unit,
             work_order,
             panel_definition,
+            condition_ctx,
         )
         if candidate_required:
             return candidate
@@ -167,9 +174,16 @@ def _panel_is_ready(
     work_unit: WorkUnit,
     work_order: WorkOrder,
     panel_definition: PanelDefinition,
+    condition_ctx: ConditionContext,
 ) -> tuple[bool, set[int], set[int]]:
     required_ids = _required_panel_task_ids(
-        task_defs, applicability_map, station, work_unit, work_order, panel_definition
+        task_defs,
+        applicability_map,
+        station,
+        work_unit,
+        work_order,
+        panel_definition,
+        condition_ctx,
     )
     if not required_ids:
         return True, required_ids, set()
@@ -214,6 +228,9 @@ def main() -> None:
 
     with SessionLocal() as session:
         task_defs, applicability_map = _load_panel_tasks(session)
+        condition_ctx = load_condition_context(
+            session, [task.id for task in task_defs], None
+        )
         stations = list(session.execute(select(Station)).scalars())
         station_map = {station.id: station for station in stations}
         panel_stations = sorted(
@@ -272,6 +289,7 @@ def main() -> None:
                 work_unit,
                 work_order,
                 panel_def,
+                condition_ctx,
             )
             if not ready:
                 continue
@@ -285,6 +303,7 @@ def main() -> None:
                 work_unit,
                 work_order,
                 panel_def,
+                condition_ctx,
             )
             work_unit_status_change = None
             if next_station:

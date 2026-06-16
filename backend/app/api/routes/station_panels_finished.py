@@ -40,6 +40,7 @@ from app.schemas.analytics import (
     StationPanelsFinishedWorkerEntry,
 )
 from app.services.shift_masks import ShiftMaskResolver
+from app.services.conditions import ConditionContext, load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
@@ -105,9 +106,12 @@ def _required_panel_task_ids(
     panel_definition_id: int,
     panel_task_order: list[int] | None,
     station_sequence_order: int | None,
+    condition_ctx: ConditionContext,
+    work_unit_id: int | None,
 ) -> set[int]:
     if station_sequence_order is None:
         return set()
+    unit_condition_value_ids = condition_ctx.values_for(work_unit_id)
     required_ids: set[int] = set()
     for task in task_definitions:
         applies, station_sequence = resolve_task_station_sequence(
@@ -117,6 +121,8 @@ def _required_panel_task_ids(
             sub_type_id,
             module_number,
             panel_definition_id,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if not applies or station_sequence is None:
             continue
@@ -374,6 +380,9 @@ def _station_panels_finished_summary(
     sub_type_id: int | None,
 ) -> StationPanelsFinishedResponse:
     active_panel_tasks, applicability_map = _load_panel_task_applicability(db)
+    condition_ctx = load_condition_context(
+        db, [task.id for task in active_panel_tasks], None
+    )
 
     instance_stmt = (
         select(
@@ -522,6 +531,8 @@ def _station_panels_finished_summary(
             row.panel_definition_id,
             None,
             station.sequence_order,
+            condition_ctx,
+            row.work_unit_id,
         )
         passed_at = _resolve_passed_at(
             required_task_ids,
@@ -577,6 +588,11 @@ def _station_panels_finished_summary(
                 row.id,
                 None,
                 station.sequence_order,
+                condition_ctx,
+                # Definition-level pre-filter has no work unit; condition-gated
+                # tasks count as not required here and the per-unit checks below
+                # decide with the real assignments.
+                None,
             )
         ]
         if not no_required_panel_definition_ids:
@@ -816,6 +832,9 @@ def get_station_panels_finished(
         db.execute(select(TaskDefinition).where(TaskDefinition.scope == TaskScope.PANEL)).scalars()
     )
     active_panel_tasks, applicability_map = _load_panel_task_applicability(db)
+    condition_ctx = load_condition_context(
+        db, [task.id for task in active_panel_tasks], None
+    )
     panel_definitions: dict[int, PanelDefinition] = {}
     task_definitions: dict[int, TaskDefinition] = {}
 
@@ -1203,6 +1222,8 @@ def get_station_panels_finished(
             panel_definition.id,
             panel_definition.applicable_task_ids,
             station.sequence_order,
+            condition_ctx,
+            work_unit.id,
         )
         passed_at = _resolve_passed_at(
             required_task_ids,
@@ -1345,6 +1366,8 @@ def get_station_panels_finished(
                     panel_definition.id,
                     panel_definition.applicable_task_ids,
                     station.sequence_order,
+                    condition_ctx,
+                    work_unit.id,
                 )
                 if required_task_ids:
                     continue

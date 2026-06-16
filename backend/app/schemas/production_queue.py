@@ -21,6 +21,7 @@ class ProductionQueueItem(BaseModel):
     planned_start_datetime: datetime | None = None
     planned_assembly_line: str | None = None
     status: WorkUnitStatus
+    condition_value_ids: list[int] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -88,6 +89,7 @@ class ProductionQueueUpdate(BaseModel):
     planned_assembly_line: str | None = None
     sub_type_id: int | None = None
     status: WorkUnitStatus | None = None
+    condition_value_ids: list[int] | None = None
 
 
 class ProductionQueueBulkUpdate(BaseModel):
@@ -97,10 +99,20 @@ class ProductionQueueBulkUpdate(BaseModel):
     planned_assembly_line: str | None = None
     sub_type_id: int | None = None
     status: WorkUnitStatus | None = None
+    condition_value_ids: list[int] | None = None
 
 
 class ProductionQueueReorder(BaseModel):
     ordered_ids: list[int]
+
+
+class ProductionQueueSequenceUpdateItem(BaseModel):
+    work_unit_id: int
+    planned_sequence: int
+
+
+class ProductionQueueSequenceUpdate(BaseModel):
+    updates: list[ProductionQueueSequenceUpdateItem]
 
 
 class ProductionQueueBulkDelete(BaseModel):

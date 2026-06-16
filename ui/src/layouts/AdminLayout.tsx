@@ -14,6 +14,7 @@ import {
   BarChart3,
   Save,
   ShieldCheck,
+  SlidersHorizontal,
 } from 'lucide-react';
 import clsx from 'clsx';
 import {
@@ -138,6 +139,12 @@ const AdminLayout: React.FC = () => {
       items: [
         { id: 'stations', name: 'Estaciones', path: '/admin/stations', icon: Settings, sysadminOnly: true },
         { id: 'task-defs', name: 'Tareas', path: '/admin/task-defs', icon: ClipboardList },
+        {
+          id: 'condition-defs',
+          name: 'Condiciones',
+          path: '/admin/condition-defs',
+          icon: SlidersHorizontal,
+        },
         { id: 'pause-note-defs', name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
         { id: 'backups', name: 'Respaldos', path: '/admin/backups', icon: Database, sysadminOnly: true },
       ],

@@ -1,4 +1,11 @@
 from app.models.admin import AdminDashboardPermission, AdminSession, AdminUser, CommentTemplate, PauseReason
+from app.models.conditions import (
+    ConditionType,
+    ConditionValue,
+    TaskConditionRule,
+    TaskConditionRuleValue,
+    WorkUnitCondition,
+)
 from app.models.enums import *  # noqa: F403
 from app.models.geovictoria_attendance_cache import GeoVictoriaAttendanceCache
 from app.models.house import (
@@ -69,6 +76,8 @@ __all__ = [
     "AdminSession",
     "AdminDashboardPermission",
     "CommentTemplate",
+    "ConditionType",
+    "ConditionValue",
     "GeoVictoriaAttendanceCache",
     "HouseParameter",
     "HouseParameterValue",
@@ -108,6 +117,8 @@ __all__ = [
     "ShiftEstimate",
     "ShiftEstimateWorkerPresence",
     "TaskApplicability",
+    "TaskConditionRule",
+    "TaskConditionRuleValue",
     "TaskCorrectionLog",
     "TaskDefinition",
     "TaskException",
@@ -120,6 +131,7 @@ __all__ = [
     "TaskWorkerRestriction",
     "WorkOrder",
     "WorkUnit",
+    "WorkUnitCondition",
     "Worker",
     "WorkerSupervisor",
     "WorkerSupervisorSession",

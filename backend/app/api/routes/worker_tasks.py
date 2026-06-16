@@ -45,6 +45,7 @@ from app.schemas.worker_station import (
     WorkerBusyCheckRequest,
     WorkerBusyCheckResponse,
 )
+from app.services.conditions import ConditionContext, load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 from app.services.qc_runtime import open_qc_checks_for_task_completion
 from app.services.task_station_adherence import capture_task_station_adherence_fact
@@ -77,6 +78,8 @@ def _required_panel_task_ids(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(db, task_def_ids, [work_unit.id])
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
 
     required_ids: set[int] = set()
     for task in task_defs:
@@ -87,6 +90,8 @@ def _required_panel_task_ids(
             work_order.sub_type_id,
             work_unit.module_number,
             panel_definition.id,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if not applies:
             continue
@@ -231,9 +236,11 @@ def _station_has_module_tasks(
     applicability_map: dict[int, list[TaskApplicability]],
     work_order: WorkOrder,
     work_unit: WorkUnit,
+    condition_ctx: ConditionContext,
 ) -> bool:
     if station.sequence_order is None:
         return False
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
     for task in task_definitions:
         applies, station_sequence_order = resolve_task_station_sequence(
             task,
@@ -242,6 +249,8 @@ def _station_has_module_tasks(
             work_order.sub_type_id,
             work_unit.module_number,
             None,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if applies and station_sequence_order == station.sequence_order:
             return True
@@ -271,6 +280,7 @@ def _next_applicable_module_station(
     applicability_map: dict[int, list[TaskApplicability]] = {}
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
+    condition_ctx = load_condition_context(db, task_def_ids, [work_unit.id])
 
     candidates = list(
         db.execute(
@@ -283,7 +293,7 @@ def _next_applicable_module_station(
     )
     for candidate in candidates:
         if _station_has_module_tasks(
-            candidate, task_definitions, applicability_map, work_order, work_unit
+            candidate, task_definitions, applicability_map, work_order, work_unit, condition_ctx
         ):
             return candidate
     return None

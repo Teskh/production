@@ -48,6 +48,7 @@ from app.schemas.worker_station import (
     StationTask,
     StationWorkItem,
 )
+from app.services.conditions import ConditionContext, load_condition_context
 from app.services.task_applicability import (
     PanelApplicabilityIndex,
     build_panel_applicability_index,
@@ -123,6 +124,9 @@ def _build_task_lists(
     worker_id: int | None,
     current_station_sequence_order: int | None,
     panel_applicability_index: PanelApplicabilityIndex | None = None,
+    *,
+    condition_ctx: ConditionContext,
+    work_unit_id: int,
 ) -> tuple[list[StationTask], list[StationTask], list[StationTask]]:
     instance_map: dict[int, TaskInstance] = {}
     for instance in instances:
@@ -151,6 +155,10 @@ def _build_task_lists(
     backlog_tasks: list[StationTask] = []
 
     for task in ordered_tasks:
+        # Condition requirements filter every path, including the
+        # panel-applicability-index shortcut that skips the resolver.
+        if not condition_ctx.task_applies(task.id, work_unit_id, house_type_id):
+            continue
         if panel_rows is not None:
             station_sequence_order = panel_rows[task.id].station_sequence_order
         else:
@@ -260,9 +268,11 @@ def _station_has_module_tasks(
     applicability_map: dict[int, list[TaskApplicability]],
     work_order: WorkOrder,
     work_unit: WorkUnit,
+    condition_ctx: ConditionContext,
 ) -> bool:
     if station.sequence_order is None:
         return False
+    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
     for task in task_definitions:
         applies, station_sequence_order = resolve_task_station_sequence(
             task,
@@ -271,6 +281,8 @@ def _station_has_module_tasks(
             work_order.sub_type_id,
             work_unit.module_number,
             None,
+            condition_requirements=condition_ctx.requirements_for(task.id),
+            unit_condition_value_ids=unit_condition_value_ids,
         )
         if applies and station_sequence_order == station.sequence_order:
             return True
@@ -283,6 +295,7 @@ def _first_applicable_assembly_station(
     applicability_map: dict[int, list[TaskApplicability]],
     work_order: WorkOrder,
     work_unit: WorkUnit,
+    condition_ctx: ConditionContext,
 ) -> Station | None:
     for candidate in stations:
         if _station_has_module_tasks(
@@ -291,6 +304,7 @@ def _first_applicable_assembly_station(
             applicability_map,
             work_order,
             work_unit,
+            condition_ctx,
         ):
             return candidate
     return None
@@ -478,6 +492,8 @@ def station_snapshot(
     for row in applicability_rows:
         applicability_map.setdefault(row.task_definition_id, []).append(row)
     panel_applicability_index = build_panel_applicability_index(applicability_rows)
+    # Work units are gathered branch-by-branch below; load every assignment once.
+    condition_ctx = load_condition_context(db, list(task_definition_by_id.keys()), None)
     allowed_worker_map: dict[int, set[int]] = {}
     allowed_worker_name_map: dict[int, list[str]] = {}
     if task_definition_by_id:
@@ -594,6 +610,8 @@ def station_snapshot(
                 _worker.id if _worker else None,
                 station.sequence_order,
                 panel_applicability_index,
+                condition_ctx=condition_ctx,
+                work_unit_id=work_unit.id,
             )
             work_items.append(
                 StationWorkItem(
@@ -751,6 +769,8 @@ def station_snapshot(
                             _worker.id if _worker else None,
                             station.sequence_order,
                             panel_applicability_index,
+                            condition_ctx=condition_ctx,
+                            work_unit_id=work_unit.id,
                         )
                         planned_items.append(
                             StationWorkItem(
@@ -827,6 +847,9 @@ def station_snapshot(
                     )
                     for row in applicability_rows_all:
                         applicability_map_all.setdefault(row.task_definition_id, []).append(row)
+                condition_ctx_all = load_condition_context(
+                    db, [task.id for task in all_module_tasks], None
+                )
 
                 magazine_rows = list(
                     db.execute(
@@ -853,6 +876,7 @@ def station_snapshot(
                             applicability_map_all,
                             work_order,
                             work_unit,
+                            condition_ctx_all,
                         )
                         if target_station is None:
                             target_station = first_station
@@ -894,6 +918,8 @@ def station_snapshot(
                 dependency_name_map,
                 _worker.id if _worker else None,
                 station.sequence_order,
+                condition_ctx=condition_ctx,
+                work_unit_id=work_unit.id,
             )
             work_items.append(
                 StationWorkItem(

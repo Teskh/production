@@ -41,6 +41,20 @@ type QueueItem = {
   planned_start_datetime: string | null;
   planned_assembly_line: LineId;
   status: ProductionStatus;
+  condition_value_ids: number[];
+};
+
+type ConditionValue = {
+  id: number;
+  condition_type_id: number;
+  name: string;
+};
+
+type ConditionType = {
+  id: number;
+  name: string;
+  active: boolean;
+  values: ConditionValue[];
 };
 
 type PanelStatus = 'Planned' | 'InProgress' | 'Completed' | 'Consumed';
@@ -218,6 +232,15 @@ const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
     }
     return a.id - b.id;
   });
+
+const parseSequenceDraftValue = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
 
 const suggestHouseIdentifierBase = (projectName: string, items: QueueItem[]): string => {
   const bestMatch = items
@@ -429,6 +452,7 @@ const ProductionQueue: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [houseTypes, setHouseTypes] = useState<HouseType[]>([]);
   const [houseSubTypes, setHouseSubTypes] = useState<Record<number, HouseSubType[]>>({});
+  const [conditionTypes, setConditionTypes] = useState<ConditionType[]>([]);
   const [batchSaving, setBatchSaving] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchDraft, setBatchDraft] = useState<BatchDraft>({
@@ -447,8 +471,23 @@ const ProductionQueue: React.FC = () => {
   const [editStartCleared, setEditStartCleared] = useState(false);
   const [editSubTypeValue, setEditSubTypeValue] = useState('keep');
   const [editSubTypeInitial, setEditSubTypeInitial] = useState('keep');
+  const [editConditionsEnabled, setEditConditionsEnabled] = useState(false);
+  const [editConditionValueIds, setEditConditionValueIds] = useState<number[]>([]);
+  const [editConditionInitial, setEditConditionInitial] = useState('');
+  const [isBulkConditionModalOpen, setIsBulkConditionModalOpen] = useState(false);
+  const [bulkConditionMode, setBulkConditionMode] = useState<'add' | 'remove' | 'replace'>(
+    'add'
+  );
+  const [bulkConditionValueIds, setBulkConditionValueIds] = useState<number[]>([]);
+  const [bulkConditionIds, setBulkConditionIds] = useState<number[]>([]);
+  const [bulkConditionSaving, setBulkConditionSaving] = useState(false);
+  const [bulkConditionError, setBulkConditionError] = useState<string | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [sequenceEditMode, setSequenceEditMode] = useState(false);
+  const [sequenceDraft, setSequenceDraft] = useState<Record<number, string>>({});
+  const [sequenceSaving, setSequenceSaving] = useState(false);
+  const [sequenceError, setSequenceError] = useState<string | null>(null);
   const [draggingIds, setDraggingIds] = useState<number[]>([]);
   const [dragTarget, setDragTarget] = useState<{
     id: number;
@@ -593,11 +632,46 @@ const ProductionQueue: React.FC = () => {
 
   useEffect(() => {
     loadQueue(false);
+  }, [loadQueue]);
+
+  useEffect(() => {
     const interval = window.setInterval(() => {
-      loadQueue(true);
+      if (!sequenceEditMode) {
+        loadQueue(true);
+      }
     }, 30000);
     return () => window.clearInterval(interval);
-  }, [loadQueue]);
+  }, [loadQueue, sequenceEditMode]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await apiRequest<ConditionType[]>('/api/conditions/types');
+        setConditionTypes(data);
+      } catch {
+        // Conditions are optional metadata for the queue; ignore load errors.
+      }
+    };
+    load();
+  }, []);
+
+  const conditionValueById = useMemo(() => {
+    const map = new Map<number, { name: string; typeName: string }>();
+    conditionTypes.forEach((conditionType) => {
+      conditionType.values.forEach((value) => {
+        map.set(value.id, { name: value.name, typeName: conditionType.name });
+      });
+    });
+    return map;
+  }, [conditionTypes]);
+
+  const activeConditionTypes = useMemo(
+    () =>
+      conditionTypes.filter(
+        (conditionType) => conditionType.active && conditionType.values.length > 0
+      ),
+    [conditionTypes]
+  );
 
   useEffect(() => {
     if (items.length === 0) {
@@ -721,12 +795,121 @@ const ProductionQueue: React.FC = () => {
 
   const visibleItems = filteredItems.slice(0, visibleCount);
   const hasMoreItems = visibleItems.length < filteredItems.length;
+  const sequenceValidation = useMemo(() => {
+    const invalidIds = new Set<number>();
+    const conflictIds = new Set<number>();
+    const changedUpdates: { work_unit_id: number; planned_sequence: number }[] = [];
+    let conflictLabel: string | null = null;
+
+    if (!sequenceEditMode) {
+      return { invalidIds, conflictIds, changedUpdates, conflictLabel };
+    }
+
+    const buckets = new Map<string, { projectName: string; sequence: number; ids: number[] }>();
+    items.forEach((item) => {
+      const draftValue = sequenceDraft[item.id] ?? String(item.planned_sequence);
+      const plannedSequence = parseSequenceDraftValue(draftValue);
+      if (plannedSequence === null) {
+        invalidIds.add(item.id);
+        return;
+      }
+      if (plannedSequence !== item.planned_sequence) {
+        changedUpdates.push({
+          work_unit_id: item.id,
+          planned_sequence: plannedSequence,
+        });
+      }
+      const key = `${item.project_name}\u0000${plannedSequence}`;
+      const bucket =
+        buckets.get(key) ?? { projectName: item.project_name, sequence: plannedSequence, ids: [] };
+      bucket.ids.push(item.id);
+      buckets.set(key, bucket);
+    });
+
+    for (const bucket of buckets.values()) {
+      if (bucket.ids.length > 1) {
+        bucket.ids.forEach((id) => conflictIds.add(id));
+        if (!conflictLabel) {
+          conflictLabel = `${bucket.projectName} #${bucket.sequence}`;
+        }
+      }
+    }
+
+    return { invalidIds, conflictIds, changedUpdates, conflictLabel };
+  }, [items, sequenceDraft, sequenceEditMode]);
+
+  const sequenceApplyDisabled =
+    sequenceSaving ||
+    sequenceValidation.changedUpdates.length === 0 ||
+    sequenceValidation.invalidIds.size > 0 ||
+    sequenceValidation.conflictIds.size > 0;
+
+  const startSequenceEdit = () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    setSequenceDraft(
+      Object.fromEntries(items.map((item) => [item.id, String(item.planned_sequence)]))
+    );
+    setSequenceError(null);
+    setSequenceEditMode(true);
+    setSelectedIds(new Set());
+    setLastSelectedIndex(null);
+    setDraggingIds([]);
+    setDragTarget(null);
+  };
+
+  const cancelSequenceEdit = () => {
+    setSequenceEditMode(false);
+    setSequenceDraft({});
+    setSequenceError(null);
+    setSequenceSaving(false);
+  };
+
+  const handleSequenceSave = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    if (sequenceValidation.invalidIds.size > 0) {
+      setSequenceError('Todos los numeros deben ser enteros positivos.');
+      return;
+    }
+    if (sequenceValidation.conflictIds.size > 0) {
+      setSequenceError('Hay numeros repetidos dentro del mismo proyecto.');
+      return;
+    }
+    if (sequenceValidation.changedUpdates.length === 0) {
+      cancelSequenceEdit();
+      return;
+    }
+    try {
+      setSequenceSaving(true);
+      setSequenceError(null);
+      const updated = await apiRequest<QueueItem[]>('/api/production-queue/sequences', {
+        method: 'PUT',
+        body: JSON.stringify({ updates: sequenceValidation.changedUpdates }),
+      });
+      setItems(sortQueueItems(updated));
+      setSequenceEditMode(false);
+      setSequenceDraft({});
+      setLastUpdated(new Date());
+    } catch (error) {
+      setSequenceError(
+        error instanceof Error ? error.message : 'No se pudieron guardar los numeros.'
+      );
+    } finally {
+      setSequenceSaving(false);
+    }
+  };
 
   const applySelection = (
     id: number,
     index: number,
     event: React.MouseEvent<HTMLDivElement>
   ) => {
+    if (sequenceEditMode) {
+      return;
+    }
     const isToggle = event.metaKey || event.ctrlKey;
     const isRange = event.shiftKey && lastSelectedIndex !== null;
 
@@ -825,6 +1008,9 @@ const ProductionQueue: React.FC = () => {
   };
 
   const moveSelectionByOne = (direction: 'up' | 'down', anchorId: number) => {
+    if (sequenceEditMode) {
+      return;
+    }
     if (!ensureQueueMutationAllowed()) {
       return;
     }
@@ -868,7 +1054,7 @@ const ProductionQueue: React.FC = () => {
     item: QueueItem,
     index: number
   ) => {
-    if (!canManageQueue || item.status === 'Completed') {
+    if (!canManageQueue || sequenceEditMode || item.status === 'Completed') {
       event.preventDefault();
       return;
     }
@@ -885,7 +1071,7 @@ const ProductionQueue: React.FC = () => {
     event: React.DragEvent<HTMLDivElement>,
     itemId: number
   ) => {
-    if (!canManageQueue) {
+    if (!canManageQueue || sequenceEditMode) {
       return;
     }
     event.preventDefault();
@@ -899,7 +1085,7 @@ const ProductionQueue: React.FC = () => {
     event: React.DragEvent<HTMLDivElement>,
     targetId: number
   ) => {
-    if (!canManageQueue) {
+    if (!canManageQueue || sequenceEditMode) {
       return;
     }
     event.preventDefault();
@@ -932,6 +1118,22 @@ const ProductionQueue: React.FC = () => {
     setEditIds(uniqueIds);
     setEditError(null);
     setEditStartCleared(false);
+    const sharedConditionIds =
+      itemsForEdit.length > 0 &&
+      itemsForEdit.every(
+        (item) =>
+          [...item.condition_value_ids].sort((a, b) => a - b).join(',') ===
+          [...itemsForEdit[0].condition_value_ids].sort((a, b) => a - b).join(',')
+      )
+        ? [...itemsForEdit[0].condition_value_ids]
+        : null;
+    setEditConditionsEnabled(uniqueIds.length === 1 || sharedConditionIds !== null);
+    setEditConditionValueIds(sharedConditionIds ?? []);
+    setEditConditionInitial(
+      sharedConditionIds === null
+        ? 'mixed'
+        : [...sharedConditionIds].sort((a, b) => a - b).join(',')
+    );
     if (uniqueIds.length === 1) {
       const item = items.find((queue) => queue.id === uniqueIds[0]);
       const houseTypeValue = item ? String(item.house_type_id) : '';
@@ -1010,6 +1212,57 @@ const ProductionQueue: React.FC = () => {
     setStatusDetailError(null);
   };
 
+  const openBulkConditionModal = () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    if (!selectedIds.size) {
+      return;
+    }
+    setBulkConditionIds(Array.from(selectedIds));
+    setBulkConditionMode('add');
+    setBulkConditionValueIds([]);
+    setBulkConditionError(null);
+    setIsBulkConditionModalOpen(true);
+  };
+
+  const handleBulkConditionSave = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    if (!bulkConditionIds.length) {
+      return;
+    }
+    if (bulkConditionMode !== 'replace' && bulkConditionValueIds.length === 0) {
+      setBulkConditionError('Selecciona al menos un valor.');
+      return;
+    }
+    const payload: Record<string, unknown> = { work_unit_ids: bulkConditionIds };
+    if (bulkConditionMode === 'add') {
+      payload.add_value_ids = bulkConditionValueIds;
+    } else if (bulkConditionMode === 'remove') {
+      payload.remove_value_ids = bulkConditionValueIds;
+    } else {
+      payload.replace_value_ids = bulkConditionValueIds;
+    }
+    try {
+      setBulkConditionSaving(true);
+      setBulkConditionError(null);
+      await apiRequest('/api/conditions/work-units/bulk', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      setIsBulkConditionModalOpen(false);
+      await loadQueue(true);
+    } catch (error) {
+      setBulkConditionError(
+        error instanceof Error ? error.message : 'No se pudieron actualizar las condiciones.'
+      );
+    } finally {
+      setBulkConditionSaving(false);
+    }
+  };
+
   const handleEditHouseTypeChange = (nextValue: string) => {
     setEditHouseTypeValue(nextValue);
     if (nextValue === 'keep') {
@@ -1048,6 +1301,12 @@ const ProductionQueue: React.FC = () => {
     }
     if (editSubTypeValue !== editSubTypeInitial && editSubTypeValue !== 'keep') {
       payload.sub_type_id = editSubTypeValue === 'none' ? null : Number(editSubTypeValue);
+    }
+    if (editConditionsEnabled) {
+      const serialized = [...editConditionValueIds].sort((a, b) => a - b).join(',');
+      if (serialized !== editConditionInitial) {
+        payload.condition_value_ids = editConditionValueIds;
+      }
     }
     if (Object.keys(payload).length === 1) {
       setIsEditModalOpen(false);
@@ -1282,11 +1541,11 @@ const ProductionQueue: React.FC = () => {
       <div className="flex justify-end">
         <button
           onClick={() => {
-            if (ensureQueueMutationAllowed()) {
+            if (!sequenceEditMode && ensureQueueMutationAllowed()) {
               setIsAddModalOpen(true);
             }
           }}
-          disabled={!canManageQueue}
+          disabled={!canManageQueue || sequenceEditMode}
           className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="h-4 w-4" /> Agregar lote de produccion
@@ -1330,6 +1589,35 @@ const ProductionQueue: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {sequenceEditMode ? (
+              <>
+                <button
+                  type="button"
+                  onClick={cancelSequenceEdit}
+                  disabled={sequenceSaving}
+                  className="rounded-full border border-black/10 px-4 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSequenceSave}
+                  disabled={sequenceApplyDisabled}
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sequenceSaving ? 'Guardando...' : 'Aplicar numeros'}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={startSequenceEdit}
+                disabled={!canManageQueue || items.length === 0}
+                className="rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)] shadow-sm hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Editar numeros
+              </button>
+            )}
             <label className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
               <input
@@ -1343,14 +1631,14 @@ const ProductionQueue: React.FC = () => {
             <div className="h-6 w-px bg-black/10 mx-1" />
             <button
               onClick={() => loadQueue(true)}
-              disabled={refreshing}
+              disabled={refreshing || sequenceEditMode}
               className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] disabled:opacity-40 transition-colors"
               title="Actualizar"
             >
               <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             <button
-              disabled={!canManageQueue || selectedCount === 0}
+              disabled={!canManageQueue || selectedCount === 0 || sequenceEditMode}
               onClick={handleDelete}
               className="p-2 text-[var(--ink-muted)] hover:text-red-500 disabled:opacity-30 transition-colors"
               title="Eliminar seleccionados"
@@ -1363,6 +1651,24 @@ const ProductionQueue: React.FC = () => {
         {errorMessage && (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {errorMessage}
+          </div>
+        )}
+
+        {sequenceEditMode && sequenceValidation.conflictLabel && (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            Numero repetido en {sequenceValidation.conflictLabel}.
+          </div>
+        )}
+
+        {sequenceEditMode && sequenceValidation.invalidIds.size > 0 && (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            Todos los numeros deben ser enteros positivos.
+          </div>
+        )}
+
+        {sequenceError && (
+          <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {sequenceError}
           </div>
         )}
 
@@ -1379,18 +1685,27 @@ const ProductionQueue: React.FC = () => {
             </span>
             <button
               onClick={() => openEditModal(Array.from(selectedIds))}
-              disabled={!canManageQueue}
+              disabled={!canManageQueue || sequenceEditMode}
               className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[var(--ink)] shadow-sm border border-black/10 hover:border-black/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Editar
             </button>
             <button
               onClick={() => openStatusModal(Array.from(selectedIds))}
-              disabled={!canManageQueue}
+              disabled={!canManageQueue || sequenceEditMode}
               className="rounded-full bg-[var(--leaf)]/10 px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[var(--leaf)]/20 hover:bg-[var(--leaf)]/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Editar estado
             </button>
+            {activeConditionTypes.length > 0 && (
+              <button
+                onClick={openBulkConditionModal}
+                disabled={!canManageQueue || sequenceEditMode}
+                className="rounded-full bg-[rgba(47,107,79,0.08)] px-3 py-1 text-xs font-semibold text-[var(--leaf)] border border-[rgba(47,107,79,0.2)] hover:bg-[rgba(47,107,79,0.16)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Condiciones
+              </button>
+            )}
             <button
               onClick={clearSelection}
               className="rounded-full px-3 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
@@ -1423,6 +1738,11 @@ const ProductionQueue: React.FC = () => {
             const prevItem = index > 0 ? visibleItems[index - 1] : null;
             const isNewGroup = !prevItem || prevItem.project_name !== item.project_name;
             const subTypes = houseSubTypes[item.house_type_id] ?? [];
+            const draftSequenceValue = sequenceDraft[item.id] ?? String(item.planned_sequence);
+            const sequenceChanged =
+              parseSequenceDraftValue(draftSequenceValue) !== item.planned_sequence;
+            const sequenceInvalid = sequenceValidation.invalidIds.has(item.id);
+            const sequenceConflict = sequenceValidation.conflictIds.has(item.id);
             const dragHighlight =
               dragTarget?.id === item.id
                 ? dragTarget.position === 'before'
@@ -1450,7 +1770,7 @@ const ProductionQueue: React.FC = () => {
                   onDragOver={(event) => handleDragOver(event, item.id)}
                   onDrop={(event) => handleDrop(event, item.id)}
                   onDragEnd={handleDragEnd}
-                  draggable={canManageQueue && item.status !== 'Completed'}
+                  draggable={canManageQueue && !sequenceEditMode && item.status !== 'Completed'}
                   className={`
                     group relative flex items-center p-4 rounded-2xl border transition-all animate-rise select-none cursor-pointer
                     ${
@@ -1465,9 +1785,34 @@ const ProductionQueue: React.FC = () => {
                 >
                   <div className="flex items-center mr-6 gap-3">
                     <GripVertical className="h-4 w-4 text-black/10 group-hover:text-black/30" />
-                    <span className="text-xs font-mono font-bold text-black/20 w-8">
-                      {item.planned_sequence}
-                    </span>
+                    {sequenceEditMode ? (
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={draftSequenceValue}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => {
+                          const nextValue = event.target.value;
+                          setSequenceDraft((prev) => ({
+                            ...prev,
+                            [item.id]: nextValue,
+                          }));
+                          setSequenceError(null);
+                        }}
+                        className={`h-8 w-16 rounded-xl border bg-white px-2 text-center text-xs font-mono font-bold outline-none focus:ring-2 focus:ring-[var(--accent)]/20 ${
+                          sequenceInvalid || sequenceConflict
+                            ? 'border-red-300 text-red-700'
+                            : sequenceChanged
+                            ? 'border-red-200 text-red-600'
+                            : 'border-black/10 text-[var(--ink)]'
+                        }`}
+                      />
+                    ) : (
+                      <span className="text-xs font-mono font-bold text-black/20 w-8">
+                        {item.planned_sequence}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex-1 grid grid-cols-12 gap-4 items-center">
@@ -1476,6 +1821,25 @@ const ProductionQueue: React.FC = () => {
                       <p className="text-[11px] text-[var(--ink-muted)]">
                         Modulo: M-{String(item.module_number).padStart(2, '0')}
                       </p>
+                      {item.condition_value_ids.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {item.condition_value_ids.map((valueId) => {
+                            const value = conditionValueById.get(valueId);
+                            if (!value) {
+                              return null;
+                            }
+                            return (
+                              <span
+                                key={valueId}
+                                title={`${value.typeName}: ${value.name}`}
+                                className="rounded-full border border-[rgba(47,107,79,0.2)] bg-[rgba(47,107,79,0.08)] px-2 py-0.5 text-[10px] font-semibold text-[var(--leaf)]"
+                              >
+                                {value.name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
 
                     <div className="col-span-3 flex items-center gap-3 min-w-0">
@@ -1489,7 +1853,7 @@ const ProductionQueue: React.FC = () => {
                               : [item.id]
                           );
                         }}
-                        disabled={!canManageQueue}
+                        disabled={!canManageQueue || sequenceEditMode}
                         className="truncate max-w-[160px] text-left text-sm font-medium text-[var(--ink)] transition-colors hover:text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                         title="Editar elementos"
                       >
@@ -1500,7 +1864,7 @@ const ProductionQueue: React.FC = () => {
                           subTypes={subTypes}
                           currentId={item.sub_type_id}
                           onToggle={(subTypeId) => handleSubTypeToggle(subTypeId, item.id)}
-                          disabled={!canManageQueue}
+                          disabled={!canManageQueue || sequenceEditMode}
                         />
                       ) : (
                         item.sub_type_name && (
@@ -1515,7 +1879,7 @@ const ProductionQueue: React.FC = () => {
                           event.stopPropagation();
                           openEditModal([item.id]);
                         }}
-                        disabled={!canManageQueue}
+                        disabled={!canManageQueue || sequenceEditMode}
                         className="flex items-center gap-1.5 text-left disabled:cursor-not-allowed disabled:opacity-60"
                         title={formatPlannedTime(item.planned_start_datetime)}
                       >
@@ -1530,7 +1894,12 @@ const ProductionQueue: React.FC = () => {
                       <LineSelector
                         current={item.planned_assembly_line}
                         onChange={(line) => handleLineChange(line, item.id)}
-                        disabled={!canManageQueue || item.status === 'Completed' || hasCompletedSelected}
+                        disabled={
+                          !canManageQueue ||
+                          sequenceEditMode ||
+                          item.status === 'Completed' ||
+                          hasCompletedSelected
+                        }
                       />
                     </div>
 
@@ -1554,7 +1923,7 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             openEditModal(selectedIds.has(item.id) && selectedCount > 1 ? Array.from(selectedIds) : [item.id]);
                           }}
-                          disabled={!canManageQueue}
+                          disabled={!canManageQueue || sequenceEditMode}
                           className="p-2 text-[var(--ink-muted)] hover:text-blue-500 hover:bg-blue-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
                           title="Editar"
                         >
@@ -1569,7 +1938,7 @@ const ProductionQueue: React.FC = () => {
                                 : [item.id]
                             );
                           }}
-                          disabled={!canManageQueue}
+                          disabled={!canManageQueue || sequenceEditMode}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--leaf)] hover:bg-green-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
                           title="Editar estado"
                         >
@@ -1580,7 +1949,7 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             moveSelectionByOne('up', item.id);
                           }}
-                          disabled={!canManageQueue || item.status === 'Completed'}
+                          disabled={!canManageQueue || sequenceEditMode || item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
                           title="Mover arriba"
                         >
@@ -1591,7 +1960,7 @@ const ProductionQueue: React.FC = () => {
                             event.stopPropagation();
                             moveSelectionByOne('down', item.id);
                           }}
-                          disabled={!canManageQueue || item.status === 'Completed'}
+                          disabled={!canManageQueue || sequenceEditMode || item.status === 'Completed'}
                           className="p-2 text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-black/5 rounded-xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-30"
                           title="Mover abajo"
                         >
@@ -2185,6 +2554,72 @@ const ProductionQueue: React.FC = () => {
                 )}
               </div>
 
+              {activeConditionTypes.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                    Condiciones del modulo
+                  </label>
+                  {editIds.length > 1 && (
+                    <label className="ml-1 flex items-center gap-2 text-[11px] text-[var(--ink-muted)]">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5"
+                        checked={editConditionsEnabled}
+                        onChange={(event) => setEditConditionsEnabled(event.target.checked)}
+                      />
+                      Reemplazar condiciones de todos los seleccionados
+                    </label>
+                  )}
+                  <div
+                    className={`space-y-2 rounded-2xl border border-black/10 bg-white px-4 py-3 ${
+                      editConditionsEnabled ? '' : 'opacity-50'
+                    }`}
+                  >
+                    {activeConditionTypes.map((conditionType) => (
+                      <div key={conditionType.id}>
+                        <p className="text-[11px] font-semibold text-[var(--ink)]">
+                          {conditionType.name}
+                        </p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {conditionType.values.map((value) => {
+                            const checked = editConditionValueIds.includes(value.id);
+                            return (
+                              <label
+                                key={value.id}
+                                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${
+                                  checked
+                                    ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                                    : 'border-black/10 bg-white text-[var(--ink-muted)]'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="h-3 w-3"
+                                  disabled={!editConditionsEnabled}
+                                  checked={checked}
+                                  onChange={() =>
+                                    setEditConditionValueIds((prev) =>
+                                      prev.includes(value.id)
+                                        ? prev.filter((id) => id !== value.id)
+                                        : [...prev, value.id]
+                                    )
+                                  }
+                                />
+                                {value.name}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-[var(--ink-muted)]">
+                    Las tareas con condiciones requeridas solo aplican en modulos que las tengan
+                    asignadas.
+                  </p>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-4">
                 <button
                   onClick={() => setIsEditModalOpen(false)}
@@ -2198,6 +2633,133 @@ const ProductionQueue: React.FC = () => {
                   className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
                 >
                   {editSaving ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isBulkConditionModalOpen && (
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-[520px] max-h-[85vh] overflow-y-auto border border-black/5 animate-rise">
+            <div className="px-8 py-6 flex justify-between items-center">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                  Condiciones en lote
+                </p>
+                <h2 className="text-xl font-display text-[var(--ink)]">
+                  Asignar condiciones
+                </h2>
+                <p className="text-xs text-[var(--ink-muted)] mt-1">
+                  {bulkConditionIds.length} modulos seleccionados
+                </p>
+              </div>
+              <button
+                onClick={() => setIsBulkConditionModalOpen(false)}
+                className="p-2 hover:bg-black/5 rounded-full transition-colors text-[var(--ink-muted)]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-8 pb-8 space-y-5">
+              {bulkConditionError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {bulkConditionError}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[var(--ink-muted)] ml-1">
+                  Operacion
+                </label>
+                <div className="flex bg-black/5 rounded-xl p-1 gap-1">
+                  {(
+                    [
+                      ['add', 'Agregar'],
+                      ['remove', 'Quitar'],
+                      ['replace', 'Reemplazar'],
+                    ] as const
+                  ).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => {
+                        setBulkConditionMode(mode);
+                        setBulkConditionError(null);
+                      }}
+                      className={`flex-1 h-8 flex items-center justify-center text-xs font-bold rounded-lg transition-all ${
+                        bulkConditionMode === mode
+                          ? 'bg-white text-[var(--accent)] shadow-sm border border-black/5'
+                          : 'text-[var(--ink-muted)] hover:text-[var(--ink)] hover:bg-white/50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-[var(--ink-muted)] ml-1">
+                  {bulkConditionMode === 'add' &&
+                    'Agrega los valores marcados sin tocar el resto de las condiciones de cada modulo.'}
+                  {bulkConditionMode === 'remove' &&
+                    'Quita los valores marcados de los modulos que los tengan.'}
+                  {bulkConditionMode === 'replace' &&
+                    'Reemplaza todas las condiciones de los modulos por los valores marcados (sin marcas, las deja sin condiciones).'}
+                </p>
+              </div>
+
+              <div className="space-y-2 rounded-2xl border border-black/10 bg-white px-4 py-3">
+                {activeConditionTypes.map((conditionType) => (
+                  <div key={conditionType.id}>
+                    <p className="text-[11px] font-semibold text-[var(--ink)]">
+                      {conditionType.name}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {conditionType.values.map((value) => {
+                        const checked = bulkConditionValueIds.includes(value.id);
+                        return (
+                          <label
+                            key={value.id}
+                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${
+                              checked
+                                ? 'border-[var(--accent)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                                : 'border-black/10 bg-white text-[var(--ink-muted)]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-3 w-3"
+                              checked={checked}
+                              onChange={() =>
+                                setBulkConditionValueIds((prev) =>
+                                  prev.includes(value.id)
+                                    ? prev.filter((id) => id !== value.id)
+                                    : [...prev, value.id]
+                                )
+                              }
+                            />
+                            {value.name}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setIsBulkConditionModalOpen(false)}
+                  className="flex-1 rounded-full border border-black/10 px-4 py-2.5 text-sm font-semibold text-[var(--ink)] hover:bg-black/5 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleBulkConditionSave}
+                  disabled={bulkConditionSaving}
+                  className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
+                >
+                  {bulkConditionSaving ? 'Aplicando...' : 'Aplicar'}
                 </button>
               </div>
             </div>

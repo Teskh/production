@@ -38,6 +38,7 @@ import Stations from './pages/admin/config/Stations';
 import HouseConfigurator from './pages/admin/config/HouseConfigurator';
 import HouseParams from './pages/admin/config/HouseParams';
 import TaskDefs from './pages/admin/config/TaskDefs';
+import ConditionDefs from './pages/admin/config/ConditionDefs';
 import PauseNoteDefs from './pages/admin/config/PauseNoteDefs';
 import Backups from './pages/admin/config/Backups';
 import QCChecks from './pages/admin/quality/QCChecks';
@@ -156,6 +157,7 @@ function App() {
           />
           <Route path="house-panels" element={<Navigate to="/admin/house-config" replace />} />
           <Route path="task-defs" element={<TaskDefs />} />
+          <Route path="condition-defs" element={<ConditionDefs />} />
           <Route path="pause-note-defs" element={<PauseNoteDefs />} />
           <Route
             path="pause-defs"
