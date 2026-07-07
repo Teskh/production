@@ -22,13 +22,11 @@ from app.models.admin import AdminUser
 from app.models.enums import (
     AdminRole,
     PanelUnitStatus,
-    QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
     QCExecutionOutcome,
     QCNotificationStatus,
     QCReworkStatus,
-    QCTriggerEventType,
     StationRole,
     TaskScope,
     TaskStatus,
@@ -47,7 +45,6 @@ from app.models.qc import (
     QCEvidence,
     QCNotification,
     QCReworkTask,
-    QCTrigger,
 )
 from app.models.stations import Station
 from app.models.tasks import (
@@ -183,75 +180,6 @@ def _resolve_current_station(
         station_id = work_unit.current_station_id if work_unit else None
     station_name = db.get(Station, station_id).name if station_id else None
     return station_id, station_name
-
-
-def _resolve_definition_locked_station_id(
-    db: Session,
-    check_definition_id: int,
-) -> int | None:
-    trigger_rows = list(
-        db.execute(
-            select(QCTrigger).where(
-                QCTrigger.check_definition_id == check_definition_id,
-                QCTrigger.event_type == QCTriggerEventType.TASK_COMPLETED,
-            )
-        ).scalars()
-    )
-    if not trigger_rows:
-        return None
-
-    task_definition_ids: set[int] = set()
-    for trigger in trigger_rows:
-        params = trigger.params_json or {}
-        if not isinstance(params, dict):
-            continue
-        task_ids = params.get("task_definition_ids")
-        if not isinstance(task_ids, list):
-            continue
-        for task_id in task_ids:
-            try:
-                task_definition_ids.add(int(task_id))
-            except (TypeError, ValueError):
-                continue
-
-    if not task_definition_ids:
-        return None
-
-    task_rows = list(
-        db.execute(
-            select(TaskDefinition.id, TaskDefinition.default_station_sequence).where(
-                TaskDefinition.id.in_(sorted(task_definition_ids))
-            )
-        ).all()
-    )
-    sequences = {
-        sequence for _, sequence in task_rows if sequence is not None
-    }
-    if not sequences:
-        return None
-    if len(sequences) > 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Triggered check maps to multiple stations; cannot lock manual station",
-        )
-
-    sequence_order = next(iter(sequences))
-    station_ids = list(
-        db.execute(
-            select(Station.id).where(Station.sequence_order == sequence_order)
-        ).scalars()
-    )
-    if not station_ids:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No station found for trigger task sequence",
-        )
-    if len(station_ids) > 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Multiple stations share trigger task sequence; cannot lock manual station",
-        )
-    return station_ids[0]
 
 
 def _module_has_later_applicable_station(
@@ -1224,14 +1152,10 @@ def create_manual_check(
         if not applies:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Check does not apply")
 
-    station_id = payload.station_id
-    if check_def and check_def.kind == QCCheckKind.TRIGGERED:
-        station_id = _resolve_definition_locked_station_id(db, check_def.id)
-        if station_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Triggered check has no resolvable station; cannot create manual check",
-            )
+    current_station_id, current_station_name = _resolve_current_station(
+        db, payload.work_unit_id, payload.panel_unit_id
+    )
+    station_id = current_station_id
 
     instance = QCCheckInstance(
         check_definition_id=check_def.id if check_def else None,
@@ -1251,14 +1175,11 @@ def create_manual_check(
     db.commit()
     db.refresh(instance)
 
-    station_name = db.get(Station, station_id).name if station_id else None
+    station_name = current_station_name
     panel_code = None
     if payload.panel_unit_id:
         panel = db.get(PanelUnit, payload.panel_unit_id)
         panel_code = panel.panel_definition.panel_code if panel else None
-    current_station_id, current_station_name = _resolve_current_station(
-        db, payload.work_unit_id, payload.panel_unit_id
-    )
 
     return _build_check_summary(
         instance,

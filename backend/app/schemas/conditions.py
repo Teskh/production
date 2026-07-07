@@ -77,3 +77,12 @@ class WorkUnitConditionsBulkUpdate(BaseModel):
     add_value_ids: list[int] = []
     remove_value_ids: list[int] = []
     replace_value_ids: list[int] | None = None
+
+
+class WorkUnitConditionsMatrixItem(BaseModel):
+    work_unit_id: int
+    condition_value_ids: list[int] = []
+
+
+class WorkUnitConditionsMatrixUpdate(BaseModel):
+    items: list[WorkUnitConditionsMatrixItem] = Field(min_length=1)

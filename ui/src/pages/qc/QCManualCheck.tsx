@@ -18,18 +18,6 @@ type QCCheckDefinition = {
   archived_at: string | null;
 };
 
-type QCTrigger = {
-  id: number;
-  check_definition_id: number;
-  event_type: 'task_completed';
-  params_json: Record<string, unknown> | null;
-};
-
-type TaskDefinition = {
-  id: number;
-  default_station_sequence: number | null;
-};
-
 type ProductionQueueItem = {
   id: number;
   project_name: string;
@@ -43,20 +31,18 @@ type PanelStatus = {
   panel_unit_id: number | null;
   panel_code: string | null;
   status: string;
-};
-
-type ProductionQueueModuleStatus = {
-  panels: PanelStatus[];
-};
-
-type StationSummary = {
-  id: number;
-  name: string;
-  sequence_order?: number | null;
+  current_station_id: number | null;
+  current_station_name: string | null;
 };
 
 type ManualCheckResponse = {
   id: number;
+};
+
+type ProductionQueueModuleStatus = {
+  current_station_id: number | null;
+  current_station_name: string | null;
+  panels: PanelStatus[];
 };
 
 type ManualMode = 'ad_hoc' | 'definition';
@@ -89,17 +75,14 @@ const QCManualCheck: React.FC = () => {
 
   const [workUnits, setWorkUnits] = useState<ProductionQueueItem[]>([]);
   const [checkDefinitions, setCheckDefinitions] = useState<QCCheckDefinition[]>([]);
-  const [triggers, setTriggers] = useState<QCTrigger[]>([]);
-  const [taskDefinitions, setTaskDefinitions] = useState<TaskDefinition[]>([]);
-  const [stations, setStations] = useState<StationSummary[]>([]);
+  const [moduleStatus, setModuleStatus] = useState<ProductionQueueModuleStatus | null>(null);
   const [panels, setPanels] = useState<PanelStatus[]>([]);
-  const [panelsLoading, setPanelsLoading] = useState(false);
+  const [moduleStatusLoading, setModuleStatusLoading] = useState(false);
 
   const [mode, setMode] = useState<ManualMode>('ad_hoc');
   const [scope, setScope] = useState<TaskScope>('module');
   const [workUnitId, setWorkUnitId] = useState<number | null>(null);
   const [panelUnitId, setPanelUnitId] = useState<number | null>(null);
-  const [stationId, setStationId] = useState<number | null>(null);
   const [checkDefinitionId, setCheckDefinitionId] = useState<number | null>(null);
   const [adHocTitle, setAdHocTitle] = useState('');
 
@@ -108,20 +91,14 @@ const QCManualCheck: React.FC = () => {
     const loadData = async () => {
       setLoading(true);
       try {
-        const [queue, defs, triggerData, taskData, stationData] = await Promise.all([
+        const [queue, defs] = await Promise.all([
           apiRequest<ProductionQueueItem[]>('/api/production-queue?include_completed=false'),
           apiRequest<QCCheckDefinition[]>('/api/qc/check-definitions'),
-          apiRequest<QCTrigger[]>('/api/qc/triggers'),
-          apiRequest<TaskDefinition[]>('/api/task-definitions'),
-          apiRequest<StationSummary[]>('/api/stations'),
         ]);
         if (!active) {
           return;
         }
         setWorkUnits(queue);
-        setStations(stationData);
-        setTriggers(triggerData);
-        setTaskDefinitions(taskData);
         setCheckDefinitions(defs.filter((item) => item.active && !item.archived_at));
         setErrorMessage(null);
       } catch (error) {
@@ -142,18 +119,15 @@ const QCManualCheck: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (scope !== 'panel') {
-      setPanelUnitId(null);
-      setPanels([]);
-      return;
-    }
     if (!workUnitId) {
+      setPanelUnitId(null);
+      setModuleStatus(null);
       setPanels([]);
       return;
     }
     let active = true;
-    const loadPanels = async () => {
-      setPanelsLoading(true);
+    const loadModuleStatus = async () => {
+      setModuleStatusLoading(true);
       try {
         const status = await apiRequest<ProductionQueueModuleStatus>(
           `/api/production-queue/items/${workUnitId}/status`
@@ -161,107 +135,43 @@ const QCManualCheck: React.FC = () => {
         if (!active) {
           return;
         }
+        setModuleStatus(status);
         setPanels(status.panels.filter((panel) => panel.panel_unit_id !== null));
       } catch {
         if (active) {
+          setModuleStatus(null);
           setPanels([]);
         }
       } finally {
         if (active) {
-          setPanelsLoading(false);
+          setModuleStatusLoading(false);
         }
       }
     };
-    void loadPanels();
+    void loadModuleStatus();
     return () => {
       active = false;
     };
-  }, [scope, workUnitId]);
+  }, [workUnitId]);
+
+  useEffect(() => {
+    if (scope !== 'panel') {
+      setPanelUnitId(null);
+    }
+  }, [scope]);
 
   const sortedDefinitions = useMemo(
     () => [...checkDefinitions].sort((a, b) => a.name.localeCompare(b.name)),
     [checkDefinitions]
   );
-  const selectedDefinition = useMemo(
-    () => sortedDefinitions.find((item) => item.id === checkDefinitionId) ?? null,
-    [checkDefinitionId, sortedDefinitions]
+  const selectedPanel = useMemo(
+    () => panels.find((panel) => panel.panel_unit_id === panelUnitId) ?? null,
+    [panelUnitId, panels]
   );
-  const stationLockedByDefinition =
-    mode === 'definition' && selectedDefinition?.kind === 'triggered';
-  const lockedStation = useMemo(() => {
-    if (!stationLockedByDefinition || !selectedDefinition) {
-      return {
-        stationId: null as number | null,
-        stationName: null as string | null,
-        error: null as string | null,
-      };
-    }
-
-    const taskIds = new Set<number>();
-    triggers
-      .filter(
-        (trigger) =>
-          trigger.check_definition_id === selectedDefinition.id && trigger.event_type === 'task_completed'
-      )
-      .forEach((trigger) => {
-        const ids = trigger.params_json?.task_definition_ids;
-        if (!Array.isArray(ids)) {
-          return;
-        }
-        ids.forEach((value) => {
-          const parsed = Number(value);
-          if (!Number.isNaN(parsed)) {
-            taskIds.add(parsed);
-          }
-        });
-      });
-
-    if (taskIds.size === 0) {
-      return { stationId: null, stationName: null, error: 'No hay trigger-task definido para este check.' };
-    }
-
-    const sequenceSet = new Set<number>();
-    taskIds.forEach((taskId) => {
-      const task = taskDefinitions.find((item) => item.id === taskId);
-      if (task?.default_station_sequence !== null && task?.default_station_sequence !== undefined) {
-        sequenceSet.add(task.default_station_sequence);
-      }
-    });
-
-    if (sequenceSet.size === 0) {
-      return {
-        stationId: null,
-        stationName: null,
-        error: 'Las tareas trigger no tienen secuencia de estacion configurada.',
-      };
-    }
-    if (sequenceSet.size > 1) {
-      return {
-        stationId: null,
-        stationName: null,
-        error: 'El check trigger apunta a multiples secuencias de estacion.',
-      };
-    }
-
-    const sequence = Array.from(sequenceSet)[0];
-    const stationMatches = stations.filter((station) => station.sequence_order === sequence);
-    if (stationMatches.length === 0) {
-      return { stationId: null, stationName: null, error: 'No existe estacion para la secuencia del trigger.' };
-    }
-    if (stationMatches.length > 1) {
-      return {
-        stationId: null,
-        stationName: null,
-        error: 'Hay multiples estaciones para la secuencia del trigger.',
-      };
-    }
-    return {
-      stationId: stationMatches[0].id,
-      stationName: stationMatches[0].name,
-      error: null,
-    };
-  }, [selectedDefinition, stationLockedByDefinition, stations, taskDefinitions, triggers]);
-  const displayStationId = stationLockedByDefinition ? lockedStation.stationId : stationId;
+  const currentStationName =
+    scope === 'panel'
+      ? selectedPanel?.current_station_name ?? moduleStatus?.current_station_name ?? null
+      : moduleStatus?.current_station_name ?? null;
 
   const requiresPanel = scope === 'panel';
   const canSubmit =
@@ -269,14 +179,7 @@ const QCManualCheck: React.FC = () => {
     !submitting &&
     !!workUnitId &&
     (!requiresPanel || !!panelUnitId) &&
-    (!stationLockedByDefinition || !lockedStation.error) &&
     (mode === 'definition' ? !!checkDefinitionId : adHocTitle.trim().length > 0);
-
-  useEffect(() => {
-    if (stationLockedByDefinition && stationId !== null) {
-      setStationId(null);
-    }
-  }, [stationId, stationLockedByDefinition]);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -294,7 +197,7 @@ const QCManualCheck: React.FC = () => {
         scope,
         work_unit_id: workUnitId,
         panel_unit_id: scope === 'panel' ? panelUnitId : null,
-        station_id: stationLockedByDefinition ? lockedStation.stationId : stationId,
+        station_id: null,
       };
       const created = await apiRequest<ManualCheckResponse>('/api/qc/check-instances/manual', {
         method: 'POST',
@@ -436,7 +339,7 @@ const QCManualCheck: React.FC = () => {
                   value={panelUnitId ?? ''}
                   onChange={(event) => setPanelUnitId(Number(event.target.value) || null)}
                   className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  disabled={!workUnitId || panelsLoading}
+                  disabled={!workUnitId || moduleStatusLoading}
                 >
                   <option value="">Seleccionar panel...</option>
                   {panels.map((panel) => (
@@ -445,35 +348,22 @@ const QCManualCheck: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                {panelsLoading ? (
+                {moduleStatusLoading ? (
                   <span className="text-xs text-[var(--ink-muted)]">Cargando paneles del modulo...</span>
                 ) : null}
               </label>
             ) : null}
 
-            <label className="grid gap-2 text-sm text-[var(--ink)]">
-              Estacion {stationLockedByDefinition ? '(fijada por trigger)' : '(opcional)'}
-              <select
-                value={displayStationId ?? ''}
-                onChange={(event) => setStationId(Number(event.target.value) || null)}
-                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                disabled={stationLockedByDefinition}
-              >
-                <option value="">
-                  {stationLockedByDefinition
-                    ? lockedStation.stationName ?? 'Se asigna automaticamente al crear'
-                    : 'Sin estacion fija'}
-                </option>
-                {stations.map((station) => (
-                  <option key={station.id} value={station.id}>
-                    {station.name}
-                  </option>
-                ))}
-              </select>
-              {stationLockedByDefinition && lockedStation.error ? (
-                <span className="text-xs text-rose-700">{lockedStation.error}</span>
-              ) : null}
-            </label>
+            <div className="grid gap-2 text-sm text-[var(--ink)]">
+              <span>Estacion actual</span>
+              <div className="rounded-xl border border-black/10 bg-[rgba(15,27,45,0.03)] px-3 py-2 text-sm text-[var(--ink)]">
+                {workUnitId
+                  ? moduleStatusLoading
+                    ? 'Cargando estacion...'
+                    : currentStationName ?? 'Sin estacion actual'
+                  : 'Seleccione un modulo'}
+              </div>
+            </div>
 
             {mode === 'definition' ? (
               <label className="grid gap-2 text-sm text-[var(--ink)]">

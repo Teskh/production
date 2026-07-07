@@ -26,6 +26,7 @@ from app.schemas.conditions import (
     TaskConditionRulesUpdate,
     WorkUnitConditionRead,
     WorkUnitConditionsBulkUpdate,
+    WorkUnitConditionsMatrixUpdate,
     WorkUnitConditionsUpdate,
 )
 
@@ -470,6 +471,63 @@ def bulk_update_work_unit_conditions(
             desired = set(replace_ids)
         else:
             desired = (set(current) | set(add_ids)) - remove_ids
+        for value_id, row in current.items():
+            if value_id not in desired:
+                db.delete(row)
+        for value_id in desired - set(current):
+            db.add(WorkUnitCondition(work_unit_id=unit_id, condition_value_id=value_id))
+
+    db.commit()
+    return list(
+        db.execute(
+            select(WorkUnitCondition)
+            .where(WorkUnitCondition.work_unit_id.in_(unit_ids))
+            .order_by(WorkUnitCondition.work_unit_id, WorkUnitCondition.id)
+        ).scalars()
+    )
+
+
+@router.post("/work-units/matrix", response_model=list[WorkUnitConditionRead])
+def set_work_unit_conditions_matrix(
+    payload: WorkUnitConditionsMatrixUpdate,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(get_current_admin),
+) -> list[WorkUnitCondition]:
+    requested_by_unit: dict[int, list[int]] = {}
+    for item in payload.items:
+        requested_by_unit[item.work_unit_id] = list(
+            dict.fromkeys(item.condition_value_ids)
+        )
+    unit_ids = list(requested_by_unit)
+    found_unit_ids = set(
+        db.execute(select(WorkUnit.id).where(WorkUnit.id.in_(unit_ids))).scalars()
+    )
+    if len(found_unit_ids) != len(unit_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found"
+        )
+
+    all_value_ids = [
+        value_id
+        for condition_value_ids in requested_by_unit.values()
+        for value_id in condition_value_ids
+    ]
+    _validated_condition_value_ids(db, all_value_ids)
+
+    existing_rows = list(
+        db.execute(
+            select(WorkUnitCondition).where(
+                WorkUnitCondition.work_unit_id.in_(unit_ids)
+            )
+        ).scalars()
+    )
+    existing_by_unit: dict[int, dict[int, WorkUnitCondition]] = {}
+    for row in existing_rows:
+        existing_by_unit.setdefault(row.work_unit_id, {})[row.condition_value_id] = row
+
+    for unit_id, value_ids in requested_by_unit.items():
+        current = existing_by_unit.get(unit_id, {})
+        desired = set(value_ids)
         for value_id, row in current.items():
             if value_id not in desired:
                 db.delete(row)

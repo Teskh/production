@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Calendar,
+  Check,
   CheckCircle,
   ChevronDown,
   ChevronUp,
@@ -10,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -128,6 +130,8 @@ type BatchDraft = {
   planned_start_datetime: string;
 };
 
+type ConditionMatrixScope = 'visible' | 'selected';
+
 // --- Utils ---
 
 const buildHeaders = (options: RequestInit): Headers => {
@@ -232,6 +236,17 @@ const sortQueueItems = (list: QueueItem[]): QueueItem[] =>
     }
     return a.id - b.id;
   });
+
+const conditionSignature = (ids: Iterable<number>): string =>
+  Array.from(new Set(ids)).sort((a, b) => a - b).join(',');
+
+const buildConditionMatrixDraft = (queueItems: QueueItem[]): Record<number, Set<number>> => {
+  const draft: Record<number, Set<number>> = {};
+  queueItems.forEach((item) => {
+    draft[item.id] = new Set(item.condition_value_ids);
+  });
+  return draft;
+};
 
 const parseSequenceDraftValue = (value: string): number | null => {
   const trimmed = value.trim();
@@ -482,6 +497,14 @@ const ProductionQueue: React.FC = () => {
   const [bulkConditionIds, setBulkConditionIds] = useState<number[]>([]);
   const [bulkConditionSaving, setBulkConditionSaving] = useState(false);
   const [bulkConditionError, setBulkConditionError] = useState<string | null>(null);
+  const [isConditionMatrixOpen, setIsConditionMatrixOpen] = useState(false);
+  const [conditionMatrixScope, setConditionMatrixScope] =
+    useState<ConditionMatrixScope>('visible');
+  const [conditionMatrixDraft, setConditionMatrixDraft] = useState<Record<number, Set<number>>>(
+    {}
+  );
+  const [conditionMatrixSaving, setConditionMatrixSaving] = useState(false);
+  const [conditionMatrixError, setConditionMatrixError] = useState<string | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [sequenceEditMode, setSequenceEditMode] = useState(false);
@@ -555,6 +578,9 @@ const ProductionQueue: React.FC = () => {
       prev !== null && prev >= filteredItems.length ? null : prev
     );
   }, [filteredItems.length, pageSize]);
+
+  const visibleItems = filteredItems.slice(0, visibleCount);
+  const hasMoreItems = visibleItems.length < filteredItems.length;
 
   const projectOptions = useMemo(() => {
     const unique = new Set(items.map((item) => item.project_name).filter(Boolean));
@@ -636,12 +662,12 @@ const ProductionQueue: React.FC = () => {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      if (!sequenceEditMode) {
+      if (!sequenceEditMode && !isConditionMatrixOpen) {
         loadQueue(true);
       }
     }, 30000);
     return () => window.clearInterval(interval);
-  }, [loadQueue, sequenceEditMode]);
+  }, [isConditionMatrixOpen, loadQueue, sequenceEditMode]);
 
   useEffect(() => {
     const load = async () => {
@@ -671,6 +697,25 @@ const ProductionQueue: React.FC = () => {
         (conditionType) => conditionType.active && conditionType.values.length > 0
       ),
     [conditionTypes]
+  );
+
+  const activeConditionValues = useMemo(
+    () => activeConditionTypes.flatMap((conditionType) => conditionType.values),
+    [activeConditionTypes]
+  );
+
+  const conditionMatrixItems = useMemo(
+    () => (conditionMatrixScope === 'selected' ? selectedItems : visibleItems),
+    [conditionMatrixScope, selectedItems, visibleItems]
+  );
+
+  const conditionMatrixChangedCount = useMemo(
+    () =>
+      conditionMatrixItems.filter((item) => {
+        const draftIds = conditionMatrixDraft[item.id] ?? new Set<number>();
+        return conditionSignature(draftIds) !== conditionSignature(item.condition_value_ids);
+      }).length,
+    [conditionMatrixDraft, conditionMatrixItems]
   );
 
   useEffect(() => {
@@ -793,8 +838,6 @@ const ProductionQueue: React.FC = () => {
     load();
   }, [editResolvedHouseTypeId, houseSubTypes, isEditModalOpen]);
 
-  const visibleItems = filteredItems.slice(0, visibleCount);
-  const hasMoreItems = visibleItems.length < filteredItems.length;
   const sequenceValidation = useMemo(() => {
     const invalidIds = new Set<number>();
     const conflictIds = new Set<number>();
@@ -1263,6 +1306,125 @@ const ProductionQueue: React.FC = () => {
     }
   };
 
+  const openConditionMatrix = () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    if (activeConditionTypes.length === 0) {
+      setErrorMessage('No hay condiciones activas para editar.');
+      return;
+    }
+    const scope: ConditionMatrixScope = selectedCount > 0 ? 'selected' : 'visible';
+    const targetItems = scope === 'selected' ? selectedItems : visibleItems;
+    if (targetItems.length === 0) {
+      setErrorMessage('No hay modulos para editar en la matriz.');
+      return;
+    }
+    setConditionMatrixScope(scope);
+    setConditionMatrixDraft(buildConditionMatrixDraft(targetItems));
+    setConditionMatrixError(null);
+    setIsConditionMatrixOpen(true);
+  };
+
+  const changeConditionMatrixScope = (scope: ConditionMatrixScope) => {
+    if (scope === 'selected' && selectedCount === 0) {
+      return;
+    }
+    const targetItems = scope === 'selected' ? selectedItems : visibleItems;
+    setConditionMatrixScope(scope);
+    setConditionMatrixDraft(buildConditionMatrixDraft(targetItems));
+    setConditionMatrixError(null);
+  };
+
+  const closeConditionMatrix = () => {
+    setIsConditionMatrixOpen(false);
+    setConditionMatrixDraft({});
+    setConditionMatrixError(null);
+  };
+
+  const toggleConditionMatrixValue = (workUnitId: number, valueId: number) => {
+    setConditionMatrixDraft((prev) => {
+      const nextValues = new Set(prev[workUnitId] ?? []);
+      if (nextValues.has(valueId)) {
+        nextValues.delete(valueId);
+      } else {
+        nextValues.add(valueId);
+      }
+      return { ...prev, [workUnitId]: nextValues };
+    });
+  };
+
+  const setConditionMatrixRow = (workUnitId: number, mode: 'all' | 'none') => {
+    setConditionMatrixDraft((prev) => {
+      const nextValues = new Set(prev[workUnitId] ?? []);
+      activeConditionValues.forEach((value) => {
+        if (mode === 'all') {
+          nextValues.add(value.id);
+        } else {
+          nextValues.delete(value.id);
+        }
+      });
+      return { ...prev, [workUnitId]: nextValues };
+    });
+  };
+
+  const toggleConditionMatrixColumn = (valueId: number) => {
+    setConditionMatrixDraft((prev) => {
+      const allChecked =
+        conditionMatrixItems.length > 0 &&
+        conditionMatrixItems.every((item) => (prev[item.id] ?? new Set()).has(valueId));
+      const nextDraft: Record<number, Set<number>> = { ...prev };
+      conditionMatrixItems.forEach((item) => {
+        const nextValues = new Set(nextDraft[item.id] ?? []);
+        if (allChecked) {
+          nextValues.delete(valueId);
+        } else {
+          nextValues.add(valueId);
+        }
+        nextDraft[item.id] = nextValues;
+      });
+      return nextDraft;
+    });
+  };
+
+  const handleConditionMatrixSave = async () => {
+    if (!ensureQueueMutationAllowed()) {
+      return;
+    }
+    const changes = conditionMatrixItems
+      .map((item) => {
+        const draftIds = Array.from(conditionMatrixDraft[item.id] ?? []).sort((a, b) => a - b);
+        if (conditionSignature(draftIds) === conditionSignature(item.condition_value_ids)) {
+          return null;
+        }
+        return {
+          work_unit_id: item.id,
+          condition_value_ids: draftIds,
+        };
+      })
+      .filter(Boolean);
+    if (changes.length === 0) {
+      closeConditionMatrix();
+      return;
+    }
+    try {
+      setConditionMatrixSaving(true);
+      setConditionMatrixError(null);
+      await apiRequest('/api/conditions/work-units/matrix', {
+        method: 'POST',
+        body: JSON.stringify({ items: changes }),
+      });
+      closeConditionMatrix();
+      await loadQueue(true);
+    } catch (error) {
+      setConditionMatrixError(
+        error instanceof Error ? error.message : 'No se pudo guardar la matriz de condiciones.'
+      );
+    } finally {
+      setConditionMatrixSaving(false);
+    }
+  };
+
   const handleEditHouseTypeChange = (nextValue: string) => {
     setEditHouseTypeValue(nextValue);
     if (nextValue === 'keep') {
@@ -1589,6 +1751,20 @@ const ProductionQueue: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {activeConditionTypes.length > 0 && (
+              <button
+                type="button"
+                onClick={openConditionMatrix}
+                disabled={
+                  !canManageQueue ||
+                  sequenceEditMode ||
+                  (selectedCount === 0 && visibleItems.length === 0)
+                }
+                className="inline-flex items-center gap-2 rounded-full border border-[rgba(47,107,79,0.2)] bg-[rgba(47,107,79,0.08)] px-4 py-2 text-xs font-semibold text-[var(--leaf)] shadow-sm hover:bg-[rgba(47,107,79,0.16)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <SlidersHorizontal className="h-4 w-4" /> Condiciones
+              </button>
+            )}
             {sequenceEditMode ? (
               <>
                 <button
@@ -2633,6 +2809,252 @@ const ProductionQueue: React.FC = () => {
                   className="flex-1 rounded-full bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60"
                 >
                   {editSaving ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConditionMatrixOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm">
+          <div className="flex h-full max-h-[90vh] w-full max-w-[95vw] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5 animate-rise">
+            <div className="z-20 flex items-center justify-between border-b border-black/5 bg-white px-8 py-6">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Matriz de configuracion
+                </p>
+                <h3 className="mt-1 text-xl font-display text-[var(--ink)]">
+                  Condiciones
+                </h3>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="flex rounded-full bg-black/5 p-1">
+                    <button
+                      type="button"
+                      onClick={() => changeConditionMatrixScope('visible')}
+                      disabled={conditionMatrixSaving}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-all ${
+                        conditionMatrixScope === 'visible'
+                          ? 'bg-white text-[var(--ink)] shadow-sm'
+                          : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      Vista actual ({visibleItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => changeConditionMatrixScope('selected')}
+                      disabled={conditionMatrixSaving || selectedCount === 0}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold transition-all disabled:opacity-40 ${
+                        conditionMatrixScope === 'selected'
+                          ? 'bg-white text-[var(--ink)] shadow-sm'
+                          : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      Seleccionados ({selectedCount})
+                    </button>
+                  </div>
+                  <span className="rounded-md bg-[rgba(47,107,79,0.08)] px-2 py-1 text-xs font-semibold text-[var(--leaf)] ring-1 ring-[rgba(47,107,79,0.18)]">
+                    {conditionMatrixItems.length} modulos
+                  </span>
+                  <span className="rounded-md bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                    {activeConditionValues.length} valores
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeConditionMatrix}
+                disabled={conditionMatrixSaving}
+                className="rounded-full p-2 text-[var(--ink-muted)] transition-colors hover:bg-black/5 disabled:opacity-40"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="relative flex-1 overflow-auto bg-slate-50/50">
+              {conditionMatrixItems.length === 0 ? (
+                <div className="flex h-full items-center justify-center p-8">
+                  <div className="rounded-2xl border border-dashed border-black/10 bg-white p-8 text-center">
+                    <p className="text-sm text-[var(--ink-muted)]">
+                      No hay modulos en el alcance elegido.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="inline-block min-w-fit w-full">
+                  <table className="w-full border-separate border-spacing-0 text-sm">
+                    <thead className="sticky top-0 z-20 bg-slate-50">
+                      <tr>
+                        <th
+                          rowSpan={2}
+                          className="sticky left-0 z-30 w-72 min-w-[18rem] border-b border-r border-black/5 bg-slate-50 px-4 py-4 text-left shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]"
+                        >
+                          <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+                            Modulo
+                          </span>
+                        </th>
+                        {activeConditionTypes.map((conditionType) => (
+                          <th
+                            key={conditionType.id}
+                            colSpan={conditionType.values.length}
+                            className="border-b border-black/5 bg-slate-50/95 px-3 py-3 text-left backdrop-blur-sm"
+                          >
+                            <span className="text-xs font-semibold uppercase tracking-wider text-[var(--ink-muted)]">
+                              {conditionType.name}
+                            </span>
+                          </th>
+                        ))}
+                      </tr>
+                      <tr>
+                        {activeConditionTypes.flatMap((conditionType) =>
+                          conditionType.values.map((value) => {
+                            const checkedEverywhere =
+                              conditionMatrixItems.length > 0 &&
+                              conditionMatrixItems.every((item) =>
+                                (conditionMatrixDraft[item.id] ?? new Set()).has(value.id)
+                              );
+                            return (
+                              <th
+                                key={value.id}
+                                className="min-w-[140px] border-b border-black/5 bg-slate-50/95 px-3 py-2 text-left backdrop-blur-sm"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => toggleConditionMatrixColumn(value.id)}
+                                  disabled={conditionMatrixSaving}
+                                  className={`w-full rounded-xl border px-3 py-2 text-left text-xs font-semibold transition-colors disabled:opacity-40 ${
+                                    checkedEverywhere
+                                      ? 'border-[rgba(47,107,79,0.28)] bg-[rgba(47,107,79,0.10)] text-[var(--leaf)]'
+                                      : 'border-black/10 bg-white text-[var(--ink)] hover:bg-black/5'
+                                  }`}
+                                  title="Alternar esta condicion en todos los modulos del alcance"
+                                >
+                                  {value.name}
+                                </button>
+                              </th>
+                            );
+                          })
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white">
+                      {conditionMatrixItems.map((item, index) => {
+                        const previous = index > 0 ? conditionMatrixItems[index - 1] : null;
+                        const isNewProject =
+                          !previous || previous.project_name !== item.project_name;
+                        const draftValues = conditionMatrixDraft[item.id] ?? new Set<number>();
+                        return (
+                          <React.Fragment key={item.id}>
+                            {isNewProject && (
+                              <tr>
+                                <td
+                                  colSpan={activeConditionValues.length + 1}
+                                  className="border-b border-black/5 bg-slate-100/80 px-4 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ink-muted)]"
+                                >
+                                  Proyecto: {item.project_name}
+                                </td>
+                              </tr>
+                            )}
+                            <tr className="group transition-colors hover:bg-slate-50/60">
+                              <td className="sticky left-0 z-10 w-72 min-w-[18rem] border-b border-r border-black/5 bg-white px-4 py-3 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)] group-hover:bg-slate-50">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-semibold text-[var(--ink)]">
+                                      {item.house_identifier}
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">
+                                      M-{String(item.module_number).padStart(2, '0')} ·{' '}
+                                      {item.house_type_name}
+                                    </p>
+                                  </div>
+                                  <div className="flex shrink-0 gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setConditionMatrixRow(item.id, 'all')}
+                                      disabled={conditionMatrixSaving}
+                                      className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--ink-muted)] hover:bg-black/5 disabled:opacity-40"
+                                    >
+                                      Todo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConditionMatrixRow(item.id, 'none')}
+                                      disabled={conditionMatrixSaving}
+                                      className="rounded-full border border-black/10 px-2 py-0.5 text-[10px] font-semibold text-[var(--ink-muted)] hover:bg-black/5 disabled:opacity-40"
+                                    >
+                                      Nada
+                                    </button>
+                                  </div>
+                                </div>
+                              </td>
+                              {activeConditionTypes.flatMap((conditionType) =>
+                                conditionType.values.map((value) => {
+                                  const checked = draftValues.has(value.id);
+                                  return (
+                                    <td
+                                      key={value.id}
+                                      className="border-b border-black/5 px-3 py-2"
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          toggleConditionMatrixValue(item.id, value.id)
+                                        }
+                                        disabled={conditionMatrixSaving}
+                                        className={`flex h-9 w-full items-center justify-center rounded-xl border transition-all disabled:opacity-40 ${
+                                          checked
+                                            ? 'border-[rgba(47,107,79,0.28)] bg-[rgba(47,107,79,0.10)] text-[var(--leaf)] shadow-sm'
+                                            : 'border-transparent bg-slate-50 text-slate-300 hover:border-slate-200 hover:bg-slate-100'
+                                        }`}
+                                        title={`${item.house_identifier} M-${item.module_number}: ${conditionType.name} / ${value.name}`}
+                                      >
+                                        {checked ? (
+                                          <Check className="h-4 w-4" strokeWidth={3} />
+                                        ) : (
+                                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                        )}
+                                      </button>
+                                    </td>
+                                  );
+                                })
+                              )}
+                            </tr>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="z-20 flex items-center justify-between border-t border-black/5 bg-white px-8 py-5">
+              <div className="text-xs text-[var(--ink-muted)]">
+                {conditionMatrixError ? (
+                  <span className="rounded-md bg-red-50 px-2 py-1 font-medium text-red-600">
+                    {conditionMatrixError}
+                  </span>
+                ) : (
+                  <span>{conditionMatrixChangedCount} filas con cambios pendientes</span>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  className="rounded-full border border-black/10 px-6 py-2.5 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-slate-50 disabled:opacity-50"
+                  onClick={closeConditionMatrix}
+                  disabled={conditionMatrixSaving}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full bg-[var(--accent)] px-6 py-2.5 text-sm font-semibold text-white shadow-md transition-all hover:bg-[var(--accent)]/90 hover:shadow-lg disabled:opacity-60 disabled:shadow-none"
+                  onClick={handleConditionMatrixSave}
+                  disabled={conditionMatrixSaving || conditionMatrixItems.length === 0}
+                >
+                  {conditionMatrixSaving ? 'Guardando...' : 'Guardar matriz'}
                 </button>
               </div>
             </div>
