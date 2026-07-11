@@ -2,36 +2,32 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
   ChevronRight,
-  CircleDot,
-  Clock,
-  Eye,
+  ExternalLink,
   FileImage,
-  Filter,
   Plus,
   Search,
   ShieldCheck,
   Trash2,
-  Wrench,
   X,
 } from 'lucide-react';
 import { useOptionalQCSession } from '../../layouts/QCLayoutContext';
 import { formatDateTimeShort } from '../../utils/timeUtils';
+import './QCLibrary.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
 // const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const QC_DELETE_ROLES = new Set(['Calidad', 'QC']);
+const SEARCH_DEBOUNCE_MS = 300;
 
 type QCExecutionOutcome = 'Pass' | 'Fail' | 'Waive' | 'Skip';
 type QCCheckStatus = 'Open' | 'Closed';
 type TaskScope = 'panel' | 'module' | 'aux';
 type QCReworkStatus = 'Open' | 'InProgress' | 'Done' | 'Canceled';
 type TaskStatus = 'NotStarted' | 'InProgress' | 'Paused' | 'Completed';
+type QCSeverity = 'baja' | 'media' | 'critica';
 
 type AdminUserRead = {
   id: number;
@@ -70,7 +66,7 @@ type QCCheckInstanceSummary = {
   module_number: number;
   panel_code: string | null;
   status: QCCheckStatus;
-  severity_level: 'baja' | 'media' | 'critica' | null;
+  severity_level: QCSeverity | null;
   opened_by_user_id: number | null;
   opened_at: string;
   closed_at: string | null;
@@ -161,7 +157,7 @@ type QCFailureModeSummary = {
   check_definition_id: number | null;
   name: string;
   description: string | null;
-  default_severity_level: 'baja' | 'media' | 'critica' | null;
+  default_severity_level: QCSeverity | null;
   default_rework_description: string | null;
 };
 
@@ -255,22 +251,291 @@ const scopeLabel: Record<TaskScope, string> = {
   aux: 'Aux',
 };
 
-const classForOutcome = (outcome: QCExecutionOutcome | null | undefined) => {
-  if (outcome === 'Pass') return 'bg-emerald-50 text-emerald-800 border-emerald-100';
-  if (outcome === 'Fail') return 'bg-rose-50 text-rose-800 border-rose-100';
-  if (outcome === 'Waive') return 'bg-amber-50 text-amber-800 border-amber-100';
-  if (outcome === 'Skip') return 'bg-slate-50 text-slate-700 border-slate-100';
-  return 'bg-white text-[var(--ink-muted)] border-black/10';
+const severityLabel: Record<QCSeverity, string> = {
+  baja: 'Sev. baja',
+  media: 'Sev. media',
+  critica: 'Sev. critica',
 };
 
-const classForCheckStatus = (status: QCCheckStatus) => {
-  if (status === 'Open') return 'bg-sky-50 text-sky-800 border-sky-100';
-  return 'bg-white text-[var(--ink-muted)] border-black/10';
+// Tone classes map statuses to the physical QC tag colors defined in QCLibrary.css.
+const outcomeTone: Record<QCExecutionOutcome, string> = {
+  Pass: 'qcl-pass',
+  Fail: 'qcl-fail',
+  Waive: 'qcl-rework',
+  Skip: 'qcl-skip',
 };
+
+const severityTone: Record<QCSeverity, string> = {
+  baja: 'qcl-skip',
+  media: 'qcl-rework',
+  critica: 'qcl-fail',
+};
+
+const checkStatusTone = (status: QCCheckStatus): string =>
+  status === 'Open' ? 'qcl-open' : 'qcl-neutral';
 
 const manualSubtypeLabel = (check: QCCheckInstanceSummary): string | null => {
   if (check.origin !== 'manual') return null;
   return check.check_definition_id === null ? 'Ad-hoc' : 'Manual desde check';
+};
+
+const checkDisplayName = (check: QCCheckInstanceSummary): string =>
+  check.check_name ?? `Check #${check.id}`;
+
+// ---------------------------------------------------------------------------
+// Presentational leaves
+// ---------------------------------------------------------------------------
+
+const Tag: React.FC<{ tone: string; children: React.ReactNode; className?: string }> = ({
+  tone,
+  children,
+  className,
+}) => <span className={clsx('qcl-tag', tone, className)}>{children}</span>;
+
+const OutcomeStamp: React.FC<{
+  outcome: QCExecutionOutcome;
+  large?: boolean;
+  tilt?: boolean;
+}> = ({ outcome, large, tilt }) => (
+  <span
+    className={clsx(
+      'qcl-stamp',
+      outcomeTone[outcome],
+      large && 'qcl-stamp--lg',
+      tilt && 'qcl-stamp--tilt'
+    )}
+  >
+    {outcomeLabel[outcome]}
+  </span>
+);
+
+const Counter: React.FC<{ label: string; value: number; tone?: string }> = ({
+  label,
+  value,
+  tone,
+}) => (
+  <div className="px-5 first:pl-0 last:pr-0">
+    <div className={clsx('qcl-counter-num', value > 0 && tone ? tone : 'qcl-ink')}>{value}</div>
+    <div className="qcl-counter-label mt-1">{label}</div>
+  </div>
+);
+
+const EvidenceThumb: React.FC<{
+  item: QCEvidenceSummary;
+  onOpen: (item: QCEvidenceSummary) => void;
+  className?: string;
+}> = ({ item, onOpen, className }) => (
+  <button
+    type="button"
+    onClick={() => onOpen(item)}
+    title={`Evidencia #${item.id} · ${formatDateTimeShort(item.captured_at)}`}
+    className={clsx(
+      'group relative overflow-hidden rounded-[3px] border border-[var(--qcl-line)] bg-[var(--qcl-paper-2)]',
+      className ?? 'h-14 w-14'
+    )}
+  >
+    {item.mime_type?.startsWith('image/') ? (
+      <img
+        src={resolveMediaUri(item.uri)}
+        alt={`Evidencia ${item.id}`}
+        loading="lazy"
+        className="h-full w-full object-cover transition group-hover:scale-105"
+      />
+    ) : (
+      <span className="flex h-full w-full items-center justify-center text-[var(--qcl-ink-2)]">
+        <FileImage className="h-5 w-5" />
+      </span>
+    )}
+  </button>
+);
+
+// ---------------------------------------------------------------------------
+// Check story (per-check history card in the module sheet)
+// ---------------------------------------------------------------------------
+
+type StoryEvent =
+  | { kind: 'opened'; ts: string }
+  | { kind: 'execution'; ts: string; execution: QCExecutionRead; evidence: QCEvidenceSummary[] }
+  | { kind: 'rework'; ts: string; rework: QCReworkTaskSummary }
+  | { kind: 'closed'; ts: string };
+
+type CheckStory = {
+  check: QCCheckInstanceSummary;
+  events: StoryEvent[];
+  lastOutcome: QCExecutionOutcome | null;
+  lastActivityTs: string;
+  hasFail: boolean;
+  openReworkCount: number;
+};
+
+const storyAccentClass = (story: CheckStory): string => {
+  if (story.check.status === 'Open') {
+    return story.hasFail ? 'qcl-story--fail' : 'qcl-story--open';
+  }
+  return story.hasFail ? 'qcl-story--rework' : 'qcl-story--pass';
+};
+
+const StoryEventRow: React.FC<{
+  event: StoryEvent;
+  isLast: boolean;
+  check: QCCheckInstanceSummary;
+  adminNameById: Map<number, string>;
+  onOpenMedia: (item: QCEvidenceSummary) => void;
+}> = ({ event, isLast, check, adminNameById, onOpenMedia }) => {
+  let nodeClass = 'qcl-open qcl-node--outline';
+  let title: React.ReactNode = 'Check abierto';
+
+  if (event.kind === 'closed') {
+    nodeClass = 'qcl-ink';
+    title = 'Check cerrado';
+  } else if (event.kind === 'rework') {
+    nodeClass = 'qcl-rework qcl-node--diamond';
+    title = (
+      <>
+        Rework · <span className="qcl-rework">{reworkStatusLabel[event.rework.status]}</span>
+      </>
+    );
+  } else if (event.kind === 'execution') {
+    nodeClass = outcomeTone[event.execution.outcome];
+    title = (
+      <>
+        Inspeccion ·{' '}
+        <span className={outcomeTone[event.execution.outcome]}>
+          {outcomeLabel[event.execution.outcome]}
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <li className="relative flex gap-3 pb-4 last:pb-0">
+      <div className="relative flex w-4 shrink-0 justify-center pt-[5px]">
+        {!isLast ? (
+          <span className="absolute bottom-[-6px] left-1/2 top-4 w-px -translate-x-1/2 bg-[var(--qcl-line)]" />
+        ) : null}
+        <span className={clsx('qcl-node relative z-10', nodeClass)} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+          <span className="text-sm font-semibold">{title}</span>
+          <span className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
+            {formatDateTimeShort(event.ts)}
+          </span>
+        </div>
+        {event.kind === 'opened' ? (
+          <p className="mt-0.5 text-xs text-[var(--qcl-ink-2)]">
+            {check.origin === 'triggered' ? 'Generado por tarea' : 'Creado manualmente'}
+            {check.station_name ? ` · ${check.station_name}` : ''}
+          </p>
+        ) : null}
+        {event.kind === 'execution' ? (
+          <>
+            <p className="mt-0.5 text-xs text-[var(--qcl-ink-2)]">
+              por{' '}
+              {adminNameById.get(event.execution.performed_by_user_id) ??
+                `Usuario #${event.execution.performed_by_user_id}`}
+            </p>
+            {event.execution.notes ? (
+              <p className="mt-1 text-sm">{event.execution.notes}</p>
+            ) : null}
+            {event.execution.failure_modes.length ? (
+              <p className="mt-1 text-xs text-[var(--qcl-ink-2)]">
+                Fallas:{' '}
+                <span className="font-medium text-[var(--qcl-ink)]">
+                  {event.execution.failure_modes
+                    .map((mode) => mode.failure_mode_name ?? mode.other_text ?? 'Otro')
+                    .join(', ')}
+                </span>
+              </p>
+            ) : null}
+            {event.evidence.length ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {event.evidence.map((item) => (
+                  <EvidenceThumb key={item.id} item={item} onOpen={onOpenMedia} />
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {event.kind === 'rework' ? (
+          <p className="mt-0.5 text-sm">{event.rework.description}</p>
+        ) : null}
+      </div>
+    </li>
+  );
+};
+
+const CheckStoryCard: React.FC<{
+  story: CheckStory;
+  adminNameById: Map<number, string>;
+  onOpenCheck: (checkId: number) => void;
+  onOpenMedia: (item: QCEvidenceSummary) => void;
+}> = ({ story, adminNameById, onOpenCheck, onOpenMedia }) => {
+  const { check } = story;
+  return (
+    <article className={clsx('qcl-card qcl-story overflow-hidden', storyAccentClass(story))}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--qcl-line-soft)] bg-[var(--qcl-paper-2)] px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h5 className="text-[15px] font-semibold leading-tight">{checkDisplayName(check)}</h5>
+            <span className="qcl-mono text-[10.5px] uppercase tracking-[0.08em] text-[var(--qcl-ink-2)]">
+              {check.scope === 'panel' && check.panel_code
+                ? `Panel ${check.panel_code}`
+                : scopeLabel[check.scope]}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <Tag tone={checkStatusTone(check.status)}>{checkStatusLabel[check.status]}</Tag>
+            {story.lastOutcome ? <OutcomeStamp outcome={story.lastOutcome} /> : null}
+            {check.severity_level ? (
+              <Tag tone={severityTone[check.severity_level]}>
+                {severityLabel[check.severity_level]}
+              </Tag>
+            ) : null}
+            {story.openReworkCount > 0 ? (
+              <Tag tone="qcl-rework">{story.openReworkCount} rework abierto</Tag>
+            ) : null}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenCheck(check.id)}
+          className="qcl-btn qcl-btn--sm shrink-0"
+        >
+          Ver ficha
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <ol className="px-4 py-3">
+        {story.events.map((event, index) => (
+          <StoryEventRow
+            key={`${event.kind}:${index}`}
+            event={event}
+            isLast={index === story.events.length - 1}
+            check={check}
+            adminNameById={adminNameById}
+            onOpenMedia={onOpenMedia}
+          />
+        ))}
+      </ol>
+    </article>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// House grouping for the main list
+// ---------------------------------------------------------------------------
+
+type HouseGroup = {
+  key: string;
+  houseIdentifier: string | null;
+  projectName: string;
+  houseTypeName: string;
+  units: QCLibraryWorkUnitSummary[];
+  openChecks: number;
+  openRework: number;
+  lastOutcome: QCExecutionOutcome | null;
+  lastOutcomeAt: string | null;
 };
 
 const QCLibrary: React.FC = () => {
@@ -287,6 +552,7 @@ const QCLibrary: React.FC = () => {
 
   const [adminUsers, setAdminUsers] = useState<AdminUserRead[]>([]);
 
+  const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [projectFilter, setProjectFilter] = useState<string>('__all__');
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
@@ -299,6 +565,8 @@ const QCLibrary: React.FC = () => {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
+  const [sheetStatusFilter, setSheetStatusFilter] = useState<'all' | 'open' | 'fail'>('all');
+  const [sheetScopeFilter, setSheetScopeFilter] = useState<string>('__all__');
 
   const [checkDetail, setCheckDetail] = useState<QCCheckInstanceDetail | null>(null);
   const [loadingCheckDetail, setLoadingCheckDetail] = useState(false);
@@ -316,6 +584,10 @@ const QCLibrary: React.FC = () => {
     mimeType: string | null;
     title: string;
   } | null>(null);
+
+  // ------------------------------------------------------------------
+  // Overlay navigation (URL-backed so deep links keep working)
+  // ------------------------------------------------------------------
 
   const closeModuleOverlay = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -345,11 +617,48 @@ const QCLibrary: React.FC = () => {
     setUploadingEvidenceExecutionIds(new Set());
   }, [searchParams, setSearchParams]);
 
-  const openCheckOverlay = (checkId: number) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('check', String(checkId));
-    setSearchParams(next, { replace: true });
-  };
+  const openCheckOverlay = useCallback(
+    (checkId: number) => {
+      const next = new URLSearchParams(searchParams);
+      next.set('check', String(checkId));
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams]
+  );
+
+  // ------------------------------------------------------------------
+  // Data loading
+  // ------------------------------------------------------------------
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchTerm(searchInput), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const fetchUnitsPage = useCallback(
+    async (offset: number): Promise<QCLibraryWorkUnitSummary[] | 'unauthorized'> => {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        include_planned: 'false',
+        sort: 'newest',
+      });
+      if (searchTerm.trim()) {
+        params.set('q', searchTerm.trim());
+      }
+      const response = await fetch(
+        `${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`,
+        { credentials: 'include' }
+      );
+      if (response.status === 401) return 'unauthorized';
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text ? parseApiErrorMessage(text) : `Solicitud fallida (${response.status})`);
+      }
+      return (await response.json()) as QCLibraryWorkUnitSummary[];
+    },
+    [searchTerm]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -367,31 +676,15 @@ const QCLibrary: React.FC = () => {
     const loadUnits = async () => {
       setLoadingUnits(true);
       try {
-        const params = new URLSearchParams({
-          limit: String(PAGE_SIZE),
-          offset: '0',
-          include_planned: 'false',
-          sort: 'newest',
-        });
-        if (searchTerm.trim()) {
-          params.set('q', searchTerm.trim());
-        }
-        const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
-          credentials: 'include',
-        });
+        const data = await fetchUnitsPage(0);
         if (!mounted) return;
-        if (response.status === 401) {
+        if (data === 'unauthorized') {
           setWorkUnits([]);
           setHasMoreUnits(false);
           setIsUnauthorized(true);
           setUnitsError(null);
           return;
         }
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `Solicitud fallida (${response.status})`);
-        }
-        const data = (await response.json()) as QCLibraryWorkUnitSummary[];
         setWorkUnits(data);
         setHasMoreUnits(data.length === PAGE_SIZE);
         setUnitsError(null);
@@ -410,52 +703,29 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [qcSession, searchTerm, unitsRefreshToken]);
+  }, [fetchUnitsPage, qcSession, unitsRefreshToken]);
 
   const loadMoreUnits = async () => {
     if (!qcSession) return;
     if (loadingUnits || loadingMoreUnits || !hasMoreUnits) return;
     setLoadingMoreUnits(true);
     try {
-      const offset = workUnits.length;
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(offset),
-        include_planned: 'false',
-        sort: 'newest',
-      });
-      if (searchTerm.trim()) {
-        params.set('q', searchTerm.trim());
-      }
-      const response = await fetch(`${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`, {
-        credentials: 'include',
-      });
-      if (response.status === 401) {
+      const data = await fetchUnitsPage(workUnits.length);
+      if (data === 'unauthorized') {
         setWorkUnits([]);
         setHasMoreUnits(false);
         setIsUnauthorized(true);
         setUnitsError(null);
         return;
       }
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Solicitud fallida (${response.status})`);
-      }
-      const data = (await response.json()) as QCLibraryWorkUnitSummary[];
       setWorkUnits((prev) => {
-        const next = [...prev];
         const existing = new Set(prev.map((unit) => unit.work_unit_id));
-        for (const unit of data) {
-          if (existing.has(unit.work_unit_id)) continue;
-          next.push(unit);
-        }
-        return next;
+        return [...prev, ...data.filter((unit) => !existing.has(unit.work_unit_id))];
       });
       setHasMoreUnits(data.length === PAGE_SIZE);
       setUnitsError(null);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'No se pudo cargar mas modulos.';
+      const message = error instanceof Error ? error.message : 'No se pudo cargar mas modulos.';
       setUnitsError(message);
     } finally {
       setLoadingMoreUnits(false);
@@ -484,56 +754,6 @@ const QCLibrary: React.FC = () => {
       mounted = false;
     };
   }, [qcSession]);
-
-  const adminNameById = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const user of adminUsers) {
-      map.set(user.id, `${user.first_name} ${user.last_name}`.trim());
-    }
-    return map;
-  }, [adminUsers]);
-
-  const projectOptions = useMemo(() => {
-    const uniq = new Set<string>();
-    for (const unit of workUnits) {
-      if (unit.project_name) uniq.add(unit.project_name);
-    }
-    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
-  }, [workUnits]);
-
-  const statusOptions = useMemo(() => {
-    const uniq = new Set<string>();
-    for (const unit of workUnits) {
-      if (unit.status) uniq.add(unit.status);
-    }
-    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
-  }, [workUnits]);
-
-  const filteredUnits = useMemo(() => {
-    const needle = searchTerm.trim().toLowerCase();
-    return workUnits.filter((unit) => {
-      if (unit.status === 'Planned') return false;
-      if (projectFilter !== '__all__' && unit.project_name !== projectFilter) return false;
-      if (statusFilter !== '__all__' && unit.status !== statusFilter) return false;
-      if (unfulfilledOnly && unit.open_checks + unit.open_rework === 0) return false;
-      if (!needle) return true;
-      return (
-        String(unit.module_number).toLowerCase().includes(needle) ||
-        (unit.house_identifier ?? '').toLowerCase().includes(needle) ||
-        unit.project_name.toLowerCase().includes(needle) ||
-        unit.house_type_name.toLowerCase().includes(needle)
-      );
-    });
-  }, [projectFilter, searchTerm, statusFilter, unfulfilledOnly, workUnits]);
-
-  const summaryCounts = useMemo(() => {
-    const totals = {
-      modules: filteredUnits.length,
-      openChecks: filteredUnits.reduce((acc, unit) => acc + unit.open_checks, 0),
-      openRework: filteredUnits.reduce((acc, unit) => acc + unit.open_rework, 0),
-    };
-    return totals;
-  }, [filteredUnits]);
 
   useEffect(() => {
     let mounted = true;
@@ -570,6 +790,11 @@ const QCLibrary: React.FC = () => {
   }, [detailRefreshToken, selectedWorkUnitId]);
 
   useEffect(() => {
+    setSheetStatusFilter('all');
+    setSheetScopeFilter('__all__');
+  }, [selectedWorkUnitId]);
+
+  useEffect(() => {
     let mounted = true;
     if (!selectedCheckId) {
       setCheckDetail(null);
@@ -585,7 +810,9 @@ const QCLibrary: React.FC = () => {
     const loadCheck = async () => {
       setLoadingCheckDetail(true);
       try {
-        const detail = await apiRequest<QCCheckInstanceDetail>(`/api/qc/check-instances/${selectedCheckId}`);
+        const detail = await apiRequest<QCCheckInstanceDetail>(
+          `/api/qc/check-instances/${selectedCheckId}`
+        );
         if (!mounted) return;
         setCheckDetail(detail);
         setCheckDetailError(null);
@@ -605,104 +832,203 @@ const QCLibrary: React.FC = () => {
     };
   }, [checkRefreshToken, selectedCheckId]);
 
-  const workUnitById = useMemo(() => {
-    const map = new Map<number, QCLibraryWorkUnitSummary>();
-    for (const unit of workUnits) map.set(unit.work_unit_id, unit);
+  // ------------------------------------------------------------------
+  // Derived data
+  // ------------------------------------------------------------------
+
+  const adminNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const user of adminUsers) {
+      map.set(user.id, `${user.first_name} ${user.last_name}`.trim());
+    }
     return map;
+  }, [adminUsers]);
+
+  const projectOptions = useMemo(() => {
+    const uniq = new Set<string>();
+    for (const unit of workUnits) {
+      if (unit.project_name) uniq.add(unit.project_name);
+    }
+    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
   }, [workUnits]);
 
-  const selectedWorkUnitSummary = selectedWorkUnitId ? workUnitById.get(selectedWorkUnitId) : null;
+  const statusOptions = useMemo(() => {
+    const uniq = new Set<string>();
+    for (const unit of workUnits) {
+      if (unit.status) uniq.add(unit.status);
+    }
+    return Array.from(uniq).sort((a, b) => a.localeCompare(b));
+  }, [workUnits]);
 
-  const groupedChecks = useMemo(() => {
-    const checks = workUnitDetail?.checks ?? [];
-    const byPanel = new Map<string, QCCheckInstanceSummary[]>();
-    const moduleChecks: QCCheckInstanceSummary[] = [];
-    const auxChecks: QCCheckInstanceSummary[] = [];
-    for (const check of checks) {
-      if (check.scope === 'panel' && check.panel_code) {
-        const list = byPanel.get(check.panel_code) ?? [];
-        list.push(check);
-        byPanel.set(check.panel_code, list);
-      } else if (check.scope === 'module') {
-        moduleChecks.push(check);
-      } else {
-        auxChecks.push(check);
+  const filteredUnits = useMemo(() => {
+    const needle = searchInput.trim().toLowerCase();
+    return workUnits.filter((unit) => {
+      if (projectFilter !== '__all__' && unit.project_name !== projectFilter) return false;
+      if (statusFilter !== '__all__' && unit.status !== statusFilter) return false;
+      if (unfulfilledOnly && unit.open_checks + unit.open_rework === 0) return false;
+      if (!needle) return true;
+      return (
+        String(unit.module_number).toLowerCase().includes(needle) ||
+        (unit.house_identifier ?? '').toLowerCase().includes(needle) ||
+        unit.project_name.toLowerCase().includes(needle) ||
+        unit.house_type_name.toLowerCase().includes(needle)
+      );
+    });
+  }, [projectFilter, searchInput, statusFilter, unfulfilledOnly, workUnits]);
+
+  const houseGroups = useMemo<HouseGroup[]>(() => {
+    const map = new Map<string, HouseGroup>();
+    const order: string[] = [];
+    for (const unit of filteredUnits) {
+      // Units without a house identifier stay as standalone entries.
+      const key = unit.house_identifier
+        ? `${unit.project_name}::${unit.house_identifier}`
+        : `wu::${unit.work_unit_id}`;
+      let group = map.get(key);
+      if (!group) {
+        group = {
+          key,
+          houseIdentifier: unit.house_identifier,
+          projectName: unit.project_name,
+          houseTypeName: unit.house_type_name,
+          units: [],
+          openChecks: 0,
+          openRework: 0,
+          lastOutcome: null,
+          lastOutcomeAt: null,
+        };
+        map.set(key, group);
+        order.push(key);
+      }
+      group.units.push(unit);
+      group.openChecks += unit.open_checks;
+      group.openRework += unit.open_rework;
+      if (
+        unit.last_outcome_at &&
+        (!group.lastOutcomeAt || unit.last_outcome_at > group.lastOutcomeAt)
+      ) {
+        group.lastOutcome = unit.last_outcome;
+        group.lastOutcomeAt = unit.last_outcome_at;
       }
     }
-    for (const list of byPanel.values()) {
-      list.sort((a, b) => (b.opened_at ?? '').localeCompare(a.opened_at ?? ''));
+    for (const group of map.values()) {
+      group.units.sort((a, b) => a.module_number - b.module_number);
     }
-    moduleChecks.sort((a, b) => (b.opened_at ?? '').localeCompare(a.opened_at ?? ''));
-    auxChecks.sort((a, b) => (b.opened_at ?? '').localeCompare(a.opened_at ?? ''));
+    // The API sorts by newest activity; first appearance preserves that order.
+    return order.map((key) => map.get(key)!);
+  }, [filteredUnits]);
+
+  const summaryCounts = useMemo(
+    () => ({
+      houses: houseGroups.length,
+      modules: filteredUnits.length,
+      openChecks: filteredUnits.reduce((acc, unit) => acc + unit.open_checks, 0),
+      openRework: filteredUnits.reduce((acc, unit) => acc + unit.open_rework, 0),
+    }),
+    [filteredUnits, houseGroups]
+  );
+
+  const sheetStats = useMemo(() => {
+    if (!workUnitDetail) return null;
     return {
-      byPanel: Array.from(byPanel.entries()).sort(([a], [b]) => a.localeCompare(b)),
-      moduleChecks,
-      auxChecks,
+      totalChecks: workUnitDetail.checks.length,
+      openChecks: workUnitDetail.checks.filter((check) => check.status === 'Open').length,
+      fails: workUnitDetail.executions.filter((execution) => execution.outcome === 'Fail').length,
+      openRework: workUnitDetail.rework_tasks.filter(
+        (rework) => rework.status === 'Open' || rework.status === 'InProgress'
+      ).length,
+      evidence: workUnitDetail.evidence.length,
     };
   }, [workUnitDetail]);
 
-  type TimelineEvent = {
-    id: string;
-    ts: string | null;
-    kind: 'check-opened' | 'execution' | 'rework';
-    title: string;
-    subtitle: string;
-    outcome?: QCExecutionOutcome | null;
-    checkId?: number;
-    executionId?: number;
-  };
-
-  const timeline = useMemo(() => {
+  const checkStories = useMemo<CheckStory[]>(() => {
     if (!workUnitDetail) return [];
-    const checkNameById = new Map<number, string>();
-    for (const check of workUnitDetail.checks) {
-      checkNameById.set(check.id, check.check_name ?? `Check #${check.id}`);
+    const evidenceByExecution = new Map<number, QCEvidenceSummary[]>();
+    for (const item of workUnitDetail.evidence) {
+      const list = evidenceByExecution.get(item.execution_id) ?? [];
+      list.push(item);
+      evidenceByExecution.set(item.execution_id, list);
     }
-    const events: TimelineEvent[] = [];
-    for (const check of workUnitDetail.checks) {
-      events.push({
-        id: `check-opened:${check.id}`,
-        ts: check.opened_at,
-        kind: 'check-opened',
-        title: check.check_name ?? `Check #${check.id}`,
-        subtitle: `${scopeLabel[check.scope]}${check.panel_code ? ` ${check.panel_code}` : ''} · ${checkStatusLabel[check.status]}`,
-        checkId: check.id,
+    return workUnitDetail.checks
+      .map((check) => {
+        const executions = workUnitDetail.executions
+          .filter((execution) => execution.check_instance_id === check.id)
+          .sort((a, b) => a.performed_at.localeCompare(b.performed_at));
+        const reworks = workUnitDetail.rework_tasks.filter(
+          (rework) => rework.check_instance_id === check.id
+        );
+        const events: StoryEvent[] = [{ kind: 'opened', ts: check.opened_at }];
+        for (const execution of executions) {
+          events.push({
+            kind: 'execution',
+            ts: execution.performed_at,
+            execution,
+            evidence: (evidenceByExecution.get(execution.id) ?? [])
+              .slice()
+              .sort((a, b) => a.captured_at.localeCompare(b.captured_at)),
+          });
+        }
+        for (const rework of reworks) {
+          events.push({ kind: 'rework', ts: rework.created_at, rework });
+        }
+        if (check.closed_at) {
+          events.push({ kind: 'closed', ts: check.closed_at });
+        }
+        events.sort((a, b) => (a.ts ?? '').localeCompare(b.ts ?? ''));
+        const lastExecution = executions[executions.length - 1] ?? null;
+        return {
+          check,
+          events,
+          lastOutcome: lastExecution?.outcome ?? null,
+          lastActivityTs: events[events.length - 1]?.ts ?? check.opened_at,
+          hasFail: executions.some((execution) => execution.outcome === 'Fail'),
+          openReworkCount: reworks.filter(
+            (rework) => rework.status === 'Open' || rework.status === 'InProgress'
+          ).length,
+        };
+      })
+      .sort((a, b) => {
+        const aOpen = a.check.status === 'Open' ? 0 : 1;
+        const bOpen = b.check.status === 'Open' ? 0 : 1;
+        if (aOpen !== bOpen) return aOpen - bOpen;
+        return b.lastActivityTs.localeCompare(a.lastActivityTs);
       });
-      if (check.closed_at) {
-        events.push({
-          id: `check-closed:${check.id}:${check.closed_at}`,
-          ts: check.closed_at,
-          kind: 'check-opened',
-          title: `Cierre: ${check.check_name ?? `Check #${check.id}`}`,
-          subtitle: `${scopeLabel[check.scope]}${check.panel_code ? ` ${check.panel_code}` : ''}`,
-          checkId: check.id,
-        });
+  }, [workUnitDetail]);
+
+  const sheetScopeOptions = useMemo(() => {
+    const panels = new Set<string>();
+    let hasModule = false;
+    let hasAux = false;
+    for (const story of checkStories) {
+      if (story.check.scope === 'panel' && story.check.panel_code) {
+        panels.add(story.check.panel_code);
+      } else if (story.check.scope === 'module') {
+        hasModule = true;
+      } else {
+        hasAux = true;
       }
     }
-    for (const exec of workUnitDetail.executions) {
-      events.push({
-        id: `exec:${exec.id}`,
-        ts: exec.performed_at,
-        kind: 'execution',
-        title: `${outcomeLabel[exec.outcome]} · ${checkNameById.get(exec.check_instance_id) ?? `Check #${exec.check_instance_id}`}`,
-        subtitle: `${adminNameById.get(exec.performed_by_user_id) ?? `Usuario #${exec.performed_by_user_id}`}`,
-        outcome: exec.outcome,
-        checkId: exec.check_instance_id,
-        executionId: exec.id,
-      });
-    }
-    for (const rework of workUnitDetail.rework_tasks) {
-      events.push({
-        id: `rework:${rework.id}`,
-        ts: rework.created_at,
-        kind: 'rework',
-        title: `Rework: ${reworkStatusLabel[rework.status]}`,
-        subtitle: `${rework.description}${rework.panel_code ? ` · Panel ${rework.panel_code}` : ''}`,
-        checkId: rework.check_instance_id,
-      });
-    }
-    return events.sort((a, b) => (b.ts ?? '').localeCompare(a.ts ?? ''));
-  }, [adminNameById, workUnitDetail]);
+    return {
+      panels: Array.from(panels).sort((a, b) => a.localeCompare(b)),
+      hasModule,
+      hasAux,
+    };
+  }, [checkStories]);
+
+  const visibleStories = useMemo(() => {
+    return checkStories.filter((story) => {
+      if (sheetStatusFilter === 'open' && story.check.status !== 'Open') return false;
+      if (sheetStatusFilter === 'fail' && !story.hasFail) return false;
+      if (sheetScopeFilter === '__all__') return true;
+      if (sheetScopeFilter === 'module') return story.check.scope === 'module';
+      if (sheetScopeFilter === 'aux') return story.check.scope === 'aux';
+      return story.check.scope === 'panel' && story.check.panel_code === sheetScopeFilter;
+    });
+  }, [checkStories, sheetScopeFilter, sheetStatusFilter]);
+
+  // ------------------------------------------------------------------
+  // Escape closes the topmost overlay
+  // ------------------------------------------------------------------
 
   const closeOnEscapeRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -721,6 +1047,10 @@ const QCLibrary: React.FC = () => {
       if (selectedWorkUnitId) return closeModuleOverlay();
     };
   }, [closeCheckOverlay, closeModuleOverlay, mediaViewer, selectedCheckId, selectedWorkUnitId]);
+
+  // ------------------------------------------------------------------
+  // Check management (delete check, add/remove evidence)
+  // ------------------------------------------------------------------
 
   const hasDeleteRole = qcSession ? QC_DELETE_ROLES.has(qcSession.role) : false;
   const hasFailedExecution =
@@ -757,7 +1087,7 @@ const QCLibrary: React.FC = () => {
       setCheckDeleteError(checkDeleteBlockedReason);
       return;
     }
-    const checkName = checkDetail.check_instance.check_name ?? `Check #${checkDetail.check_instance.id}`;
+    const checkName = checkDisplayName(checkDetail.check_instance);
     const confirmed = window.confirm(
       `Eliminar ${checkName}? Esta accion eliminara ejecuciones y evidencias asociadas.`
     );
@@ -874,60 +1204,89 @@ const QCLibrary: React.FC = () => {
     [evidenceManageBlockedReason]
   );
 
+  const openMediaForEvidence = useCallback((item: QCEvidenceSummary) => {
+    setMediaViewer({
+      uri: resolveMediaUri(item.uri),
+      mimeType: item.mime_type,
+      title: `Evidencia #${item.id}`,
+    });
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Render
+  // ------------------------------------------------------------------
+
   if (isUnauthorized) {
     return (
-      <div className="rounded-3xl border border-black/10 bg-white/80 p-6 text-sm text-[var(--ink-muted)] shadow-sm">
+      <div className="qcl qcl-card p-6 text-sm text-[var(--qcl-ink-2)]">
         Inicia sesion como QC para ver la biblioteca.
-        <Link className="ml-2 font-semibold text-[var(--ink)] underline" to="/login">
+        <Link className="ml-2 font-semibold text-[var(--qcl-ink)] underline" to="/login">
           Iniciar sesion
         </Link>
       </div>
     );
   }
 
+  const sheetHouseIdentifier =
+    workUnitDetail?.house_identifier ??
+    workUnits.find((unit) => unit.work_unit_id === selectedWorkUnitId)?.house_identifier ??
+    null;
+
+  const fichaHeadStamp = (() => {
+    if (!checkDetail) return null;
+    const executions = checkDetail.executions
+      .slice()
+      .sort((a, b) => a.performed_at.localeCompare(b.performed_at));
+    const last = executions[executions.length - 1];
+    if (last) return <OutcomeStamp outcome={last.outcome} large tilt />;
+    return (
+      <span
+        className={clsx(
+          'qcl-stamp qcl-stamp--lg qcl-stamp--tilt',
+          checkStatusTone(checkDetail.check_instance.status)
+        )}
+      >
+        {checkStatusLabel[checkDetail.check_instance.status]}
+      </span>
+    );
+  })();
+
   return (
-    <div className="space-y-6">
-      <header className="rounded-3xl border border-black/10 bg-white/80 p-6 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-              Historial y trazabilidad
-            </p>
-            <h2 className="mt-2 font-display text-2xl text-[var(--ink)]">Biblioteca QC</h2>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-xs text-[var(--ink-muted)]">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4" />
-                Modulos: <span className="font-semibold text-[var(--ink)]">{summaryCounts.modules}</span>
-              </div>
+    <div className="qcl -mx-6 -my-8 min-h-[calc(100vh-72px)] bg-[var(--qcl-paper)] px-4 py-7 sm:px-6">
+      <div className="mx-auto max-w-6xl space-y-5">
+        {/* ------------------------------------------------------------ */}
+        {/* Masthead: title, counters, search and filters                 */}
+        {/* ------------------------------------------------------------ */}
+        <header>
+          <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+            <div>
+              <p className="qcl-eyebrow">Control de calidad · Trazabilidad</p>
+              <h2 className="qcl-display mt-1.5 text-[34px] font-semibold uppercase leading-none tracking-[0.03em]">
+                Biblioteca QC
+              </h2>
             </div>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
-              Revisiones abiertas:{' '}
-              <span className="font-semibold text-emerald-900">{summaryCounts.openChecks}</span>
-            </div>
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-              Rework abierto:{' '}
-              <span className="font-semibold text-amber-900">{summaryCounts.openRework}</span>
+            <div className="flex divide-x divide-[var(--qcl-line)]">
+              <Counter label="Casas" value={summaryCounts.houses} />
+              <Counter label="Modulos" value={summaryCounts.modules} />
+              <Counter label="Checks abiertos" value={summaryCounts.openChecks} tone="qcl-open" />
+              <Counter label="Rework abierto" value={summaryCounts.openRework} tone="qcl-rework" />
             </div>
           </div>
-        </div>
+          <div className="mt-4 h-[2px] bg-[var(--qcl-ink)]" />
 
-        <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_220px_auto]">
-          <label className="relative">
-            <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-muted)]" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar por modulo, casa, proyecto o tipo..."
-              className="w-full rounded-2xl border border-black/10 bg-white px-10 py-3 text-sm text-[var(--ink)] shadow-sm outline-none focus:ring-2 focus:ring-black/10"
-            />
-          </label>
+          <div className="qcl-card mt-4 grid gap-2 p-3 md:grid-cols-[minmax(0,1fr)_200px_180px_auto]">
+            <label className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--qcl-ink-2)]" />
+              <input
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Buscar por casa, modulo, proyecto o tipo..."
+                className="qcl-input pl-9"
+              />
+            </label>
 
-          <label className="flex items-center gap-2 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)] shadow-sm">
-            <Filter className="h-4 w-4" />
             <select
-              className="w-full bg-transparent text-sm text-[var(--ink)] outline-none"
+              className="qcl-input"
               value={projectFilter}
               onChange={(event) => setProjectFilter(event.target.value)}
             >
@@ -938,12 +1297,9 @@ const QCLibrary: React.FC = () => {
                 </option>
               ))}
             </select>
-          </label>
 
-          <label className="flex items-center gap-2 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)] shadow-sm">
-            <Filter className="h-4 w-4" />
             <select
-              className="w-full bg-transparent text-sm text-[var(--ink)] outline-none"
+              className="qcl-input"
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value)}
             >
@@ -954,345 +1310,247 @@ const QCLibrary: React.FC = () => {
                 </option>
               ))}
             </select>
-          </label>
 
-          <label className="flex items-center justify-between gap-3 rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink)] shadow-sm">
-            <span className="text-sm font-medium">Solo pendientes</span>
-            <input
-              type="checkbox"
-              checked={unfulfilledOnly}
-              onChange={(event) => setUnfulfilledOnly(event.target.checked)}
-              className="h-4 w-4"
-            />
-          </label>
-        </div>
-        {unitsError ? (
-          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-            {unitsError}
-          </div>
-        ) : null}
-      </header>
-
-      <section className="rounded-3xl border border-black/10 bg-white/80 shadow-sm overflow-hidden">
-        <div className="border-b border-black/5 bg-white/70 px-5 py-4 text-sm text-[var(--ink-muted)]">
-          {loadingUnits
-            ? 'Cargando modulos...'
-            : `Mostrando ${filteredUnits.length} de ${workUnits.length} modulos cargados`}
-        </div>
-        <div className="divide-y divide-black/5">
-          {loadingUnits && !filteredUnits.length ? (
-            <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">Cargando biblioteca...</div>
-          ) : null}
-          {!loadingUnits && !filteredUnits.length ? (
-            <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">Sin resultados.</div>
-          ) : null}
-          {filteredUnits.map((unit) => (
             <button
-              key={unit.work_unit_id}
               type="button"
-              onClick={() => openModuleOverlay(unit.work_unit_id)}
-              className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-white"
+              aria-pressed={unfulfilledOnly}
+              onClick={() => setUnfulfilledOnly((prev) => !prev)}
+              className={clsx('qcl-btn justify-center', unfulfilledOnly && 'qcl-btn--primary')}
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--ink)] text-white">
-                <span className="text-sm font-semibold">
-                  {unit.house_identifier ?? '-'}
+              Solo pendientes
+            </button>
+          </div>
+          {unitsError ? <div className="qcl-error mt-3">{unitsError}</div> : null}
+        </header>
+
+        {/* ------------------------------------------------------------ */}
+        {/* House list                                                    */}
+        {/* ------------------------------------------------------------ */}
+        <section className="space-y-4">
+          <div className="qcl-mono px-1 text-[11px] uppercase tracking-[0.08em] text-[var(--qcl-ink-2)]">
+            {loadingUnits
+              ? 'Cargando modulos...'
+              : `${summaryCounts.houses} casas · ${summaryCounts.modules} de ${workUnits.length} modulos cargados`}
+          </div>
+
+          {loadingUnits && !houseGroups.length ? (
+            <div className="qcl-empty px-5 py-8 text-center text-sm">Cargando biblioteca...</div>
+          ) : null}
+          {!loadingUnits && !houseGroups.length ? (
+            <div className="qcl-empty px-5 py-8 text-center text-sm">
+              Sin resultados para los filtros actuales.
+            </div>
+          ) : null}
+
+          {houseGroups.map((group) => (
+            <article key={group.key} className="qcl-card overflow-hidden">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--qcl-line-soft)] bg-[var(--qcl-paper-2)] px-4 py-3">
+                <span className="qcl-plate shrink-0">
+                  {group.houseIdentifier ? `Casa ${group.houseIdentifier}` : 'Sin ID'}
                 </span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-[var(--ink)]">
-                    {unit.project_name}
-                  </span>
-                  <span className="text-xs text-[var(--ink-muted)]">·</span>
-                  <span className="text-sm text-[var(--ink-muted)]">
-                    {unit.house_type_name} MD {unit.module_number}
-                  </span>
+                <div className="min-w-0 flex-1">
+                  <div className="qcl-display text-lg font-semibold uppercase leading-tight tracking-[0.02em]">
+                    {group.projectName}
+                  </div>
+                  <div className="qcl-mono mt-0.5 text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
+                    {group.houseTypeName} ·{' '}
+                    {group.units.length === 1 ? '1 modulo' : `${group.units.length} modulos`}
+                    {group.lastOutcomeAt
+                      ? ` · Ultima inspeccion ${formatDateTimeShort(group.lastOutcomeAt)}`
+                      : ' · Sin inspecciones'}
+                  </div>
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
-                  Estado: <span className="font-medium text-[var(--ink)]">{unit.status}</span>
-                  {unit.last_outcome ? (
-                    <>
-                      <span className="text-[var(--ink-muted)]">·</span>
-                      <span
-                        className={clsx(
-                          'inline-flex items-center rounded-full border px-2 py-0.5 font-semibold',
-                          classForOutcome(unit.last_outcome)
-                        )}
-                      >
-                        {outcomeLabel[unit.last_outcome]}
-                        {unit.last_outcome_at ? ` · ${formatDateTimeShort(unit.last_outcome_at)}` : ''}
-                      </span>
-                    </>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  {group.openChecks > 0 ? (
+                    <Tag tone="qcl-open">
+                      {group.openChecks}{' '}
+                      {group.openChecks === 1 ? 'check abierto' : 'checks abiertos'}
+                    </Tag>
+                  ) : null}
+                  {group.openRework > 0 ? (
+                    <Tag tone="qcl-rework">{group.openRework} rework</Tag>
+                  ) : null}
+                  {group.openChecks === 0 && group.openRework === 0 ? (
+                    <Tag tone="qcl-pass">Sin pendientes</Tag>
                   ) : null}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
-                  {unit.open_checks} checks
-                </span>
-                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
-                  {unit.open_rework} rework
-                </span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-[var(--ink-muted)]" />
-            </button>
-          ))}
-        </div>
-        {hasMoreUnits ? (
-          <div className="border-t border-black/5 bg-white/60 px-5 py-4">
-            <button
-              type="button"
-              onClick={loadMoreUnits}
-              disabled={loadingMoreUnits}
-              className="inline-flex items-center justify-center rounded-2xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loadingMoreUnits ? `Cargando ${PAGE_SIZE}...` : `Cargar ${PAGE_SIZE} mas`}
-            </button>
-          </div>
-        ) : null}
-      </section>
 
+              <div className="divide-y divide-[var(--qcl-line-soft)]">
+                {group.units.map((unit) => (
+                  <button
+                    key={unit.work_unit_id}
+                    type="button"
+                    onClick={() => openModuleOverlay(unit.work_unit_id)}
+                    className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--qcl-paper-2)]"
+                  >
+                    <span className="qcl-mono w-14 shrink-0 text-[13px] font-semibold">
+                      MD {unit.module_number}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <span className="text-sm font-medium">{unit.status}</span>
+                        {unit.last_outcome ? (
+                          <Tag tone={outcomeTone[unit.last_outcome]}>
+                            {outcomeLabel[unit.last_outcome]}
+                            {unit.last_outcome_at
+                              ? ` · ${formatDateTimeShort(unit.last_outcome_at)}`
+                              : ''}
+                          </Tag>
+                        ) : (
+                          <span className="qcl-mono text-[10.5px] uppercase tracking-[0.08em] text-[var(--qcl-ink-2)]">
+                            Sin inspecciones
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-x-4">
+                      {unit.open_checks > 0 ? (
+                        <Tag tone="qcl-open">{unit.open_checks} checks</Tag>
+                      ) : null}
+                      {unit.open_rework > 0 ? (
+                        <Tag tone="qcl-rework">{unit.open_rework} rework</Tag>
+                      ) : null}
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-[var(--qcl-ink-2)]" />
+                  </button>
+                ))}
+              </div>
+            </article>
+          ))}
+
+          {hasMoreUnits ? (
+            <div className="flex justify-center pt-1">
+              <button
+                type="button"
+                onClick={loadMoreUnits}
+                disabled={loadingMoreUnits}
+                className="qcl-btn"
+              >
+                {loadingMoreUnits ? `Cargando ${PAGE_SIZE}...` : `Cargar ${PAGE_SIZE} mas`}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      </div>
+
+      {/* ------------------------------------------------------------ */}
+      {/* Module sheet: per-check history                               */}
+      {/* ------------------------------------------------------------ */}
       {selectedWorkUnitId ? (
-        <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/40 px-4 py-6">
+        <div className="qcl-overlay fixed inset-0 z-50 flex items-stretch justify-end bg-[rgba(16,23,32,0.5)] px-4 py-5">
           <div className="absolute inset-0" onClick={closeModuleOverlay} />
-          <div className="relative flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-black/10 bg-white shadow-xl">
-            <div className="flex items-start justify-between gap-4 border-b border-black/5 bg-white/70 px-6 py-5 backdrop-blur">
+          <div className="qcl-sheet relative flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-md border border-[var(--qcl-line)] bg-[var(--qcl-paper)] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--qcl-ink)] bg-[var(--qcl-card)] px-5 py-4">
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Detalle del modulo
-                </p>
-                <h3 className="mt-2 text-xl font-display text-[var(--ink)]">
-                  Modulo {selectedWorkUnitSummary?.house_identifier ?? workUnitDetail?.house_identifier ?? '-'}{' '}
-                  <span className="text-[var(--ink-muted)]">
-                    · {selectedWorkUnitSummary?.project_name ?? 'Proyecto'}
-                  </span>
+                <p className="qcl-eyebrow">Historial del modulo</p>
+                <h3 className="qcl-display mt-1.5 text-2xl font-semibold uppercase leading-none tracking-[0.02em]">
+                  {sheetHouseIdentifier ? `Casa ${sheetHouseIdentifier}` : 'Casa sin ID'} · MD{' '}
+                  {workUnitDetail?.module_number ?? '...'}
                 </h3>
-                <div className="mt-1 text-sm text-[var(--ink-muted)]">
-                  {selectedWorkUnitSummary?.house_type_name ?? workUnitDetail?.house_type_name ?? '-'} MD{' '}
-                  {selectedWorkUnitSummary?.module_number ??
-                    workUnitDetail?.module_number ??
-                    selectedWorkUnitId}{' '}
-                  ·{' '}
-                  {selectedWorkUnitSummary?.status ?? workUnitDetail?.status ?? '-'}
+                <div className="qcl-mono mt-2 text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
+                  {workUnitDetail
+                    ? `${workUnitDetail.project_name} · ${workUnitDetail.house_type_name} · ${workUnitDetail.status}`
+                    : 'Cargando...'}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={closeModuleOverlay}
-                className="rounded-full border border-black/10 p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                className="qcl-btn qcl-btn--icon"
+                aria-label="Cerrar"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto bg-white">
+            <div className="flex-1 overflow-y-auto">
               {loadingDetail ? (
-                <div className="px-6 py-6 text-sm text-[var(--ink-muted)]">Cargando detalle...</div>
+                <div className="px-5 py-6 text-sm text-[var(--qcl-ink-2)]">Cargando detalle...</div>
               ) : null}
-              {detailError ? (
-                <div className="px-6 py-6 text-sm text-rose-800">{detailError}</div>
-              ) : null}
+              {detailError ? <div className="qcl-error mx-5 my-5">{detailError}</div> : null}
 
-              {!loadingDetail && workUnitDetail ? (
-                <div className="grid lg:grid-cols-3 gap-8 px-6 py-6 items-start">
-                  {/* LÍNEA DE TIEMPO (HISTORIAL) */}
-                  <div className="lg:col-span-2 space-y-6">
-                    <div className="flex items-center gap-2 border-b border-black/5 pb-3">
-                      <Clock className="h-5 w-5 text-[var(--ink-muted)]" />
-                      <h4 className="text-lg font-display font-semibold text-[var(--ink)]">Historial de Vida</h4>
-                    </div>
-                    
-                    {!timeline.length ? (
-                      <div className="text-sm text-[var(--ink-muted)] py-4">
-                        No hay eventos QC para este modulo.
+              {!loadingDetail && workUnitDetail && sheetStats ? (
+                <div className="space-y-4 px-5 py-5">
+                  <div className="qcl-card flex divide-x divide-[var(--qcl-line-soft)] overflow-x-auto">
+                    {(
+                      [
+                        ['Checks', sheetStats.totalChecks, undefined],
+                        ['Abiertos', sheetStats.openChecks, 'qcl-open'],
+                        ['Fallas', sheetStats.fails, 'qcl-fail'],
+                        ['Rework', sheetStats.openRework, 'qcl-rework'],
+                        ['Evidencias', sheetStats.evidence, undefined],
+                      ] as const
+                    ).map(([label, value, tone]) => (
+                      <div key={label} className="flex-1 px-4 py-3 text-center">
+                        <div className={clsx('qcl-counter-num', value > 0 && tone ? tone : 'qcl-ink')}>
+                          {value}
+                        </div>
+                        <div className="qcl-counter-label mt-1">{label}</div>
                       </div>
-                    ) : (
-                      <div className="space-y-0">
-                        {timeline.map((event, i) => {
-                          const isLast = i === timeline.length - 1;
-                          const isRework = event.kind === 'rework';
-                          const isExec = event.kind === 'execution';
-                          const isPass = isExec && event.outcome === 'Pass';
-                          const isFail = isExec && event.outcome === 'Fail';
-                          const isClosed = event.kind === 'check-opened' && event.title.startsWith('Cierre:');
-
-                          let iconBg = 'border-sky-200 bg-sky-50 text-sky-800';
-                          if (isRework) iconBg = 'border-amber-200 bg-amber-50 text-amber-800';
-                          else if (isPass || isClosed) iconBg = 'border-emerald-200 bg-emerald-50 text-emerald-800';
-                          else if (isFail) iconBg = 'border-rose-200 bg-rose-50 text-rose-800';
-                          else if (isExec) iconBg = 'border-slate-200 bg-slate-50 text-slate-800';
-
-                          let cardBg = 'border-black/10 bg-white hover:border-black/20';
-                          if (isFail) cardBg = 'border-rose-200 bg-rose-50/40 hover:border-rose-300';
-                          else if (isPass) cardBg = 'border-emerald-200 bg-emerald-50/40 hover:border-emerald-300';
-                          else if (isRework) cardBg = 'border-amber-200 bg-amber-50/40 hover:border-amber-300';
-
-                          return (
-                            <div key={event.id} className="relative flex gap-4 md:gap-6">
-                              <div className="relative flex flex-col items-center">
-                                <div className={clsx("z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-4 border-white shadow-sm", iconBg)}>
-                                  {isRework ? <Wrench className="h-4 w-4" /> : 
-                                   isPass || isClosed ? <CheckCircle2 className="h-4 w-4" /> : 
-                                   isFail ? <AlertTriangle className="h-4 w-4" /> : 
-                                   <CircleDot className="h-4 w-4" />}
-                                </div>
-                                {!isLast && <div className="absolute top-10 bottom-[-1rem] w-0.5 bg-black/10" />}
-                              </div>
-                              <div className="flex-1 pb-6 min-w-0">
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  onClick={() => event.checkId ? openCheckOverlay(event.checkId) : null}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      if (event.checkId) openCheckOverlay(event.checkId);
-                                    }
-                                  }}
-                                  className={clsx("rounded-2xl border p-4 shadow-sm transition group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 text-left w-full block", cardBg)}
-                                >
-                                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="font-semibold text-[var(--ink)] text-base break-words">
-                                        {event.title}
-                                      </div>
-                                      <div className="mt-1 text-sm text-[var(--ink-muted)] leading-relaxed break-words">
-                                        {event.subtitle}
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center sm:flex-col sm:items-end gap-2 shrink-0">
-                                      <div className="text-xs font-medium text-[var(--ink-muted)] bg-white/60 border border-black/5 px-2 py-1 rounded-lg">
-                                        {event.ts ? formatDateTimeShort(event.ts) : '-'}
-                                      </div>
-                                      <ChevronRight className="h-4 w-4 text-black/20 group-hover:text-black/40 transition-colors hidden sm:block mt-1" />
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                    ))}
                   </div>
 
-                  {/* RESUMEN Y CHECKS */}
-                  <div className="lg:col-span-1 space-y-8">
-                    {/* STATS */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4 flex flex-col items-center justify-center text-center">
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold">Checks Abiertos</p>
-                        <p className="mt-2 text-3xl font-display font-semibold text-[var(--ink)]">
-                          {selectedWorkUnitSummary?.open_checks ?? 0}
-                        </p>
-                      </div>
-                      <div className="rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4 flex flex-col items-center justify-center text-center">
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold">Rework Abierto</p>
-                        <p className="mt-2 text-3xl font-display font-semibold text-[var(--ink)]">
-                          {selectedWorkUnitSummary?.open_rework ?? 0}
-                        </p>
-                      </div>
-                      <div className="col-span-2 rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] p-4">
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--ink-muted)] font-bold mb-3">Último Resultado</p>
-                        {selectedWorkUnitSummary?.last_outcome ? (
-                          <div className="flex items-center gap-3">
-                            <span className={clsx('inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold', classForOutcome(selectedWorkUnitSummary.last_outcome))}>
-                              {outcomeLabel[selectedWorkUnitSummary.last_outcome]}
-                            </span>
-                            {selectedWorkUnitSummary?.last_outcome_at && (
-                              <span className="text-xs font-medium text-[var(--ink-muted)]">
-                                {formatDateTimeShort(selectedWorkUnitSummary.last_outcome_at)}
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-sm text-[var(--ink-muted)]">Ninguno</span>
-                        )}
-                      </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="qcl-seg">
+                      {(
+                        [
+                          ['all', 'Todos'],
+                          ['open', 'Abiertos'],
+                          ['fail', 'Con fallas'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          aria-pressed={sheetStatusFilter === value}
+                          onClick={() => setSheetStatusFilter(value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
                     </div>
+                    {sheetScopeOptions.panels.length ||
+                    sheetScopeOptions.hasModule ||
+                    sheetScopeOptions.hasAux ? (
+                      <select
+                        value={sheetScopeFilter}
+                        onChange={(event) => setSheetScopeFilter(event.target.value)}
+                        className="qcl-input qcl-input--fit ml-auto"
+                      >
+                        <option value="__all__">Todas las ubicaciones</option>
+                        {sheetScopeOptions.hasModule ? <option value="module">Modulo</option> : null}
+                        {sheetScopeOptions.hasAux ? <option value="aux">Aux</option> : null}
+                        {sheetScopeOptions.panels.map((panel) => (
+                          <option key={panel} value={panel}>
+                            Panel {panel}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
 
-                    {/* CHECKS POR PANEL */}
-                    <div>
-                      <h4 className="text-xs font-bold text-[var(--ink-muted)] mb-3 uppercase tracking-[0.15em] border-b border-black/5 pb-2">Índice de Paneles</h4>
-                      {!groupedChecks.byPanel.length ? (
-                        <div className="text-sm text-[var(--ink-muted)] rounded-2xl border border-black/10 p-4 bg-white/50">
-                          No hay checks asociados a paneles.
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {groupedChecks.byPanel.map(([panelCode, checks]) => (
-                            <details key={panelCode} className="group rounded-2xl border border-black/10 bg-white overflow-hidden shadow-sm transition-all">
-                              <summary className="flex cursor-pointer items-center justify-between bg-white px-4 py-3 text-sm font-semibold outline-none hover:bg-[rgba(15,27,45,0.02)] transition-colors select-none group-open:border-b group-open:border-black/5 group-open:bg-[rgba(15,27,45,0.02)]">
-                                Panel {panelCode}
-                                <div className="flex items-center gap-3">
-                                  <span className="text-[10px] font-bold text-[var(--ink-muted)] bg-white px-2 py-0.5 rounded-full border border-black/10 shadow-sm">{checks.length} checks</span>
-                                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180 text-[var(--ink-muted)]" />
-                                </div>
-                              </summary>
-                              <div className="p-2 space-y-1 bg-white/50">
-                                {checks.map((check) => (
-                                  <button
-                                    key={check.id}
-                                    type="button"
-                                    onClick={() => openCheckOverlay(check.id)}
-                                    className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                                  >
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-sm font-medium text-[var(--ink)]">
-                                        {check.check_name ?? `Check #${check.id}`}
-                                      </div>
-                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-[var(--ink-muted)]">
-                                        <span className={clsx('rounded-full border px-1.5 py-0.5', classForCheckStatus(check.status))}>
-                                          {checkStatusLabel[check.status]}
-                                        </span>
-                                        <span>{formatDateTimeShort(check.opened_at)}</span>
-                                      </div>
-                                    </div>
-                                    <Eye className="h-4 w-4 text-black/20 shrink-0" />
-                                  </button>
-                                ))}
-                              </div>
-                            </details>
-                          ))}
-                        </div>
-                      )}
+                  {!checkStories.length ? (
+                    <div className="qcl-empty px-5 py-8 text-center text-sm">
+                      No hay checks QC registrados para este modulo.
                     </div>
+                  ) : null}
+                  {checkStories.length && !visibleStories.length ? (
+                    <div className="qcl-empty px-5 py-8 text-center text-sm">
+                      Ningun check coincide con los filtros.
+                    </div>
+                  ) : null}
 
-                    {/* CHECKS GENERALES */}
-                    <div>
-                      <h4 className="text-xs font-bold text-[var(--ink-muted)] mb-3 uppercase tracking-[0.15em] border-b border-black/5 pb-2">Checks Generales</h4>
-                      {!groupedChecks.moduleChecks.length && !groupedChecks.auxChecks.length ? (
-                        <div className="text-sm text-[var(--ink-muted)] rounded-2xl border border-black/10 p-4 bg-white/50">
-                          No hay checks de modulo/aux.
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-black/10 bg-white shadow-sm p-2 space-y-1">
-                          {[...groupedChecks.moduleChecks, ...groupedChecks.auxChecks].map((check) => (
-                            <button
-                              key={check.id}
-                              type="button"
-                              onClick={() => openCheckOverlay(check.id)}
-                              className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-sm font-medium text-[var(--ink)]">
-                                  {check.check_name ?? `Check #${check.id}`}
-                                </div>
-                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-[var(--ink-muted)]">
-                                  <span className="rounded-full border border-black/10 bg-[rgba(15,27,45,0.04)] px-1.5 py-0.5">
-                                    {scopeLabel[check.scope]}
-                                  </span>
-                                  <span className={clsx('rounded-full border px-1.5 py-0.5', classForCheckStatus(check.status))}>
-                                    {checkStatusLabel[check.status]}
-                                  </span>
-                                </div>
-                              </div>
-                              <Eye className="h-4 w-4 text-black/20 shrink-0" />
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  <div className="space-y-3">
+                    {visibleStories.map((story) => (
+                      <CheckStoryCard
+                        key={story.check.id}
+                        story={story}
+                        adminNameById={adminNameById}
+                        onOpenCheck={openCheckOverlay}
+                        onOpenMedia={openMediaForEvidence}
+                      />
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -1301,126 +1559,111 @@ const QCLibrary: React.FC = () => {
         </div>
       ) : null}
 
+      {/* ------------------------------------------------------------ */}
+      {/* Check modal: full record + evidence management                */}
+      {/* ------------------------------------------------------------ */}
       {selectedCheckId ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4 py-6">
+        <div className="qcl-overlay fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(16,23,32,0.6)] px-4 py-6">
           <div className="absolute inset-0" onClick={closeCheckOverlay} />
-          <div className="relative max-h-full w-full max-w-4xl overflow-hidden rounded-3xl border border-black/10 bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-black/5 bg-white/70 px-6 py-5 backdrop-blur">
+          <div className="qcl-modal relative max-h-full w-full max-w-3xl overflow-hidden rounded-md border border-[var(--qcl-line)] bg-[var(--qcl-paper)] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--qcl-ink)] bg-[var(--qcl-card)] px-5 py-4">
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Inspeccion QC
-                </p>
-                <h3 className="mt-2 text-xl font-display text-[var(--ink)]">
-                  {checkDetail?.check_instance.check_name ?? `Check #${selectedCheckId}`}
+                <p className="qcl-eyebrow">Ficha de inspeccion · N° {selectedCheckId}</p>
+                <h3 className="qcl-display mt-1.5 text-2xl font-semibold uppercase leading-none tracking-[0.02em]">
+                  {checkDetail
+                    ? checkDisplayName(checkDetail.check_instance)
+                    : `Check #${selectedCheckId}`}
                 </h3>
-                {checkDetail?.check_instance ? (
-                  <div className="mt-1 text-sm text-[var(--ink-muted)]">
-                    Modulo {checkDetail.check_instance.module_number}
-                    {checkDetail.check_instance.panel_code
-                      ? ` · Panel ${checkDetail.check_instance.panel_code}`
-                      : ''}
-                    {checkDetail.check_instance.station_name
-                      ? ` · ${checkDetail.check_instance.station_name}`
-                      : ''}
-                  </div>
+                {checkDetail ? (
+                  <>
+                    <div className="qcl-mono mt-2 text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
+                      MD {checkDetail.check_instance.module_number}
+                      {checkDetail.check_instance.panel_code
+                        ? ` · Panel ${checkDetail.check_instance.panel_code}`
+                        : ` · ${scopeLabel[checkDetail.check_instance.scope]}`}
+                      {checkDetail.check_instance.station_name
+                        ? ` · ${checkDetail.check_instance.station_name}`
+                        : ''}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      <Tag tone={checkStatusTone(checkDetail.check_instance.status)}>
+                        {checkStatusLabel[checkDetail.check_instance.status]}
+                      </Tag>
+                      {checkDetail.check_instance.severity_level ? (
+                        <Tag tone={severityTone[checkDetail.check_instance.severity_level]}>
+                          {severityLabel[checkDetail.check_instance.severity_level]}
+                        </Tag>
+                      ) : null}
+                      <Tag tone="qcl-neutral">
+                        {checkDetail.check_instance.origin === 'triggered'
+                          ? 'Origen: trigger'
+                          : `Origen: ${manualSubtypeLabel(checkDetail.check_instance) ?? 'manual'}`}
+                      </Tag>
+                      <span className="qcl-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
+                        Abierto {formatDateTimeShort(checkDetail.check_instance.opened_at)}
+                        {checkDetail.check_instance.closed_at
+                          ? ` · Cerrado ${formatDateTimeShort(checkDetail.check_instance.closed_at)}`
+                          : ''}
+                      </span>
+                    </div>
+                  </>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={closeCheckOverlay}
-                className="rounded-full border border-black/10 p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                {fichaHeadStamp}
+                <button
+                  type="button"
+                  onClick={closeCheckOverlay}
+                  className="qcl-btn qcl-btn--icon"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="max-h-[calc(100vh-9rem)] overflow-y-auto px-6 py-6">
+            <div className="max-h-[calc(100vh-14rem)] overflow-y-auto px-5 py-5">
               {loadingCheckDetail ? (
-                <div className="text-sm text-[var(--ink-muted)]">Cargando inspeccion...</div>
+                <div className="text-sm text-[var(--qcl-ink-2)]">Cargando inspeccion...</div>
               ) : null}
-              {checkDetailError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                  {checkDetailError}
-                </div>
-              ) : null}
-              {checkDeleteError ? (
-                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-                  {checkDeleteError}
-                </div>
-              ) : null}
+              {checkDetailError ? <div className="qcl-error">{checkDetailError}</div> : null}
+              {checkDeleteError ? <div className="qcl-error mt-3">{checkDeleteError}</div> : null}
 
               {!loadingCheckDetail && checkDetail ? (
-                <div className="space-y-6">
-                  <section className="grid gap-3 md:grid-cols-3">
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Estado</p>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className={clsx('rounded-full border px-3 py-1 text-sm font-semibold', classForCheckStatus(checkDetail.check_instance.status))}>
-                          {checkStatusLabel[checkDetail.check_instance.status]}
-                        </span>
-                        <span className="text-sm text-[var(--ink-muted)]">
-                          {formatDateTimeShort(checkDetail.check_instance.opened_at)}
-                          {checkDetail.check_instance.closed_at
-                            ? ` → ${formatDateTimeShort(checkDetail.check_instance.closed_at)}`
-                            : ''}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Contexto</p>
-                      <div className="mt-3 text-sm text-[var(--ink)]">
-                        {scopeLabel[checkDetail.check_instance.scope]}
-                        {checkDetail.check_instance.panel_code ? ` · Panel ${checkDetail.check_instance.panel_code}` : ''}
-                      </div>
-                      <div className="mt-2 text-xs text-[var(--ink-muted)]">
-                        Origen: {checkDetail.check_instance.origin === 'triggered' ? 'Trigger' : 'Manual'}
-                      </div>
-                      {manualSubtypeLabel(checkDetail.check_instance) ? (
-                        <div className="mt-2 text-xs text-[var(--ink-muted)]">
-                          Tipo manual: {manualSubtypeLabel(checkDetail.check_instance)}
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">Acciones</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <Link
-                          to={`/qc/execute?check=${checkDetail.check_instance.id}`}
-                          className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-                        >
-                          <ShieldCheck className="h-4 w-4" />
-                          Abrir ejecucion
-                        </Link>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteCheck()}
-                          disabled={Boolean(checkDeleteBlockedReason) || deletingCheck}
-                          className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-800 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          {deletingCheck ? 'Eliminando...' : 'Eliminar check'}
-                        </button>
-                      </div>
-                      {checkDeleteBlockedReason ? (
-                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{checkDeleteBlockedReason}</div>
-                      ) : null}
-                      {evidenceManageBlockedReason && !checkDeleteBlockedReason ? (
-                        <div className="mt-3 text-xs text-[var(--ink-muted)]">{evidenceManageBlockedReason}</div>
-                      ) : null}
-                    </div>
+                <div className="space-y-5">
+                  <section className="flex flex-wrap items-center gap-2">
+                    <Link
+                      to={`/qc/execute?check=${checkDetail.check_instance.id}`}
+                      className="qcl-btn qcl-btn--primary"
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      Abrir ejecucion
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteCheck()}
+                      disabled={Boolean(checkDeleteBlockedReason) || deletingCheck}
+                      className="qcl-btn qcl-btn--danger"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {deletingCheck ? 'Eliminando...' : 'Eliminar check'}
+                    </button>
+                    {checkDeleteBlockedReason ? (
+                      <span className="text-xs text-[var(--qcl-ink-2)]">
+                        {checkDeleteBlockedReason}
+                      </span>
+                    ) : null}
                   </section>
 
                   {checkDetail.trigger_task ? (
-                    <section className="rounded-3xl border border-black/10 bg-white p-5 shadow-sm">
-                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                        Tarea verificada (origen)
-                      </p>
+                    <section className="qcl-card p-4">
+                      <p className="qcl-eyebrow">Tarea verificada (origen)</p>
                       <div className="mt-3 grid gap-2 md:grid-cols-2">
                         <div>
-                          <div className="text-sm font-semibold text-[var(--ink)]">
+                          <div className="text-sm font-semibold">
                             {checkDetail.trigger_task.task_name}
                           </div>
-                          <div className="mt-1 text-xs text-[var(--ink-muted)]">
+                          <div className="qcl-mono mt-1 text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
                             {checkDetail.trigger_task.station_name ?? 'Sin estacion'} ·{' '}
                             {checkDetail.trigger_task.completed_at
                               ? `Completada ${formatDateTimeShort(checkDetail.trigger_task.completed_at)}`
@@ -1428,8 +1671,8 @@ const QCLibrary: React.FC = () => {
                           </div>
                         </div>
                         <div>
-                          <div className="text-xs font-semibold text-[var(--ink)]">Realizada por</div>
-                          <div className="mt-1 text-sm text-[var(--ink-muted)]">
+                          <div className="text-xs font-semibold">Realizada por</div>
+                          <div className="mt-1 text-sm text-[var(--qcl-ink-2)]">
                             {checkDetail.trigger_task.workers.length
                               ? checkDetail.trigger_task.workers.map((w) => w.worker_name).join(', ')
                               : '-'}
@@ -1439,225 +1682,216 @@ const QCLibrary: React.FC = () => {
                     </section>
                   ) : null}
 
-                  <section className="rounded-3xl border border-black/10 bg-white shadow-sm">
-                    <div className="border-b border-black/5 px-5 py-4">
-                      <div className="text-sm font-semibold text-[var(--ink)]">Ejecuciones</div>
+                  <section className="qcl-card overflow-hidden">
+                    <div className="border-b border-[var(--qcl-line-soft)] px-4 py-3">
+                      <h4 className="qcl-h">Ejecuciones ({checkDetail.executions.length})</h4>
                     </div>
-                    <div className="divide-y divide-black/5">
+                    <div className="divide-y divide-[var(--qcl-line-soft)]">
                       {!checkDetail.executions.length ? (
-                        <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">
+                        <div className="px-4 py-6 text-sm text-[var(--qcl-ink-2)]">
                           Sin ejecuciones registradas.
                         </div>
                       ) : null}
-                      {checkDetail.executions.map((exec) => {
-                        const evidence = checkDetail.evidence.filter((e) => e.execution_id === exec.id);
-                        return (
-                          <div key={exec.id} className="px-5 py-4">
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className={clsx('inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold', classForOutcome(exec.outcome))}>
-                                    {outcomeLabel[exec.outcome]}
-                                  </span>
-                                  <span className="text-xs text-[var(--ink-muted)]">
-                                    {formatDateTimeShort(exec.performed_at)}
-                                  </span>
-                                </div>
-                                <div className="mt-2 text-xs text-[var(--ink-muted)]">
-                                  QC: {adminNameById.get(exec.performed_by_user_id) ?? `Usuario #${exec.performed_by_user_id}`}
-                                </div>
-                                {exec.notes ? (
-                                  <div className="mt-2 text-sm text-[var(--ink)]">{exec.notes}</div>
-                                ) : null}
-                                {exec.failure_modes.length ? (
-                                  <div className="mt-3 text-xs text-[var(--ink-muted)]">
-                                    Fallas:{' '}
-                                    <span className="font-medium text-[var(--ink)]">
-                                      {exec.failure_modes
-                                        .map((mode) => mode.failure_mode_name ?? mode.other_text ?? 'Otro')
-                                        .join(', ')}
+                      {checkDetail.executions
+                        .slice()
+                        .sort((a, b) => a.performed_at.localeCompare(b.performed_at))
+                        .map((exec, index) => {
+                          const evidence = checkDetail.evidence.filter(
+                            (item) => item.execution_id === exec.id
+                          );
+                          return (
+                            <div key={exec.id} className="px-4 py-4">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                    <span className="qcl-eyebrow">Ejecucion {index + 1}</span>
+                                    <OutcomeStamp outcome={exec.outcome} />
+                                    <span className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
+                                      {formatDateTimeShort(exec.performed_at)}
                                     </span>
                                   </div>
-                                ) : null}
+                                  <div className="mt-2 text-xs text-[var(--qcl-ink-2)]">
+                                    QC:{' '}
+                                    {adminNameById.get(exec.performed_by_user_id) ??
+                                      `Usuario #${exec.performed_by_user_id}`}
+                                  </div>
+                                  {exec.notes ? (
+                                    <div className="mt-2 text-sm">{exec.notes}</div>
+                                  ) : null}
+                                  {exec.failure_modes.length ? (
+                                    <div className="mt-2 text-xs text-[var(--qcl-ink-2)]">
+                                      Fallas:{' '}
+                                      <span className="font-medium text-[var(--qcl-ink)]">
+                                        {exec.failure_modes
+                                          .map(
+                                            (mode) =>
+                                              mode.failure_mode_name ?? mode.other_text ?? 'Otro'
+                                          )
+                                          .join(', ')}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
+                                  #{exec.id}
+                                </div>
                               </div>
-                              <div className="text-xs text-[var(--ink-muted)]">#{exec.id}</div>
-                            </div>
 
-                            <div className="mt-4">
-                              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs font-semibold text-[var(--ink)]">
-                                  Evidencia ({evidence.length})
+                              <div className="mt-4">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                  <div className="qcl-mono text-[10.5px] font-semibold uppercase tracking-[0.08em]">
+                                    Evidencia ({evidence.length})
+                                  </div>
+                                  <label
+                                    className={clsx(
+                                      'qcl-btn qcl-btn--sm',
+                                      evidenceManageBlockedReason
+                                        ? 'cursor-not-allowed opacity-50'
+                                        : 'cursor-pointer'
+                                    )}
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    {uploadingEvidenceExecutionIds.has(exec.id)
+                                      ? 'Subiendo...'
+                                      : 'Agregar desde galeria'}
+                                    <input
+                                      type="file"
+                                      accept="image/*,video/*"
+                                      multiple
+                                      className="hidden"
+                                      disabled={
+                                        Boolean(evidenceManageBlockedReason) ||
+                                        uploadingEvidenceExecutionIds.has(exec.id)
+                                      }
+                                      onChange={(event) => {
+                                        const files = event.target.files
+                                          ? Array.from(event.target.files)
+                                          : [];
+                                        event.target.value = '';
+                                        void handleAddEvidence(exec.id, files);
+                                      }}
+                                    />
+                                  </label>
                                 </div>
-                                <label
-                                  className={`inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm ${
-                                    evidenceManageBlockedReason
-                                      ? 'cursor-not-allowed opacity-50'
-                                      : 'cursor-pointer'
-                                  }`}
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                  {uploadingEvidenceExecutionIds.has(exec.id)
-                                    ? 'Subiendo...'
-                                    : 'Agregar desde galeria'}
-                                  <input
-                                    type="file"
-                                    accept="image/*,video/*"
-                                    multiple
-                                    className="hidden"
-                                    disabled={
-                                      Boolean(evidenceManageBlockedReason) ||
-                                      uploadingEvidenceExecutionIds.has(exec.id)
-                                    }
-                                    onChange={(event) => {
-                                      const files = event.target.files
-                                        ? Array.from(event.target.files)
-                                        : [];
-                                      event.target.value = '';
-                                      void handleAddEvidence(exec.id, files);
-                                    }}
-                                  />
-                                </label>
-                              </div>
-                              {evidenceManageBlockedReason ? (
-                                <div className="mb-2 text-xs text-[var(--ink-muted)]">
-                                  {evidenceManageBlockedReason}
-                                </div>
-                              ) : null}
-                              {evidence.length ? (
-                                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                                  {evidence.map((item) => {
-                                    const isDeletingEvidence = deletingEvidenceIds.has(item.id);
-                                    return (
-                                      <div
-                                        key={item.id}
-                                        role="button"
-                                        tabIndex={0}
-                                        onClick={() =>
-                                          setMediaViewer({
-                                            uri: resolveMediaUri(item.uri),
-                                            mimeType: item.mime_type,
-                                            title: `Evidencia #${item.id}`,
-                                          })
-                                        }
-                                        onKeyDown={(event) => {
-                                          if (event.key === 'Enter' || event.key === ' ') {
-                                            event.preventDefault();
-                                            setMediaViewer({
-                                              uri: resolveMediaUri(item.uri),
-                                              mimeType: item.mime_type,
-                                              title: `Evidencia #${item.id}`,
-                                            });
-                                          }
-                                        }}
-                                        className="group relative overflow-hidden rounded-2xl border border-black/10 bg-[rgba(15,27,45,0.02)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                                      >
-                                        {item.mime_type?.startsWith('image/') ? (
-                                          <img
-                                            src={resolveMediaUri(item.uri)}
-                                            alt={`Evidencia ${item.id}`}
-                                            className="h-28 w-full object-cover transition group-hover:scale-[1.02]"
-                                            loading="lazy"
+                                {evidenceManageBlockedReason ? (
+                                  <div className="mb-2 text-xs text-[var(--qcl-ink-2)]">
+                                    {evidenceManageBlockedReason}
+                                  </div>
+                                ) : null}
+                                {evidence.length ? (
+                                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+                                    {evidence.map((item) => {
+                                      const isDeletingEvidence = deletingEvidenceIds.has(item.id);
+                                      return (
+                                        <div key={item.id} className="relative">
+                                          <EvidenceThumb
+                                            item={item}
+                                            onOpen={openMediaForEvidence}
+                                            className="h-28 w-full"
                                           />
-                                        ) : (
-                                          <div className="flex h-28 w-full items-center justify-center text-[var(--ink-muted)]">
-                                            <FileImage className="h-6 w-6" />
+                                          <button
+                                            type="button"
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                              void handleDeleteEvidence(item);
+                                            }}
+                                            disabled={
+                                              Boolean(evidenceManageBlockedReason) ||
+                                              isDeletingEvidence
+                                            }
+                                            className="absolute right-1.5 top-1.5 inline-flex items-center justify-center rounded-[3px] border border-[var(--qcl-fail)] bg-white/95 p-1 text-[var(--qcl-fail)] shadow-sm transition hover:bg-[var(--qcl-fail-tint)] disabled:cursor-not-allowed disabled:opacity-50"
+                                            aria-label={`Eliminar evidencia ${item.id}`}
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </button>
+                                          <div className="qcl-mono pointer-events-none absolute inset-x-0 bottom-0 bg-[rgba(16,23,32,0.55)] px-2 py-1 text-[10px] text-white">
+                                            {isDeletingEvidence
+                                              ? 'Eliminando...'
+                                              : formatDateTimeShort(item.captured_at)}
                                           </div>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            void handleDeleteEvidence(item);
-                                          }}
-                                          disabled={Boolean(evidenceManageBlockedReason) || isDeletingEvidence}
-                                          className="absolute right-2 top-2 inline-flex items-center justify-center rounded-full border border-rose-200 bg-white/90 p-1 text-rose-700 shadow-sm transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                          aria-label={`Eliminar evidencia ${item.id}`}
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                        <div className="absolute inset-x-0 bottom-0 bg-black/40 px-2 py-1 text-[10px] text-white">
-                                          {isDeletingEvidence
-                                            ? 'Eliminando...'
-                                            : formatDateTimeShort(item.captured_at)}
                                         </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="rounded-2xl border border-dashed border-black/10 bg-[rgba(15,27,45,0.02)] px-4 py-6 text-sm text-[var(--ink-muted)]">
-                                  Sin evidencia registrada para esta ejecucion.
-                                </div>
-                              )}
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <div className="qcl-empty px-4 py-5 text-sm">
+                                    Sin evidencia registrada para esta ejecucion.
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
                     </div>
                   </section>
 
-                  <section className="rounded-3xl border border-black/10 bg-white shadow-sm">
-                    <div className="border-b border-black/5 px-5 py-4">
-                      <div className="text-sm font-semibold text-[var(--ink)]">Rework</div>
+                  <section className="qcl-card overflow-hidden">
+                    <div className="border-b border-[var(--qcl-line-soft)] px-4 py-3">
+                      <h4 className="qcl-h">Rework ({checkDetail.rework_tasks.length})</h4>
                     </div>
-                    <div className="divide-y divide-black/5">
+                    <div className="divide-y divide-[var(--qcl-line-soft)]">
                       {!checkDetail.rework_tasks.length ? (
-                        <div className="px-5 py-6 text-sm text-[var(--ink-muted)]">
+                        <div className="px-4 py-6 text-sm text-[var(--qcl-ink-2)]">
                           Sin rework asociado.
                         </div>
                       ) : null}
                       {checkDetail.rework_tasks.map((rework) => {
                         const attempts = checkDetail.rework_attempts
                           .filter((attempt) => attempt.rework_task_id === rework.id)
-                          .sort((a, b) => (b.started_at ?? '').localeCompare(a.started_at ?? ''));
+                          .sort((a, b) => (a.started_at ?? '').localeCompare(b.started_at ?? ''));
                         return (
-                          <div key={rework.id} className="px-5 py-4">
+                          <div key={rework.id} className="px-4 py-4">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-800">
-                                    {reworkStatusLabel[rework.status]}
-                                  </span>
-                                  <span className="text-xs text-[var(--ink-muted)]">
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                                  <Tag tone="qcl-rework">{reworkStatusLabel[rework.status]}</Tag>
+                                  <span className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
                                     {formatDateTimeShort(rework.created_at)}
                                   </span>
                                   {rework.task_status ? (
-                                    <span className="rounded-full border border-black/10 bg-white px-2 py-0.5 text-xs text-[var(--ink-muted)]">
+                                    <Tag tone="qcl-neutral">
                                       {taskStatusLabel[rework.task_status]}
-                                    </span>
+                                    </Tag>
                                   ) : null}
                                 </div>
-                                <div className="mt-2 text-sm text-[var(--ink)]">{rework.description}</div>
+                                <div className="mt-2 text-sm">{rework.description}</div>
                               </div>
-                              <div className="text-xs text-[var(--ink-muted)]">#{rework.id}</div>
+                              <div className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
+                                #{rework.id}
+                              </div>
                             </div>
 
                             {attempts.length ? (
                               <div className="mt-4 space-y-2">
-                                <div className="text-xs font-semibold text-[var(--ink)]">
+                                <div className="qcl-mono text-[10.5px] font-semibold uppercase tracking-[0.08em]">
                                   Intentos ({attempts.length})
                                 </div>
                                 {attempts.map((attempt) => (
                                   <div
                                     key={attempt.task_instance_id}
-                                    className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm"
+                                    className="rounded-[4px] border border-[var(--qcl-line-soft)] bg-[var(--qcl-paper-2)] px-3 py-2.5 text-sm"
                                   >
                                     <div className="flex flex-wrap items-start justify-between gap-2">
-                                      <div className="text-sm font-semibold text-[var(--ink)]">
-                                        {attempt.station_name ?? 'Sin estacion'} · {taskStatusLabel[attempt.status]}
+                                      <div className="text-sm font-semibold">
+                                        {attempt.station_name ?? 'Sin estacion'} ·{' '}
+                                        {taskStatusLabel[attempt.status]}
                                       </div>
-                                      <div className="text-xs text-[var(--ink-muted)]">
+                                      <div className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
                                         #{attempt.task_instance_id}
                                       </div>
                                     </div>
-                                    <div className="mt-1 text-xs text-[var(--ink-muted)]">
-                                      {attempt.started_at ? formatDateTimeShort(attempt.started_at) : '-'}
-                                      {attempt.completed_at ? ` → ${formatDateTimeShort(attempt.completed_at)}` : ''}
+                                    <div className="qcl-mono mt-1 text-[11px] text-[var(--qcl-ink-2)]">
+                                      {attempt.started_at
+                                        ? formatDateTimeShort(attempt.started_at)
+                                        : '-'}
+                                      {attempt.completed_at
+                                        ? ` → ${formatDateTimeShort(attempt.completed_at)}`
+                                        : ''}
                                     </div>
-                                    <div className="mt-2 text-xs text-[var(--ink-muted)]">
+                                    <div className="mt-1.5 text-xs text-[var(--qcl-ink-2)]">
                                       Workers:{' '}
-                                      <span className="font-medium text-[var(--ink)]">
+                                      <span className="font-medium text-[var(--qcl-ink)]">
                                         {attempt.workers.length
                                           ? attempt.workers.map((w) => w.worker_name).join(', ')
                                           : '-'}
@@ -1679,36 +1913,48 @@ const QCLibrary: React.FC = () => {
         </div>
       ) : null}
 
+      {/* ------------------------------------------------------------ */}
+      {/* Media viewer                                                  */}
+      {/* ------------------------------------------------------------ */}
       {mediaViewer ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4 py-6">
+        <div className="qcl-overlay fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(16,23,32,0.75)] px-4 py-6">
           <div className="absolute inset-0" onClick={() => setMediaViewer(null)} />
-          <div className="relative w-full max-w-5xl overflow-hidden rounded-3xl border border-black/10 bg-white shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-black/5 bg-white/80 px-6 py-4">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-[var(--ink)]">{mediaViewer.title}</div>
+          <div className="qcl-modal relative w-full max-w-5xl overflow-hidden rounded-md border border-[var(--qcl-line)] bg-[var(--qcl-card)] shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--qcl-line-soft)] px-5 py-3">
+              <div className="qcl-mono min-w-0 truncate text-[12px] font-semibold uppercase tracking-[0.08em]">
+                {mediaViewer.title}
               </div>
               <button
                 type="button"
                 onClick={() => setMediaViewer(null)}
-                className="rounded-full border border-black/10 p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                className="qcl-btn qcl-btn--icon"
+                aria-label="Cerrar"
               >
-                <X className="h-5 w-5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="bg-black/5 p-4">
+            <div className="bg-[var(--qcl-paper)] p-4">
               {mediaViewer.mimeType?.startsWith('video/') ? (
-                <video src={mediaViewer.uri} controls className="max-h-[75vh] w-full rounded-2xl bg-black" />
+                <video
+                  src={mediaViewer.uri}
+                  controls
+                  className="max-h-[75vh] w-full rounded-[4px] bg-black"
+                />
               ) : (
-                <img src={mediaViewer.uri} alt={mediaViewer.title} className="max-h-[75vh] w-full object-contain" />
+                <img
+                  src={mediaViewer.uri}
+                  alt={mediaViewer.title}
+                  className="max-h-[75vh] w-full object-contain"
+                />
               )}
               <div className="mt-3 flex justify-end">
                 <a
                   href={mediaViewer.uri}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                  className="qcl-btn qcl-btn--sm"
                 >
-                  <FileImage className="h-4 w-4" />
+                  <ExternalLink className="h-4 w-4" />
                   Abrir en nueva pestaña
                 </a>
               </div>

@@ -1,0 +1,406 @@
+/* Scoped skin for the QC Library — an "inspection record" look built from the
+   factory's own artifacts: traveler sheets, QC tags, and rubber stamps.
+   Tokens and identity pieces live here; layout utilities stay in Tailwind. */
+
+.qcl {
+  --qcl-paper: #eef0f2;
+  --qcl-paper-2: #f7f8f9;
+  --qcl-card: #ffffff;
+  --qcl-ink: #1a2530;
+  --qcl-ink-2: #5a6675;
+  --qcl-line: #c9d0d7;
+  --qcl-line-soft: #e3e7ea;
+  --qcl-pass: #1b7a44;
+  --qcl-fail: #c22f21;
+  --qcl-rework: #8f6400;
+  --qcl-open: #20549b;
+  --qcl-skip: #6b7683;
+  --qcl-fail-tint: #faeae7;
+  --qcl-font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --qcl-font-body: 'Barlow', 'Segoe UI', sans-serif;
+  --qcl-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  font-family: var(--qcl-font-body);
+  color: var(--qcl-ink);
+}
+
+.qcl :focus-visible {
+  outline: 2px solid var(--qcl-open);
+  outline-offset: 2px;
+}
+
+.qcl-display {
+  font-family: var(--qcl-font-display);
+}
+
+.qcl-mono {
+  font-family: var(--qcl-font-mono);
+}
+
+.qcl-ink {
+  color: var(--qcl-ink);
+}
+
+.qcl-pass {
+  color: var(--qcl-pass);
+}
+
+.qcl-fail {
+  color: var(--qcl-fail);
+}
+
+.qcl-rework {
+  color: var(--qcl-rework);
+}
+
+.qcl-open {
+  color: var(--qcl-open);
+}
+
+.qcl-skip {
+  color: var(--qcl-skip);
+}
+
+.qcl-neutral {
+  color: var(--qcl-ink-2);
+}
+
+.qcl-card {
+  background: var(--qcl-card);
+  border: 1px solid var(--qcl-line);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(26, 37, 48, 0.05);
+}
+
+.qcl-eyebrow {
+  font-family: var(--qcl-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--qcl-ink-2);
+}
+
+/* Section heading — factory signage. */
+.qcl-h {
+  font-family: var(--qcl-font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qcl-ink);
+}
+
+/* Inspection stamp — the page's signature element. */
+.qcl-stamp {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--qcl-font-display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 4px 8px 3px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.qcl-stamp--lg {
+  font-size: 16px;
+  padding: 7px 12px 6px;
+  border-width: 2px;
+}
+
+.qcl-stamp--tilt {
+  transform: rotate(-4deg);
+}
+
+/* Status tag — tiny colored square + mono label, like a physical QC tag. */
+.qcl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--qcl-font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.qcl-tag::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  flex: none;
+  background: currentColor;
+}
+
+/* Serial plate — house identifiers, like an equipment nameplate. */
+.qcl-plate {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--qcl-font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 8px 12px 7px;
+  border: 1px solid var(--qcl-ink);
+  border-radius: 2px;
+  background: var(--qcl-card);
+  box-shadow: inset 0 0 0 3px var(--qcl-card), inset 0 0 0 4px var(--qcl-line-soft);
+}
+
+/* Buttons — signage type, sharp corners. */
+.qcl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--qcl-font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 10px 14px 9px;
+  border-radius: 3px;
+  border: 1px solid var(--qcl-line);
+  background: var(--qcl-card);
+  color: var(--qcl-ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.qcl-btn:hover {
+  border-color: var(--qcl-ink);
+}
+
+.qcl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qcl-btn:disabled:hover {
+  border-color: var(--qcl-line);
+}
+
+.qcl-btn--primary {
+  background: var(--qcl-ink);
+  border-color: var(--qcl-ink);
+  color: #fff;
+}
+
+.qcl-btn--primary:hover {
+  background: #000;
+  border-color: #000;
+}
+
+.qcl-btn--danger {
+  color: var(--qcl-fail);
+  border-color: var(--qcl-fail);
+}
+
+.qcl-btn--danger:hover {
+  background: var(--qcl-fail-tint);
+  border-color: var(--qcl-fail);
+}
+
+.qcl-btn--sm {
+  font-size: 12px;
+  padding: 7px 10px 6px;
+}
+
+.qcl-btn--icon {
+  padding: 8px;
+}
+
+/* Inputs. */
+.qcl-input {
+  width: 100%;
+  font-family: var(--qcl-font-body);
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--qcl-ink);
+  background: var(--qcl-card);
+  border: 1px solid var(--qcl-line);
+  border-radius: 4px;
+  padding: 9px 12px;
+}
+
+.qcl-input:focus {
+  outline: none;
+  border-color: var(--qcl-open);
+  box-shadow: 0 0 0 1px var(--qcl-open);
+}
+
+.qcl-input::placeholder {
+  color: var(--qcl-ink-2);
+}
+
+.qcl-input--fit {
+  width: auto;
+}
+
+/* Segmented control. */
+.qcl-seg {
+  display: inline-flex;
+  border: 1px solid var(--qcl-line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--qcl-card);
+}
+
+.qcl-seg > button {
+  font-family: var(--qcl-font-display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 9px 14px 8px;
+  color: var(--qcl-ink-2);
+  border-right: 1px solid var(--qcl-line);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.qcl-seg > button:last-child {
+  border-right: 0;
+}
+
+.qcl-seg > button:hover {
+  color: var(--qcl-ink);
+}
+
+.qcl-seg > button[aria-pressed='true'] {
+  background: var(--qcl-ink);
+  color: #fff;
+}
+
+/* Timeline nodes — square marks; diamond = rework. */
+.qcl-node {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  background: currentColor;
+}
+
+.qcl-node--outline {
+  background: var(--qcl-card);
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+
+.qcl-node--diamond {
+  transform: rotate(45deg);
+}
+
+/* Story card left accent. */
+.qcl-story {
+  border-left-width: 3px;
+}
+
+.qcl-story--open {
+  border-left-color: var(--qcl-open);
+}
+
+.qcl-story--fail {
+  border-left-color: var(--qcl-fail);
+}
+
+.qcl-story--rework {
+  border-left-color: var(--qcl-rework);
+}
+
+.qcl-story--pass {
+  border-left-color: var(--qcl-pass);
+}
+
+/* Counters in the masthead and module sheet. */
+.qcl-counter-num {
+  font-family: var(--qcl-font-display);
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.qcl-counter-label {
+  font-family: var(--qcl-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--qcl-ink-2);
+}
+
+/* Empty and error states. */
+.qcl-empty {
+  border: 1px dashed var(--qcl-line);
+  border-radius: 6px;
+  background: var(--qcl-paper-2);
+  color: var(--qcl-ink-2);
+}
+
+.qcl-error {
+  border: 1px solid var(--qcl-fail);
+  background: var(--qcl-fail-tint);
+  color: var(--qcl-fail);
+  border-radius: 4px;
+  font-size: 13px;
+  padding: 10px 12px;
+}
+
+/* Overlay motion. */
+@keyframes qcl-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes qcl-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes qcl-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.qcl-overlay {
+  animation: qcl-fade-in 0.18s ease both;
+}
+
+.qcl-sheet {
+  animation: qcl-slide-in 0.22s ease both;
+}
+
+.qcl-modal {
+  animation: qcl-pop-in 0.18s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qcl-overlay,
+  .qcl-sheet,
+  .qcl-modal {
+    animation: none;
+  }
+}
