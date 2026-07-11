@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
 type TimelineRow = {
   taskInstanceId: number;
   taskDefinitionId: number | null;
@@ -475,9 +477,12 @@ const DashboardPlantView: React.FC = () => {
     setLoadingSample(true);
     setDataError('');
     try {
-      const response = await fetch('/synthetic_task_timeline.csv');
+      const response = await fetch(
+        `${API_BASE_URL}/api/task-analysis/sample-timeline.csv`,
+        { credentials: 'include' },
+      );
       if (!response.ok) {
-        throw new Error('No se encontro /synthetic_task_timeline.csv');
+        throw new Error('No se encontro el archivo de muestra.');
       }
       const text = await response.text();
       loadRowsFromText(text, 'synthetic_task_timeline.csv');

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.enums import RestrictionType
 from app.models.tasks import TaskDefinition
@@ -53,7 +53,7 @@ def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinitionR
 def create_task_definition(
     payload: TaskDefinitionCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskDefinition:
     task = TaskDefinition(**payload.model_dump())
     db.add(task)
@@ -79,7 +79,7 @@ def update_task_definition(
     task_definition_id: int,
     payload: TaskDefinitionUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskDefinition:
     task = db.get(TaskDefinition, task_definition_id)
     if not task:
@@ -97,7 +97,7 @@ def update_task_definition(
 def delete_task_definition(
     task_definition_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> None:
     task = db.get(TaskDefinition, task_definition_id)
     if not task:
@@ -134,7 +134,7 @@ def set_task_specialty(
     task_definition_id: int,
     payload: TaskSpecialty,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskSpecialty:
     task = db.get(TaskDefinition, task_definition_id)
     if not task:
@@ -223,7 +223,7 @@ def set_allowed_workers(
     task_definition_id: int,
     payload: TaskAllowedWorkers,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskAllowedWorkers:
     task = db.get(TaskDefinition, task_definition_id)
     if not task:
@@ -264,7 +264,7 @@ def set_regular_crew(
     task_definition_id: int,
     payload: TaskRegularCrew,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskRegularCrew:
     task = db.get(TaskDefinition, task_definition_id)
     if not task:

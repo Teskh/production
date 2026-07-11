@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.conditions import (
     ConditionType,
@@ -79,7 +79,7 @@ def list_condition_types(db: Session = Depends(get_db)) -> list[ConditionType]:
 def create_condition_type(
     payload: ConditionTypeCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> ConditionType:
     name = payload.name.strip()
     if not name:
@@ -105,7 +105,7 @@ def update_condition_type(
     type_id: int,
     payload: ConditionTypeUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> ConditionType:
     row = db.get(ConditionType, type_id)
     if not row:
@@ -141,7 +141,7 @@ def update_condition_type(
 def delete_condition_type(
     type_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> None:
     row = db.get(ConditionType, type_id)
     if not row:
@@ -178,7 +178,7 @@ def delete_condition_type(
 def create_condition_value(
     payload: ConditionValueCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> ConditionValue:
     if not db.get(ConditionType, payload.condition_type_id):
         raise HTTPException(
@@ -211,7 +211,7 @@ def update_condition_value(
     value_id: int,
     payload: ConditionValueUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> ConditionValue:
     row = db.get(ConditionValue, value_id)
     if not row:
@@ -246,7 +246,7 @@ def update_condition_value(
 def delete_condition_value(
     value_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> None:
     row = db.get(ConditionValue, value_id)
     if not row:
@@ -347,7 +347,7 @@ def set_task_condition_rules(
     task_definition_id: int,
     payload: TaskConditionRulesUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> list[TaskConditionRuleRead]:
     if not db.get(TaskDefinition, task_definition_id):
         raise HTTPException(
@@ -406,7 +406,7 @@ def set_work_unit_conditions(
     work_unit_id: int,
     payload: WorkUnitConditionsUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> list[WorkUnitCondition]:
     if not db.get(WorkUnit, work_unit_id):
         raise HTTPException(
@@ -435,7 +435,7 @@ def set_work_unit_conditions(
 def bulk_update_work_unit_conditions(
     payload: WorkUnitConditionsBulkUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> list[WorkUnitCondition]:
     unit_ids = list(dict.fromkeys(payload.work_unit_ids))
     found_unit_ids = set(
@@ -491,7 +491,7 @@ def bulk_update_work_unit_conditions(
 def set_work_unit_conditions_matrix(
     payload: WorkUnitConditionsMatrixUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("condition-defs", edit=True)),
 ) -> list[WorkUnitCondition]:
     requested_by_unit: dict[int, list[int]] = {}
     for item in payload.items:

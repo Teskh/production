@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.stations import Station
 from app.models.workers import (
@@ -107,7 +107,7 @@ def list_workers(db: Session = Depends(get_db)) -> list[Worker]:
 def create_worker(
     payload: WorkerCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> Worker:
     geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
     geovictoria_identifier = _normalize_geovictoria_value(
@@ -160,7 +160,7 @@ def list_supervisors(db: Session = Depends(get_db)) -> list[WorkerSupervisor]:
 def create_supervisor(
     payload: WorkerSupervisorCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> WorkerSupervisorRead:
     geovictoria_id = _normalize_geovictoria_value(payload.geovictoria_id, "GeoVictoria ID")
     geovictoria_identifier = _normalize_geovictoria_value(
@@ -196,7 +196,7 @@ def update_supervisor(
     supervisor_id: int,
     payload: WorkerSupervisorUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> WorkerSupervisorRead:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
@@ -230,7 +230,7 @@ def update_supervisor(
 def delete_supervisor(
     supervisor_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> None:
     supervisor = db.get(WorkerSupervisor, supervisor_id)
     if not supervisor:
@@ -255,7 +255,7 @@ def list_skill_assignments(db: Session = Depends(get_db)) -> list[WorkerSkill]:
 def create_skill(
     payload: SkillCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> Skill:
     skill = Skill(**payload.model_dump())
     db.add(skill)
@@ -277,7 +277,7 @@ def update_skill(
     skill_id: int,
     payload: SkillUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> Skill:
     skill = db.get(Skill, skill_id)
     if not skill:
@@ -293,7 +293,7 @@ def update_skill(
 def delete_skill(
     skill_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> None:
     skill = db.get(Skill, skill_id)
     if not skill:
@@ -307,7 +307,7 @@ def set_skill_workers(
     skill_id: int,
     payload: WorkerAssignment,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> list[Worker]:
     skill = db.get(Skill, skill_id)
     if not skill:
@@ -343,7 +343,7 @@ def update_worker(
     worker_id: int,
     payload: WorkerUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> Worker:
     worker = db.get(Worker, worker_id)
     if not worker:
@@ -392,7 +392,7 @@ def update_worker(
 def delete_worker(
     worker_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> None:
     worker = db.get(Worker, worker_id)
     if not worker:
@@ -417,7 +417,7 @@ def set_worker_skills(
     worker_id: int,
     payload: SkillAssignment,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("workers", edit=True)),
 ) -> list[Skill]:
     worker = db.get(Worker, worker_id)
     if not worker:

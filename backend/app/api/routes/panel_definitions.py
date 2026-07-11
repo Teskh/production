@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.schemas.panels import (
@@ -49,7 +49,7 @@ def list_panel_definitions(db: Session = Depends(get_db)) -> list[PanelDefinitio
 def create_panel_definition(
     payload: PanelDefinitionCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> PanelDefinition:
     if not db.get(HouseType, payload.house_type_id):
         raise HTTPException(
@@ -92,7 +92,7 @@ def update_panel_definition(
     panel_definition_id: int,
     payload: PanelDefinitionUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> PanelDefinition:
     panel_definition = db.get(PanelDefinition, panel_definition_id)
     if not panel_definition:
@@ -131,7 +131,7 @@ def update_panel_definition(
 def delete_panel_definition(
     panel_definition_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> None:
     panel_definition = db.get(PanelDefinition, panel_definition_id)
     if not panel_definition:

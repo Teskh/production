@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.house import HouseSubType, HouseType, PanelDefinition
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskExpectedDuration
@@ -91,7 +91,7 @@ def list_task_applicability(db: Session = Depends(get_db)) -> list[TaskApplicabi
 def create_task_applicability(
     payload: TaskApplicabilityCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskApplicability:
     if _is_default_applicability_scope(
         payload.house_type_id,
@@ -158,7 +158,7 @@ def update_task_applicability(
     applicability_id: int,
     payload: TaskApplicabilityUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskApplicability:
     row = db.get(TaskApplicability, applicability_id)
     if not row:
@@ -213,7 +213,7 @@ def update_task_applicability(
 def delete_task_applicability(
     applicability_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> None:
     row = db.get(TaskApplicability, applicability_id)
     if not row:
@@ -233,7 +233,7 @@ def list_task_durations(db: Session = Depends(get_db)) -> list[TaskExpectedDurat
 def create_task_duration(
     payload: TaskExpectedDurationCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskExpectedDuration:
     _validate_task_duration_values(
         payload.expected_minutes, payload.expected_headcount
@@ -280,7 +280,7 @@ def update_task_duration(
     duration_id: int,
     payload: TaskExpectedDurationUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskExpectedDuration:
     row = db.get(TaskExpectedDuration, duration_id)
     if not row:
@@ -324,7 +324,7 @@ def update_task_duration(
 def delete_task_duration(
     duration_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> None:
     row = db.get(TaskExpectedDuration, duration_id)
     if not row:

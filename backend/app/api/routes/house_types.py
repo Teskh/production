@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.house import HouseParameterValue, HouseSubType, HouseType, PanelDefinition
 from app.models.qc import (
@@ -376,7 +376,7 @@ def list_house_types(db: Session = Depends(get_db)) -> list[HouseType]:
 def create_house_type(
     payload: HouseTypeCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> HouseType:
     house_type = HouseType(**payload.model_dump())
     db.add(house_type)
@@ -398,7 +398,7 @@ def update_house_type(
     house_type_id: int,
     payload: HouseTypeUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> HouseType:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -415,7 +415,7 @@ def delete_house_type(
     house_type_id: int,
     force: bool = False,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> None:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -464,7 +464,7 @@ def create_house_subtype(
     house_type_id: int,
     payload: HouseSubTypeCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> HouseSubType:
     house_type = db.get(HouseType, house_type_id)
     if not house_type:
@@ -489,7 +489,7 @@ def update_house_subtype(
     sub_type_id: int,
     payload: HouseSubTypeUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> HouseSubType:
     subtype = db.get(HouseSubType, sub_type_id)
     if not subtype:
@@ -510,7 +510,7 @@ def update_house_subtype(
 def delete_house_subtype(
     sub_type_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> None:
     subtype = db.get(HouseSubType, sub_type_id)
     if not subtype:

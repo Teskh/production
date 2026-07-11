@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.enums import StationRole
 from app.models.stations import Station
@@ -64,7 +64,7 @@ def _normalize_camera_feed_ip(value: str | None) -> str | None:
 def create_station(
     payload: StationCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("stations", edit=True)),
 ) -> Station:
     payload.camera_feed_ip = _normalize_camera_feed_ip(payload.camera_feed_ip)
     _validate_station_payload(
@@ -92,7 +92,7 @@ def update_station(
     station_id: int,
     payload: StationUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("stations", edit=True)),
 ) -> Station:
     station = db.get(Station, station_id)
     if not station:
@@ -119,7 +119,7 @@ def update_station(
 def delete_station(
     station_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("stations", edit=True)),
 ) -> None:
     station = db.get(Station, station_id)
     if not station:

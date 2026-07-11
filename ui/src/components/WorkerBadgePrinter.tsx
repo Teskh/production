@@ -667,30 +667,22 @@ const WorkerBadgePrinter: React.FC<WorkerBadgePrinterProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [showCutLines, setShowCutLines] = useState(true);
   const [previewScale, setPreviewScale] = useState(1);
+  const [wasOpen, setWasOpen] = useState(open);
   const previewRef = useRef<HTMLDivElement | null>(null);
 
   const logoSrc = LOGO_SRC;
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    if (selectedIds.size > 0) {
-      return;
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setSearchQuery('');
     }
     const fallbackId =
       defaultWorkerId ?? workers.find((worker) => worker.active)?.id ?? workers[0]?.id;
-    if (fallbackId) {
+    if (open && selectedIds.size === 0 && fallbackId) {
       setSelectedIds(new Set([fallbackId]));
     }
-  }, [defaultWorkerId, open, selectedIds, workers]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setSearchQuery('');
-  }, [open]);
+  }
 
   const orderedWorkers = useMemo(() => {
     return [...workers].sort((a, b) => {

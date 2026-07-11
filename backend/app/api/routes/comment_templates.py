@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.admin import CommentTemplate
 from app.models.stations import Station
@@ -40,7 +40,7 @@ def list_comment_templates(db: Session = Depends(get_db)) -> list[CommentTemplat
 def create_comment_template(
     payload: CommentTemplateCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> CommentTemplate:
     _validate_station_ids(db, payload.applicable_station_ids)
     template = CommentTemplate(**payload.model_dump())
@@ -67,7 +67,7 @@ def update_comment_template(
     template_id: int,
     payload: CommentTemplateUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> CommentTemplate:
     template = db.get(CommentTemplate, template_id)
     if not template:
@@ -88,7 +88,7 @@ def update_comment_template(
 def delete_comment_template(
     template_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> None:
     template = db.get(CommentTemplate, template_id)
     if not template:

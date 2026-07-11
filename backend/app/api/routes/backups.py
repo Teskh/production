@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_current_admin
+from app.api.deps import require_admin_page
 from app.models.admin import AdminUser
 from app.schemas.backups import (
     BackupCreateRequest,
@@ -19,14 +19,16 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[BackupRecord])
-def list_backups(_admin: AdminUser = Depends(get_current_admin)) -> list[dict]:
+def list_backups(
+    _admin: AdminUser = Depends(require_admin_page("backups")),
+) -> list[dict]:
     return backup_service.list_backups()
 
 
 @router.post("", response_model=BackupCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_backup(
     payload: BackupCreateRequest,
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("backups", edit=True)),
 ) -> BackupCreateResponse:
     try:
         backup, settings, pruned = backup_service.create_backup(payload.label)
@@ -38,14 +40,16 @@ def create_backup(
 
 
 @router.get("/settings", response_model=BackupSettings)
-def get_settings(_admin: AdminUser = Depends(get_current_admin)) -> dict:
+def get_settings(
+    _admin: AdminUser = Depends(require_admin_page("backups")),
+) -> dict:
     return backup_service.load_backup_settings()
 
 
 @router.put("/settings", response_model=BackupSettings)
 def update_settings(
     payload: BackupSettingsUpdate,
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("backups", edit=True)),
 ) -> dict:
     update = payload.model_dump(exclude_unset=True)
     try:
@@ -58,7 +62,7 @@ def update_settings(
 @router.post("/restore", response_model=BackupRestoreResponse)
 def restore_backup(
     payload: BackupRestoreRequest,
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("backups", edit=True)),
 ) -> BackupRestoreResponse:
     try:
         result = backup_service.restore_backup(

@@ -211,7 +211,10 @@ const apiDeleteRequest = async (path: string): Promise<void> => {
 
 // Temporarily paused. Keep the helper for the 48h delete/evidence window so it can be
 // restored without rediscovering all call sites.
-const isWithinDeleteWindow = (_openedAt: string): boolean => true;
+const isWithinDeleteWindow = (openedAt: string): boolean => {
+  void openedAt;
+  return true;
+};
 
 const resolveMediaUri = (uri: string): string => {
   if (!uri) return uri;

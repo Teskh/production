@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.enums import (
     AdminRole,
@@ -74,7 +74,7 @@ def _normalize_line(line: str | None) -> str | None:
 
 
 def require_queue_manager(
-    admin: AdminUser = Depends(get_current_admin),
+    admin: AdminUser = Depends(require_admin_page("production-queue", edit=True)),
 ) -> AdminUser:
     role = str(getattr(admin, "role", "")).strip().casefold()
     if role not in _QUEUE_MANAGER_ROLES:

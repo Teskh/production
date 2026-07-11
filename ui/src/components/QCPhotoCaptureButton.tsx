@@ -66,13 +66,6 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
   useEffect(() => {
     if (!open) {
       stopCamera();
-      setCameraReady(false);
-      setCameraError(null);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError('Este navegador no soporta camara.');
-      setCameraReady(false);
       return;
     }
 
@@ -80,6 +73,10 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
     const startCamera = async () => {
       setCameraError(null);
       setCameraReady(false);
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError('Este navegador no soporta camara.');
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -116,6 +113,19 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
     };
   }, [open]);
 
+  const openCamera = () => {
+    setCameraError(null);
+    setCameraReady(false);
+    setOpen(true);
+  };
+
+  const closeCamera = () => {
+    stopCamera();
+    setCameraReady(false);
+    setCameraError(null);
+    setOpen(false);
+  };
+
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) {
       setCameraError('No se pudo acceder a la camara.');
@@ -150,14 +160,14 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
     setCaptureFlash(true);
     window.setTimeout(() => setCaptureFlash(false), 120);
     onCapture(file);
-    setOpen(false);
+    closeCamera();
   };
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openCamera}
         disabled={disabled}
         className={clsx(
           'inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-semibold text-[var(--ink)] ring-1 ring-black/10 disabled:cursor-not-allowed disabled:opacity-60',
@@ -178,7 +188,7 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={closeCamera}
                 className="rounded-full p-2 text-white/70 hover:text-white"
               >
                 <X className="h-5 w-5" />
@@ -222,7 +232,7 @@ const QCPhotoCaptureButton: React.FC<QCPhotoCaptureButtonProps> = ({
             <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={closeCamera}
                 className="rounded-full bg-slate-800 px-4 py-2 text-sm font-semibold text-white"
               >
                 Cancelar

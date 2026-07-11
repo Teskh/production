@@ -1,7 +1,8 @@
-This project is an attempt at a large scale refactor of another project.
-it features a ui/ folder with a frontend setup, which features mostly placeholders. it was built off docs/REBUILD_UI_SPEC.md by someone without any view of the backend or deeper understanding about how the project would eventually work, thus treat only the style as a guide, but otherwise don't be coy about largely rebuilding pages as much as necessary.
-Deeper guides about the functioning of the project is found in docs/
-docs/ROADMAP.md is a checklist style roadmap of where we are in the rebuilding of the refactor
+This project is a large-scale refactor of an earlier production application. The backend
+and UI now contain substantial working behavior; do not treat current pages as placeholders.
 
+Read `docs/ARCHITECTURE.md` for the current system map and `docs/COMMANDS.md` for verified
+development, migration, test, and production commands.
 
-always use 'uv' instead of 'pip' for python dependencies. We already have a root level uv virtual environment (venv)
+Always use `uv` instead of `pip` for Python dependencies. The root `pyproject.toml` and
+`uv.lock` are the dependency source of truth; `uv sync --dev` creates the root `.venv`.

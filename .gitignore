@@ -39,6 +39,8 @@ __pycache__/
 *.bak
 *.svg
 *.png
+!ui/public/logo.png
+!ui/public/logo_white.png
 #*.jpg
 *txt
 !backend/requirements.txt

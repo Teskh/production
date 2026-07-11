@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,26 @@ from app.services.conditions import load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
 router = APIRouter()
+SAMPLE_TIMELINE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "synthetic_exports"
+    / "synthetic_task_timeline.csv"
+)
+
+
+@router.get("/sample-timeline.csv", response_class=FileResponse)
+def get_sample_timeline() -> FileResponse:
+    if not SAMPLE_TIMELINE_PATH.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sample timeline is not available",
+        )
+    return FileResponse(
+        SAMPLE_TIMELINE_PATH,
+        media_type="text/csv",
+        filename="synthetic_task_timeline.csv",
+    )
 
 
 def _parse_datetime(value: str | None, field: str) -> datetime | None:

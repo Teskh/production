@@ -105,7 +105,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({
       gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
       oscillator.stop(context.currentTime + 0.2);
-    } catch (error) {
+    } catch {
       // Ignore audio failures; scanning should continue.
     }
   }, []);
@@ -198,7 +198,7 @@ const QRCodeScannerModal: React.FC<QRCodeScannerModalProps> = ({
           }
         }
       }
-    } catch (error) {
+    } catch {
       // Ignore transient decode errors.
     } finally {
       scanningRef.current = false;

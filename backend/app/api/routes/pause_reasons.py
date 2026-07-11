@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.admin import PauseReason
 from app.models.stations import Station
@@ -36,7 +36,7 @@ def list_pause_reasons(db: Session = Depends(get_db)) -> list[PauseReason]:
 def create_pause_reason(
     payload: PauseReasonCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> PauseReason:
     _validate_station_ids(db, payload.applicable_station_ids)
     reason = PauseReason(**payload.model_dump())
@@ -59,7 +59,7 @@ def update_pause_reason(
     reason_id: int,
     payload: PauseReasonUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> PauseReason:
     reason = db.get(PauseReason, reason_id)
     if not reason:
@@ -78,7 +78,7 @@ def update_pause_reason(
 def delete_pause_reason(
     reason_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("pause-note-defs", edit=True)),
 ) -> None:
     reason = db.get(PauseReason, reason_id)
     if not reason:

@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_token, utc_now
 from app.db.session import SessionLocal
-from app.models.admin import AdminSession, AdminUser
+from app.models.admin import AdminPagePermission, AdminSession, AdminUser
+from app.models.enums import AdminRole
 from app.models.workers import (
     Worker,
     WorkerSession,
@@ -69,6 +70,55 @@ def get_optional_admin(
     if not admin or not getattr(admin, "active", True):
         return None
     return admin
+
+
+def admin_page_access_allowed(
+    admin: AdminUser,
+    permissions: list[AdminPagePermission],
+    *,
+    edit: bool,
+) -> bool:
+    """Mirror the admin UI's default-open page permission semantics on the server."""
+    if str(getattr(admin, "role", "")).strip() == AdminRole.SYSADMIN.value:
+        return True
+    if not permissions:
+        return True
+    role = str(getattr(admin, "role", "")).strip()
+    permission = next(
+        (row for row in permissions if str(row.role).strip() == role),
+        None,
+    )
+    if permission is None or not permission.can_view:
+        return False
+    return bool(permission.can_edit) if edit else True
+
+
+def require_admin_page(page_id: str, *, edit: bool = False):
+    """Build a FastAPI dependency enforcing an admin page permission."""
+    normalized_page_id = page_id.strip()
+    if not normalized_page_id:
+        raise ValueError("page_id is required")
+
+    def dependency(
+        admin: AdminUser = Depends(get_current_admin),
+        db: Session = Depends(get_db),
+    ) -> AdminUser:
+        permissions = list(
+            db.execute(
+                select(AdminPagePermission).where(
+                    AdminPagePermission.page_id == normalized_page_id
+                )
+            ).scalars()
+        )
+        if not admin_page_access_allowed(admin, permissions, edit=edit):
+            action = "edit" if edit else "view"
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Admin page {action} permission required",
+            )
+        return admin
+
+    return dependency
 
 
 def _get_worker_session(token: str, db: Session) -> WorkerSession:

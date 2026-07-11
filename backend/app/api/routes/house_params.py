@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_admin, get_db
+from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.house import HouseParameter, HouseParameterValue, HouseType
 from app.schemas.parameters import (
@@ -26,7 +26,7 @@ def list_house_parameters(db: Session = Depends(get_db)) -> list[HouseParameter]
 def create_house_parameter(
     payload: HouseParameterCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> HouseParameter:
     parameter = HouseParameter(**payload.model_dump())
     db.add(parameter)
@@ -50,7 +50,7 @@ def update_house_parameter(
     parameter_id: int,
     payload: HouseParameterUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> HouseParameter:
     parameter = db.get(HouseParameter, parameter_id)
     if not parameter:
@@ -68,7 +68,7 @@ def update_house_parameter(
 def delete_house_parameter(
     parameter_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> None:
     parameter = db.get(HouseParameter, parameter_id)
     if not parameter:
@@ -96,7 +96,7 @@ def create_house_parameter_value(
     parameter_id: int,
     payload: HouseParameterValueCreate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> HouseParameterValue:
     if parameter_id != payload.parameter_id:
         raise HTTPException(
@@ -135,7 +135,7 @@ def update_house_parameter_value(
     value_id: int,
     payload: HouseParameterValueUpdate,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> HouseParameterValue:
     value = db.get(HouseParameterValue, value_id)
     if not value:
@@ -162,7 +162,7 @@ def update_house_parameter_value(
 def delete_house_parameter_value(
     value_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(get_current_admin),
+    _admin: AdminUser = Depends(require_admin_page("house-params", edit=True)),
 ) -> None:
     value = db.get(HouseParameterValue, value_id)
     if not value:
