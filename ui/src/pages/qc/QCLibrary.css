@@ -242,6 +242,10 @@
   color: var(--qcl-ink-2);
 }
 
+.qcl-input.qcl-input--search {
+  padding-left: 36px;
+}
+
 .qcl-input--fit {
   width: auto;
 }

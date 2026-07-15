@@ -178,6 +178,16 @@ type QCComplaintDetail = QCComplaintSummary & {
   events: QCComplaintEvent[];
 };
 
+type QCComplaintNotification = {
+  id: number;
+  complaint_id: number;
+  supervisor_id: number;
+  event_id: number | null;
+  status: 'Active' | 'Dismissed';
+  created_at: string;
+  seen_at: string | null;
+};
+
 type QCExecutionFailureModeRead = {
   id: number;
   failure_mode_definition_id: number | null;
@@ -390,6 +400,8 @@ const PanelLineSupervisorView: React.FC = () => {
   const [loadingCheckIds, setLoadingCheckIds] = useState<Set<number>>(new Set());
   const [checkDetailError, setCheckDetailError] = useState<string | null>(null);
   const [complaintDetails, setComplaintDetails] = useState<Record<number, QCComplaintDetail>>({});
+  const [complaintNotifications, setComplaintNotifications] = useState<QCComplaintNotification[]>([]);
+  const [selectedComplaintId, setSelectedComplaintId] = useState<number | null>(null);
   const [loadingComplaintIds, setLoadingComplaintIds] = useState<Set<number>>(new Set());
   const [complaintDetailError, setComplaintDetailError] = useState<string | null>(null);
   const [complaintDrafts, setComplaintDrafts] = useState<Record<number, string>>({});
@@ -467,6 +479,34 @@ const PanelLineSupervisorView: React.FC = () => {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    if (!supervisorSession) {
+      setComplaintNotifications([]);
+      return;
+    }
+    let isMounted = true;
+    const loadNotifications = async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/qc/supervisor/complaint-notifications`,
+          { credentials: 'include' }
+        );
+        if (!isMounted) return;
+        if (response.ok) {
+          setComplaintNotifications(await response.json() as QCComplaintNotification[]);
+        }
+      } catch {
+        // Notification state is supplementary; keep the operational board available.
+      }
+    };
+    void loadNotifications();
+    const intervalId = window.setInterval(loadNotifications, REFRESH_INTERVAL_MS);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [supervisorSession]);
 
   useEffect(() => {
     let isMounted = true;
@@ -606,6 +646,46 @@ const PanelLineSupervisorView: React.FC = () => {
     [supervisorSession]
   );
 
+  const unreadComplaintIds = useMemo(
+    () =>
+      new Set(
+        complaintNotifications
+          .filter((notification) => notification.status === 'Active' && !notification.seen_at)
+          .map((notification) => notification.complaint_id)
+      ),
+    [complaintNotifications]
+  );
+
+  const markComplaintSeen = useCallback(
+    async (complaintId: number) => {
+      if (!supervisorSession || !unreadComplaintIds.has(complaintId)) return;
+      const seenAt = new Date().toISOString();
+      setComplaintNotifications((current) =>
+        current.map((notification) =>
+          notification.complaint_id === complaintId && notification.status === 'Active'
+            ? { ...notification, status: 'Dismissed', seen_at: seenAt }
+            : notification
+        )
+      );
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/qc/supervisor/complaints/${complaintId}/notifications/seen`,
+          { method: 'POST', credentials: 'include' }
+        );
+        if (!response.ok) throw new Error('No se pudo confirmar lectura.');
+      } catch {
+        setComplaintNotifications((current) =>
+          current.map((notification) =>
+            notification.complaint_id === complaintId && notification.seen_at === seenAt
+              ? { ...notification, status: 'Active', seen_at: null }
+              : notification
+          )
+        );
+      }
+    },
+    [supervisorSession, unreadComplaintIds]
+  );
+
   const alertsByWorkUnit = useMemo(() => {
     const alerts = new Map<
       number,
@@ -614,6 +694,7 @@ const PanelLineSupervisorView: React.FC = () => {
         reworks: number;
         complaints: number;
         assignedComplaints: number;
+        unreadComplaints: number;
         maxComplaintSeverity: 'baja' | 'media' | 'critica' | null;
         maxCheckSeverity: 'baja' | 'media' | 'critica' | null;
       }
@@ -628,6 +709,7 @@ const PanelLineSupervisorView: React.FC = () => {
         reworks: number;
         complaints: number;
         assignedComplaints: number;
+        unreadComplaints: number;
         maxComplaintSeverity: 'baja' | 'media' | 'critica' | null;
         maxCheckSeverity: 'baja' | 'media' | 'critica' | null;
       } = {
@@ -635,6 +717,7 @@ const PanelLineSupervisorView: React.FC = () => {
         reworks: 0,
         complaints: 0,
         assignedComplaints: 0,
+        unreadComplaints: 0,
         maxComplaintSeverity: null,
         maxCheckSeverity: null,
       };
@@ -675,6 +758,9 @@ const PanelLineSupervisorView: React.FC = () => {
         if (isComplaintAssignedToCurrentSupervisor(complaint)) {
           entry.assignedComplaints += 1;
         }
+        if (unreadComplaintIds.has(complaint.id)) {
+          entry.unreadComplaints += 1;
+        }
         
         const currentWeight = entry.maxComplaintSeverity ? severityWeights[entry.maxComplaintSeverity] : 0;
         const newWeight = severityWeights[complaint.severity_level] || 0;
@@ -685,7 +771,7 @@ const PanelLineSupervisorView: React.FC = () => {
       });
 
     return alerts;
-  }, [complaints, isComplaintAssignedToCurrentSupervisor, qcDashboard.rework_tasks]);
+  }, [complaints, isComplaintAssignedToCurrentSupervisor, qcDashboard.rework_tasks, unreadComplaintIds]);
 
   const selectedAlertDetails = useMemo(() => {
     if (!alertModal) {
@@ -801,15 +887,47 @@ const PanelLineSupervisorView: React.FC = () => {
 
   useEffect(() => {
     if (!alertModal || alertModal.kind !== 'complaints' || !selectedAlertDetails) {
+      setSelectedComplaintId(null);
       return;
     }
-      const complaintIds = Array.from(
-      new Set(
-        (selectedAlertDetails.items as QCComplaintSummary[])
-          .map((complaint) => complaint.id)
-          .filter((id) => !complaintDetails[id])
-      )
-    );
+    const items = selectedAlertDetails.items as QCComplaintSummary[];
+    if (selectedComplaintId && items.some((item) => item.id === selectedComplaintId)) {
+      return;
+    }
+    const preferred = [...items].sort((left, right) => {
+      const unreadDelta = Number(unreadComplaintIds.has(right.id)) - Number(unreadComplaintIds.has(left.id));
+      if (unreadDelta) return unreadDelta;
+      const assignedDelta =
+        Number(isComplaintAssignedToCurrentSupervisor(right)) -
+        Number(isComplaintAssignedToCurrentSupervisor(left));
+      if (assignedDelta) return assignedDelta;
+      return Date.parse(right.updated_at) - Date.parse(left.updated_at);
+    })[0];
+    setSelectedComplaintId(preferred?.id ?? null);
+  }, [
+    alertModal,
+    isComplaintAssignedToCurrentSupervisor,
+    selectedAlertDetails,
+    selectedComplaintId,
+    unreadComplaintIds,
+  ]);
+
+  useEffect(() => {
+    if (alertModal?.kind === 'complaints' && selectedComplaintId) {
+      void markComplaintSeen(selectedComplaintId);
+    }
+  }, [alertModal, markComplaintSeen, selectedComplaintId]);
+
+  useEffect(() => {
+    if (
+      !alertModal ||
+      alertModal.kind !== 'complaints' ||
+      !selectedAlertDetails ||
+      !selectedComplaintId
+    ) {
+      return;
+    }
+    const complaintIds = complaintDetails[selectedComplaintId] ? [] : [selectedComplaintId];
     if (!complaintIds.length) {
       return;
     }
@@ -866,7 +984,13 @@ const PanelLineSupervisorView: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [alertModal, complaintDetails, isComplaintAssignedToCurrentSupervisor, selectedAlertDetails]);
+  }, [
+    alertModal,
+    complaintDetails,
+    isComplaintAssignedToCurrentSupervisor,
+    selectedAlertDetails,
+    selectedComplaintId,
+  ]);
 
   const handleSupervisorLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1273,6 +1397,11 @@ const PanelLineSupervisorView: React.FC = () => {
                                                     >
                                                       <MessageSquare className="h-3 w-3" />
                                                       {alerts.complaints}
+                                                      {alerts.unreadComplaints > 0 ? (
+                                                        <span className="ml-0.5 rounded-full bg-rose-600 px-1 text-[8px] leading-4 text-white ring-1 ring-white">
+                                                          {alerts.unreadComplaints}
+                                                        </span>
+                                                      ) : null}
                                                     </button>
                                                   )}
                                                   {alerts.failedChecks > 0 && (
@@ -1457,6 +1586,11 @@ const PanelLineSupervisorView: React.FC = () => {
                                                   }
                                                 >
                                                   <MessageSquare className="h-2.5 w-2.5" />
+                                                  {alerts.unreadComplaints > 0 ? (
+                                                    <span className="ml-0.5 rounded-full bg-rose-600 px-1 text-[8px] leading-3 text-white ring-1 ring-white">
+                                                      {alerts.unreadComplaints}
+                                                    </span>
+                                                  ) : null}
                                                 </button>
                                               )}
                                               {alerts.failedChecks > 0 && (
@@ -1495,7 +1629,12 @@ const PanelLineSupervisorView: React.FC = () => {
       </div>
       {alertModal && selectedAlertDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-4xl rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+          <div
+            className={clsx(
+              'w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-xl',
+              alertModal.kind === 'complaints' ? 'max-w-6xl' : 'max-w-4xl'
+            )}
+          >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-900">{selectedAlertDetails.title}</h2>
@@ -1514,7 +1653,7 @@ const PanelLineSupervisorView: React.FC = () => {
               </button>
             </div>
 
-            <div className="mt-5 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+            <div className={clsx('mt-5', alertModal.kind === 'complaints' ? '' : 'max-h-[60vh] space-y-3 overflow-y-auto pr-1')}>
               {selectedAlertDetails.items.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-sm text-gray-500">
                   No hay informacion vigente para este modulo.
@@ -1561,7 +1700,50 @@ const PanelLineSupervisorView: React.FC = () => {
                     </div>
                   ))
                 : alertModal.kind === 'complaints'
-                ? (selectedAlertDetails.items as QCComplaintSummary[]).map((complaint) => {
+                ? (() => {
+                    const complaintItems = selectedAlertDetails.items as QCComplaintSummary[];
+                    return (
+                    <div className="grid min-h-[520px] max-h-[72vh] overflow-hidden rounded-xl border border-gray-200 md:grid-cols-[300px_minmax(0,1fr)]">
+                      <aside className="overflow-y-auto border-b border-gray-200 bg-gray-50 md:border-b-0 md:border-r">
+                        <div className="sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-gray-500">
+                          {complaintItems.length} conversación{complaintItems.length === 1 ? '' : 'es'}
+                        </div>
+                        {complaintItems.map((item) => {
+                          const isSelected = item.id === selectedComplaintId;
+                          const isUnread = unreadComplaintIds.has(item.id);
+                          const isAssigned = isComplaintAssignedToCurrentSupervisor(item);
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => setSelectedComplaintId(item.id)}
+                              className={clsx(
+                                'block w-full border-b border-gray-200 px-3 py-3 text-left transition',
+                                isSelected ? 'border-l-[3px] border-l-blue-600 bg-white' : 'hover:bg-white'
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="line-clamp-2 text-sm font-bold text-gray-900">{item.title}</p>
+                                {isUnread ? (
+                                  <span className="shrink-0 rounded-full bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
+                                    Nuevo
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-xs text-gray-500">{item.description}</p>
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                                <span className={clsx('rounded-full px-1.5 py-0.5 font-bold uppercase', severityBadgeClass(item.severity_level))}>
+                                  {severityLabel(item.severity_level)}
+                                </span>
+                                <span>{complaintStatusLabel(item.status)}</span>
+                                {supervisorSession ? <span>{isAssigned ? 'Para ti' : 'Visible'}</span> : null}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </aside>
+                      <div className="overflow-y-auto bg-white p-4">
+                      {complaintItems.filter((complaint) => complaint.id === selectedComplaintId).map((complaint) => {
                     const detail = complaintDetails[complaint.id];
                     const draft = complaintDrafts[complaint.id] ?? '';
                     const files = complaintFiles[complaint.id] ?? [];
@@ -1798,7 +1980,16 @@ const PanelLineSupervisorView: React.FC = () => {
                         ) : null}
                       </div>
                     );
-                  })
+                  })}
+                      {!selectedComplaintId ? (
+                        <div className="grid h-full min-h-80 place-items-center text-sm text-gray-500">
+                          Selecciona una conversación.
+                        </div>
+                      ) : null}
+                      </div>
+                    </div>
+                    );
+                  })()
                 : (selectedAlertDetails.items as QCReworkTaskSummary[]).map((task) => {
                       const detail = checkDetails[task.check_instance_id];
                       const failedExecution = detail?.executions.find(
@@ -1960,7 +2151,8 @@ const PanelLineSupervisorView: React.FC = () => {
               <div>
                 <h2 className="text-lg font-bold text-gray-900">Login supervisor</h2>
                 <p className="mt-1 text-sm text-gray-500">
-                  Las observaciones se filtraran por el supervisor activo.
+                  Todas las observaciones seguirán visibles. Inicia sesión para responder las que
+                  están asignadas a ti y recibir avisos de actividad nueva.
                 </p>
               </div>
               <button

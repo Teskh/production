@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   AlertTriangle,
+  ChevronRight,
   CheckCircle2,
+  LayoutGrid,
+  List,
   Loader2,
   MessageSquare,
   Plus,
@@ -38,6 +42,23 @@ type PanelStatus = {
 
 type ProductionQueueModuleStatus = {
   panels: PanelStatus[];
+};
+
+type StationSummary = {
+  id: number;
+  name: string;
+  role: string;
+  line_type: string | null;
+  sequence_order: number | null;
+};
+
+type PlantModuleGroup = {
+  workUnitId: number;
+  moduleNumber: number;
+  projectName: string;
+  houseIdentifier: string | null;
+  houseTypeName: string;
+  observations: ComplaintSummary[];
 };
 
 type SupervisorSummary = {
@@ -192,6 +213,7 @@ const buildObservationWatermarkLines = (
 };
 
 const QCComplaints: React.FC = () => {
+  const navigate = useNavigate();
   const qcSession = useOptionalQCSession();
   const canManage = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
 
@@ -204,6 +226,10 @@ const QCComplaints: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | QCComplaintStatus>('all');
   const [severityFilter, setSeverityFilter] = useState<'all' | QCSeverityLevel>('all');
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<'recent' | 'plant'>('recent');
+  const [stations, setStations] = useState<StationSummary[]>([]);
+  const [stationsLoading, setStationsLoading] = useState(true);
+  const [stationsError, setStationsError] = useState<string | null>(null);
 
   const [workUnits, setWorkUnits] = useState<ProductionQueueItem[]>([]);
   const [supervisors, setSupervisors] = useState<SupervisorSummary[]>([]);
@@ -247,6 +273,11 @@ const QCComplaints: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!canManage) {
+      setWorkUnits([]);
+      setSupervisors([]);
+      return;
+    }
     let active = true;
     const loadBaseData = async () => {
       try {
@@ -267,12 +298,40 @@ const QCComplaints: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [canManage]);
 
   useEffect(() => {
     void loadComplaints();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, severityFilter]);
+
+  useEffect(() => {
+    let active = true;
+    const loadStations = async () => {
+      setStationsLoading(true);
+      try {
+        const data = await apiRequest<StationSummary[]>('/api/stations');
+        if (!active) return;
+        setStations(data);
+        setStationsError(null);
+      } catch (error) {
+        if (!active) return;
+        setStationsError(error instanceof Error ? error.message : 'No se pudo cargar la planta.');
+      } finally {
+        if (active) setStationsLoading(false);
+      }
+    };
+    void loadStations();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === 'plant' && statusFilter === 'Closed') {
+      setStatusFilter('all');
+    }
+  }, [statusFilter, viewMode]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -354,6 +413,92 @@ const QCComplaints: React.FC = () => {
       return haystack.includes(query);
     });
   }, [complaints, search]);
+
+  const plantView = useMemo(() => {
+    const openObservations = filteredComplaints.filter((item) => item.status !== 'Closed');
+    const byStation = new Map<number | null, Map<number, PlantModuleGroup>>();
+    openObservations.forEach((observation) => {
+      const stationKey = observation.station_id ?? null;
+      const stationModules = byStation.get(stationKey) ?? new Map<number, PlantModuleGroup>();
+      const moduleGroup = stationModules.get(observation.work_unit_id) ?? {
+        workUnitId: observation.work_unit_id,
+        moduleNumber: observation.module_number,
+        projectName: observation.project_name,
+        houseIdentifier: observation.house_identifier,
+        houseTypeName: observation.house_type_name,
+        observations: [],
+      };
+      moduleGroup.observations.push(observation);
+      stationModules.set(observation.work_unit_id, moduleGroup);
+      byStation.set(stationKey, stationModules);
+    });
+
+    const sortStations = (left: StationSummary, right: StationSummary) =>
+      (left.sequence_order ?? Number.POSITIVE_INFINITY) -
+        (right.sequence_order ?? Number.POSITIVE_INFINITY) || left.name.localeCompare(right.name);
+    const moduleGroupsFor = (stationId: number | null) =>
+      Array.from(byStation.get(stationId)?.values() ?? []).sort(
+        (left, right) => left.moduleNumber - right.moduleNumber
+      );
+    const stationIds = new Set(stations.map((station) => station.id));
+    const makeStations = (items: StationSummary[]) =>
+      [...items].sort(sortStations).map((station) => ({
+        station,
+        modules: moduleGroupsFor(station.id),
+      }));
+    const panels = stations.filter((station) => station.role === 'Panels');
+    const assemblyStations = stations.filter(
+      (station) => station.role === 'Assembly' && ['1', '2', '3'].includes(station.line_type ?? '')
+    );
+    const assemblyLines = ['1', '2', '3'].map((line) => ({
+      id: `line-${line}`,
+      title: `Línea ${line}`,
+      stations: makeStations(
+        stations.filter((station) => station.role === 'Assembly' && station.line_type === line)
+      ),
+    }));
+    const primaryStationIds = new Set([...panels, ...assemblyStations].map((station) => station.id));
+    const otherStations = stations.filter((station) => !primaryStationIds.has(station.id));
+    const unmatched = openObservations.filter(
+      (observation) => observation.station_id === null || !stationIds.has(observation.station_id)
+    );
+    const unmatchedByWorkUnit = new Map<number, PlantModuleGroup>();
+    unmatched.forEach((observation) => {
+      const current = unmatchedByWorkUnit.get(observation.work_unit_id) ?? {
+        workUnitId: observation.work_unit_id,
+        moduleNumber: observation.module_number,
+        projectName: observation.project_name,
+        houseIdentifier: observation.house_identifier,
+        houseTypeName: observation.house_type_name,
+        observations: [],
+      };
+      current.observations.push(observation);
+      unmatchedByWorkUnit.set(observation.work_unit_id, current);
+    });
+    return {
+      groups: [
+        { id: 'panels', title: 'Paneles', stations: makeStations(panels) },
+        ...assemblyLines,
+        ...(otherStations.length
+          ? [{ id: 'other', title: 'Otras estaciones', stations: makeStations(otherStations) }]
+          : []),
+      ],
+      unmatched: Array.from(unmatchedByWorkUnit.values()).sort(
+        (left, right) => left.moduleNumber - right.moduleNumber
+      ),
+      openCount: openObservations.length,
+      moduleCount: new Set(openObservations.map((item) => item.work_unit_id)).size,
+    };
+  }, [filteredComplaints, stations]);
+
+  const openPlantModule = (module: PlantModuleGroup) => {
+    const newest = [...module.observations].sort(
+      (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)
+    )[0];
+    if (!newest) return;
+    setSelectedId(newest.id);
+    setViewMode('recent');
+  };
 
   const uploadFiles = async (complaintId: number, eventId: number, files: File[]) => {
     for (const file of files) {
@@ -493,66 +638,219 @@ const QCComplaints: React.FC = () => {
     }
   };
 
-  if (!canManage) {
+  const renderPlantModule = (module: PlantModuleGroup) => {
+    const closureProposed = module.observations.filter(
+      (item) => item.status === 'ClosureProposed'
+    ).length;
+    const highestSeverity = module.observations.some((item) => item.severity_level === 'critica')
+      ? 'critica'
+      : module.observations.some((item) => item.severity_level === 'media')
+        ? 'media'
+        : 'baja';
+    const newest = [...module.observations].sort(
+      (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)
+    )[0];
     return (
-      <div className="p-8">
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          Inicia sesion como Calidad para gestionar observaciones.
+      <button
+        key={module.workUnitId}
+        type="button"
+        onClick={() => openPlantModule(module)}
+        className={clsx(
+          'group w-full border-l-[4px] bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md',
+          highestSeverity === 'critica'
+            ? 'border-l-[var(--qc-fail)]'
+            : highestSeverity === 'media'
+              ? 'border-l-[var(--qc-warn)]'
+              : 'border-l-[var(--qc-open)]'
+        )}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--qc-ink)]">
+                Módulo {module.moduleNumber}
+              </span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">
+                {module.observations.length} {module.observations.length === 1 ? 'abierta' : 'abiertas'}
+              </span>
+            </div>
+            <p className="mt-1 truncate text-xs font-semibold text-[var(--qc-ink)]">
+              {module.projectName}{module.houseIdentifier ? ` · Casa ${module.houseIdentifier}` : ''}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-[var(--qc-muted)]">
+              {newest?.title ?? module.houseTypeName}
+            </p>
+          </div>
+          <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-[var(--qc-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--qc-ink)]" />
         </div>
+        <div className="mt-3 flex items-center justify-between gap-2 border-t border-[var(--qc-line-soft)] pt-2 font-mono text-[9px] uppercase tracking-[0.05em] text-[var(--qc-muted)]">
+          <span>{newest ? formatDateTimeShort(newest.updated_at) : 'Sin actividad'}</span>
+          {closureProposed ? (
+            <span className="font-semibold text-[var(--qc-warn)]">
+              {closureProposed} cierre{closureProposed === 1 ? '' : 's'} pendiente{closureProposed === 1 ? '' : 's'}
+            </span>
+          ) : (
+            <span>{severityLabels[highestSeverity]}</span>
+          )}
+        </div>
+      </button>
+    );
+  };
+
+  const renderPlantStation = (
+    item: { station: StationSummary; modules: PlantModuleGroup[] },
+    index: number
+  ) => {
+    const { station, modules } = item;
+    return (
+      <div key={station.id} className="bg-[var(--qc-paper-raised)] p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="grid h-5 w-5 shrink-0 place-items-center bg-[var(--qc-ink)] font-mono text-[8px] text-white">
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <h5 className="truncate font-mono text-[10px] font-semibold uppercase tracking-[0.07em] text-[var(--qc-ink)]">
+              {station.name}
+            </h5>
+          </div>
+          <span
+            className={clsx(
+              'shrink-0 font-mono text-[9px] uppercase tracking-[0.05em]',
+              modules.length ? 'text-[var(--qc-open)]' : 'text-[var(--qc-muted)]'
+            )}
+          >
+            {modules.length ? `${modules.length} activo${modules.length === 1 ? '' : 's'}` : 'Despejada'}
+          </span>
+        </div>
+        {modules.length ? (
+          <div className="grid gap-2">{modules.map(renderPlantModule)}</div>
+        ) : (
+          <div className="grid min-h-14 place-items-center border border-dashed border-[var(--qc-line)] bg-white/50 px-3 text-center font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">
+            Sin conversaciones abiertas
+          </div>
+        )}
       </div>
     );
-  }
+  };
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="qc-page qc-page--wide flex flex-col gap-5">
+      <header className="qc-page__header">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">Observaciones QC</p>
-          <h2 className="font-display text-2xl text-[var(--ink)]">Seguimiento con supervisores</h2>
+          <p className="qc-page__eyebrow">Observaciones QC · Coordinación</p>
+          <h2 className="qc-page__title">Seguimiento</h2>
+          <p className="qc-page__intro">
+            Un único hilo por hallazgo, desde el aviso inicial hasta la aceptación del cierre.
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreateOpen(true)}
-          className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
-        >
-          <Plus className="h-4 w-4" />
-          Nueva observacion
-        </button>
-      </div>
+        {canManage ? (
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="qc-btn qc-btn--primary shrink-0"
+          >
+            <Plus className="h-4 w-4" />
+            Nueva observación
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => navigate('/qc/complaints', { state: { qcLogin: true } })}
+            className="qc-btn shrink-0"
+          >
+            Iniciar sesión para participar
+          </button>
+        )}
+      </header>
 
-      <div className="grid gap-4 lg:grid-cols-[420px_minmax(0,1fr)]">
-        <section className="overflow-hidden rounded-lg border border-black/10 bg-white/85 shadow-sm">
-          <div className="border-b border-black/10 p-4">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[var(--ink-muted)]" />
+      <section className="qc-card p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="inline-flex w-fit border border-[var(--qc-line)] bg-[var(--qc-paper-raised)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('recent')}
+              aria-pressed={viewMode === 'recent'}
+              className={clsx(
+                'inline-flex items-center gap-2 px-4 py-2 font-display text-xs font-semibold uppercase tracking-[0.08em] transition',
+                viewMode === 'recent'
+                  ? 'bg-[var(--qc-ink)] text-white'
+                  : 'text-[var(--qc-muted)] hover:text-[var(--qc-ink)]'
+              )}
+            >
+              <List className="h-4 w-4" />
+              Recientes
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('plant')}
+              aria-pressed={viewMode === 'plant'}
+              className={clsx(
+                'inline-flex items-center gap-2 px-4 py-2 font-display text-xs font-semibold uppercase tracking-[0.08em] transition',
+                viewMode === 'plant'
+                  ? 'bg-[var(--qc-ink)] text-white'
+                  : 'text-[var(--qc-muted)] hover:text-[var(--qc-ink)]'
+              )}
+            >
+              <LayoutGrid className="h-4 w-4" />
+              Planta
+              {plantView.openCount > 0 ? (
+                <span className={clsx('font-mono text-[9px]', viewMode === 'plant' ? 'text-white/70' : 'text-[var(--qc-open)]')}>
+                  {plantView.openCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_160px] lg:max-w-3xl">
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--qc-muted)]" />
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por modulo, supervisor o texto"
-                className="w-full rounded-lg border border-black/10 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--accent)]"
+                placeholder="Buscar módulo, proyecto, supervisor o texto…"
+                className="qc-input qc-input--with-icon min-h-9 py-1.5"
               />
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">Todos los estados</option>
-                <option value="Open">Abiertas</option>
-                <option value="ClosureProposed">Cierre propuesto</option>
-                <option value="Closed">Cerradas</option>
-              </select>
-              <select
-                value={severityFilter}
-                onChange={(event) => setSeverityFilter(event.target.value as typeof severityFilter)}
-                className="rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">Toda severidad</option>
-                <option value="baja">Baja</option>
-                <option value="media">Media</option>
-                <option value="critica">Critica</option>
-              </select>
+            </label>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+              className="qc-input min-h-9 py-1.5 text-xs"
+              aria-label="Filtrar por estado"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="Open">Abiertas</option>
+              <option value="ClosureProposed">Cierre propuesto</option>
+              <option value="Closed" disabled={viewMode === 'plant'}>Cerradas</option>
+            </select>
+            <select
+              value={severityFilter}
+              onChange={(event) => setSeverityFilter(event.target.value as typeof severityFilter)}
+              className="qc-input min-h-9 py-1.5 text-xs"
+              aria-label="Filtrar por severidad"
+            >
+              <option value="all">Toda severidad</option>
+              <option value="baja">Baja</option>
+              <option value="media">Media</option>
+              <option value="critica">Crítica</option>
+            </select>
+          </div>
+        </div>
+        {viewMode === 'plant' ? (
+          <p className="mt-2 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">
+            La vista de planta muestra solo conversaciones abiertas o con cierre propuesto.
+          </p>
+        ) : null}
+      </section>
+
+      {viewMode === 'recent' ? (
+      <div className="grid gap-4 lg:grid-cols-[390px_minmax(0,1fr)]">
+        <section className="qc-card overflow-hidden">
+          <div className="qc-card__header">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="qc-section-title">Bandeja de hallazgos</h3>
+              <span className="font-mono text-[10px] text-[var(--qc-muted)]">
+                {filteredComplaints.length}/{complaints.length}
+              </span>
             </div>
           </div>
 
@@ -571,8 +869,8 @@ const QCComplaints: React.FC = () => {
                   type="button"
                   onClick={() => setSelectedId(item.id)}
                   className={clsx(
-                    'block w-full border-b border-black/5 p-4 text-left transition hover:bg-slate-50',
-                    selectedId === item.id && 'bg-[var(--accent)]/10'
+                    'block w-full border-b border-[var(--qc-line-soft)] p-4 text-left transition hover:bg-[var(--qc-paper-raised)]',
+                    selectedId === item.id && 'border-l-[3px] border-l-[var(--qc-open)] bg-[#edf4fc]'
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -608,18 +906,18 @@ const QCComplaints: React.FC = () => {
           )}
         </section>
 
-        <section className="min-h-[72vh] overflow-hidden rounded-lg border border-black/10 bg-white/85 shadow-sm">
+        <section className="qc-card min-h-[72vh] overflow-hidden">
           {!detail ? (
             <div className="flex h-full min-h-[420px] items-center justify-center p-8 text-sm text-[var(--ink-muted)]">
               Selecciona una observacion para ver la conversacion.
             </div>
           ) : (
             <div className="flex h-full min-h-[72vh] flex-col">
-              <div className="border-b border-black/10 p-5">
+              <div className="qc-card__header p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-display text-xl text-[var(--ink)]">{detail.title}</h3>
+                      <h3 className="font-display text-2xl font-semibold uppercase tracking-[0.03em] text-[var(--ink)]">{detail.title}</h3>
                       <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
                         {statusLabels[detail.status]}
                       </span>
@@ -636,11 +934,11 @@ const QCComplaints: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {detail.status !== 'Closed' && (
+                    {canManage && detail.status !== 'Closed' && (
                       <button
                         type="button"
                         onClick={() => void handleCancel()}
-                        className="inline-flex items-center gap-2 rounded-full bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-200"
+                        className="qc-btn qc-btn--danger min-h-8 px-3 py-1.5"
                       >
                         <Trash2 className="h-4 w-4" />
                         Cancelar
@@ -727,7 +1025,7 @@ const QCComplaints: React.FC = () => {
                               </div>
                               )}
                             </div>
-                            {isPendingClosureProposal ? (
+                            {canManage && isPendingClosureProposal ? (
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <button
                                   type="button"
@@ -755,14 +1053,14 @@ const QCComplaints: React.FC = () => {
                 </div>
               )}
 
-              {detail.status !== 'Closed' && (
+              {canManage && detail.status !== 'Closed' ? (
                 <div className="border-t border-black/10 p-4">
                   <textarea
                     value={commentText}
                     onChange={(event) => setCommentText(event.target.value)}
                     rows={3}
                     placeholder="Escribir comentario para supervisores"
-                    className="w-full resize-none rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+                    className="qc-input w-full resize-none"
                   />
                   {commentFiles.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -798,26 +1096,154 @@ const QCComplaints: React.FC = () => {
                       type="button"
                       onClick={() => void handleComment()}
                       disabled={commentSubmitting}
-                      className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                      className="qc-btn qc-btn--primary"
                     >
                       {commentSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                       Enviar
                     </button>
                   </div>
                 </div>
-              )}
+              ) : detail.status !== 'Closed' ? (
+                <div className="border-t border-[var(--qc-line)] bg-[var(--qc-paper-raised)] px-4 py-3 text-xs text-[var(--qc-muted)]">
+                  Vista de solo lectura · Inicie sesión como Calidad para comentar o gestionar el cierre.
+                </div>
+              ) : null}
             </div>
           )}
         </section>
       </div>
+      ) : (
+        <section className="qc-card overflow-hidden">
+          <div className="qc-card__header flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="qc-section-title">Observaciones abiertas en planta</h3>
+              <p className="mt-1 text-xs text-[var(--qc-muted)]">
+                {plantView.openCount} conversaciones en {plantView.moduleCount} módulos
+              </p>
+            </div>
+            <div className="flex items-center gap-4 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">
+              <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 bg-[var(--qc-fail)]" /> Crítica</span>
+              <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 bg-[var(--qc-warn)]" /> Media</span>
+              <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 bg-[var(--qc-open)]" /> Baja</span>
+            </div>
+          </div>
 
-      {createOpen && (
+          {stationsLoading ? (
+            <div className="flex items-center gap-2 p-6 text-sm text-[var(--qc-muted)]">
+              <Loader2 className="h-4 w-4 animate-spin" /> Cargando distribución de planta…
+            </div>
+          ) : stationsError ? (
+            <div className="qc-notice qc-notice--error m-4">{stationsError}</div>
+          ) : (
+            <div className="space-y-5 bg-[var(--qc-paper-raised)] p-4 sm:p-5">
+              {plantView.groups.filter((group) => group.id === 'panels').map((group) => (
+                <section key={group.id} className="border border-[var(--qc-line)] bg-white">
+                  <div className="flex items-center justify-between border-b border-[var(--qc-line)] bg-[var(--qc-ink)] px-4 py-2 text-white">
+                    <h4 className="font-display text-xs font-semibold uppercase tracking-[0.1em]">{group.title}</h4>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-white/65">
+                      {group.stations.reduce((count, item) => count + item.modules.length, 0)} módulos con observaciones
+                    </span>
+                  </div>
+                  {group.stations.length ? (
+                    <div className="grid gap-px bg-[var(--qc-line)] md:grid-cols-2 xl:grid-cols-3">
+                      {group.stations.map(renderPlantStation)}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-xs text-[var(--qc-muted)]">Sin estaciones configuradas.</div>
+                  )}
+                </section>
+              ))}
+
+              <section>
+                <div className="mb-2 flex items-end justify-between gap-3">
+                  <div>
+                    <h4 className="qc-section-title">Líneas de armado</h4>
+                    <p className="mt-1 text-xs text-[var(--qc-muted)]">
+                      Las estaciones avanzan de arriba hacia abajo en cada línea.
+                    </p>
+                  </div>
+                  <span className="hidden font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)] sm:block">
+                    Flujo de producción ↓
+                  </span>
+                </div>
+                <div className="overflow-x-auto pb-2">
+                  <div className="grid min-w-[900px] grid-cols-3 gap-3">
+                    {plantView.groups.filter((group) => group.id.startsWith('line-')).map((group) => (
+                      <section key={group.id} className="border border-[var(--qc-line)] bg-white">
+                        <div className="flex items-center justify-between border-b border-[var(--qc-line)] bg-[var(--qc-ink)] px-4 py-2 text-white">
+                          <h4 className="font-display text-xs font-semibold uppercase tracking-[0.1em]">
+                            {group.title}
+                          </h4>
+                          <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-white/65">
+                            {group.stations.reduce((count, item) => count + item.modules.length, 0)} módulos
+                          </span>
+                        </div>
+                        {group.stations.length ? (
+                          <div className="grid gap-px bg-[var(--qc-line)]">
+                            {group.stations.map(renderPlantStation)}
+                          </div>
+                        ) : (
+                          <div className="p-4 text-xs text-[var(--qc-muted)]">Sin estaciones configuradas.</div>
+                        )}
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {plantView.groups.filter((group) => group.id === 'other').map((group) => (
+                <section key={group.id} className="border border-[var(--qc-line)] bg-white">
+                  <div className="flex items-center justify-between border-b border-[var(--qc-line)] px-4 py-2">
+                    <h4 className="qc-section-title">{group.title}</h4>
+                    <span className="font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">
+                      Fuera del flujo principal
+                    </span>
+                  </div>
+                  <div className="grid gap-px bg-[var(--qc-line)] md:grid-cols-2 xl:grid-cols-3">
+                    {group.stations.map(renderPlantStation)}
+                  </div>
+                </section>
+              ))}
+
+              {plantView.unmatched.length ? (
+                <section className="border border-dashed border-[var(--qc-line)] bg-white p-4">
+                  <div className="mb-3">
+                    <h4 className="qc-section-title">Sin estación identificada</h4>
+                    <p className="mt-1 text-xs text-[var(--qc-muted)]">
+                      Módulos cuya observación no tiene una ubicación de planta vigente.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {plantView.unmatched.map(renderPlantModule)}
+                  </div>
+                </section>
+              ) : null}
+
+              {!plantView.openCount ? (
+                <div className="grid min-h-36 place-items-center border border-dashed border-[var(--qc-line)] bg-white p-6 text-center">
+                  <div>
+                    <CheckCircle2 className="mx-auto h-7 w-7 text-[var(--qc-pass)]" />
+                    <p className="mt-2 font-display text-sm font-semibold uppercase tracking-[0.08em] text-[var(--qc-ink)]">
+                      Sin observaciones abiertas
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--qc-muted)]">
+                      No hay conversaciones activas para los filtros actuales.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </section>
+      )}
+
+      {canManage && createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl">
+          <div className="qc-card max-h-[92vh] w-full max-w-3xl overflow-y-auto shadow-xl">
             <div className="flex items-center justify-between border-b border-black/10 px-5 py-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.22em] text-[var(--ink-muted)]">Nueva observacion</p>
-                <h3 className="font-display text-xl text-[var(--ink)]">Crear conversacion con supervisores</h3>
+                <p className="qc-page__eyebrow">Nuevo hallazgo</p>
+                <h3 className="font-display text-2xl font-semibold uppercase tracking-[0.03em] text-[var(--ink)]">Abrir conversación</h3>
               </div>
               <button
                 type="button"

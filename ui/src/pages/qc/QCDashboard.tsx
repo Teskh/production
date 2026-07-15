@@ -899,7 +899,7 @@ const QCDashboard: React.FC = () => {
     [filterStationGroups]
   );
   const baseCardClass =
-    'group rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md';
+    'group rounded-[4px] border border-[var(--qc-line)] bg-white px-4 py-3 shadow-sm transition hover:border-[var(--qc-ink)] hover:shadow-md';
   const disabledCardClass = clsx(baseCardClass, 'pointer-events-none opacity-70');
   const locationLabel = (stationName: string | null, currentName: string | null) =>
     currentName ?? stationName ?? 'Sin estacion';
@@ -1364,9 +1364,22 @@ const QCDashboard: React.FC = () => {
     : '';
 
   return (
-    <div className="space-y-6">
+    <div className="qc-page qc-page--wide space-y-5">
+      <header className="qc-page__header">
+        <div>
+          <p className="qc-page__eyebrow">Control de calidad · Operación en planta</p>
+          <h2 className="qc-page__title">Tablero QC</h2>
+          <p className="qc-page__intro">
+            Priorice revisiones abiertas, observaciones y retrabajos; luego ubique su contexto
+            directamente en el mapa de producción.
+          </p>
+        </div>
+        <div className="hidden font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--qc-muted)] md:block">
+          Auto-refresco · {Math.floor(REFRESH_INTERVAL_MS / 1000)} s
+        </div>
+      </header>
       {(unauthorizedMessage || blockedMessage) && (
-        <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
+        <div className="qc-notice">
           {blockedMessage ?? unauthorizedMessage}
           {!canExecuteChecks ? (
             <button
@@ -1380,16 +1393,16 @@ const QCDashboard: React.FC = () => {
         </div>
       )}
       {errorMessage && (
-        <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
+        <div className="qc-notice qc-notice--error">
           {errorMessage}
         </div>
       )}
       {reportError && (
-        <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm text-[var(--ink-muted)]">
+        <div className="qc-notice qc-notice--error">
           {reportError}
         </div>
       )}
-      <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
+      <section className="qc-card p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex flex-wrap items-center gap-2">
             {([
@@ -1404,18 +1417,18 @@ const QCDashboard: React.FC = () => {
                   type="button"
                   onClick={() => setActiveTaskTab(id)}
                   className={clsx(
-                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition',
+                    'inline-flex items-center gap-2 rounded-[3px] border px-4 py-2 font-display text-xs font-semibold uppercase tracking-[0.08em] transition',
                     active
-                      ? 'bg-[var(--ink)] text-white shadow-sm'
-                      : 'border border-black/10 bg-white text-[var(--ink-muted)] hover:bg-[var(--canvas)]'
+                      ? 'border-[var(--qc-ink)] bg-[var(--qc-ink)] text-white'
+                      : 'border-[var(--qc-line)] bg-white text-[var(--qc-muted)] hover:border-[var(--qc-ink)]'
                   )}
                 >
                   <Icon className="h-4 w-4" />
                   {label}
                   <span
                     className={clsx(
-                      'rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                      active ? 'bg-white/20 text-white' : 'bg-black/5 text-[var(--ink)]'
+                      'min-w-5 border-l px-1.5 py-0.5 font-mono text-[9px] font-semibold',
+                      active ? 'border-white/30 text-white' : 'border-[var(--qc-line)] text-[var(--qc-ink)]'
                     )}
                   >
                     {count}
@@ -1430,7 +1443,7 @@ const QCDashboard: React.FC = () => {
                 type="button"
                 onClick={handleExportReport}
                 disabled={reportGenerating}
-                className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-70"
+                className="qc-btn min-h-8 px-3 py-1.5"
               >
                 <FileSpreadsheet className="h-3.5 w-3.5" />
                 {reportGenerating ? 'Generando...' : 'Reporte Excel'}
@@ -1517,7 +1530,7 @@ const QCDashboard: React.FC = () => {
             {canExecuteChecks ? (
               <Link
                 to="/qc/new"
-                className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                className="qc-btn qc-btn--primary"
               >
                 <ClipboardPlus className="h-4 w-4" />
                 Nueva inspeccion
@@ -1735,7 +1748,7 @@ const QCDashboard: React.FC = () => {
         ) : null}
       </section>
 
-      <section className="rounded-3xl border border-black/5 bg-white/90 p-5 shadow-sm">
+      <section className="qc-card p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex items-center gap-2">
             {(['panels', 'armado'] as const).map((id) => {
@@ -1746,10 +1759,10 @@ const QCDashboard: React.FC = () => {
                   type="button"
                   onClick={() => setActivePlantTab(id)}
                   className={clsx(
-                    'rounded-full px-5 py-2 text-sm font-semibold transition',
+                    'rounded-[3px] border px-5 py-2 font-display text-xs font-semibold uppercase tracking-[0.08em] transition',
                     active
-                      ? 'bg-[var(--ink)] text-white shadow-sm'
-                      : 'border border-black/10 bg-white text-[var(--ink-muted)] hover:bg-[var(--canvas)]'
+                      ? 'border-[var(--qc-ink)] bg-[var(--qc-ink)] text-white'
+                      : 'border-[var(--qc-line)] bg-white text-[var(--qc-muted)] hover:border-[var(--qc-ink)]'
                   )}
                 >
                   {id === 'panels' ? 'Paneles' : 'Armado'}

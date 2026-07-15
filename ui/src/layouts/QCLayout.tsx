@@ -17,6 +17,7 @@ import {
   type AdminSession,
   type QCLayoutStatus,
 } from './QCLayoutContext';
+import '../pages/qc/QCSystem.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -38,7 +39,7 @@ const QCLayout: React.FC = () => {
   const navItems = [
     { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
-    ...(admin ? [{ name: 'Observaciones', path: '/qc/complaints', icon: MessageSquare }] : []),
+    { name: 'Observaciones', path: '/qc/complaints', icon: MessageSquare },
     ...(admin ? [{ name: 'Checks', path: '/qc/checks', icon: ShieldCheck }] : []),
   ];
 
@@ -165,8 +166,8 @@ const QCLayout: React.FC = () => {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#fef6e7,_#f2eadb_50%,_#e9e0d0_100%)] flex items-center justify-center text-sm text-[var(--ink-muted)]">
-        Verificando sesion...
+      <div className="qc-shell flex min-h-screen items-center justify-center text-sm text-[var(--qc-muted)]">
+        Verificando sesión…
       </div>
     );
   }
@@ -194,30 +195,20 @@ const QCLayout: React.FC = () => {
   return (
     <QCSessionContext.Provider value={admin}>
       <QCLayoutStatusContext.Provider value={{ status, setStatus }}>
-        <div
-          className="relative min-h-screen bg-[radial-gradient(circle_at_top,_#fef6e7,_#f2eadb_50%,_#e9e0d0_100%)]"
-          onTouchEnd={handleTouchEnd}
-        >
-          <div className="pointer-events-none absolute inset-0">
-            <div className="absolute left-6 top-6 h-28 w-28 rounded-full bg-[rgba(242,98,65,0.18)] blur-2xl animate-drift" />
-            <div className="absolute right-10 bottom-10 h-36 w-36 rounded-full bg-[rgba(15,27,45,0.12)] blur-3xl" />
-            <div className="absolute inset-0 bg-grid opacity-[0.12]" />
-          </div>
-          <div className="relative flex min-h-screen flex-col">
-            <header className="flex flex-wrap items-center gap-4 border-b border-black/5 bg-white/75 px-6 py-4 backdrop-blur">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--ink)] text-white">
+        <div className="qc-shell" onTouchEnd={handleTouchEnd}>
+          <div className="flex min-h-screen flex-col">
+            <header className="qc-shell__header">
+              <div className="qc-shell__brand">
+                <div className="qc-shell__mark">
                   <ShieldCheck className="h-5 w-5" />
                 </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    Control de Calidad
-                  </p>
-                  <h1 className="font-display text-lg text-[var(--ink)]">Menú</h1>
+                <div className="qc-shell__brand-copy">
+                  <p className="qc-shell__kicker">Sistema de producción</p>
+                  <h1 className="qc-shell__title">Control de calidad</h1>
                 </div>
               </div>
 
-              <nav className="flex flex-wrap items-center gap-2">
+              <nav className="qc-shell__nav" aria-label="Navegación de control de calidad">
                 {navItems.map((item) => {
                   const active =
                     item.path === '/qc'
@@ -228,89 +219,76 @@ const QCLayout: React.FC = () => {
                       key={item.path}
                       to={item.path}
                       className={clsx(
-                        'flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition',
-                        active
-                          ? 'bg-[var(--ink)] text-white shadow-sm'
-                          : 'bg-white/70 text-[var(--ink)] hover:bg-white'
+                        'qc-shell__nav-link',
+                        active && 'qc-shell__nav-link--active'
                       )}
                     >
                       <item.icon className="h-4 w-4" />
-                      {item.name}
+                      <span>{item.name}</span>
                     </Link>
                   );
                 })}
               </nav>
 
-              <div className="flex-1" />
+              <div className="qc-shell__account">
               {isAuthenticated ? (
                 <>
-                  <div className="hidden sm:flex items-center gap-3 rounded-full border border-black/10 bg-white px-4 py-2 text-xs text-[var(--ink-muted)]">
-                    Sesion: {admin?.first_name} {admin?.last_name}
+                  <div className="qc-shell__user">
+                    <span className="qc-shell__user-label">Sesión QC</span>
+                    <span className="qc-shell__user-name">{admin?.first_name} {admin?.last_name}</span>
                   </div>
                   <button
                     type="button"
                     onClick={handleExitToLogin}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
+                    className="qc-shell__account-button"
                   >
-                    <LogOut className="h-4 w-4" /> Salir
+                    <LogOut className="h-4 w-4" /> <span>Salir</span>
                   </button>
                 </>
               ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={openLogin}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-                  >
-                    <LogOut className="h-4 w-4" /> Iniciar sesion
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExitToLogin}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-                  >
-                    <LogOut className="h-4 w-4" /> Salir
-                  </button>
-                </div>
+                <button type="button" onClick={openLogin} className="qc-shell__account-button">
+                  <LogOut className="h-4 w-4" /> <span>Iniciar sesión</span>
+                </button>
               )}
+              </div>
             </header>
             {(status.refreshIntervalMs || status.lastUpdated) && (
-              <div className="flex flex-wrap items-center justify-end gap-3 border-b border-black/5 bg-white/65 px-6 py-3 text-xs text-[var(--ink-muted)] backdrop-blur">
+              <div className="qc-shell__status">
                 {status.refreshIntervalMs ? (
-                  <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2">
+                  <div className="qc-shell__status-item">
                     <RefreshCw className="h-3.5 w-3.5" />
                     Auto-refresco cada {Math.floor(status.refreshIntervalMs / 1000)}s
                   </div>
                 ) : null}
                 {status.lastUpdated ? (
-                  <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-2">
+                  <div className="qc-shell__status-item">
                     <CalendarClock className="h-3.5 w-3.5" />
                     Actualizado {formatTime(status.lastUpdated)}
                   </div>
                 ) : null}
               </div>
             )}
-            <main className="flex-1 px-6 py-8">
+            <main className="qc-shell__main flex-1">
               <Outlet />
             </main>
           </div>
         </div>
         {loginOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="w-full max-w-md rounded-3xl border border-black/10 bg-white p-6 shadow-xl">
+            <div className="qc-shell__login-card">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                    QC login
+                  <p className="qc-shell__kicker text-[var(--qc-muted)]">
+                    Acceso restringido
                   </p>
-                  <h2 className="mt-2 font-display text-xl text-[var(--ink)]">
-                    Iniciar sesion
+                  <h2 className="qc-shell__title mt-2 text-[var(--qc-ink)]">
+                    Iniciar sesión QC
                   </h2>
                 </div>
                 <button
                   type="button"
                   onClick={closeLogin}
-                  className="rounded-full border border-black/10 p-2 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                    className="border border-[var(--qc-line)] p-2 text-[var(--qc-muted)] hover:text-[var(--qc-ink)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -328,7 +306,7 @@ const QCLayout: React.FC = () => {
                     type="text"
                     value={loginName}
                     onChange={(event) => setLoginName(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
+                    className="mt-2 w-full border px-4 py-2 text-sm"
                   />
                 </label>
                 <label className="block text-sm text-[var(--ink-muted)]">
@@ -337,7 +315,7 @@ const QCLayout: React.FC = () => {
                     type="password"
                     value={loginPin}
                     onChange={(event) => setLoginPin(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-2 text-sm text-[var(--ink)]"
+                    className="mt-2 w-full border px-4 py-2 text-sm"
                   />
                 </label>
                 {loginError ? (
@@ -349,8 +327,8 @@ const QCLayout: React.FC = () => {
                   type="submit"
                   disabled={loginSubmitting}
                   className={clsx(
-                    'w-full rounded-2xl px-4 py-2 text-sm font-semibold text-white transition',
-                    loginSubmitting ? 'bg-slate-400' : 'bg-[var(--ink)] hover:bg-black'
+                    'w-full border border-[var(--qc-ink)] px-4 py-2 font-display text-sm font-semibold uppercase tracking-[0.08em] text-white transition',
+                    loginSubmitting ? 'bg-slate-400' : 'bg-[var(--qc-ink)] hover:bg-black'
                   )}
                 >
                   {loginSubmitting ? 'Ingresando...' : 'Ingresar'}

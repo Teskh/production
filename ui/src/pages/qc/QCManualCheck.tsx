@@ -87,6 +87,10 @@ const QCManualCheck: React.FC = () => {
   const [adHocTitle, setAdHocTitle] = useState('');
 
   useEffect(() => {
+    if (!canCreate) {
+      setLoading(false);
+      return;
+    }
     let active = true;
     const loadData = async () => {
       setLoading(true);
@@ -116,7 +120,7 @@ const QCManualCheck: React.FC = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [canCreate]);
 
   useEffect(() => {
     if (!workUnitId) {
@@ -212,202 +216,210 @@ const QCManualCheck: React.FC = () => {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">QC manual</p>
-            <h2 className="mt-2 text-2xl font-display text-[var(--ink)]">Crear inspeccion manual</h2>
-            <p className="mt-2 text-sm text-[var(--ink-muted)]">
-              Abra una inspeccion fuera del flujo de triggers, sobre modulo o panel especifico.
-            </p>
-          </div>
-          <Link
-            to="/qc"
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink)] shadow-sm"
-          >
-            <ArrowLeft className="h-4 w-4" /> Volver al tablero
-          </Link>
+    <div className="qc-page space-y-5">
+      <header className="qc-page__header">
+        <div>
+          <p className="qc-page__eyebrow">QC manual · Apertura controlada</p>
+          <h2 className="qc-page__title">Nueva inspección</h2>
+          <p className="qc-page__intro">
+            Abra una revisión fuera del flujo automático y ubíquela en el módulo, panel y
+            estación correctos antes de comenzar.
+          </p>
         </div>
-      </section>
+        <Link to="/qc" className="qc-btn shrink-0">
+          <ArrowLeft className="h-4 w-4" /> Volver
+        </Link>
+      </header>
 
       {!canCreate ? (
-        <section className="rounded-3xl border border-black/10 bg-white p-6 text-sm text-[var(--ink-muted)] shadow-sm">
-          Tu sesion no tiene permisos QC para crear inspecciones manuales.
-          <button
-            type="button"
-            onClick={() => navigate('/qc', { state: { qcLogin: true } })}
-            className="ml-2 font-semibold text-[var(--ink)] underline"
-          >
-            Iniciar sesion QC
-          </button>
-        </section>
-      ) : null}
-
-      {(errorMessage || submitError) && (
-        <section className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 shadow-sm">
-          {submitError ?? errorMessage}
-        </section>
-      )}
-
-      <form onSubmit={handleSubmit}>
-        <section className="rounded-3xl border border-black/10 bg-white p-6 shadow-sm">
-          <div className="grid gap-5">
-            <div>
-              <label className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Tipo</label>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('ad_hoc');
-                    setCheckDefinitionId(null);
-                  }}
-                  className={clsx(
-                    'rounded-2xl border px-4 py-3 text-left transition',
-                    mode === 'ad_hoc'
-                      ? 'border-[var(--ink)] bg-[rgba(15,27,45,0.05)]'
-                      : 'border-black/10 bg-white hover:bg-[rgba(15,27,45,0.03)]'
-                  )}
-                >
-                  <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
-                    <FlaskConical className="h-4 w-4" /> Libre
-                  </span>
-                  <p className="mt-1 text-xs text-[var(--ink-muted)]">Ad-hoc con titulo libre.</p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode('definition');
-                    setAdHocTitle('');
-                  }}
-                  className={clsx(
-                    'rounded-2xl border px-4 py-3 text-left transition',
-                    mode === 'definition'
-                      ? 'border-[var(--ink)] bg-[rgba(15,27,45,0.05)]'
-                      : 'border-black/10 bg-white hover:bg-[rgba(15,27,45,0.03)]'
-                  )}
-                >
-                  <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ink)]">
-                    <ListChecks className="h-4 w-4" /> Desde check
-                  </span>
-                  <p className="mt-1 text-xs text-[var(--ink-muted)]">
-                    Usa un check definido, aunque no se haya disparado.
-                  </p>
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm text-[var(--ink)]">
-                Alcance
-                <select
-                  value={scope}
-                  onChange={(event) => setScope(event.target.value as TaskScope)}
-                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                >
-                  <option value="module">Modulo</option>
-                  <option value="panel">Panel</option>
-                  <option value="aux">Aux</option>
-                </select>
-              </label>
-
-              <label className="grid gap-2 text-sm text-[var(--ink)]">
-                Modulo objetivo
-                <select
-                  value={workUnitId ?? ''}
-                  onChange={(event) => {
-                    const next = Number(event.target.value) || null;
-                    setWorkUnitId(next);
-                    setPanelUnitId(null);
-                  }}
-                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">Seleccionar modulo...</option>
-                  {workUnits.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.project_name} · Casa {item.house_identifier} · Modulo {item.module_number}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {scope === 'panel' ? (
-              <label className="grid gap-2 text-sm text-[var(--ink)]">
-                Panel objetivo
-                <select
-                  value={panelUnitId ?? ''}
-                  onChange={(event) => setPanelUnitId(Number(event.target.value) || null)}
-                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  disabled={!workUnitId || moduleStatusLoading}
-                >
-                  <option value="">Seleccionar panel...</option>
-                  {panels.map((panel) => (
-                    <option key={panel.panel_unit_id ?? panel.panel_code} value={panel.panel_unit_id ?? ''}>
-                      {panel.panel_code ?? 'Panel'} · {panel.status}
-                    </option>
-                  ))}
-                </select>
-                {moduleStatusLoading ? (
-                  <span className="text-xs text-[var(--ink-muted)]">Cargando paneles del modulo...</span>
-                ) : null}
-              </label>
-            ) : null}
-
-            <div className="grid gap-2 text-sm text-[var(--ink)]">
-              <span>Estacion actual</span>
-              <div className="rounded-xl border border-black/10 bg-[rgba(15,27,45,0.03)] px-3 py-2 text-sm text-[var(--ink)]">
-                {workUnitId
-                  ? moduleStatusLoading
-                    ? 'Cargando estacion...'
-                    : currentStationName ?? 'Sin estacion actual'
-                  : 'Seleccione un modulo'}
-              </div>
-            </div>
-
-            {mode === 'definition' ? (
-              <label className="grid gap-2 text-sm text-[var(--ink)]">
-                Check predefinido
-                <select
-                  value={checkDefinitionId ?? ''}
-                  onChange={(event) => setCheckDefinitionId(Number(event.target.value) || null)}
-                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                >
-                  <option value="">Seleccionar check...</option>
-                  {sortedDefinitions.map((definition) => (
-                    <option key={definition.id} value={definition.id}>
-                      {definition.name} · {definition.kind === 'triggered' ? 'Trigger' : 'Plantilla manual'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <label className="grid gap-2 text-sm text-[var(--ink)]">
-                Titulo
-                <input
-                  value={adHocTitle}
-                  onChange={(event) => setAdHocTitle(event.target.value)}
-                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm"
-                  placeholder="Ej: Verificacion dimensional especial"
-                />
-              </label>
-            )}
-
+        <section className="qc-card p-6">
+          <div className="max-w-xl">
+            <p className="qc-page__eyebrow">Acceso restringido</p>
+            <h3 className="qc-page__title mt-2 text-[26px]">Se requiere una sesión QC</h3>
+            <p className="qc-page__intro">
+              La biblioteca y el tablero son públicos. Crear y ejecutar inspecciones requiere
+              identificar al responsable de calidad.
+            </p>
             <button
-              type="submit"
-              disabled={!canSubmit || loading}
-              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--ink)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1b3552] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              type="button"
+              onClick={() => navigate('/qc', { state: { qcLogin: true } })}
+              className="qc-btn qc-btn--primary mt-5"
             >
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardPlus className="h-4 w-4" />}
-              {submitting ? 'Creando...' : 'Crear e iniciar inspeccion'}
+              Iniciar sesión QC
             </button>
-
-            {loading ? (
-              <p className="text-xs text-[var(--ink-muted)]">Cargando datos iniciales...</p>
-            ) : null}
           </div>
         </section>
-      </form>
+      ) : (
+        <>
+          {(errorMessage || submitError) && (
+            <div className="qc-notice qc-notice--error">{submitError ?? errorMessage}</div>
+          )}
+
+          <form onSubmit={handleSubmit}>
+            <section className="qc-card overflow-hidden">
+              <div className="qc-card__header">
+                <h3 className="qc-section-title">
+                  <span className="qc-section-index">01</span>
+                  Origen de la inspección
+                </h3>
+              </div>
+              <div className="grid gap-6 p-5 sm:p-6">
+                <div className="qc-segment">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('ad_hoc');
+                      setCheckDefinitionId(null);
+                    }}
+                    className={clsx(
+                      'qc-segment__option',
+                      mode === 'ad_hoc' && 'qc-segment__option--active'
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <FlaskConical className="h-4 w-4" /> Revisión libre
+                    </span>
+                    <p className={clsx('mt-1 text-xs', mode === 'ad_hoc' ? 'text-white/70' : 'text-[var(--qc-muted)]')}>
+                      Registre un control puntual con título propio.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('definition');
+                      setAdHocTitle('');
+                    }}
+                    className={clsx(
+                      'qc-segment__option',
+                      mode === 'definition' && 'qc-segment__option--active'
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <ListChecks className="h-4 w-4" /> Check definido
+                    </span>
+                    <p className={clsx('mt-1 text-xs', mode === 'definition' ? 'text-white/70' : 'text-[var(--qc-muted)]')}>
+                      Reutilice una pauta existente sin esperar su gatillante.
+                    </p>
+                  </button>
+                </div>
+
+                {mode === 'definition' ? (
+                  <label className="qc-field">
+                    Check predefinido
+                    <select
+                      value={checkDefinitionId ?? ''}
+                      onChange={(event) => setCheckDefinitionId(Number(event.target.value) || null)}
+                      className="qc-input"
+                    >
+                      <option value="">Seleccionar check…</option>
+                      {sortedDefinitions.map((definition) => (
+                        <option key={definition.id} value={definition.id}>
+                          {definition.name} · {definition.kind === 'triggered' ? 'Trigger' : 'Plantilla manual'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="qc-field">
+                    Título de la revisión
+                    <input
+                      value={adHocTitle}
+                      onChange={(event) => setAdHocTitle(event.target.value)}
+                      className="qc-input"
+                      placeholder="Ej: Verificación dimensional especial"
+                      autoFocus
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div className="qc-card__header border-t border-[var(--qc-line)]">
+                <h3 className="qc-section-title">
+                  <span className="qc-section-index">02</span>
+                  Ubicación en planta
+                </h3>
+              </div>
+              <div className="grid gap-5 p-5 sm:p-6">
+                <div className="grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+                  <label className="qc-field">
+                    Alcance
+                    <select
+                      value={scope}
+                      onChange={(event) => setScope(event.target.value as TaskScope)}
+                      className="qc-input"
+                    >
+                      <option value="module">Módulo</option>
+                      <option value="panel">Panel</option>
+                      <option value="aux">Auxiliar</option>
+                    </select>
+                  </label>
+
+                  <label className="qc-field">
+                    Módulo objetivo
+                    <select
+                      value={workUnitId ?? ''}
+                      onChange={(event) => {
+                        const next = Number(event.target.value) || null;
+                        setWorkUnitId(next);
+                        setPanelUnitId(null);
+                      }}
+                      className="qc-input"
+                    >
+                      <option value="">Seleccionar módulo…</option>
+                      {workUnits.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.project_name} · Casa {item.house_identifier} · Módulo {item.module_number}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {scope === 'panel' ? (
+                  <label className="qc-field">
+                    Panel objetivo
+                    <select
+                      value={panelUnitId ?? ''}
+                      onChange={(event) => setPanelUnitId(Number(event.target.value) || null)}
+                      className="qc-input"
+                      disabled={!workUnitId || moduleStatusLoading}
+                    >
+                      <option value="">Seleccionar panel…</option>
+                      {panels.map((panel) => (
+                        <option key={panel.panel_unit_id ?? panel.panel_code} value={panel.panel_unit_id ?? ''}>
+                          {panel.panel_code ?? 'Panel'} · {panel.status}
+                        </option>
+                      ))}
+                    </select>
+                    {moduleStatusLoading ? <span>Cargando paneles del módulo…</span> : null}
+                  </label>
+                ) : null}
+
+                <div className="qc-field">
+                  Estación detectada
+                  <div className="qc-readout">
+                    {workUnitId
+                      ? moduleStatusLoading
+                        ? 'Consultando ubicación…'
+                        : currentStationName ?? 'Sin estación actual'
+                      : 'Se mostrará al seleccionar un módulo'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-[var(--qc-line)] bg-[var(--qc-paper-raised)] p-5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-[var(--qc-muted)]">
+                  La inspección se abrirá directamente en modo ejecución.
+                </p>
+                <button type="submit" disabled={!canSubmit || loading} className="qc-btn qc-btn--primary sm:min-w-[230px]">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardPlus className="h-4 w-4" />}
+                  {submitting ? 'Creando…' : 'Crear e iniciar'}
+                </button>
+              </div>
+            </section>
+          </form>
+        </>
+      )}
     </div>
   );
 };

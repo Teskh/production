@@ -11,6 +11,7 @@ import {
   Flashlight,
   Image,
 } from 'lucide-react';
+import './QCSystem.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
@@ -1138,23 +1139,24 @@ const QCExecution: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-900 text-white overflow-hidden">
+    <div className="qc-execution flex h-screen flex-col overflow-hidden text-white">
       {/* Minimal Header */}
-      <div className="flex items-center px-4 py-2 bg-slate-800/50 backdrop-blur-sm">
+      <header className="qc-execution__header flex items-center px-4 py-2">
         <button
           onClick={() => navigate('/qc')}
-          className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
+          className="qc-execution__back"
+          aria-label="Volver al tablero QC"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>
-        <div className="ml-2 text-sm text-slate-400">
-          <div className="text-xs text-slate-400">
+        <div className="ml-3 min-w-0">
+          <div className="qc-execution__context-primary truncate">
             {headerProject}
             <span className="mx-2">•</span>
             {headerHouseLabel}
           </div>
-          <div>
-            <span className="font-medium text-white">{headerModule}</span>
+          <div className="qc-execution__context-secondary truncate">
+            <span className="font-semibold text-white">{headerModule}</span>
             <span className="mx-2">•</span>
             <span>
               {headerStation}
@@ -1170,13 +1172,13 @@ const QCExecution: React.FC = () => {
             )}
           </div>
         </div>
-      </div>
+      </header>
 
       {/* Main Content: Two Carousels Side by Side */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Reference Images Carousel */}
         <div
-          className="flex-1 relative bg-slate-800 flex items-center justify-center min-h-[30vh] lg:min-h-0"
+          className="qc-execution__viewer relative flex min-h-[30vh] flex-1 items-center justify-center lg:min-h-0"
           onTouchStart={
             referenceImages.length > 1 ? handleTouchStart(refTouchState) : undefined
           }
@@ -1186,7 +1188,7 @@ const QCExecution: React.FC = () => {
               : undefined
           }
         >
-          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
+          <div className="qc-execution__viewer-label">
             Referencia
           </div>
 
@@ -1240,7 +1242,7 @@ const QCExecution: React.FC = () => {
 
         {/* Guidance Images Carousel */}
         <div
-          className="flex-1 relative bg-slate-800/50 flex items-center justify-center min-h-[30vh] lg:min-h-0"
+          className="qc-execution__viewer qc-execution__viewer--secondary relative flex min-h-[30vh] flex-1 items-center justify-center lg:min-h-0"
           onTouchStart={guidanceImages.length > 1 ? handleTouchStart(guideTouchState) : undefined}
           onTouchEnd={
             guidanceImages.length > 1
@@ -1248,8 +1250,8 @@ const QCExecution: React.FC = () => {
               : undefined
           }
         >
-          <div className="absolute top-3 left-3 bg-blue-600/80 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold z-10">
-            Guia Visual
+          <div className="qc-execution__viewer-label qc-execution__viewer-label--guide">
+            Guía visual
           </div>
 
           {guidanceImages.length > 0 ? (
@@ -1298,24 +1300,24 @@ const QCExecution: React.FC = () => {
       </div>
 
       {/* Bottom Panel: Description + Actions */}
-      <div className="bg-slate-800 border-t border-slate-700">
+      <div className="qc-execution__panel">
         {/* Description */}
-        <div className="px-4 py-3 border-b border-slate-700/50">
+        <div className="qc-execution__description px-4 py-3">
           <h2 className="text-lg font-bold text-white">{currentStepData?.title || headerTitle}</h2>
           <p className="text-sm text-slate-300 mt-1">
             {currentStepData?.desc || 'Sin guia adicional.'}
           </p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-400">
-            <span className="rounded-full bg-slate-900/60 px-3 py-1">Proyecto: {headerProject}</span>
-            <span className="rounded-full bg-slate-900/60 px-3 py-1">Casa: {headerHouse}</span>
-            <span className="rounded-full bg-slate-900/60 px-3 py-1">
-              Modulo: {headerModule}
+          <div className="qc-execution__facts mt-3">
+            <span className="qc-execution__fact">Proyecto · {headerProject}</span>
+            <span className="qc-execution__fact">Casa · {headerHouse}</span>
+            <span className="qc-execution__fact">
+              Módulo · {headerModule}
             </span>
             {headerPanel && (
-              <span className="rounded-full bg-slate-900/60 px-3 py-1">Panel: {headerPanel}</span>
+              <span className="qc-execution__fact">Panel · {headerPanel}</span>
             )}
-            <span className="rounded-full bg-slate-900/60 px-3 py-1">
-              Estacion: {headerStation}
+            <span className="qc-execution__fact">
+              Estación · {headerStation}
             </span>
           </div>
           {reworkState && (
@@ -1329,12 +1331,12 @@ const QCExecution: React.FC = () => {
         </div>
 
         {/* Actions Row */}
-        <div className="flex items-center justify-between p-3 gap-3">
+        <div className="qc-execution__actions flex items-center justify-between gap-3 p-3">
           {/* Left: Tools */}
           <div className="flex items-center gap-2">
             <button
               onClick={openRegistroCamera}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
+              className="qc-execution__tool"
             >
               <Camera className="w-4 h-4" />
               <span className="hidden sm:inline">Registro</span>
@@ -1342,7 +1344,7 @@ const QCExecution: React.FC = () => {
                 <span className="inline-block w-2 h-2 rounded-full bg-amber-400" aria-hidden="true" />
               )}
             </button>
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-slate-700 px-3 py-2 text-sm transition-colors hover:bg-slate-600">
+            <label className="qc-execution__tool cursor-pointer">
               <Image className="w-4 h-4" />
               <span className="hidden sm:inline">Galeria</span>
               <input
@@ -1360,9 +1362,7 @@ const QCExecution: React.FC = () => {
             </label>
             <button
               onClick={() => setShowNotesModal(true)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
-                notes ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-600'
-              }`}
+              className={`qc-execution__tool ${notes ? 'border-blue-400 bg-blue-800' : ''}`}
             >
               <MessageSquare className="w-4 h-4" />
               <span className="hidden sm:inline">Nota</span>
@@ -1410,15 +1410,15 @@ const QCExecution: React.FC = () => {
             <button
               onClick={() => setShowFailModal(true)}
               disabled={isSubmitting}
-              className="flex items-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 rounded-xl font-bold transition-colors"
+              className="qc-execution__action qc-execution__action--fail"
             >
               <X className="w-5 h-5" />
-              <span className="hidden sm:inline">Fallar</span>
+              <span>Fallar</span>
             </button>
             <button
               onClick={handlePass}
               disabled={isSubmitting}
-              className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98]"
+              className="qc-execution__action qc-execution__action--pass"
             >
               <Check className="w-5 h-5" />
               <span>{currentStep < steps.length - 1 ? 'Siguiente' : 'Finalizar'}</span>

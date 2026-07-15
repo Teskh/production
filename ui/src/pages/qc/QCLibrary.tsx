@@ -547,7 +547,6 @@ const QCLibrary: React.FC = () => {
   const [loadingMoreUnits, setLoadingMoreUnits] = useState(false);
   const [hasMoreUnits, setHasMoreUnits] = useState(false);
   const [unitsError, setUnitsError] = useState<string | null>(null);
-  const [isUnauthorized, setIsUnauthorized] = useState(false);
   const [unitsRefreshToken, setUnitsRefreshToken] = useState(0);
 
   const [adminUsers, setAdminUsers] = useState<AdminUserRead[]>([]);
@@ -636,7 +635,7 @@ const QCLibrary: React.FC = () => {
   }, [searchInput]);
 
   const fetchUnitsPage = useCallback(
-    async (offset: number): Promise<QCLibraryWorkUnitSummary[] | 'unauthorized'> => {
+    async (offset: number): Promise<QCLibraryWorkUnitSummary[]> => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
         offset: String(offset),
@@ -650,7 +649,6 @@ const QCLibrary: React.FC = () => {
         `${API_BASE_URL}/api/qc/library/work-units?${params.toString()}`,
         { credentials: 'include' }
       );
-      if (response.status === 401) return 'unauthorized';
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text ? parseApiErrorMessage(text) : `Solicitud fallida (${response.status})`);
@@ -662,33 +660,15 @@ const QCLibrary: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    if (!qcSession) {
-      setWorkUnits([]);
-      setLoadingUnits(false);
-      setLoadingMoreUnits(false);
-      setHasMoreUnits(false);
-      setIsUnauthorized(true);
-      return () => {
-        mounted = false;
-      };
-    }
 
     const loadUnits = async () => {
       setLoadingUnits(true);
       try {
         const data = await fetchUnitsPage(0);
         if (!mounted) return;
-        if (data === 'unauthorized') {
-          setWorkUnits([]);
-          setHasMoreUnits(false);
-          setIsUnauthorized(true);
-          setUnitsError(null);
-          return;
-        }
         setWorkUnits(data);
         setHasMoreUnits(data.length === PAGE_SIZE);
         setUnitsError(null);
-        setIsUnauthorized(false);
       } catch (error) {
         if (!mounted) return;
         const message =
@@ -703,21 +683,13 @@ const QCLibrary: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [fetchUnitsPage, qcSession, unitsRefreshToken]);
+  }, [fetchUnitsPage, unitsRefreshToken]);
 
   const loadMoreUnits = async () => {
-    if (!qcSession) return;
     if (loadingUnits || loadingMoreUnits || !hasMoreUnits) return;
     setLoadingMoreUnits(true);
     try {
       const data = await fetchUnitsPage(workUnits.length);
-      if (data === 'unauthorized') {
-        setWorkUnits([]);
-        setHasMoreUnits(false);
-        setIsUnauthorized(true);
-        setUnitsError(null);
-        return;
-      }
       setWorkUnits((prev) => {
         const existing = new Set(prev.map((unit) => unit.work_unit_id));
         return [...prev, ...data.filter((unit) => !existing.has(unit.work_unit_id))];
@@ -1216,17 +1188,6 @@ const QCLibrary: React.FC = () => {
   // Render
   // ------------------------------------------------------------------
 
-  if (isUnauthorized) {
-    return (
-      <div className="qcl qcl-card p-6 text-sm text-[var(--qcl-ink-2)]">
-        Inicia sesion como QC para ver la biblioteca.
-        <Link className="ml-2 font-semibold text-[var(--qcl-ink)] underline" to="/login">
-          Iniciar sesion
-        </Link>
-      </div>
-    );
-  }
-
   const sheetHouseIdentifier =
     workUnitDetail?.house_identifier ??
     workUnits.find((unit) => unit.work_unit_id === selectedWorkUnitId)?.house_identifier ??
@@ -1252,7 +1213,7 @@ const QCLibrary: React.FC = () => {
   })();
 
   return (
-    <div className="qcl -mx-6 -my-8 min-h-[calc(100vh-72px)] bg-[var(--qcl-paper)] px-4 py-7 sm:px-6">
+    <div className="qcl -mx-4 -my-4 min-h-[calc(100vh-72px)] bg-[var(--qcl-paper)] px-4 py-7 sm:-mx-6 sm:-my-6 sm:px-6">
       <div className="mx-auto max-w-6xl space-y-5">
         {/* ------------------------------------------------------------ */}
         {/* Masthead: title, counters, search and filters                 */}
@@ -1281,7 +1242,7 @@ const QCLibrary: React.FC = () => {
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
                 placeholder="Buscar por casa, modulo, proyecto o tipo..."
-                className="qcl-input pl-9"
+                className="qcl-input qcl-input--search"
               />
             </label>
 

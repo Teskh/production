@@ -1496,13 +1496,15 @@ const QCChecks: React.FC = () => {
       <button
         key={check.id}
         onClick={() => setSelectedCheckId(check.id)}
-        className={`group flex w-full items-center justify-between px-4 py-3 text-left transition-colors ${
-          isSelected ? 'bg-blue-50/60' : 'bg-white hover:bg-gray-50'
+        className={`group flex w-full items-center justify-between border-l-[3px] px-4 py-3 text-left transition-colors ${
+          isSelected
+            ? 'border-l-[var(--qc-open)] bg-[#edf4fc]'
+            : 'border-l-transparent bg-white hover:bg-[var(--qc-paper-raised)]'
         }`}
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className={`truncate text-sm font-medium ${isSelected ? 'text-blue-900' : 'text-gray-900'}`}>
+            <p className={`truncate text-sm font-semibold ${isSelected ? 'text-[var(--qc-open)]' : 'text-[var(--qc-ink)]'}`}>
               {check.name}
             </p>
             {!check.active && (
@@ -1589,27 +1591,35 @@ const QCChecks: React.FC = () => {
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="qc-page qc-page--wide space-y-5">
+      <header className="qc-page__header">
+        <div>
+          <p className="qc-page__eyebrow">Configuración QC · Fuente maestra</p>
+          <h2 className="qc-page__title">Catálogo de checks</h2>
+          <p className="qc-page__intro">
+            Defina la pauta una vez: contenido, fallas, gatillantes, referencias y alcance viven
+            juntos en este editor.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={handleAddCheck}
-            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm"
+            className="qc-btn qc-btn--primary"
           >
             <Plus className="h-4 w-4" /> Agregar check
           </button>
           <button
             type="button"
             onClick={handleExit}
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm text-[var(--ink)] hover:bg-black/5"
+            className="qc-btn"
           >
             Salir
           </button>
+          <div className="ml-2 hidden items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--qc-muted)] xl:flex">
+            <Filter className="h-3.5 w-3.5" /> {summaryLabel}
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
-          <Filter className="h-3.5 w-3.5" /> {summaryLabel}
-        </div>
-      </div>
+      </header>
 
       {triggerTaskIssues.length > 0 && (
         <section className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -1630,12 +1640,12 @@ const QCChecks: React.FC = () => {
         </section>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_1.9fr] items-start">
-        <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-3 bg-gray-50/50">
+      <div className="grid items-start gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <section className="qc-card overflow-hidden xl:sticky xl:top-[86px]">
+          <div className="qc-card__header flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Biblioteca de checks</h2>
-              <p className="text-xs text-gray-500">{summaryLabel}</p>
+              <h3 className="qc-section-title">Índice de checks</h3>
+              <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">{summaryLabel}</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <label className="relative">
@@ -1643,7 +1653,7 @@ const QCChecks: React.FC = () => {
                 <input
                   type="search"
                   placeholder="Buscar..."
-                  className="h-8 rounded-md border border-gray-200 bg-white pl-9 pr-3 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="qc-input qc-input--with-icon min-h-8 w-36 py-1.5 text-xs"
                   value={checkSearch}
                   onChange={(event) => setCheckSearch(event.target.value)}
                 />
@@ -1659,7 +1669,7 @@ const QCChecks: React.FC = () => {
             </div>
           </div>
 
-          <div className="border-b border-gray-100 px-4 py-3 bg-gray-50/30">
+          <div className="border-b border-[var(--qc-line)] px-4 py-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
                 Categorias y checks
@@ -1667,7 +1677,7 @@ const QCChecks: React.FC = () => {
               <button
                 type="button"
                 onClick={startNewCategory}
-                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                className="font-mono text-[9px] font-semibold uppercase tracking-[0.07em] text-[var(--qc-open)] hover:underline"
               >
                 <Plus className="h-3 w-3" /> Nueva categoria
               </button>
@@ -1705,14 +1715,14 @@ const QCChecks: React.FC = () => {
           )}
         </section>
 
-        <aside className="space-y-6">
-          <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
+        <aside className="space-y-5">
+          <section className="qc-card p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                  Editor de Check
+                <p className="qc-page__eyebrow">
+                  Editor de check
                 </p>
-                <h2 className="mt-2 text-lg font-display text-[var(--ink)]">
+                <h2 className="mt-1 font-display text-2xl font-semibold uppercase tracking-[0.03em] text-[var(--ink)]">
                   {checkDraft.name.trim() ||
                     (checkDraft.id ? `Check #${checkDraft.id}` : 'Nuevo Check')}
                 </h2>
@@ -1720,15 +1730,15 @@ const QCChecks: React.FC = () => {
               <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap border-b border-[var(--qc-line)]">
               {tabs.map((tab) => (
                 <button
                   key={tab.key}
                   onClick={() => setSelectedTab(tab.key)}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                  className={`border-b-2 px-4 py-2 font-display text-xs font-semibold uppercase tracking-[0.07em] transition ${
                     selectedTab === tab.key
-                      ? 'bg-[var(--ink)] text-white'
-                      : 'bg-white text-[var(--ink)] border border-black/10'
+                      ? 'border-[var(--qc-ink)] text-[var(--qc-ink)]'
+                      : 'border-transparent text-[var(--qc-muted)] hover:text-[var(--qc-ink)]'
                   }`}
                 >
                   <span className="inline-flex items-center gap-2">
@@ -1828,14 +1838,14 @@ const QCChecks: React.FC = () => {
                   <button
                     onClick={handleSaveCheck}
                     disabled={saving}
-                    className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                    className="qc-btn qc-btn--primary"
                   >
                     {saving ? 'Guardando...' : 'Guardar revision'}
                   </button>
                   <button
                     onClick={handleDeleteCheck}
                     disabled={saving || !checkDraft.id}
-                    className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                    className="qc-btn qc-btn--danger"
                   >
                     <Trash2 className="h-4 w-4" /> Eliminar
                   </button>

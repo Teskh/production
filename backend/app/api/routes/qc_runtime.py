@@ -1705,7 +1705,6 @@ def list_library_work_units(
     include_planned: bool = Query(default=True),
     sort: str = Query(default="planned_sequence"),
     q: str | None = Query(default=None),
-    _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> list[QCLibraryWorkUnitSummary]:
     stmt = (
@@ -1792,7 +1791,6 @@ def list_library_work_units(
 @router.get("/library/work-units/{work_unit_id}", response_model=QCLibraryWorkUnitDetail)
 def library_work_unit_detail(
     work_unit_id: int,
-    _admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> QCLibraryWorkUnitDetail:
     work_unit = db.get(WorkUnit, work_unit_id)

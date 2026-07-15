@@ -811,3 +811,29 @@ def list_supervisor_notifications(
         ).scalars()
     )
     return [QCComplaintNotificationRead.model_validate(row, from_attributes=True) for row in rows]
+
+
+@router.post(
+    "/supervisor/complaints/{complaint_id}/notifications/seen",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def mark_supervisor_complaint_notifications_seen(
+    complaint_id: int,
+    db: Session = Depends(get_db),
+    supervisor: WorkerSupervisor = Depends(get_current_supervisor),
+) -> Response:
+    _load_supervisor_complaint(db, complaint_id, supervisor)
+    now = utc_now()
+    notifications = list(
+        db.execute(
+            select(QCQualityComplaintNotification)
+            .where(QCQualityComplaintNotification.complaint_id == complaint_id)
+            .where(QCQualityComplaintNotification.supervisor_id == supervisor.id)
+            .where(QCQualityComplaintNotification.status == QCNotificationStatus.ACTIVE)
+        ).scalars()
+    )
+    for notification in notifications:
+        notification.status = QCNotificationStatus.DISMISSED
+        notification.seen_at = now
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
