@@ -13,15 +13,6 @@ from app.services.conditions import TaskConditionRules, conditions_met
 PanelApplicabilityIndex = dict[int, dict[int, TaskApplicability]]
 
 
-def _is_default_scope(row: TaskApplicability) -> bool:
-    return (
-        row.house_type_id is None
-        and row.sub_type_id is None
-        and row.module_number is None
-        and row.panel_definition_id is None
-    )
-
-
 def _matches_applicability(
     row: TaskApplicability,
     house_type_id: int,
@@ -63,8 +54,6 @@ def _resolve_applicability(
     best: TaskApplicability | None = None
     best_rank: tuple[int, int, int] | None = None
     for row in rows:
-        if _is_default_scope(row):
-            continue
         if not _matches_applicability(
             row, house_type_id, sub_type_id, module_number, panel_definition_id
         ):

@@ -13,6 +13,26 @@ from app.services.admin_bootstrap import SYSADMIN_FIRST_NAME, SYSADMIN_LAST_NAME
 router = APIRouter()
 
 
+def _normalize_email(value: str | None) -> str | None:
+    normalized = (value or "").strip().lower()
+    return normalized or None
+
+
+def _ensure_email_available(
+    db: Session, email: str | None, *, exclude_user_id: int | None = None
+) -> None:
+    if email is None:
+        return
+    stmt = select(AdminUser.id).where(func.lower(AdminUser.email) == email)
+    if exclude_user_id is not None:
+        stmt = stmt.where(AdminUser.id != exclude_user_id)
+    if db.execute(stmt).scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="email is already assigned to another admin user",
+        )
+
+
 def _is_protected_sysadmin(target: AdminUser) -> bool:
     return (
         target.first_name.strip().lower() == SYSADMIN_FIRST_NAME
@@ -76,10 +96,13 @@ def create_admin_user(
     pin = payload.pin.strip()
     if not pin:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="pin is required")
+    email = _normalize_email(payload.email)
+    _ensure_email_available(db, email)
 
     user = AdminUser(
         first_name=first_name,
         last_name=last_name,
+        email=email,
         pin=pin,
         role=payload.role.strip() or AdminRole.ADMIN.value,
         active=payload.active,
@@ -122,6 +145,10 @@ def update_admin_user(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="last_name is required"
             )
         user.last_name = last_name
+    if "email" in payload.model_fields_set:
+        email = _normalize_email(payload.email)
+        _ensure_email_available(db, email, exclude_user_id=user.id)
+        user.email = email
     if payload.pin is not None:
         pin = payload.pin.strip()
         if not pin:

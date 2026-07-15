@@ -469,7 +469,6 @@ const resolveApplicabilityRow = (
 ): TaskApplicability | null => {
   const matches = rows.filter(
     (row) =>
-      !isDefaultApplicabilityScope(row) &&
       matchesApplicabilityContext(
         row,
         houseTypeId,
@@ -995,7 +994,8 @@ const HouseConfigurator: React.FC = () => {
           row.sub_type_id === null &&
           row.panel_definition_id === null
       );
-      const resolvedApplicability = moduleRow ?? houseRow ?? null;
+      const defaultRow = pickRow(taskApplicabilityRows, isDefaultApplicabilityScope);
+      const resolvedApplicability = moduleRow ?? houseRow ?? defaultRow ?? null;
       const applies = resolvedApplicability ? resolvedApplicability.applies : true;
       const resolvedStationSequence = moduleRow
         ? moduleRow.station_sequence_order

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, Eye, FileSignature, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import MicrosoftAdminLoginButton from '../components/MicrosoftAdminLoginButton';
 import type { StationContext } from '../utils/stationContext';
 import { formatStationContext, formatStationLabel } from '../utils/stationContext';
 
@@ -228,6 +229,12 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
     () => resolveAdminErrorMessage(stationChangeAuthError),
     [stationChangeAuthError]
   );
+
+  useEffect(() => {
+    if (adminError) {
+      setAdminOpen(true);
+    }
+  }, [adminError]);
   const assemblySequenceLabelByOrder = useMemo(() => {
     const entries = new Map<number, Set<string>>();
     assemblyStations.forEach((station) => {
@@ -519,6 +526,12 @@ const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
                     >
                       Entrar a Admin
                     </button>
+                    <div className="flex items-center gap-3 py-1 text-[11px] uppercase tracking-wider text-slate-400">
+                      <span className="h-px flex-1 bg-slate-200" />
+                      o
+                      <span className="h-px flex-1 bg-slate-200" />
+                    </div>
+                    <MicrosoftAdminLoginButton returnTo="/admin" />
                   </form>
                 )}
               </div>

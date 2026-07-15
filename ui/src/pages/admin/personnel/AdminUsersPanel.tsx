@@ -11,6 +11,7 @@ type AdminUser = {
   id: number;
   first_name: string;
   last_name: string;
+  email: string | null;
   role: string;
   active: boolean;
 };
@@ -19,6 +20,7 @@ type AdminUserDraft = {
   id?: number;
   first_name: string;
   last_name: string;
+  email: string;
   role: string;
   active: boolean;
   pin: string;
@@ -27,6 +29,7 @@ type AdminUserDraft = {
 const emptyDraft = (): AdminUserDraft => ({
   first_name: '',
   last_name: '',
+  email: '',
   role: '',
   active: true,
   pin: '',
@@ -97,7 +100,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
     }
     return adminUsers.filter((user) => {
       const haystack = normalizeSearchValue(
-        `${user.first_name} ${user.last_name} ${user.role}`.trim()
+        `${user.first_name} ${user.last_name} ${user.email ?? ''} ${user.role}`.trim()
       );
       return haystack.includes(needle);
     });
@@ -130,6 +133,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
           id: found.id,
           first_name: found.first_name,
           last_name: found.last_name,
+          email: found.email ?? '',
           role: found.role,
           active: found.active,
           pin: '',
@@ -156,6 +160,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
       id: selectedUser.id,
       first_name: selectedUser.first_name,
       last_name: selectedUser.last_name,
+      email: selectedUser.email ?? '',
       role: selectedUser.role,
       active: selectedUser.active,
       pin: '',
@@ -178,6 +183,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
     }
     const firstName = draft.first_name.trim();
     const lastName = draft.last_name.trim();
+    const email = draft.email.trim();
     const role = draft.role.trim();
     if (!firstName || !lastName) {
       setStatusMessage('Nombre y apellido son requeridos.');
@@ -201,6 +207,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
           body: JSON.stringify({
             first_name: firstName,
             last_name: lastName,
+            email: email || null,
             role,
             active: draft.active,
             ...(draft.pin.trim() ? { pin: draft.pin.trim() } : {}),
@@ -214,6 +221,7 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
           body: JSON.stringify({
             first_name: firstName,
             last_name: lastName,
+            email: email || null,
             role,
             active: draft.active,
             pin: draft.pin.trim(),
@@ -318,6 +326,9 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
                           {user.first_name} {user.last_name}
                         </p>
                         <p className="text-xs text-gray-500 truncate">{user.role}</p>
+                        {user.email && (
+                          <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         {!user.active && (
@@ -402,6 +413,21 @@ const AdminUsersPanel: React.FC<Props> = ({ query, setQuery }) => {
                 value={draft.last_name}
                 onChange={(event) => setDraft((prev) => ({ ...prev, last_name: event.target.value }))}
                 disabled={selectedUser ? isProtectedSysadmin(selectedUser) : false}
+              />
+            </label>
+
+            <label className="grid gap-1 text-sm">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                Correo Microsoft
+              </span>
+              <input
+                type="email"
+                autoComplete="email"
+                className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-sm"
+                value={draft.email}
+                onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))}
+                disabled={selectedUser ? isProtectedSysadmin(selectedUser) : false}
+                placeholder="nombre@empresa.cl"
               />
             </label>
 

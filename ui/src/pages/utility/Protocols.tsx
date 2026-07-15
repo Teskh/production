@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
+import MicrosoftAdminLoginButton from '../../components/MicrosoftAdminLoginButton';
+import { consumeMicrosoftAuthError } from '../../utils/microsoftAuth';
 import {
   AlertTriangle,
   BadgeCheck,
@@ -582,6 +584,14 @@ const Protocols: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
+
+  useEffect(() => {
+    const authError = consumeMicrosoftAuthError();
+    if (authError) {
+      setActionMessage(authError);
+      setShowAdminLogin(true);
+    }
+  }, []);
 
   const managerEnabled = isProtocolManager(adminSession);
   const latestSignatureStatuses = selectedProtocol?.latest_signature_statuses ?? [];
@@ -1821,6 +1831,12 @@ const Protocols: React.FC = () => {
             <Shield className="h-4 w-4" />
             {adminSubmitting ? 'Ingresando...' : 'Ingresar'}
           </button>
+          <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-400">
+            <span className="h-px flex-1 bg-slate-200" />
+            o
+            <span className="h-px flex-1 bg-slate-200" />
+          </div>
+          <MicrosoftAdminLoginButton returnTo="/utility/protocols" />
         </form>
       </Modal>
 

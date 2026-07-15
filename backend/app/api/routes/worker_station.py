@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, get_optional_worker
 from app.models.admin import CommentTemplate, PauseReason
+from app.models.conditions import ConditionType, ConditionValue, WorkUnitCondition
 from app.models.enums import (
     PanelUnitStatus,
     QCNotificationStatus,
@@ -42,6 +43,8 @@ from app.models.work import PanelUnit, WorkOrder, WorkUnit
 from app.models.workers import TaskSkillRequirement, TaskWorkerRestriction, Worker, WorkerSkill
 from app.schemas.config import CommentTemplateRead, PauseReasonRead
 from app.schemas.worker_station import (
+    StationCondition,
+    StationConditionValue,
     StationQCEvidenceItem,
     StationQCReworkTask,
     StationSnapshot,
@@ -57,6 +60,55 @@ from app.services.task_applicability import (
 )
 
 router = APIRouter()
+
+
+def _group_work_unit_condition_rows(
+    rows: list[tuple[int, int, str, int, str]],
+) -> dict[int, list[StationCondition]]:
+    grouped: dict[int, dict[int, StationCondition]] = {}
+    for work_unit_id, type_id, type_name, value_id, value_name in rows:
+        conditions_by_type = grouped.setdefault(work_unit_id, {})
+        condition = conditions_by_type.get(type_id)
+        if condition is None:
+            condition = StationCondition(id=type_id, name=type_name)
+            conditions_by_type[type_id] = condition
+        condition.values.append(StationConditionValue(id=value_id, name=value_name))
+    return {
+        work_unit_id: list(conditions_by_type.values())
+        for work_unit_id, conditions_by_type in grouped.items()
+    }
+
+
+def _load_work_unit_conditions(
+    db: Session, work_unit_ids: set[int]
+) -> dict[int, list[StationCondition]]:
+    if not work_unit_ids:
+        return {}
+    rows = list(
+        db.execute(
+            select(
+                WorkUnitCondition.work_unit_id,
+                ConditionType.id,
+                ConditionType.name,
+                ConditionValue.id,
+                ConditionValue.name,
+            )
+            .join(
+                ConditionValue,
+                ConditionValue.id == WorkUnitCondition.condition_value_id,
+            )
+            .join(ConditionType, ConditionType.id == ConditionValue.condition_type_id)
+            .where(WorkUnitCondition.work_unit_id.in_(sorted(work_unit_ids)))
+            .where(ConditionType.active.is_(True))
+            .order_by(
+                ConditionType.name,
+                ConditionType.id,
+                ConditionValue.name,
+                ConditionValue.id,
+            )
+        ).tuples()
+    )
+    return _group_work_unit_condition_rows(rows)
 
 
 def _filter_pause_reasons(
@@ -976,6 +1028,12 @@ def station_snapshot(
         work_items.sort(
             key=lambda item: (item.project_name, item.house_identifier, item.module_number)
         )
+
+    conditions_by_work_unit = _load_work_unit_conditions(
+        db, {item.work_unit_id for item in work_items}
+    )
+    for item in work_items:
+        item.conditions = conditions_by_work_unit.get(item.work_unit_id, [])
 
     active_participation_ids: set[int] = set()
     active_nonconcurrent_ids: set[int] = set()

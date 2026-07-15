@@ -73,6 +73,13 @@ class Settings:
         )
     )
     sys_admin_password: str | None = os.getenv("SYS_ADMIN_PASSWORD")
+    microsoft_login_enabled: bool = (
+        os.getenv("MICROSOFT_LOGIN_ENABLED", "true").lower() == "true"
+    )
+    microsoft_tenant_id: str = os.getenv("MICROSOFT_TENANT_ID", "")
+    microsoft_client_id: str = os.getenv("MICROSOFT_CLIENT_ID", "")
+    microsoft_client_secret: str = os.getenv("MICROSOFT_CLIENT_SECRET", "")
+    microsoft_redirect_uri: str = os.getenv("MICROSOFT_REDIRECT_URI", "")
     camera_rtsp_username: str = os.getenv("CAMERA_RTSP_USERNAME", "admin")
     camera_rtsp_password: str = os.getenv("CAMERA_RTSP_PASSWORD", "Geoforce.2030.$")
     camera_rtsp_port: int = int(os.getenv("CAMERA_RTSP_PORT", "554"))

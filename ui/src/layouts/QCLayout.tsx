@@ -18,6 +18,8 @@ import {
   type QCLayoutStatus,
 } from './QCLayoutContext';
 import '../pages/qc/QCSystem.css';
+import MicrosoftAdminLoginButton from '../components/MicrosoftAdminLoginButton';
+import { consumeMicrosoftAuthError } from '../utils/microsoftAuth';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -42,6 +44,14 @@ const QCLayout: React.FC = () => {
     { name: 'Observaciones', path: '/qc/complaints', icon: MessageSquare },
     ...(admin ? [{ name: 'Checks', path: '/qc/checks', icon: ShieldCheck }] : []),
   ];
+
+  useEffect(() => {
+    const authError = consumeMicrosoftAuthError();
+    if (authError) {
+      setLoginError(authError);
+      setLoginOpen(true);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -333,6 +343,12 @@ const QCLayout: React.FC = () => {
                 >
                   {loginSubmitting ? 'Ingresando...' : 'Ingresar'}
                 </button>
+                <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-[var(--qc-muted)]">
+                  <span className="h-px flex-1 bg-[var(--qc-line)]" />
+                  o
+                  <span className="h-px flex-1 bg-[var(--qc-line)]" />
+                </div>
+                <MicrosoftAdminLoginButton returnTo="/qc" />
               </form>
             </div>
           </div>

@@ -456,12 +456,6 @@ const parseTaskIds = (raw: unknown): number[] | null => {
   return null;
 };
 
-const isDefaultTaskApplicabilityScope = (row: TaskApplicabilityRule): boolean =>
-  row.house_type_id == null
-  && row.sub_type_id == null
-  && row.module_number == null
-  && row.panel_definition_id == null;
-
 const matchesTaskApplicability = (
   row: TaskApplicabilityRule,
   houseTypeId: number,
@@ -505,7 +499,6 @@ const resolveTaskApplicability = (
   panelDefinitionId: number | null,
 ): TaskApplicabilityRule | null => {
   const matches = rows
-    .filter((row) => !isDefaultTaskApplicabilityScope(row))
     .filter((row) => matchesTaskApplicability(row, houseTypeId, subTypeId, moduleNumber, panelDefinitionId));
   if (!matches.length) return null;
   return matches.sort(compareTaskApplicabilityRank)[0] ?? null;

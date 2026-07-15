@@ -80,6 +80,59 @@ class TaskApplicabilityTests(unittest.TestCase):
         self.assertTrue(applies)
         self.assertEqual(station_sequence, 1)
 
+    def test_global_false_default_suppresses_new_task(self) -> None:
+        task_def = task(10, "New task", 1)
+        row = TaskApplicability(
+            id=1,
+            task_definition_id=10,
+            house_type_id=None,
+            sub_type_id=None,
+            module_number=None,
+            panel_definition_id=None,
+            applies=False,
+            station_sequence_order=1,
+        )
+
+        applies, station_sequence = resolve_task_station_sequence(
+            task_def,
+            [row],
+            house_type_id=1,
+            sub_type_id=None,
+            module_number=1,
+            panel_definition_id=100,
+        )
+
+        self.assertFalse(applies)
+        self.assertIsNone(station_sequence)
+
+    def test_scoped_true_override_wins_over_global_false_default(self) -> None:
+        task_def = task(10, "New task", 1)
+        global_row = TaskApplicability(
+            id=1,
+            task_definition_id=10,
+            applies=False,
+            station_sequence_order=1,
+        )
+        panel_row = TaskApplicability(
+            id=2,
+            task_definition_id=10,
+            panel_definition_id=100,
+            applies=True,
+            station_sequence_order=2,
+        )
+
+        applies, station_sequence = resolve_task_station_sequence(
+            task_def,
+            [global_row, panel_row],
+            house_type_id=1,
+            sub_type_id=None,
+            module_number=1,
+            panel_definition_id=100,
+        )
+
+        self.assertTrue(applies)
+        self.assertEqual(station_sequence, 2)
+
     def test_panel_applicability_index_keeps_first_row_per_panel_task(self) -> None:
         first = TaskApplicability(
             id=1,

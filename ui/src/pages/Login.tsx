@@ -4,6 +4,7 @@ import { Lock, MapPin, QrCode, Settings, User } from 'lucide-react';
 import LoginSettings from './LoginSettings';
 import QRCodeScannerModal from '../components/QRCodeScannerModal';
 import PanelStationGoalPanel from '../components/PanelStationGoalPanel';
+import { consumeMicrosoftAuthError } from '../utils/microsoftAuth';
 import type { StationContext } from '../utils/stationContext';
 import {
   SPECIFIC_STATION_ID_STORAGE_KEY,
@@ -392,6 +393,14 @@ const Login: React.FC = () => {
       window.matchMedia?.('(pointer: coarse)').matches ||
       'ontouchstart' in window
     );
+  }, []);
+
+  useEffect(() => {
+    const authError = consumeMicrosoftAuthError();
+    if (authError) {
+      setAdminError(authError);
+      setShowSettings(true);
+    }
   }, []);
 
   useEffect(() => {

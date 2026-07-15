@@ -31,9 +31,12 @@ uses same-origin cookie sessions and Vite proxies API requests during developmen
 
 ## Authorization
 
-Admin sessions establish identity. Admin page permissions are enforced both by the UI and
-by backend dependencies on mapped mutation endpoints. Worker and supervisor workflows use
-their own session cookies and route dependencies.
+Admin sessions establish identity. Admins can use the existing local name/PIN login or
+Microsoft Entra ID; both methods create the same database-backed `admin_session`. Entra
+sign-in matches the Microsoft work email to an existing active `admin_users` record and
+does not create users or replace local role permissions. Admin page permissions are
+enforced both by the UI and by backend dependencies on mapped mutation endpoints. Worker
+and supervisor workflows use their own session cookies and route dependencies.
 
 ## Verification
 

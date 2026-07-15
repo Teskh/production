@@ -29,6 +29,17 @@ class StationTask(BaseModel):
     backlog: bool = False
 
 
+class StationConditionValue(BaseModel):
+    id: int
+    name: str
+
+
+class StationCondition(BaseModel):
+    id: int
+    name: str
+    values: list[StationConditionValue] = Field(default_factory=list)
+
+
 class StationWorkItem(BaseModel):
     id: str
     scope: TaskScope
@@ -45,6 +56,7 @@ class StationWorkItem(BaseModel):
     tasks: list[StationTask]
     other_tasks: list[StationTask]
     backlog_tasks: list[StationTask] = Field(default_factory=list)
+    conditions: list[StationCondition] = Field(default_factory=list)
     recommended: bool = False
 
 

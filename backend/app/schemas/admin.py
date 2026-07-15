@@ -11,6 +11,7 @@ class AdminUserRead(BaseModel):
     id: int
     first_name: str
     last_name: str
+    email: str | None
     role: str
     active: bool
 
@@ -20,6 +21,7 @@ class AdminUserRead(BaseModel):
 class AdminUserCreate(BaseModel):
     first_name: str
     last_name: str
+    email: str | None = None
     pin: str
     role: str
     active: bool = True
@@ -28,6 +30,7 @@ class AdminUserCreate(BaseModel):
 class AdminUserUpdate(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
+    email: str | None = None
     pin: str | None = None
     role: str | None = None
     active: bool | None = None

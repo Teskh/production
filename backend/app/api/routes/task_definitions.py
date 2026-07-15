@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.enums import RestrictionType
-from app.models.tasks import TaskDefinition
+from app.models.tasks import TaskApplicability, TaskDefinition
 from app.models.workers import Skill, TaskSkillRequirement, TaskWorkerRestriction, Worker
 from app.schemas.tasks import (
     TaskAllowedWorkers,
@@ -57,6 +57,18 @@ def create_task_definition(
 ) -> TaskDefinition:
     task = TaskDefinition(**payload.model_dump())
     db.add(task)
+    db.flush()
+    db.add(
+        TaskApplicability(
+            task_definition_id=task.id,
+            house_type_id=None,
+            sub_type_id=None,
+            module_number=None,
+            panel_definition_id=None,
+            applies=False,
+            station_sequence_order=task.default_station_sequence,
+        )
+    )
     db.commit()
     db.refresh(task)
     return task
@@ -104,6 +116,9 @@ def delete_task_definition(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
         )
+    db.query(TaskApplicability).filter(
+        TaskApplicability.task_definition_id == task_definition_id
+    ).delete(synchronize_session=False)
     db.delete(task)
     db.commit()
 

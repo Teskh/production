@@ -177,7 +177,17 @@ type StationWorkItem = {
   tasks: StationTask[];
   other_tasks: StationTask[];
   backlog_tasks: StationTask[];
+  conditions: StationCondition[];
   recommended: boolean;
+};
+
+type StationCondition = {
+  id: number;
+  name: string;
+  values: Array<{
+    id: number;
+    name: string;
+  }>;
 };
 
 type StationSnapshot = {
@@ -1270,6 +1280,18 @@ const StationWorkspace: React.FC = () => {
           {item.house_type_name}
           {item.sub_type_name ? ` - ${item.sub_type_name}` : ''}
         </div>
+        {item.conditions.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {item.conditions.map((condition) => (
+              <span
+                key={condition.id}
+                className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+              >
+                {condition.name}: {condition.values.map((value) => value.name).join(', ')}
+              </span>
+            ))}
+          </div>
+        )}
       </>
     );
   };
@@ -2489,6 +2511,24 @@ const StationWorkspace: React.FC = () => {
                     {selectedWorkItem.project_name} - {selectedWorkItem.house_identifier} -
                     Modulo {selectedWorkItem.module_number}
                   </p>
+                  {selectedWorkItem.conditions.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-700">
+                        Condiciones del modulo
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap gap-2">
+                        {selectedWorkItem.conditions.map((condition) => (
+                          <span
+                            key={condition.id}
+                            className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900"
+                          >
+                            <span className="text-amber-700">{condition.name}:</span>{' '}
+                            {condition.values.map((value) => value.name).join(', ')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {!isMagazineStation && selectedWorkItem.other_tasks.length > 0 && (
                   <button

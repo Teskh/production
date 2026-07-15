@@ -28,6 +28,26 @@ cd ui && npm run dev -- --host 0.0.0.0 --port 5173
 
 Vite proxies `/api` and `/media_gallery` to the backend development server.
 
+## Microsoft admin login
+
+Microsoft sign-in is an additional admin login method; local name/PIN login remains
+available. Configure these values in the ignored root or `backend/.env` file:
+
+```dotenv
+MICROSOFT_LOGIN_ENABLED=true
+MICROSOFT_TENANT_ID=<tenant-id>
+MICROSOFT_CLIENT_ID=<client-id>
+MICROSOFT_CLIENT_SECRET=<client-secret-value>
+MICROSOFT_REDIRECT_URI=http://localhost:5173/api/admin/microsoft/callback
+```
+
+The redirect URI must exactly match a Web redirect URI registered in Entra. Set an
+explicit URI for Vite development because the browser uses port 5173 while the proxied
+backend listens on port 2340. Production must use its externally reachable HTTPS origin,
+for example `https://production.example/api/admin/microsoft/callback`. After changing env
+values, restart the backend. Assign each eligible admin's Microsoft work email under
+Admin > Personal > Equipo admin before testing sign-in.
+
 ## Verification
 
 ```bash
