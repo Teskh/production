@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ExternalLink,
   FileImage,
+  MessageSquareText,
   Plus,
   Search,
   ShieldCheck,
@@ -365,6 +366,7 @@ type CheckStory = {
   lastOutcome: QCExecutionOutcome | null;
   lastActivityTs: string;
   hasFail: boolean;
+  noteCount: number;
   openReworkCount: number;
 };
 
@@ -435,8 +437,16 @@ const StoryEventRow: React.FC<{
               {adminNameById.get(event.execution.performed_by_user_id) ??
                 `Usuario #${event.execution.performed_by_user_id}`}
             </p>
-            {event.execution.notes ? (
-              <p className="mt-1 text-sm">{event.execution.notes}</p>
+            {event.execution.notes?.trim() ? (
+              <div className="qcl-note mt-2">
+                <div className="qcl-note__label">
+                  <MessageSquareText className="h-3.5 w-3.5" />
+                  Nota
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                  {event.execution.notes.trim()}
+                </p>
+              </div>
             ) : null}
             {event.execution.failure_modes.length ? (
               <p className="mt-1 text-xs text-[var(--qcl-ink-2)]">
@@ -494,6 +504,12 @@ const CheckStoryCard: React.FC<{
             ) : null}
             {story.openReworkCount > 0 ? (
               <Tag tone="qcl-rework">{story.openReworkCount} rework abierto</Tag>
+            ) : null}
+            {story.noteCount > 0 ? (
+              <span className="qcl-note-indicator">
+                <MessageSquareText className="h-3.5 w-3.5" />
+                {story.noteCount} {story.noteCount === 1 ? 'nota' : 'notas'}
+              </span>
             ) : null}
           </div>
         </div>
@@ -954,6 +970,7 @@ const QCLibrary: React.FC = () => {
           lastOutcome: lastExecution?.outcome ?? null,
           lastActivityTs: events[events.length - 1]?.ts ?? check.opened_at,
           hasFail: executions.some((execution) => execution.outcome === 'Fail'),
+          noteCount: executions.filter((execution) => Boolean(execution.notes?.trim())).length,
           openReworkCount: reworks.filter(
             (rework) => rework.status === 'Open' || rework.status === 'InProgress'
           ).length,
@@ -1027,6 +1044,25 @@ const QCLibrary: React.FC = () => {
   const hasDeleteRole = qcSession ? QC_DELETE_ROLES.has(qcSession.role) : false;
   const hasFailedExecution =
     checkDetail?.executions.some((execution) => execution.outcome === 'Fail') ?? false;
+  const checkNotes = useMemo(() => {
+    if (!checkDetail) return [];
+    return checkDetail.executions
+      .flatMap((execution) => {
+        const note = execution.notes?.trim();
+        return note
+          ? [
+              {
+                executionId: execution.id,
+                note,
+                outcome: execution.outcome,
+                performedByUserId: execution.performed_by_user_id,
+                performedAt: execution.performed_at,
+              },
+            ]
+          : [];
+      })
+      .sort((a, b) => b.performedAt.localeCompare(a.performedAt));
+  }, [checkDetail]);
   const hasReworkTask = (checkDetail?.rework_tasks.length ?? 0) > 0;
   const checkDeleteWindowExpired = checkDetail
     ? !isWithinDeleteWindow(checkDetail.check_instance.opened_at)
@@ -1550,6 +1586,12 @@ const QCLibrary: React.FC = () => {
                       <Tag tone={checkStatusTone(checkDetail.check_instance.status)}>
                         {checkStatusLabel[checkDetail.check_instance.status]}
                       </Tag>
+                      {checkNotes.length ? (
+                        <span className="qcl-note-indicator">
+                          <MessageSquareText className="h-3.5 w-3.5" />
+                          {checkNotes.length} {checkNotes.length === 1 ? 'nota' : 'notas'}
+                        </span>
+                      ) : null}
                       {checkDetail.check_instance.severity_level ? (
                         <Tag tone={severityTone[checkDetail.check_instance.severity_level]}>
                           {severityLabel[checkDetail.check_instance.severity_level]}
@@ -1616,6 +1658,34 @@ const QCLibrary: React.FC = () => {
                     ) : null}
                   </section>
 
+                  {checkNotes.length ? (
+                    <section className="qcl-card overflow-hidden">
+                      <div className="flex items-center gap-2 border-b border-[var(--qcl-line-soft)] bg-[var(--qcl-paper-2)] px-4 py-3">
+                        <MessageSquareText className="h-4 w-4 text-[var(--qcl-open)]" />
+                        <h4 className="qcl-h">Notas del check ({checkNotes.length})</h4>
+                      </div>
+                      <div className="divide-y divide-[var(--qcl-line-soft)]">
+                        {checkNotes.map((item) => (
+                          <div key={item.executionId} className="px-4 py-3.5">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <OutcomeStamp outcome={item.outcome} />
+                              <span className="text-xs text-[var(--qcl-ink-2)]">
+                                {adminNameById.get(item.performedByUserId) ??
+                                  `Usuario #${item.performedByUserId}`}
+                              </span>
+                              <span className="qcl-mono text-[11px] text-[var(--qcl-ink-2)]">
+                                {formatDateTimeShort(item.performedAt)}
+                              </span>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed">
+                              {item.note}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
                   {checkDetail.trigger_task ? (
                     <section className="qcl-card p-4">
                       <p className="qcl-eyebrow">Tarea verificada (origen)</p>
@@ -1676,8 +1746,16 @@ const QCLibrary: React.FC = () => {
                                     {adminNameById.get(exec.performed_by_user_id) ??
                                       `Usuario #${exec.performed_by_user_id}`}
                                   </div>
-                                  {exec.notes ? (
-                                    <div className="mt-2 text-sm">{exec.notes}</div>
+                                  {exec.notes?.trim() ? (
+                                    <div className="qcl-note mt-3">
+                                      <div className="qcl-note__label">
+                                        <MessageSquareText className="h-3.5 w-3.5" />
+                                        Nota
+                                      </div>
+                                      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                                        {exec.notes.trim()}
+                                      </p>
+                                    </div>
                                   ) : null}
                                   {exec.failure_modes.length ? (
                                     <div className="mt-2 text-xs text-[var(--qcl-ink-2)]">

@@ -164,6 +164,7 @@ def sync_panel_task_applicability(
             select(TaskDefinition)
             .where(TaskDefinition.scope == TaskScope.PANEL)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
             .order_by(TaskDefinition.id)
         ).scalars()
     )

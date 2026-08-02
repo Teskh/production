@@ -5,14 +5,17 @@ from pathlib import Path
 import random
 import time
 import uuid
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import BASE_DIR, settings
+from app.db.session import SessionLocal
+from app.services import company_access
 from app.services import backups as backup_service
 from app.services import shift_estimate_scheduler as shift_estimate_scheduler_service
 
@@ -48,6 +51,63 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 logger = logging.getLogger(__name__)
+
+_COMPANY_GATE_PUBLIC_PATHS = {
+    "/health",
+    "/api/auth/microsoft/login",
+    "/api/auth/microsoft/callback",
+    "/favicon.ico",
+    "/robots.txt",
+    "/vite.svg",
+}
+_COMPANY_GATE_PUBLIC_PREFIXES = ("/assets/",)
+
+
+def _company_login_url(request: Request) -> str:
+    return_path = request.url.path
+    if request.url.query:
+        return_path = f"{return_path}?{request.url.query}"
+    return "/api/auth/microsoft/login?" + urlencode(
+        {"purpose": "company", "next": return_path}
+    )
+
+
+@app.middleware("http")
+async def enforce_company_access(request: Request, call_next):
+    if (
+        not settings.company_access_gate_enabled
+        or request.method == "OPTIONS"
+        or request.url.path in _COMPANY_GATE_PUBLIC_PATHS
+        or request.url.path.startswith(_COMPANY_GATE_PUBLIC_PREFIXES)
+        or company_access.is_trusted_network_request(request)
+    ):
+        return await call_next(request)
+
+    try:
+        with SessionLocal() as db:
+            has_access = company_access.has_valid_company_access(
+                request.cookies.get(company_access.COMPANY_ACCESS_COOKIE), db
+            )
+    except Exception:
+        logger.exception("Company access gate could not validate its session")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Company access validation is unavailable."},
+        )
+
+    if has_access:
+        return await call_next(request)
+
+    login_url = _company_login_url(request)
+    if request.url.path.startswith("/api/") or request.method not in {"GET", "HEAD"}:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Microsoft company authentication is required.",
+                "login_url": login_url,
+            },
+        )
+    return RedirectResponse(url=login_url, status_code=303)
 
 
 def _resolve_ui_asset(path: str) -> Path | None:

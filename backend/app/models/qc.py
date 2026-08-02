@@ -211,7 +211,7 @@ class QCExecution(Base):
     performed_by_user_id: Mapped[int] = mapped_column(
         ForeignKey("admin_users.id"), index=True
     )
-    performed_at: Mapped[datetime] = mapped_column(DateTime)
+    performed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class QCFailureModeDefinition(Base):
@@ -264,6 +264,23 @@ class MediaAsset(Base):
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     watermark_text: Mapped[str | None] = mapped_column(String(400), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class QCEvidenceUpload(Base):
+    __tablename__ = "qc_evidence_uploads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_instance_id: Mapped[int] = mapped_column(
+        ForeignKey("qc_check_instances.id", ondelete="CASCADE"), index=True
+    )
+    media_asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), unique=True
+    )
+    uploaded_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_users.id"), index=True
+    )
+    client_upload_id: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class QCEvidence(Base):

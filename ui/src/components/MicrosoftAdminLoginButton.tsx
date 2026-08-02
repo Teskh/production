@@ -19,7 +19,7 @@ const MicrosoftMark: React.FC = () => (
 
 const MicrosoftAdminLoginButton: React.FC<Props> = ({ returnTo, className }) => {
   const handleClick = () => {
-    const endpoint = `${API_BASE_URL}/api/admin/microsoft/login`;
+    const endpoint = `${API_BASE_URL}/api/auth/microsoft/login`;
     const url = new URL(endpoint, window.location.origin);
     url.searchParams.set('next', returnTo);
     window.location.assign(url.toString());

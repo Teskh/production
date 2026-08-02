@@ -61,3 +61,4 @@ docs/references/
 *.dump
 backend/media_gallery/
 backend/backups/
+backend/runtime/

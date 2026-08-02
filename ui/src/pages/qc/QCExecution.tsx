@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Camera,
@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Flashlight,
   Image,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import './QCSystem.css';
 
@@ -85,6 +87,27 @@ type QCStep = {
   image?: string | null;
 };
 
+type EvidenceUploadStatus = 'pending' | 'uploading' | 'uploaded' | 'error';
+
+type EvidenceItem = {
+  url: string;
+  id: string;
+  type: 'image' | 'video';
+  file: File;
+  uploadId?: number;
+  uploadStatus: EvidenceUploadStatus;
+  uploadError?: string;
+};
+
+type QCEvidenceUploadResponse = {
+  id: number;
+  client_upload_id: string;
+  uri: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
 type TorchMediaTrackCapabilities = MediaTrackCapabilities & {
   torch?: boolean;
 };
@@ -96,10 +119,27 @@ type TorchMediaTrackConstraintSet = MediaTrackConstraintSet & {
 const apiRequest = async <T,>(path: string): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    throw new Error(
+      await responseErrorMessage(response, `Solicitud fallida (${response.status})`)
+    );
   }
   return (await response.json()) as T;
+};
+
+const responseErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+  const text = await response.text();
+  if (!text) {
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    if (typeof parsed.detail === 'string') {
+      return parsed.detail;
+    }
+  } catch {
+    // Keep the server response when it is not JSON.
+  }
+  return text;
 };
 
 const apiJsonRequest = async <T,>(path: string, payload: unknown, method = 'POST'): Promise<T> => {
@@ -110,8 +150,9 @@ const apiJsonRequest = async <T,>(path: string, payload: unknown, method = 'POST
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    throw new Error(
+      await responseErrorMessage(response, `Solicitud fallida (${response.status})`)
+    );
   }
   if (response.status === 204) {
     return undefined as T;
@@ -172,6 +213,13 @@ const getSupportedVideoRecordingMimeType = (): string | null => {
   return VIDEO_RECORDING_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? null;
 };
 
+const createEvidenceId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `qc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 const QCExecution: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -204,7 +252,6 @@ const QCExecution: React.FC = () => {
   const [refImageIndex, setRefImageIndex] = useState(0);
   const [guideImageIndex, setGuideImageIndex] = useState(0);
 
-  type EvidenceItem = { url: string; id: string; type: 'image' | 'video'; file?: File };
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [notes, setNotes] = useState('');
   const [selectedFailureModeIds, setSelectedFailureModeIds] = useState<string[]>([]);
@@ -232,6 +279,7 @@ const QCExecution: React.FC = () => {
   const evidenceUrlsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    const evidenceUrls = evidenceUrlsRef.current;
     return () => {
       if (recordingIntervalRef.current !== null) {
         window.clearInterval(recordingIntervalRef.current);
@@ -239,8 +287,8 @@ const QCExecution: React.FC = () => {
       if (recordingTimeoutRef.current !== null) {
         window.clearTimeout(recordingTimeoutRef.current);
       }
-      evidenceUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-      evidenceUrlsRef.current.clear();
+      evidenceUrls.forEach((url) => URL.revokeObjectURL(url));
+      evidenceUrls.clear();
     };
   }, []);
 
@@ -372,7 +420,11 @@ const QCExecution: React.FC = () => {
       required: true,
       image: null,
     };
-  }, [checkDetail?.check_definition, checkDetail?.check_instance?.check_name]);
+  }, [
+    checkDetail?.check_definition,
+    checkDetail?.check_instance?.ad_hoc_guidance,
+    checkDetail?.check_instance?.check_name,
+  ]);
 
   const steps = useMemo<QCStep[]>(() => {
     return runtimeStep ? [runtimeStep] : [];
@@ -535,7 +587,7 @@ const QCExecution: React.FC = () => {
     return lines.filter(Boolean);
   };
 
-  const clearRecordingTimers = () => {
+  const clearRecordingTimers = useCallback(() => {
     if (recordingIntervalRef.current !== null) {
       window.clearInterval(recordingIntervalRef.current);
       recordingIntervalRef.current = null;
@@ -544,14 +596,17 @@ const QCExecution: React.FC = () => {
       window.clearTimeout(recordingTimeoutRef.current);
       recordingTimeoutRef.current = null;
     }
-  };
+  }, []);
 
-  const getCameraVideoTrack = () => cameraStreamRef.current?.getVideoTracks()[0] ?? null;
+  const getCameraVideoTrack = useCallback(
+    () => cameraStreamRef.current?.getVideoTracks()[0] ?? null,
+    []
+  );
 
-  const canUseTorch = (track: MediaStreamTrack | null) => {
+  const canUseTorch = useCallback((track: MediaStreamTrack | null) => {
     const capabilities = track?.getCapabilities?.() as TorchMediaTrackCapabilities | undefined;
     return Boolean(capabilities?.torch);
-  };
+  }, []);
 
   const applyTorch = async (enabled: boolean) => {
     const track = getCameraVideoTrack();
@@ -575,7 +630,7 @@ const QCExecution: React.FC = () => {
     }
   };
 
-  const stopCamera = (discardRecording = false) => {
+  const stopCamera = useCallback((discardRecording = false) => {
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       discardRecordingOnStopRef.current = discardRecording;
@@ -600,10 +655,10 @@ const QCExecution: React.FC = () => {
     setTorchSupported(false);
     setTorchEnabled(false);
     setTorchError(null);
-  };
+  }, [canUseTorch, clearRecordingTimers, getCameraVideoTrack]);
 
   useEffect(() => {
-    if (!showCamera) {
+    if (!showCamera || previewEvidenceId) {
       stopCamera();
       setCameraReady(false);
       setCameraError(null);
@@ -657,7 +712,7 @@ const QCExecution: React.FC = () => {
       active = false;
       stopCamera(true);
     };
-  }, [showCamera]);
+  }, [canUseTorch, previewEvidenceId, showCamera, stopCamera]);
 
   const handleCameraCapture = async () => {
     if (isRecording || isProcessingRecording) {
@@ -717,10 +772,11 @@ const QCExecution: React.FC = () => {
     setEvidence((prev) => [
       ...prev,
       {
-        id: `${file.name}-${file.lastModified}-${file.size}`,
+        id: createEvidenceId(),
         url,
         type: 'image',
         file,
+        uploadStatus: 'pending',
       },
     ]);
     setCaptureFlash(true);
@@ -729,7 +785,6 @@ const QCExecution: React.FC = () => {
     setActionError(null);
   };
 
-  const hasVideoEvidence = evidence.some((item) => item.type === 'video');
   const videoRecordingMimeType = getSupportedVideoRecordingMimeType();
 
   const stopVideoRecording = () => {
@@ -758,36 +813,20 @@ const QCExecution: React.FC = () => {
       return;
     }
 
-    const imageItems: EvidenceItem[] = [];
-    let videoItem: EvidenceItem | null = null;
-
-    for (const file of acceptedFiles) {
+    const items = acceptedFiles.map((file): EvidenceItem => {
       const type: EvidenceItem['type'] = file.type.startsWith('video/') ? 'video' : 'image';
-      if (type === 'video' && videoItem) {
-        continue;
-      }
       const url = URL.createObjectURL(file);
       evidenceUrlsRef.current.add(url);
-      const item = {
-        id: `${file.name}-${file.lastModified}-${file.size}`,
+      return {
+        id: createEvidenceId(),
         url,
         type,
         file,
+        uploadStatus: 'pending',
       };
-      if (type === 'video') {
-        videoItem = item;
-      } else {
-        imageItems.push(item);
-      }
-    }
-
-    setEvidence((prev) => {
-      const next = videoItem ? prev.filter((item) => item.type !== 'video') : [...prev];
-      return [...next, ...imageItems, ...(videoItem ? [videoItem] : [])];
     });
-    if (videoItem) {
-      setPreviewEvidenceId(videoItem.id);
-    }
+
+    setEvidence((prev) => [...prev, ...items]);
     setEvidenceGateError(null);
     setActionError(null);
   };
@@ -799,10 +838,6 @@ const QCExecution: React.FC = () => {
     }
     if (!videoRecordingMimeType) {
       setCameraError('Este navegador no soporta grabacion de video.');
-      return;
-    }
-    if (hasVideoEvidence) {
-      setCameraError('Solo se permite un video por revision.');
       return;
     }
     if (isProcessingRecording) {
@@ -865,16 +900,17 @@ const QCExecution: React.FC = () => {
         const fileName = `qc-${checkId ?? 'check'}-${Date.now()}${fileExtension}`;
         const file = new File([blob], fileName, { type: blob.type || recorder.mimeType || 'video/webm' });
         const url = URL.createObjectURL(blob);
-        const evidenceId = `${file.name}-${file.lastModified}-${file.size}`;
+        const evidenceId = createEvidenceId();
 
         evidenceUrlsRef.current.add(url);
         setEvidence((prev) => [
-          ...prev.filter((item) => item.type !== 'video'),
+          ...prev,
           {
             id: evidenceId,
             url,
             type: 'video',
             file,
+            uploadStatus: 'pending',
           },
         ]);
         setPreviewEvidenceId(evidenceId);
@@ -906,44 +942,83 @@ const QCExecution: React.FC = () => {
   const evidenceRequiredForOutcome = (outcome: 'Pass' | 'Fail' | 'Skip' | 'Waive') =>
     outcome === 'Pass' || outcome === 'Fail';
 
-  const uploadEvidence = async (executionId: number) => {
-    const uploads = evidence.filter((item) => item.file);
-    for (const item of uploads) {
-      const formData = new FormData();
-      formData.append('file', item.file as File);
-      const maxAttempts = item.type === 'video' ? 3 : 1;
-      let uploaded = false;
-      let lastError: Error | null = null;
+  const updateEvidenceUploadState = (
+    id: string,
+    patch: Partial<Pick<EvidenceItem, 'uploadId' | 'uploadStatus' | 'uploadError'>>
+  ) => {
+    setEvidence((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    );
+  };
 
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/qc/executions/${executionId}/evidence`, {
-            method: 'POST',
-            credentials: 'include',
-            body: formData,
-          });
-          if (!response.ok) {
-            const text = await response.text();
-            throw new Error(text || `No se pudo subir registro (${response.status})`);
-          }
-          uploaded = true;
-          break;
-        } catch (error) {
-          lastError =
-            error instanceof Error ? error : new Error('No se pudo subir el registro.');
-          if (attempt < maxAttempts - 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
-          }
-        }
-      }
+  const stageEvidenceItem = async (item: EvidenceItem): Promise<number> => {
+    if (!checkId) {
+      throw new Error('No se encontro la revision para subir el registro.');
+    }
+    if (item.uploadId) {
+      return item.uploadId;
+    }
 
-      if (!uploaded) {
-        if (item.type === 'video') {
-          console.warn('QC video evidence upload dropped after retries', lastError);
-          continue;
+    updateEvidenceUploadState(item.id, {
+      uploadStatus: 'uploading',
+      uploadError: undefined,
+    });
+    const formData = new FormData();
+    formData.append('client_upload_id', item.id);
+    formData.append('file', item.file);
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/qc/check-instances/${checkId}/evidence-uploads`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
         }
-        throw lastError ?? new Error('No se pudo subir el registro.');
+      );
+      if (!response.ok) {
+        throw new Error(
+          await responseErrorMessage(
+            response,
+            `No se pudo subir registro (${response.status})`
+          )
+        );
       }
+      const uploaded = (await response.json()) as QCEvidenceUploadResponse;
+      updateEvidenceUploadState(item.id, {
+        uploadId: uploaded.id,
+        uploadStatus: 'uploaded',
+        uploadError: undefined,
+      });
+      return uploaded.id;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo subir el registro.';
+      updateEvidenceUploadState(item.id, {
+        uploadStatus: 'error',
+        uploadError: message,
+      });
+      throw new Error(message);
+    }
+  };
+
+  const stageEvidenceUploads = async (): Promise<number[]> => {
+    const uploadIds: number[] = [];
+    for (const item of evidence) {
+      uploadIds.push(await stageEvidenceItem(item));
+    }
+    return uploadIds;
+  };
+
+  const retryEvidenceItem = async (id: string) => {
+    const item = evidence.find((candidate) => candidate.id === id);
+    if (!item || item.uploadStatus === 'uploading') {
+      return;
+    }
+    setActionError(null);
+    try {
+      await stageEvidenceItem(item);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo subir el registro.');
     }
   };
 
@@ -983,20 +1058,19 @@ const QCExecution: React.FC = () => {
               .map((value) => Number(value))
               .filter((value) => !Number.isNaN(value))
           : [];
+      const evidenceUploadIds = await stageEvidenceUploads();
       const payload = {
         outcome,
         notes: notes.trim() || null,
         severity_level: outcome === 'Fail' ? severity : null,
         failure_mode_ids: failureIds,
         rework_description: outcome === 'Fail' ? reworkText.trim() || null : null,
+        evidence_upload_ids: evidenceUploadIds,
       };
-      const execution = await apiJsonRequest<{ id: number }>(
+      await apiJsonRequest<{ id: number }>(
         `/api/qc/check-instances/${checkId}/execute`,
         payload
       );
-      if (evidence.some((item) => item.file)) {
-        await uploadEvidence(execution.id);
-      }
       navigate('/qc');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo completar la revision.';
@@ -1046,15 +1120,33 @@ const QCExecution: React.FC = () => {
     setCameraError(null);
   };
 
-  const removeEvidenceItem = (id: string) => {
-    setEvidence((prev) => {
-      const target = prev.find((item) => item.id === id);
-      if (target?.url) {
-        URL.revokeObjectURL(target.url);
-        evidenceUrlsRef.current.delete(target.url);
+  const removeEvidenceItem = async (id: string) => {
+    const target = evidence.find((item) => item.id === id);
+    if (!target || target.uploadStatus === 'uploading') {
+      return;
+    }
+    if (target.uploadId) {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/qc/evidence-uploads/${target.uploadId}`,
+          { method: 'DELETE', credentials: 'include' }
+        );
+        if (!response.ok && response.status !== 404) {
+          setActionError(
+            await responseErrorMessage(response, 'No se pudo eliminar el registro subido.')
+          );
+          return;
+        }
+      } catch {
+        setActionError('No se pudo eliminar el registro subido. Revise la conexion.');
+        return;
       }
-      return prev.filter((item) => item.id !== id);
-    });
+    }
+    if (target.url) {
+      URL.revokeObjectURL(target.url);
+      evidenceUrlsRef.current.delete(target.url);
+    }
+    setEvidence((prev) => prev.filter((item) => item.id !== id));
     if (previewEvidenceId === id) {
       setPreviewEvidenceId(null);
     }
@@ -1139,17 +1231,10 @@ const QCExecution: React.FC = () => {
   }
 
   return (
-    <div className="qc-execution flex h-screen flex-col overflow-hidden text-white">
+    <div className="qc-execution flex flex-col overflow-hidden text-white">
       {/* Minimal Header */}
       <header className="qc-execution__header flex items-center px-4 py-2">
-        <button
-          onClick={() => navigate('/qc')}
-          className="qc-execution__back"
-          aria-label="Volver al tablero QC"
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-        <div className="ml-3 min-w-0">
+        <div className="min-w-0">
           <div className="qc-execution__context-primary truncate">
             {headerProject}
             <span className="mx-2">•</span>
@@ -1330,12 +1415,85 @@ const QCExecution: React.FC = () => {
           )}
         </div>
 
+        {evidence.length > 0 && (
+          <div className="qc-execution__evidence-rail">
+            <div className="qc-execution__evidence-label">
+              Registros <span>{evidence.length}</span>
+            </div>
+            <div className="qc-execution__evidence-list">
+              {evidence.map((item, index) => (
+                <div key={item.id} className="qc-execution__evidence-item">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewEvidenceId(item.id);
+                      openRegistroCamera();
+                    }}
+                    className="qc-execution__evidence-preview"
+                    aria-label={`Abrir registro ${index + 1}`}
+                  >
+                    {item.type === 'video' ? (
+                      <video src={item.url} className="h-full w-full object-cover" />
+                    ) : (
+                      <img src={item.url} alt="" className="h-full w-full object-cover" />
+                    )}
+                    <span
+                      className={`qc-execution__upload-state qc-execution__upload-state--${item.uploadStatus}`}
+                    >
+                      {item.uploadStatus === 'uploading' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : item.uploadStatus === 'uploaded' ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : item.uploadStatus === 'error' ? (
+                        '!'
+                      ) : (
+                        index + 1
+                      )}
+                    </span>
+                  </button>
+                  <div className="qc-execution__evidence-controls">
+                    {item.uploadStatus === 'error' && (
+                      <button
+                        type="button"
+                        onClick={() => void retryEvidenceItem(item.id)}
+                        aria-label={`Reintentar registro ${index + 1}`}
+                        title={item.uploadError ?? 'Reintentar carga'}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void removeEvidenceItem(item.id)}
+                      disabled={item.uploadStatus === 'uploading' || isSubmitting}
+                      aria-label={`Eliminar registro ${index + 1}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Actions Row */}
         <div className="qc-execution__actions flex items-center justify-between gap-3 p-3">
           {/* Left: Tools */}
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => navigate('/qc')}
+              disabled={isSubmitting}
+              className="qc-execution__tool"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Volver</span>
+            </button>
+            <button
+              type="button"
               onClick={openRegistroCamera}
+              disabled={isSubmitting}
               className="qc-execution__tool"
             >
               <Camera className="w-4 h-4" />
@@ -1361,48 +1519,15 @@ const QCExecution: React.FC = () => {
               />
             </label>
             <button
+              type="button"
               onClick={() => setShowNotesModal(true)}
+              disabled={isSubmitting}
               className={`qc-execution__tool ${notes ? 'border-blue-400 bg-blue-800' : ''}`}
             >
               <MessageSquare className="w-4 h-4" />
               <span className="hidden sm:inline">Nota</span>
             </button>
 
-            {evidence.length > 0 && (
-              <div className="flex -space-x-2 ml-2">
-                {evidence.slice(0, 3).map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="relative w-8 h-8 rounded-lg border-2 border-slate-800 overflow-hidden cursor-pointer"
-                    onClick={() => {
-                      setPreviewEvidenceId(ev.id);
-                      openRegistroCamera();
-                    }}
-                  >
-                    {ev.type === 'video' ? (
-                      <video src={ev.url} className="w-full h-full object-cover" />
-                    ) : (
-                      <img src={ev.url} alt="Registro" className="w-full h-full object-cover" />
-                    )}
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        removeEvidenceItem(ev.id);
-                      }}
-                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-black/80 text-white text-[10px] flex items-center justify-center"
-                      aria-label="Eliminar registro"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-                {evidence.length > 3 && (
-                  <div className="w-8 h-8 rounded-lg border-2 border-slate-800 bg-slate-700 flex items-center justify-center text-xs">
-                    +{evidence.length - 3}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Right: Main Actions */}
@@ -1420,8 +1545,18 @@ const QCExecution: React.FC = () => {
               disabled={isSubmitting}
               className="qc-execution__action qc-execution__action--pass"
             >
-              <Check className="w-5 h-5" />
-              <span>{currentStep < steps.length - 1 ? 'Siguiente' : 'Finalizar'}</span>
+              {isSubmitting ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Check className="w-5 h-5" />
+              )}
+              <span>
+                {isSubmitting
+                  ? 'Guardando...'
+                  : currentStep < steps.length - 1
+                    ? 'Siguiente'
+                    : 'Finalizar'}
+              </span>
             </button>
           </div>
         </div>
@@ -1431,8 +1566,8 @@ const QCExecution: React.FC = () => {
 
       {/* Evidence Required Modal */}
       {showEvidenceRequiredModal && (
-        <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-800 w-full max-w-md rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+        <div className="qc-execution__modal-layer z-[60]">
+          <div className="qc-execution__modal-card w-full max-w-md overflow-hidden border border-slate-700 bg-slate-800 shadow-2xl">
             <div className="p-4 border-b border-slate-700 flex justify-between items-center">
               <div className="flex items-center gap-2 text-amber-300">
                 <AlertTriangle className="w-5 h-5" />
@@ -1496,50 +1631,6 @@ const QCExecution: React.FC = () => {
             <div className="text-sm text-slate-200 font-semibold">
               Registro {captureMode === 'video' ? 'de video' : 'fotografico'}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCaptureMode('photo')}
-                disabled={isRecording || isProcessingRecording}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  captureMode === 'photo'
-                    ? 'bg-white text-slate-900'
-                    : 'bg-slate-800 text-slate-300'
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                Foto
-              </button>
-              <button
-                onClick={() => setCaptureMode('video')}
-                disabled={!videoRecordingMimeType || isRecording || isProcessingRecording}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  captureMode === 'video'
-                    ? 'bg-red-500 text-white'
-                    : 'bg-slate-800 text-slate-300'
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                Video
-              </button>
-              <button
-                type="button"
-                onClick={() => void applyTorch(!torchEnabled)}
-                disabled={!cameraReady || !torchSupported}
-                title={
-                  torchSupported
-                    ? torchEnabled
-                      ? 'Apagar linterna'
-                      : 'Encender linterna'
-                    : 'Linterna no disponible'
-                }
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  torchEnabled
-                    ? 'bg-amber-300 text-slate-950'
-                    : 'bg-slate-800 text-slate-300'
-                } disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <Flashlight className="h-3.5 w-3.5" />
-                Linterna
-              </button>
-            </div>
           </div>
           <div className="flex-1 relative bg-slate-950">
             {cameraError ? (
@@ -1582,21 +1673,7 @@ const QCExecution: React.FC = () => {
             )}
             <canvas ref={canvasRef} className="hidden" />
             {previewEvidence && (
-              <div className="absolute inset-0 z-20 grid grid-rows-[auto_minmax(0,1fr)] bg-black/90">
-                <div className="z-10 flex items-center justify-between border-b border-white/10 bg-slate-950/95 px-4 py-3">
-                  <button
-                    onClick={() => setPreviewEvidenceId(null)}
-                    className="rounded-full bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-700"
-                  >
-                    Volver
-                  </button>
-                  <button
-                    onClick={() => removeEvidenceItem(previewEvidence.id)}
-                    className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
-                  >
-                    Eliminar
-                  </button>
-                </div>
+              <div className="absolute inset-0 z-20 grid grid-rows-[minmax(0,1fr)_auto] bg-black/90">
                 <div className="flex min-h-0 items-center justify-center overflow-hidden p-4">
                   {previewEvidence.type === 'video' ? (
                     <video src={previewEvidence.url} controls className="max-h-full max-w-full" />
@@ -1604,12 +1681,27 @@ const QCExecution: React.FC = () => {
                     <img src={previewEvidence.url} alt="Registro" className="max-h-full max-w-full" />
                   )}
                 </div>
+                <div className="qc-execution__camera-preview-actions">
+                  <button
+                    onClick={() => setPreviewEvidenceId(null)}
+                    className="rounded-full bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-700"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    onClick={() => void removeEvidenceItem(previewEvidence.id)}
+                    disabled={previewEvidence.uploadStatus === 'uploading' || isSubmitting}
+                    className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
             )}
             {!cameraError && (
               <>
                 {evidence.length > 0 && (
-                  <div className="absolute bottom-6 left-4 right-44 flex items-center gap-3 overflow-x-auto pb-2">
+                  <div className="absolute bottom-28 left-4 right-4 flex items-center gap-3 overflow-x-auto pb-2">
                     {evidence.map((item) => (
                       <div
                         key={item.id}
@@ -1632,7 +1724,7 @@ const QCExecution: React.FC = () => {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            removeEvidenceItem(item.id);
+                            void removeEvidenceItem(item.id);
                           }}
                           className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white text-[10px] flex items-center justify-center"
                           aria-label="Eliminar registro"
@@ -1643,19 +1735,55 @@ const QCExecution: React.FC = () => {
                     ))}
                   </div>
                 )}
-                <div className="absolute bottom-6 right-6 flex items-center gap-3">
+                <div className="qc-execution__camera-controls">
+                  <button
+                    type="button"
+                    onClick={() => setCaptureMode('photo')}
+                    disabled={isRecording || isProcessingRecording}
+                    className={`qc-execution__camera-mode ${
+                      captureMode === 'photo' ? 'qc-execution__camera-mode--active' : ''
+                    }`}
+                  >
+                    Foto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCaptureMode('video')}
+                    disabled={!videoRecordingMimeType || isRecording || isProcessingRecording}
+                    className={`qc-execution__camera-mode ${
+                      captureMode === 'video' ? 'qc-execution__camera-mode--record' : ''
+                    }`}
+                  >
+                    Video
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applyTorch(!torchEnabled)}
+                    disabled={!cameraReady || !torchSupported}
+                    title={
+                      torchSupported
+                        ? torchEnabled
+                          ? 'Apagar linterna'
+                          : 'Encender linterna'
+                        : 'Linterna no disponible'
+                    }
+                    className={`qc-execution__camera-mode ${
+                      torchEnabled ? 'qc-execution__camera-mode--torch' : ''
+                    }`}
+                  >
+                    <Flashlight className="h-4 w-4" />
+                    <span className="hidden sm:inline">Linterna</span>
+                  </button>
                   <div className="hidden sm:block text-right text-xs text-slate-300">
                     {captureMode === 'video' ? (
                       <>
-                        <div>1 video maximo</div>
-                        <div className="text-slate-400">
-                          {hasVideoEvidence ? 'Video agregado' : 'Sin audio · 2 min max'}
-                        </div>
+                        <div>Videos sin audio</div>
+                        <div className="text-slate-400">Hasta 2 min por video</div>
                       </>
                     ) : (
                       <>
                         <div>Foto instantanea</div>
-                        <div className="text-slate-400">Puede combinar fotos y 1 video</div>
+                        <div className="text-slate-400">Combine fotos y varios videos</div>
                       </>
                     )}
                   </div>
@@ -1688,13 +1816,12 @@ const QCExecution: React.FC = () => {
                       disabled={
                         !cameraReady ||
                         isProcessingRecording ||
-                        (!isRecording && hasVideoEvidence) ||
                         !videoRecordingMimeType
                       }
                       className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
                         cameraReady &&
                         !isProcessingRecording &&
-                        (isRecording || (!hasVideoEvidence && !!videoRecordingMimeType))
+                        !!videoRecordingMimeType
                           ? 'border-red-400 hover:scale-105'
                           : 'border-slate-600 opacity-50 cursor-not-allowed'
                       }`}
@@ -1711,14 +1838,21 @@ const QCExecution: React.FC = () => {
                 </div>
               </>
             )}
+            {cameraError && (
+              <div className="qc-execution__camera-error-actions">
+                <button type="button" onClick={closeCamera}>
+                  Volver a la revision
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Notes Modal */}
       {showNotesModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-800 w-full max-w-lg rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+        <div className="qc-execution__modal-layer z-50">
+          <div className="qc-execution__modal-card w-full max-w-lg overflow-hidden border border-slate-700 bg-slate-800 shadow-2xl">
             <div className="p-4 border-b border-slate-700 flex justify-between items-center">
               <h3 className="font-bold text-white">Agregar nota</h3>
               <button onClick={() => setShowNotesModal(false)} className="text-slate-400 hover:text-white">
@@ -1748,8 +1882,8 @@ const QCExecution: React.FC = () => {
 
       {/* Failure Mode Modal */}
       {showFailModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-800 w-full max-w-lg rounded-xl shadow-2xl flex flex-col max-h-[90vh] border border-slate-700">
+        <div className="qc-execution__modal-layer z-50">
+          <div className="qc-execution__modal-card flex max-h-[90dvh] w-full max-w-lg flex-col border border-slate-700 bg-slate-800 shadow-2xl">
             <div className="p-4 border-b border-slate-700 bg-red-900/30 flex justify-between items-center rounded-t-xl">
               <div className="flex items-center text-red-400">
                 <AlertTriangle className="w-5 h-5 mr-2" />

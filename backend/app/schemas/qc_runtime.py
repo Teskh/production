@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +96,93 @@ class QCDashboardResponse(BaseModel):
     plant_modules: list[QCPlantModuleSummary] = Field(default_factory=list)
 
 
+class QCMetricRange(BaseModel):
+    date_from: date
+    date_to: date
+    timezone: str
+
+
+class QCMetricCheckSummary(BaseModel):
+    total: int
+    triggered: int
+    not_performed: int
+    open: int
+
+
+class QCMetricObservationSummary(BaseModel):
+    total: int
+    open: int
+
+
+class QCMetricModuleSummary(BaseModel):
+    work_unit_id: int
+    module_number: int
+    project_name: str | None = None
+    house_identifier: str | None = None
+    house_type_name: str | None = None
+    triggered_checks: int
+    not_performed_checks: int
+    open_checks: int
+    open_observations: int
+
+
+class QCQualityMetricsResponse(BaseModel):
+    range: QCMetricRange
+    checks: QCMetricCheckSummary
+    observations: QCMetricObservationSummary
+    affected_modules: int
+    modules: list[QCMetricModuleSummary] = Field(default_factory=list)
+
+
+class QCFailureAnalysisSummary(BaseModel):
+    executions: int
+    failures: int
+    passes: int
+    waived: int
+    failure_rate: float
+    affected_modules: int
+    repeat_failure_checks: int
+    open_reworks: int
+    critical_checks: int
+
+
+class QCFailureRankingItem(BaseModel):
+    dimension_id: int | None = None
+    name: str
+    executions: int
+    failures: int
+    failure_rate: float
+
+
+class QCFailureModeMetric(BaseModel):
+    failure_mode_definition_id: int | None = None
+    name: str
+    occurrences: int
+
+
+class QCFailureSeverityMetric(BaseModel):
+    severity: str
+    failures: int
+
+
+class QCDailyFailureMetric(BaseModel):
+    date: date
+    executions: int
+    failures: int
+    failure_rate: float
+
+
+class QCFailureAnalysisResponse(BaseModel):
+    range: QCMetricRange
+    summary: QCFailureAnalysisSummary
+    tasks: list[QCFailureRankingItem] = Field(default_factory=list)
+    stations: list[QCFailureRankingItem] = Field(default_factory=list)
+    checks: list[QCFailureRankingItem] = Field(default_factory=list)
+    failure_modes: list[QCFailureModeMetric] = Field(default_factory=list)
+    severities: list[QCFailureSeverityMetric] = Field(default_factory=list)
+    daily: list[QCDailyFailureMetric] = Field(default_factory=list)
+
+
 class QCExecutionFailureModeRead(BaseModel):
     id: int
     failure_mode_definition_id: int | None = None
@@ -147,6 +234,15 @@ class QCEvidenceSummary(BaseModel):
     captured_at: datetime
 
 
+class QCEvidenceUploadRead(BaseModel):
+    id: int
+    client_upload_id: str
+    uri: str
+    mime_type: str
+    size_bytes: int
+    created_at: datetime
+
+
 class QCTaskParticipantSummary(BaseModel):
     worker_id: int
     worker_name: str
@@ -196,6 +292,7 @@ class QCExecutionCreate(BaseModel):
     measurement_json: dict | None = None
     failure_mode_notes: str | None = None
     rework_description: str | None = None
+    evidence_upload_ids: list[int] = Field(default_factory=list)
 
 
 class QCManualCheckCreate(BaseModel):

@@ -7,6 +7,7 @@ import {
   Clock,
   Eye,
   History,
+  ListOrdered,
   MapPin,
   Route,
   Save,
@@ -113,6 +114,16 @@ const dashboards: DashboardCard[] = [
     status: 'ready',
     tags: ['Plan', 'Ejecucion', 'Desviaciones'],
     icon: Route,
+  },
+  {
+    id: 'task-sequence',
+    name: 'Secuencia de tareas',
+    description:
+      'Reconstruye el orden real en que se ejecutan las tareas, con duraciones, concurrencia y consistencia.',
+    path: '/admin/dashboards/task-sequence',
+    status: 'ready',
+    tags: ['Tareas', 'Secuencia', 'Tiempo'],
+    icon: ListOrdered,
   },
   {
     id: 'assistance-activity',

@@ -15,6 +15,7 @@ import {
   Save,
   ShieldCheck,
   SlidersHorizontal,
+  Tags,
 } from 'lucide-react';
 import clsx from 'clsx';
 import {
@@ -147,6 +148,7 @@ const AdminLayout: React.FC = () => {
         },
         { id: 'pause-note-defs', name: 'Pausas y Comentarios', path: '/admin/pause-note-defs', icon: FileText },
         { id: 'backups', name: 'Respaldos', path: '/admin/backups', icon: Database, sysadminOnly: true },
+        { id: 'labels', name: 'Etiquetas', path: '/admin/labels', icon: Tags, sysadminOnly: true },
       ],
     },
   ];
@@ -188,6 +190,13 @@ const AdminLayout: React.FC = () => {
     () => allMenuItems.find((item) => item.id === permissionDialogId) ?? null,
     [allMenuItems, permissionDialogId],
   );
+  const loginRedirectTarget = useMemo(() => {
+    const authError = new URLSearchParams(location.search).get('auth_error');
+    if (!authError) {
+      return '/login';
+    }
+    return `/login?${new URLSearchParams({ auth_error: authError }).toString()}`;
+  }, [location.search]);
 
   useEffect(() => {
     let active = true;
@@ -201,7 +210,7 @@ const AdminLayout: React.FC = () => {
           return;
         }
         if (response.status === 401) {
-          navigate('/login', { replace: true });
+          navigate(loginRedirectTarget, { replace: true });
           return;
         }
         if (!response.ok) {
@@ -211,7 +220,7 @@ const AdminLayout: React.FC = () => {
         setAdmin(data);
       } catch {
         if (active) {
-          navigate('/login', { replace: true });
+          navigate(loginRedirectTarget, { replace: true });
         }
       } finally {
         if (active) {
@@ -223,7 +232,7 @@ const AdminLayout: React.FC = () => {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [loginRedirectTarget, navigate]);
 
   useEffect(() => {
     if (!admin) {

@@ -13,6 +13,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 # Repo root is preferred when both exist.
 load_dotenv(BASE_DIR.parent / ".env", override=False)
 load_dotenv(BASE_DIR / ".env", override=False)
+load_dotenv(BASE_DIR / "microsoft.env", override=False)
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,17 @@ class Settings:
             str(BASE_DIR / "runtime" / "shift_estimate_scheduler_settings.json"),
         )
     )
+    label_printer_settings_path: Path = Path(
+        os.getenv(
+            "LABEL_PRINTER_SETTINGS_PATH",
+            str(BASE_DIR / "runtime" / "label_printer_settings.json"),
+        )
+    )
+    zebra_printer_host: str = os.getenv("ZEBRA_PRINTER_HOST", "").strip()
+    zebra_printer_port: int = int(os.getenv("ZEBRA_PRINTER_PORT", "9100"))
+    zebra_printer_timeout_seconds: float = float(
+        os.getenv("ZEBRA_PRINTER_TIMEOUT_SECONDS", "3")
+    )
     sys_admin_password: str | None = os.getenv("SYS_ADMIN_PASSWORD")
     microsoft_login_enabled: bool = (
         os.getenv("MICROSOFT_LOGIN_ENABLED", "true").lower() == "true"
@@ -80,6 +92,18 @@ class Settings:
     microsoft_client_id: str = os.getenv("MICROSOFT_CLIENT_ID", "")
     microsoft_client_secret: str = os.getenv("MICROSOFT_CLIENT_SECRET", "")
     microsoft_redirect_uri: str = os.getenv("MICROSOFT_REDIRECT_URI", "")
+    company_access_gate_enabled: bool = (
+        os.getenv("COMPANY_ACCESS_GATE_ENABLED", "true").lower() == "true"
+    )
+    company_access_session_hours: int = int(
+        os.getenv("COMPANY_ACCESS_SESSION_HOURS", "12")
+    )
+    trusted_lan_cidrs: str = os.getenv(
+        "TRUSTED_LAN_CIDRS", "10.0.10.0/23"
+    )
+    trusted_proxy_cidrs: str = os.getenv(
+        "TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128"
+    )
     camera_rtsp_username: str = os.getenv("CAMERA_RTSP_USERNAME", "admin")
     camera_rtsp_password: str = os.getenv("CAMERA_RTSP_PASSWORD", "Geoforce.2030.$")
     camera_rtsp_port: int = int(os.getenv("CAMERA_RTSP_PORT", "554"))

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   Check,
@@ -49,6 +50,13 @@ type PanelDefinition = {
   applicable_task_ids: number[] | null;
   task_durations_json: Array<number | null> | null;
   panel_sequence_number: number | null;
+  archived_at: string | null;
+  archived_by_user_id: number | null;
+};
+
+type PanelDefinitionUsage = {
+  task_instances: number;
+  qc_checks: number;
 };
 
 type TaskScope = 'panel' | 'module' | 'aux';
@@ -59,6 +67,7 @@ type TaskDefinition = {
   scope: TaskScope;
   active: boolean;
   default_station_sequence: number | null;
+  archived_at: string | null;
 };
 
 type TaskApplicability = {
@@ -192,17 +201,18 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
+    let message = text;
     if (text) {
       try {
         const data = JSON.parse(text) as { detail?: string };
         if (data?.detail) {
-          throw new Error(data.detail);
+          message = data.detail;
         }
       } catch {
         // Fall through to the raw text.
       }
     }
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    throw new Error(message || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -536,6 +546,7 @@ const HouseConfigurator: React.FC = () => {
   const [newSubtypeName, setNewSubtypeName] = useState('');
   const [search, setSearch] = useState('');
   const [panels, setPanels] = useState<PanelDefinition[]>([]);
+  const [panelStatusFilter, setPanelStatusFilter] = useState<'active' | 'archived'>('active');
   const [taskDefinitions, setTaskDefinitions] = useState<TaskDefinition[]>([]);
   const [applicabilityRows, setApplicabilityRows] = useState<TaskApplicability[]>([]);
   const [durationRows, setDurationRows] = useState<TaskExpectedDuration[]>([]);
@@ -593,8 +604,8 @@ const HouseConfigurator: React.FC = () => {
           stationResult,
         ] = (await Promise.allSettled([
           pageApiRequest<HouseType[]>('/api/house-types'),
-          pageApiRequest<PanelDefinition[]>('/api/panel-definitions'),
-          pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
+          pageApiRequest<PanelDefinition[]>('/api/panel-definitions?include_archived=true'),
+          pageApiRequest<TaskDefinition[]>('/api/task-definitions?include_archived=true'),
           pageApiRequest<TaskApplicability[]>('/api/task-rules/applicability'),
           pageApiRequest<TaskExpectedDuration[]>('/api/task-rules/durations'),
           pageApiRequest<Station[]>('/api/stations'),
@@ -721,7 +732,7 @@ const HouseConfigurator: React.FC = () => {
 
   const panelTasks = useMemo(() => {
     const panelScoped = taskDefinitions
-      .filter((task) => task.scope === 'panel' && task.active)
+      .filter((task) => task.scope === 'panel' && task.active && task.archived_at === null)
       .map((task) => ({
         id: task.id,
         name: task.name,
@@ -740,7 +751,7 @@ const HouseConfigurator: React.FC = () => {
 
   const moduleTasks = useMemo(() => {
     const moduleScoped = taskDefinitions
-      .filter((task) => task.scope === 'module' && task.active)
+      .filter((task) => task.scope === 'module' && task.active && task.archived_at === null)
       .map((task) => ({
         id: task.id,
         name: task.name,
@@ -806,9 +817,12 @@ const HouseConfigurator: React.FC = () => {
     return panels.filter(
       (panel) =>
         panel.house_type_id === selectedTypeId &&
-        panel.module_sequence_number === selectedModuleNumber
+        panel.module_sequence_number === selectedModuleNumber &&
+        (panelStatusFilter === 'archived'
+          ? panel.archived_at !== null
+          : panel.archived_at === null)
     );
-  }, [panels, selectedTypeId, selectedModuleNumber]);
+  }, [panelStatusFilter, panels, selectedTypeId, selectedModuleNumber]);
 
   const groupedPanels = useMemo(() => {
     const groups = PANEL_GROUPS.map((name) => ({ name, items: [] as PanelDefinition[] }));
@@ -1424,15 +1438,37 @@ const HouseConfigurator: React.FC = () => {
     setPanelMessage(null);
   };
 
-  const handleDeletePanel = async (panel: PanelDefinition) => {
-    if (!window.confirm(`Eliminar panel ${panel.panel_code}? Esto no se puede deshacer.`)) {
-      return;
-    }
+  const handleArchivePanel = async (panel: PanelDefinition) => {
     try {
-      await pageApiRequest<void>(`/api/panel-definitions/${panel.id}`, { method: 'DELETE' });
-      setPanels((prev) => prev.filter((item) => item.id !== panel.id));
+      const usage = await pageApiRequest<PanelDefinitionUsage>(
+        `/api/panel-definitions/${panel.id}/usage`
+      );
+      const warning = `${panel.panel_code} has been used by ${usage.task_instances} tasks and ${usage.qc_checks} QC checks.`;
+      if (!window.confirm(`${warning}\n\n¿Archivar este panel?`)) {
+        return;
+      }
+      const archived = await pageApiRequest<PanelDefinition>(
+        `/api/panel-definitions/${panel.id}/archive`,
+        { method: 'POST' }
+      );
+      setPanels((prev) => prev.map((item) => (item.id === panel.id ? archived : item)));
+      setStatusMessage('Panel archivado.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo eliminar el panel.';
+      const message = error instanceof Error ? error.message : 'No se pudo archivar el panel.';
+      setStatusMessage(message);
+    }
+  };
+
+  const handleRestorePanel = async (panel: PanelDefinition) => {
+    try {
+      const restored = await pageApiRequest<PanelDefinition>(
+        `/api/panel-definitions/${panel.id}/restore`,
+        { method: 'POST' }
+      );
+      setPanels((prev) => prev.map((item) => (item.id === panel.id ? restored : item)));
+      setStatusMessage('Panel restaurado.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo restaurar el panel.';
       setStatusMessage(message);
     }
   };
@@ -2340,14 +2376,14 @@ const HouseConfigurator: React.FC = () => {
               <button
                 className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
                 onClick={handleOpenSequence}
-                disabled={filteredPanels.length === 0}
+                disabled={filteredPanels.length === 0 || panelStatusFilter === 'archived'}
               >
                 <ListOrdered className="h-4 w-4" /> Secuencia
               </button>
               <button
               className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-50"
               onClick={handleOpenMatrix}
-              disabled={filteredPanels.length === 0}
+              disabled={filteredPanels.length === 0 || panelStatusFilter === 'archived'}
             >
               <Layers className="h-4 w-4" /> Matriz de tareas
             </button>
@@ -2394,6 +2430,16 @@ const HouseConfigurator: React.FC = () => {
                   Modulo {moduleNumber}
                 </option>
               ))}
+            </select>
+            <select
+              className="rounded-full border border-black/10 bg-white px-3 py-2 text-sm"
+              value={panelStatusFilter}
+              onChange={(event) =>
+                setPanelStatusFilter(event.target.value as 'active' | 'archived')
+              }
+            >
+              <option value="active">Paneles activos</option>
+              <option value="archived">Paneles archivados</option>
             </select>
             {selectedType && selectedModuleNumber && (
               <div className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
@@ -2463,6 +2509,11 @@ const HouseConfigurator: React.FC = () => {
                                     {subtypeLabel}
                                   </span>
                                 )}
+                                {panel.archived_at && (
+                                  <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                                    Archivado
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-gray-500">
                                  {hasArea && <span>{panel.panel_area} m2</span>}
@@ -2479,20 +2530,32 @@ const HouseConfigurator: React.FC = () => {
                                   #{panel.panel_sequence_number}
                                 </span>
                               )}
-                              <button
-                                className="p-1.5 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50 transition-colors"
-                                onClick={() => handleEditPanel(panel)}
-                                title="Editar panel"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors"
-                                onClick={() => handleDeletePanel(panel)}
-                                title="Eliminar panel"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              {!panel.archived_at && (
+                                <button
+                                  className="p-1.5 text-gray-400 hover:text-blue-600 rounded hover:bg-blue-50 transition-colors"
+                                  onClick={() => handleEditPanel(panel)}
+                                  title="Editar panel"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              {panel.archived_at ? (
+                                <button
+                                  className="p-1.5 text-gray-400 hover:text-emerald-600 rounded hover:bg-emerald-50 transition-colors"
+                                  onClick={() => handleRestorePanel(panel)}
+                                  title="Restaurar panel"
+                                >
+                                  <RefreshCcw className="h-3.5 w-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  className="p-1.5 text-gray-400 hover:text-amber-600 rounded hover:bg-amber-50 transition-colors"
+                                  onClick={() => handleArchivePanel(panel)}
+                                  title="Archivar panel"
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         );

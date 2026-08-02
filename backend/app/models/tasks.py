@@ -36,6 +36,12 @@ class TaskDefinition(Base):
     dependencies_json: Mapped[list[int] | None] = mapped_column(
         JSONB, nullable=True
     )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class TaskApplicability(Base):

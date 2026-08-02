@@ -98,7 +98,7 @@ type QCPlantModuleSummary = {
   house_identifier: string | null;
 };
 
-type QCDashboardResponse = {
+type QCMainMenuResponse = {
   pending_checks: QCCheckInstanceSummary[];
   rework_tasks: QCReworkTaskSummary[];
   plant_panels: QCPlantPanelSummary[];
@@ -378,11 +378,11 @@ const parseStoredStationFilter = (): number[] => {
   }
 };
 
-const QCDashboard: React.FC = () => {
+const QCMainMenu: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [dashboard, setDashboard] = useState<QCDashboardResponse>({
+  const [dashboard, setDashboard] = useState<QCMainMenuResponse>({
     pending_checks: [],
     rework_tasks: [],
     plant_panels: [],
@@ -462,7 +462,7 @@ const QCDashboard: React.FC = () => {
           const text = await response.text();
           throw new Error(text || `Solicitud fallida (${response.status})`);
         }
-        const data = (await response.json()) as QCDashboardResponse;
+        const data = (await response.json()) as QCMainMenuResponse;
         setDashboard({
           ...data,
           plant_panels: data.plant_panels ?? [],
@@ -2389,4 +2389,4 @@ const QCDashboard: React.FC = () => {
   );
 };
 
-export default QCDashboard;
+export default QCMainMenu;

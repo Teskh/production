@@ -55,6 +55,17 @@ def get_current_admin(
     return admin
 
 
+def require_sysadmin(
+    admin: AdminUser = Depends(get_current_admin),
+) -> AdminUser:
+    if str(getattr(admin, "role", "")).strip() != AdminRole.SYSADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SysAdmin role required",
+        )
+    return admin
+
+
 def get_optional_admin(
     request: Request, db: Session = Depends(get_db)
 ) -> AdminUser | None:

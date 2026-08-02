@@ -38,6 +38,13 @@ does not create users or replace local role permissions. Admin page permissions 
 enforced both by the UI and by backend dependencies on mapped mutation endpoints. Worker
 and supervisor workflows use their own session cookies and route dependencies.
 
+The company access middleware is an outer deployment gate, separate from role identity.
+Trusted LAN CIDRs and loopback development hosts bypass it. Other clients must complete
+the tenant-specific Microsoft flow and receive a database-backed `company_access_session`
+before app pages or APIs are served. A matching active admin email additionally creates an
+admin session and redirects to the role-appropriate area; an unmatched email receives no
+app role and lands on the worker login page.
+
 ## Verification
 
 See `docs/COMMANDS.md`. CI runs backend unit tests plus frontend lint and production build.

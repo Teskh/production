@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import String, case, cast, delete, exists, func, or_, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import (
@@ -18,7 +18,7 @@ from app.api.deps import (
 )
 from app.core.config import BASE_DIR
 from app.core.security import utc_now
-from app.models.admin import AdminUser
+from app.models.admin import AdminDashboardPermission, AdminUser
 from app.models.enums import (
     AdminRole,
     PanelUnitStatus,
@@ -41,9 +41,11 @@ from app.models.qc import (
     QCCheckMediaAsset,
     QCExecution,
     QCExecutionFailureMode,
+    QCEvidenceUpload,
     QCFailureModeDefinition,
     QCEvidence,
     QCNotification,
+    QCQualityComplaint,
     QCReworkTask,
 )
 from app.models.stations import Station
@@ -64,8 +66,10 @@ from app.schemas.qc_runtime import (
     QCExecutionCreate,
     QCExecutionFailureModeRead,
     QCExecutionRead,
+    QCFailureAnalysisResponse,
     QCReworkAttemptSummary,
     QCDashboardResponse,
+    QCEvidenceUploadRead,
     QCEvidenceSummary,
     QCFailureModeSummary,
     QCLibraryWorkUnitDetail,
@@ -74,6 +78,7 @@ from app.schemas.qc_runtime import (
     QCNotificationSummary,
     QCPlantModuleSummary,
     QCPlantPanelSummary,
+    QCQualityMetricsResponse,
     QCTaskInstanceWithWorkersSummary,
     QCTaskParticipantSummary,
     QCReworkPauseRequest,
@@ -88,6 +93,11 @@ from app.services.qc_runtime import (
     update_sampling_from_execution,
 )
 from app.services.qc_excel_report import build_qc_dashboard_excel_report
+from app.services.qc_dashboard_metrics import (
+    build_qc_metric_window,
+    summarize_qc_failure_rows,
+    summarize_qc_quality_rows,
+)
 from app.services.conditions import load_condition_context
 from app.services.task_applicability import resolve_task_station_sequence
 
@@ -98,6 +108,9 @@ QC_ROLE_VALUES = {"Calidad", "QC"}
 # QC_DELETE_WINDOW = timedelta(hours=48)
 MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024
 QC_EVIDENCE_MIME_PREFIXES = ("image/", "video/")
+QC_EVIDENCE_UPLOAD_TTL = timedelta(hours=24)
+QC_QUALITY_METRICS_DASHBOARD_ID = "qc-quality-compliance"
+QC_FAILURE_ANALYSIS_DASHBOARD_ID = "qc-failure-analysis"
 
 
 def _require_qc_admin(admin: AdminUser) -> AdminUser:
@@ -115,6 +128,23 @@ def _require_qc_or_admin(admin: AdminUser) -> AdminUser:
             status_code=status.HTTP_403_FORBIDDEN, detail="QC or admin role required"
         )
     return admin
+
+
+def _require_dashboard_access(db: Session, admin: AdminUser, dashboard_id: str) -> None:
+    if admin.role == AdminRole.SYSADMIN.value:
+        return
+    configured_roles = list(
+        db.execute(
+            select(AdminDashboardPermission.role).where(
+                AdminDashboardPermission.dashboard_id == dashboard_id
+            )
+        ).scalars()
+    )
+    if configured_roles and admin.role not in configured_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dashboard access denied",
+        )
 
 
 def _ensure_aware_utc(dt: datetime) -> datetime:
@@ -166,6 +196,77 @@ def _store_qc_evidence_upload(file: UploadFile, dest_path: Path) -> int:
     return size_bytes
 
 
+def _evidence_upload_read(
+    upload: QCEvidenceUpload,
+    media: MediaAsset,
+) -> QCEvidenceUploadRead:
+    return QCEvidenceUploadRead(
+        id=upload.id,
+        client_upload_id=upload.client_upload_id,
+        uri=f"/media_gallery/{media.storage_key}",
+        mime_type=media.mime_type,
+        size_bytes=media.size_bytes,
+        created_at=upload.created_at,
+    )
+
+
+def _validate_staged_evidence_uploads(
+    uploads: list[QCEvidenceUpload],
+    requested_ids: list[int],
+    *,
+    check_instance_id: int,
+    uploaded_by_user_id: int,
+) -> None:
+    if not requested_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe subir al menos un registro antes de completar la revision",
+        )
+    if len(set(requested_ids)) != len(requested_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede usar el mismo registro mas de una vez",
+        )
+    if len(uploads) != len(requested_ids):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Uno o mas registros no estan disponibles o ya fueron utilizados",
+        )
+    for upload in uploads:
+        if upload.check_instance_id != check_instance_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El registro pertenece a otra revision QC",
+            )
+        if upload.uploaded_by_user_id != uploaded_by_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="El registro pertenece a otro usuario QC",
+            )
+
+
+def _delete_staged_evidence_uploads(
+    db: Session,
+    uploads: list[QCEvidenceUpload],
+) -> None:
+    if not uploads:
+        return
+    media_ids = [upload.media_asset_id for upload in uploads]
+    media_rows = list(
+        db.execute(
+            select(MediaAsset.id, MediaAsset.storage_key).where(MediaAsset.id.in_(media_ids))
+        )
+    )
+    db.execute(
+        delete(QCEvidenceUpload).where(
+            QCEvidenceUpload.id.in_([upload.id for upload in uploads])
+        )
+    )
+    db.execute(delete(MediaAsset).where(MediaAsset.id.in_(media_ids)))
+    for _, storage_key in media_rows:
+        _delete_media_file(storage_key)
+
+
 def _resolve_current_station(
     db: Session,
     work_unit_id: int | None,
@@ -194,6 +295,7 @@ def _module_has_later_applicable_station(
         db.execute(
             select(TaskDefinition)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
             .where(TaskDefinition.scope == TaskScope.MODULE)
             .where(TaskDefinition.is_rework == False)
         ).scalars()
@@ -367,6 +469,15 @@ def _delete_evidence_rows(db: Session, evidence_ids: list[int]) -> None:
 
 
 def _delete_check_related_rows(db: Session, check_instance_id: int) -> None:
+    staged_uploads = list(
+        db.execute(
+            select(QCEvidenceUpload).where(
+                QCEvidenceUpload.check_instance_id == check_instance_id
+            )
+        ).scalars()
+    )
+    _delete_staged_evidence_uploads(db, staged_uploads)
+
     execution_ids = list(
         db.execute(
             select(QCExecution.id).where(QCExecution.check_instance_id == check_instance_id)
@@ -658,6 +769,157 @@ def qc_dashboard(
         rework_tasks=rework_tasks,
         plant_panels=plant_panels,
         plant_modules=plant_modules,
+    )
+
+
+@router.get("/dashboards/quality-compliance", response_model=QCQualityMetricsResponse)
+def qc_quality_compliance_dashboard(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> QCQualityMetricsResponse:
+    _require_dashboard_access(db, admin, QC_QUALITY_METRICS_DASHBOARD_ID)
+    try:
+        window = build_qc_metric_window(date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El inicio del rango no puede ser posterior al fin.",
+        ) from exc
+
+    performed_exists = exists().where(
+        QCExecution.check_instance_id == QCCheckInstance.id
+    )
+    check_rows = db.execute(
+        select(
+            QCCheckInstance.work_unit_id.label("work_unit_id"),
+            WorkUnit.module_number.label("module_number"),
+            WorkOrder.project_name.label("project_name"),
+            WorkOrder.house_identifier.label("house_identifier"),
+            HouseType.name.label("house_type_name"),
+            QCCheckInstance.origin.label("origin"),
+            QCCheckInstance.status.label("status"),
+            performed_exists.label("performed"),
+        )
+        .join(WorkUnit, QCCheckInstance.work_unit_id == WorkUnit.id)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+        .where(QCCheckInstance.opened_at >= window.start_utc)
+        .where(QCCheckInstance.opened_at < window.end_utc_exclusive)
+    ).all()
+
+    observation_rows = db.execute(
+        select(
+            QCQualityComplaint.work_unit_id.label("work_unit_id"),
+            WorkUnit.module_number.label("module_number"),
+            WorkOrder.project_name.label("project_name"),
+            WorkOrder.house_identifier.label("house_identifier"),
+            HouseType.name.label("house_type_name"),
+            QCQualityComplaint.status.label("status"),
+        )
+        .join(WorkUnit, QCQualityComplaint.work_unit_id == WorkUnit.id)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+        .where(QCQualityComplaint.created_at >= window.start_utc)
+        .where(QCQualityComplaint.created_at < window.end_utc_exclusive)
+    ).all()
+
+    return QCQualityMetricsResponse.model_validate(
+        summarize_qc_quality_rows(check_rows, observation_rows, window)
+    )
+
+
+@router.get("/dashboards/failure-analysis", response_model=QCFailureAnalysisResponse)
+def qc_failure_analysis_dashboard(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> QCFailureAnalysisResponse:
+    _require_dashboard_access(db, admin, QC_FAILURE_ANALYSIS_DASHBOARD_ID)
+    try:
+        window = build_qc_metric_window(date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El inicio del rango no puede ser posterior al fin.",
+        ) from exc
+
+    execution_rows = db.execute(
+        select(
+            QCExecution.id.label("execution_id"),
+            QCExecution.check_instance_id.label("check_instance_id"),
+            QCExecution.outcome.label("outcome"),
+            QCExecution.performed_at.label("performed_at"),
+            QCCheckInstance.work_unit_id.label("work_unit_id"),
+            QCCheckInstance.severity_level.label("severity_level"),
+            TaskDefinition.id.label("task_definition_id"),
+            TaskDefinition.name.label("task_name"),
+            Station.id.label("station_id"),
+            Station.name.label("station_name"),
+            QCCheckDefinition.id.label("check_definition_id"),
+            func.coalesce(
+                QCCheckDefinition.name,
+                QCCheckInstance.ad_hoc_title,
+                "Check manual",
+            ).label("check_name"),
+        )
+        .select_from(QCExecution)
+        .join(QCCheckInstance, QCExecution.check_instance_id == QCCheckInstance.id)
+        .outerjoin(
+            TaskInstance,
+            QCCheckInstance.related_task_instance_id == TaskInstance.id,
+        )
+        .outerjoin(TaskDefinition, TaskInstance.task_definition_id == TaskDefinition.id)
+        .outerjoin(Station, QCCheckInstance.station_id == Station.id)
+        .outerjoin(
+            QCCheckDefinition,
+            QCCheckInstance.check_definition_id == QCCheckDefinition.id,
+        )
+        .where(QCExecution.performed_at >= window.start_utc)
+        .where(QCExecution.performed_at < window.end_utc_exclusive)
+    ).all()
+
+    failure_mode_rows = db.execute(
+        select(
+            QCExecutionFailureMode.failure_mode_definition_id.label(
+                "failure_mode_definition_id"
+            ),
+            QCFailureModeDefinition.name.label("failure_mode_name"),
+            QCExecutionFailureMode.other_text.label("other_text"),
+        )
+        .select_from(QCExecutionFailureMode)
+        .join(QCExecution, QCExecutionFailureMode.execution_id == QCExecution.id)
+        .outerjoin(
+            QCFailureModeDefinition,
+            QCExecutionFailureMode.failure_mode_definition_id
+            == QCFailureModeDefinition.id,
+        )
+        .where(QCExecution.outcome == QCExecutionOutcome.FAIL)
+        .where(QCExecution.performed_at >= window.start_utc)
+        .where(QCExecution.performed_at < window.end_utc_exclusive)
+    ).all()
+
+    failed_execution_in_range = (
+        exists()
+        .where(QCExecution.check_instance_id == QCReworkTask.check_instance_id)
+        .where(QCExecution.outcome == QCExecutionOutcome.FAIL)
+        .where(QCExecution.performed_at >= window.start_utc)
+        .where(QCExecution.performed_at < window.end_utc_exclusive)
+    )
+    rework_rows = db.execute(
+        select(QCReworkTask.id.label("rework_task_id"), QCReworkTask.status.label("status"))
+        .where(failed_execution_in_range)
+    ).all()
+
+    return QCFailureAnalysisResponse.model_validate(
+        summarize_qc_failure_rows(
+            execution_rows,
+            failure_mode_rows,
+            rework_rows,
+            window,
+        )
     )
 
 
@@ -981,7 +1243,11 @@ def execute_qc_check(
     db: Session = Depends(get_db),
 ) -> QCExecutionRead:
     admin = _require_qc_admin(admin)
-    instance = db.get(QCCheckInstance, check_instance_id)
+    instance = db.execute(
+        select(QCCheckInstance)
+        .where(QCCheckInstance.id == check_instance_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
     open_rework = (
@@ -1006,6 +1272,20 @@ def execute_qc_check(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Severity is required on fail"
         )
 
+    staged_uploads = list(
+        db.execute(
+            select(QCEvidenceUpload)
+            .where(QCEvidenceUpload.id.in_(payload.evidence_upload_ids))
+            .with_for_update()
+        ).scalars()
+    )
+    _validate_staged_evidence_uploads(
+        staged_uploads,
+        payload.evidence_upload_ids,
+        check_instance_id=instance.id,
+        uploaded_by_user_id=admin.id,
+    )
+
     now = utc_now()
     execution = QCExecution(
         check_instance_id=instance.id,
@@ -1017,6 +1297,20 @@ def execute_qc_check(
     )
     db.add(execution)
     db.flush()
+
+    for upload in staged_uploads:
+        db.add(
+            QCEvidence(
+                execution_id=execution.id,
+                media_asset_id=upload.media_asset_id,
+                captured_at=now,
+            )
+        )
+    db.execute(
+        delete(QCEvidenceUpload).where(
+            QCEvidenceUpload.id.in_([upload.id for upload in staged_uploads])
+        )
+    )
 
     if payload.outcome == QCExecutionOutcome.FAIL:
         instance.severity_level = payload.severity_level
@@ -1214,6 +1508,150 @@ def delete_check_instance(
     db.commit()
 
 
+@router.post(
+    "/check-instances/{check_instance_id}/evidence-uploads",
+    response_model=QCEvidenceUploadRead,
+)
+def stage_execution_evidence(
+    check_instance_id: int,
+    client_upload_id: str = Form(...),
+    file: UploadFile = File(...),
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> QCEvidenceUploadRead:
+    admin = _require_qc_admin(admin)
+    instance = db.get(QCCheckInstance, check_instance_id)
+    if not instance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QC check not found")
+    if instance.status == QCCheckStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QC check already closed")
+
+    stale_uploads = list(
+        db.execute(
+            select(QCEvidenceUpload).where(
+                QCEvidenceUpload.created_at < utc_now() - QC_EVIDENCE_UPLOAD_TTL
+            )
+        ).scalars()
+    )
+    if stale_uploads:
+        _delete_staged_evidence_uploads(db, stale_uploads)
+        db.commit()
+
+    normalized_upload_id = client_upload_id.strip()
+    if len(normalized_upload_id) < 8 or len(normalized_upload_id) > 64:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identificador de carga invalido",
+        )
+
+    existing = db.execute(
+        select(QCEvidenceUpload, MediaAsset)
+        .join(MediaAsset, QCEvidenceUpload.media_asset_id == MediaAsset.id)
+        .where(QCEvidenceUpload.client_upload_id == normalized_upload_id)
+    ).first()
+    if existing:
+        existing_upload, existing_media = existing
+        if (
+            existing_upload.check_instance_id != check_instance_id
+            or existing_upload.uploaded_by_user_id != admin.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El identificador de carga ya esta en uso",
+            )
+        return _evidence_upload_read(existing_upload, existing_media)
+
+    if not file.content_type or not file.content_type.startswith(QC_EVIDENCE_MIME_PREFIXES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se admiten fotos y videos como registro",
+        )
+
+    QC_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "").suffix or ""
+    storage_key = f"qc_evidence/{uuid4().hex}{ext}"
+    dest_path = MEDIA_GALLERY_DIR / storage_key
+    size_bytes = _store_qc_evidence_upload(file, dest_path)
+    created_at = utc_now()
+
+    media = MediaAsset(
+        storage_key=storage_key,
+        mime_type=file.content_type or "application/octet-stream",
+        size_bytes=size_bytes,
+        width=None,
+        height=None,
+        watermark_text=None,
+        created_at=created_at,
+    )
+    upload = QCEvidenceUpload(
+        check_instance_id=check_instance_id,
+        media_asset_id=0,
+        uploaded_by_user_id=admin.id,
+        client_upload_id=normalized_upload_id,
+        created_at=created_at,
+    )
+    try:
+        db.add(media)
+        db.flush()
+        upload.media_asset_id = media.id
+        db.add(upload)
+        db.commit()
+        db.refresh(upload)
+    except IntegrityError as exc:
+        db.rollback()
+        _delete_media_file(storage_key)
+        existing = db.execute(
+            select(QCEvidenceUpload, MediaAsset)
+            .join(MediaAsset, QCEvidenceUpload.media_asset_id == MediaAsset.id)
+            .where(QCEvidenceUpload.client_upload_id == normalized_upload_id)
+        ).first()
+        if existing:
+            existing_upload, existing_media = existing
+            if (
+                existing_upload.check_instance_id == check_instance_id
+                and existing_upload.uploaded_by_user_id == admin.id
+            ):
+                return _evidence_upload_read(existing_upload, existing_media)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El identificador de carga ya esta en uso",
+        ) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        _delete_media_file(storage_key)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo preparar el registro QC",
+        ) from exc
+
+    return _evidence_upload_read(upload, media)
+
+
+@router.delete(
+    "/evidence-uploads/{upload_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_staged_execution_evidence(
+    upload_id: int,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> None:
+    admin = _require_qc_admin(admin)
+    upload = db.get(QCEvidenceUpload, upload_id)
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No se encontro el registro QC preparado",
+        )
+    if upload.uploaded_by_user_id != admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El registro pertenece a otro usuario QC",
+        )
+    _delete_staged_evidence_uploads(db, [upload])
+    db.commit()
+
+
 @router.post("/executions/{execution_id}/evidence", response_model=QCEvidenceSummary)
 def upload_execution_evidence(
     execution_id: int,
@@ -1353,6 +1791,7 @@ def _get_or_create_rework_task_definition(db: Session, scope: TaskScope) -> Task
             select(TaskDefinition)
             .where(TaskDefinition.is_rework == True)
             .where(TaskDefinition.scope == scope)
+            .where(TaskDefinition.archived_at.is_(None))
         )
         .scalars()
         .first()
@@ -1381,6 +1820,7 @@ def _get_or_create_rework_task_definition(db: Session, scope: TaskScope) -> Task
                 select(TaskDefinition)
                 .where(TaskDefinition.is_rework == True)
                 .where(TaskDefinition.scope == scope)
+                .where(TaskDefinition.archived_at.is_(None))
             )
             .scalars()
             .first()

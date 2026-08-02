@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  BarChart3,
   CalendarClock,
-  LayoutGrid,
+  ClipboardList,
   LogOut,
   MessageSquare,
   RefreshCw,
@@ -39,7 +40,8 @@ const QCLayout: React.FC = () => {
   const [loginSubmitting, setLoginSubmitting] = useState(false);
   const lastTapRef = useRef(0);
   const navItems = [
-    { name: 'Dashboard', path: '/qc', icon: LayoutGrid },
+    { name: 'Menú principal', path: '/qc', icon: ClipboardList },
+    { name: 'Dashboards', path: '/qc/dashboards', icon: BarChart3 },
     { name: 'Biblioteca', path: '/qc/library', icon: BookOpen },
     { name: 'Observaciones', path: '/qc/complaints', icon: MessageSquare },
     ...(admin ? [{ name: 'Checks', path: '/qc/checks', icon: ShieldCheck }] : []),

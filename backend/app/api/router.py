@@ -13,6 +13,7 @@ from app.api.routes import (
     house_params,
     house_types,
     line_attendance_throughput,
+    labels,
     panel_definitions,
     panel_linear_meters,
     panel_task_history,
@@ -34,6 +35,7 @@ from app.api.routes import (
     task_footage,
     task_definitions,
     task_rules,
+    task_sequence,
     worker_sessions,
     worker_station,
     worker_tasks,
@@ -43,6 +45,11 @@ from app.api.routes import (
 api_router = APIRouter()
 
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
+api_router.include_router(
+    admin_auth.microsoft_router,
+    prefix="/auth",
+    tags=["microsoft-auth"],
+)
 api_router.include_router(
     admin_dashboard_permissions.router,
     prefix="/admin",
@@ -62,6 +69,7 @@ api_router.include_router(
     prefix="/line-attendance-throughput",
     tags=["line-attendance-throughput"],
 )
+api_router.include_router(labels.router, prefix="/labels", tags=["labels"])
 api_router.include_router(workers.router, prefix="/workers", tags=["workers"])
 api_router.include_router(stations.router, prefix="/stations", tags=["stations"])
 api_router.include_router(pause_reasons.router, prefix="/pause-reasons", tags=["pause-reasons"])
@@ -112,6 +120,7 @@ api_router.include_router(
 api_router.include_router(task_definitions.router, prefix="/task-definitions", tags=["task-definitions"])
 api_router.include_router(task_rules.router, prefix="/task-rules", tags=["task-rules"])
 api_router.include_router(task_analysis.router, prefix="/task-analysis", tags=["task-analysis"])
+api_router.include_router(task_sequence.router, prefix="/task-sequence", tags=["task-sequence"])
 api_router.include_router(task_corrections.router, prefix="/task-corrections", tags=["task-corrections"])
 api_router.include_router(task_footage.router, prefix="/task-footage", tags=["task-footage"])
 api_router.include_router(pause_summary.router, prefix="/pause-summary", tags=["pause-summary"])

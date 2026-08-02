@@ -6,6 +6,7 @@ import type { ComponentType, ReactElement } from 'react';
 import AdminLayout from './layouts/AdminLayout';
 import WorkerLayout from './layouts/WorkerLayout';
 import QCLayout from './layouts/QCLayout';
+import { useOptionalQCSession } from './layouts/QCLayoutContext';
 
 // Pages
 import Login from './pages/Login';
@@ -40,7 +41,14 @@ const lazyRoute = <T extends ComponentType<Record<string, unknown>>>(
 
 const PanelLineSupervisorView = lazyRoute(() => import('./pages/PanelLineSupervisorView'));
 const StationWorkspace = lazyRoute(() => import('./pages/worker/StationWorkspace'));
-const QCDashboard = lazyRoute(() => import('./pages/qc/QCDashboard'));
+const QCMainMenu = lazyRoute(() => import('./pages/qc/QCMainMenu'));
+const QCDashboards = lazyRoute(() => import('./pages/qc/QCDashboards'));
+const DashboardQualityCompliance = lazyRoute(
+  () => import('./pages/qc/dashboard_quality_compliance'),
+);
+const DashboardFailureAnalysis = lazyRoute(
+  () => import('./pages/qc/dashboard_failure_analysis'),
+);
 const QCExecution = lazyRoute(() => import('./pages/qc/QCExecution'));
 const QCLibrary = lazyRoute(() => import('./pages/qc/QCLibrary'));
 const QCManualCheck = lazyRoute(() => import('./pages/qc/QCManualCheck'));
@@ -54,6 +62,9 @@ const DashboardPanelAnalysis = lazyRoute(
 );
 const DashboardTaskStationAdherence = lazyRoute(
   () => import('./pages/admin/dashboards/dashboard_task_station_adherence'),
+);
+const DashboardTaskSequence = lazyRoute(
+  () => import('./pages/admin/dashboards/dashboard_task_sequence'),
 );
 const DashboardTaskFootage = lazyRoute(
   () => import('./pages/admin/dashboards/dashboard_task_footage'),
@@ -76,6 +87,7 @@ const TaskDefs = lazyRoute(() => import('./pages/admin/config/TaskDefs'));
 const ConditionDefs = lazyRoute(() => import('./pages/admin/config/ConditionDefs'));
 const PauseNoteDefs = lazyRoute(() => import('./pages/admin/config/PauseNoteDefs'));
 const Backups = lazyRoute(() => import('./pages/admin/config/Backups'));
+const Labels = lazyRoute(() => import('./pages/admin/config/Labels'));
 const QCChecks = lazyRoute(() => import('./pages/admin/quality/QCChecks'));
 const DaySummary = lazyRoute(() => import('./pages/utility/DaySummary'));
 const GeneralOverview = lazyRoute(() => import('./pages/utility/GeneralOverview'));
@@ -140,6 +152,44 @@ const DashboardPermissionRoute = ({
   return element;
 };
 
+const QCDashboardPermissionRoute = ({
+  dashboardId,
+  element,
+}: {
+  dashboardId: string;
+  element: ReactElement;
+}) => {
+  const admin = useOptionalQCSession();
+  const [permissions, setPermissions] = useState<DashboardPermission[] | null>(null);
+
+  useEffect(() => {
+    if (!admin) {
+      return;
+    }
+    let isMounted = true;
+    dashboardApiRequest<DashboardPermission[]>('/api/admin/dashboard-permissions')
+      .then((nextPermissions) => {
+        if (isMounted) setPermissions(nextPermissions);
+      })
+      .catch(() => {
+        if (isMounted) setPermissions([]);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [admin]);
+
+  if (!admin) {
+    return <Navigate to="/qc/dashboards" replace state={{ qcLogin: true }} />;
+  }
+  if (isSysadminUser(admin)) return element;
+  if (permissions === null) return null;
+  if (!canViewDashboard(admin, dashboardId, permissionsToMap(permissions))) {
+    return <Navigate to="/qc/dashboards" replace />;
+  }
+  return element;
+};
+
 function App() {
   return (
     <Router>
@@ -158,7 +208,26 @@ function App() {
 
         {/* QC Routes */}
         <Route path="/qc" element={<QCLayout />}>
-          <Route index element={<QCDashboard />} />
+          <Route index element={<QCMainMenu />} />
+          <Route path="dashboards" element={<QCDashboards />} />
+          <Route
+            path="dashboards/quality-compliance"
+            element={
+              <QCDashboardPermissionRoute
+                dashboardId="qc-quality-compliance"
+                element={<DashboardQualityCompliance />}
+              />
+            }
+          />
+          <Route
+            path="dashboards/failure-analysis"
+            element={
+              <QCDashboardPermissionRoute
+                dashboardId="qc-failure-analysis"
+                element={<DashboardFailureAnalysis />}
+              />
+            }
+          />
           <Route path="new" element={<QCManualCheck />} />
           <Route path="library" element={<QCLibrary />} />
           <Route path="complaints" element={<QCComplaints />} />
@@ -204,6 +273,10 @@ function App() {
             element={<Navigate to="/admin/pause-note-defs?tab=comentarios" replace />}
           />
           <Route path="backups" element={<Backups />} />
+          <Route
+            path="labels"
+            element={<SysadminOnlyRoute element={<Labels />} />}
+          />
           
           {/* Dashboards */}
           <Route path="dashboards" element={<Dashboards />} />
@@ -221,6 +294,7 @@ function App() {
             }
           />
           <Route path="dashboards/station-adherence" element={<DashboardTaskStationAdherence />} />
+          <Route path="dashboards/task-sequence" element={<DashboardTaskSequence />} />
           <Route
             path="dashboards/assistance"
             element={

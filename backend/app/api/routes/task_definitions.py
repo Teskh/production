@@ -1,11 +1,14 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.enums import RestrictionType
-from app.models.tasks import TaskApplicability, TaskDefinition
+from app.models.qc import QCCheckInstance
+from app.models.tasks import TaskApplicability, TaskDefinition, TaskInstance
 from app.models.workers import Skill, TaskSkillRequirement, TaskWorkerRestriction, Worker
 from app.schemas.tasks import (
     TaskAllowedWorkers,
@@ -14,14 +17,60 @@ from app.schemas.tasks import (
     TaskRegularCrew,
     TaskSpecialty,
     TaskDefinitionUpdate,
+    TaskDefinitionUsageRead,
 )
 
 router = APIRouter()
 
 
+def _get_task_definition(task_definition_id: int, db: Session) -> TaskDefinition:
+    task = db.get(TaskDefinition, task_definition_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
+        )
+    return task
+
+
+def _task_usage(task_definition_id: int, db: Session) -> TaskDefinitionUsageRead:
+    task_instances = db.scalar(
+        select(func.count(TaskInstance.id)).where(
+            TaskInstance.task_definition_id == task_definition_id
+        )
+    )
+    qc_checks = db.scalar(
+        select(func.count(QCCheckInstance.id))
+        .join(
+            TaskInstance,
+            QCCheckInstance.related_task_instance_id == TaskInstance.id,
+        )
+        .where(TaskInstance.task_definition_id == task_definition_id)
+    )
+    return TaskDefinitionUsageRead(
+        task_instances=int(task_instances or 0),
+        qc_checks=int(qc_checks or 0),
+    )
+
+
+def _archive_task_definition(
+    task: TaskDefinition, admin: AdminUser, db: Session
+) -> TaskDefinition:
+    if task.archived_at is None:
+        task.archived_at = datetime.now(UTC).replace(tzinfo=None)
+        task.archived_by_user_id = admin.id
+        db.commit()
+        db.refresh(task)
+    return task
+
+
 @router.get("", response_model=list[TaskDefinitionRead])
-def list_task_definitions(db: Session = Depends(get_db)) -> list[TaskDefinitionRead]:
-    tasks = list(db.execute(select(TaskDefinition).order_by(TaskDefinition.name)).scalars())
+def list_task_definitions(
+    include_archived: bool = False, db: Session = Depends(get_db)
+) -> list[TaskDefinitionRead]:
+    stmt = select(TaskDefinition).order_by(TaskDefinition.name)
+    if not include_archived:
+        stmt = stmt.where(TaskDefinition.archived_at.is_(None))
+    tasks = list(db.execute(stmt).scalars())
     if not tasks:
         return []
 
@@ -78,12 +127,15 @@ def create_task_definition(
 def get_task_definition(
     task_definition_id: int, db: Session = Depends(get_db)
 ) -> TaskDefinition:
-    task = db.get(TaskDefinition, task_definition_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
-        )
-    return task
+    return _get_task_definition(task_definition_id, db)
+
+
+@router.get("/{task_definition_id}/usage", response_model=TaskDefinitionUsageRead)
+def get_task_definition_usage(
+    task_definition_id: int, db: Session = Depends(get_db)
+) -> TaskDefinitionUsageRead:
+    _get_task_definition(task_definition_id, db)
+    return _task_usage(task_definition_id, db)
 
 
 @router.put("/{task_definition_id}", response_model=TaskDefinitionRead)
@@ -93,11 +145,7 @@ def update_task_definition(
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> TaskDefinition:
-    task = db.get(TaskDefinition, task_definition_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
-        )
+    task = _get_task_definition(task_definition_id, db)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(task, key, value)
     db.commit()
@@ -109,18 +157,35 @@ def update_task_definition(
 def delete_task_definition(
     task_definition_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
+    admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
 ) -> None:
-    task = db.get(TaskDefinition, task_definition_id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found"
-        )
-    db.query(TaskApplicability).filter(
-        TaskApplicability.task_definition_id == task_definition_id
-    ).delete(synchronize_session=False)
-    db.delete(task)
-    db.commit()
+    task = _get_task_definition(task_definition_id, db)
+    _archive_task_definition(task, admin, db)
+
+
+@router.post("/{task_definition_id}/archive", response_model=TaskDefinitionRead)
+def archive_task_definition(
+    task_definition_id: int,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
+) -> TaskDefinition:
+    task = _get_task_definition(task_definition_id, db)
+    return _archive_task_definition(task, admin, db)
+
+
+@router.post("/{task_definition_id}/restore", response_model=TaskDefinitionRead)
+def restore_task_definition(
+    task_definition_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_admin_page("task-defs", edit=True)),
+) -> TaskDefinition:
+    task = _get_task_definition(task_definition_id, db)
+    if task.archived_at is not None:
+        task.archived_at = None
+        task.archived_by_user_id = None
+        db.commit()
+        db.refresh(task)
+    return task
 
 
 @router.get("/{task_definition_id}/specialty", response_model=TaskSpecialty)

@@ -38,6 +38,7 @@ def _load_panel_tasks(
         db.execute(
             select(TaskDefinition)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
             .where(TaskDefinition.scope == TaskScope.PANEL)
         ).scalars()
     )
@@ -92,11 +93,22 @@ def _required_panel_task_ids(
 def _applicable_panel_definitions_for_work_unit(
     db: Session, work_unit: WorkUnit, work_order: WorkOrder
 ) -> list[PanelDefinition]:
+    existing_definition_ids = set(
+        db.execute(
+            select(PanelUnit.panel_definition_id).where(
+                PanelUnit.work_unit_id == work_unit.id
+            )
+        ).scalars()
+    )
+    archive_filter = PanelDefinition.archived_at.is_(None)
+    if existing_definition_ids:
+        archive_filter = archive_filter | PanelDefinition.id.in_(existing_definition_ids)
     panel_definitions = list(
         db.execute(
             select(PanelDefinition)
             .where(PanelDefinition.house_type_id == work_order.house_type_id)
             .where(PanelDefinition.module_sequence_number == work_unit.module_number)
+            .where(archive_filter)
         ).scalars()
     )
     general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -33,5 +35,12 @@ class PanelDefinitionUpdate(BaseModel):
 
 class PanelDefinitionRead(PanelDefinitionBase):
     id: int
+    archived_at: datetime | None = None
+    archived_by_user_id: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PanelDefinitionUsageRead(BaseModel):
+    task_instances: int
+    qc_checks: int

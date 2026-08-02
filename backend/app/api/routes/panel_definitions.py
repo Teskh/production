@@ -1,48 +1,71 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
 from app.models.house import HouseSubType, HouseType, PanelDefinition
+from app.models.qc import QCCheckInstance
+from app.models.tasks import TaskInstance
+from app.models.work import PanelUnit
 from app.schemas.panels import (
     PanelDefinitionCreate,
     PanelDefinitionRead,
     PanelDefinitionUpdate,
+    PanelDefinitionUsageRead,
 )
 from app.services.task_applicability import sync_panel_task_applicability
 
 router = APIRouter()
 
 
-_PANEL_DELETE_BLOCKERS = {
-    "task_instances_panel_unit_id_fkey": (
-        "Cannot delete panel definition because generated panel units are still "
-        "referenced by task instances."
-    ),
-    "task_exceptions_panel_unit_id_fkey": (
-        "Cannot delete panel definition because generated panel units are still "
-        "referenced by task exceptions."
-    ),
-    "task_station_adherence_facts_panel_unit_id_fkey": (
-        "Cannot delete panel definition because generated panel units are still "
-        "referenced by station adherence records."
-    ),
-    "task_correction_logs_panel_unit_id_fkey": (
-        "Cannot delete panel definition because generated panel units are still "
-        "referenced by task correction logs."
-    ),
-    "qc_check_instances_panel_unit_id_fkey": (
-        "Cannot delete panel definition because generated panel units are still "
-        "referenced by QC checks."
-    ),
-}
+def _get_panel_definition(panel_definition_id: int, db: Session) -> PanelDefinition:
+    panel_definition = db.get(PanelDefinition, panel_definition_id)
+    if not panel_definition:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Panel definition not found"
+        )
+    return panel_definition
+
+
+def _panel_usage(panel_definition_id: int, db: Session) -> PanelDefinitionUsageRead:
+    task_instances = db.scalar(
+        select(func.count(TaskInstance.id))
+        .join(PanelUnit, TaskInstance.panel_unit_id == PanelUnit.id)
+        .where(PanelUnit.panel_definition_id == panel_definition_id)
+    )
+    qc_checks = db.scalar(
+        select(func.count(QCCheckInstance.id))
+        .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id)
+        .where(PanelUnit.panel_definition_id == panel_definition_id)
+    )
+    return PanelDefinitionUsageRead(
+        task_instances=int(task_instances or 0),
+        qc_checks=int(qc_checks or 0),
+    )
+
+
+def _archive_panel_definition(
+    panel_definition: PanelDefinition, admin: AdminUser, db: Session
+) -> PanelDefinition:
+    if panel_definition.archived_at is None:
+        panel_definition.archived_at = datetime.now(UTC).replace(tzinfo=None)
+        panel_definition.archived_by_user_id = admin.id
+        db.commit()
+        db.refresh(panel_definition)
+    return panel_definition
 
 
 @router.get("", response_model=list[PanelDefinitionRead])
-def list_panel_definitions(db: Session = Depends(get_db)) -> list[PanelDefinition]:
-    return list(db.execute(select(PanelDefinition).order_by(PanelDefinition.id)).scalars())
+def list_panel_definitions(
+    include_archived: bool = False, db: Session = Depends(get_db)
+) -> list[PanelDefinition]:
+    stmt = select(PanelDefinition).order_by(PanelDefinition.id)
+    if not include_archived:
+        stmt = stmt.where(PanelDefinition.archived_at.is_(None))
+    return list(db.execute(stmt).scalars())
 
 
 @router.post("", response_model=PanelDefinitionRead, status_code=status.HTTP_201_CREATED)
@@ -79,12 +102,17 @@ def create_panel_definition(
 def get_panel_definition(
     panel_definition_id: int, db: Session = Depends(get_db)
 ) -> PanelDefinition:
-    panel_definition = db.get(PanelDefinition, panel_definition_id)
-    if not panel_definition:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Panel definition not found"
-        )
-    return panel_definition
+    return _get_panel_definition(panel_definition_id, db)
+
+
+@router.get(
+    "/{panel_definition_id}/usage", response_model=PanelDefinitionUsageRead
+)
+def get_panel_definition_usage(
+    panel_definition_id: int, db: Session = Depends(get_db)
+) -> PanelDefinitionUsageRead:
+    _get_panel_definition(panel_definition_id, db)
+    return _panel_usage(panel_definition_id, db)
 
 
 @router.put("/{panel_definition_id}", response_model=PanelDefinitionRead)
@@ -94,11 +122,7 @@ def update_panel_definition(
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> PanelDefinition:
-    panel_definition = db.get(PanelDefinition, panel_definition_id)
-    if not panel_definition:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Panel definition not found"
-        )
+    panel_definition = _get_panel_definition(panel_definition_id, db)
     updates = payload.model_dump(exclude_unset=True)
     if "house_type_id" in updates and not db.get(HouseType, updates["house_type_id"]):
         raise HTTPException(
@@ -131,22 +155,36 @@ def update_panel_definition(
 def delete_panel_definition(
     panel_definition_id: int,
     db: Session = Depends(get_db),
-    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
+    admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> None:
-    panel_definition = db.get(PanelDefinition, panel_definition_id)
-    if not panel_definition:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Panel definition not found"
-        )
-    db.delete(panel_definition)
-    try:
+    panel_definition = _get_panel_definition(panel_definition_id, db)
+    _archive_panel_definition(panel_definition, admin, db)
+
+
+@router.post(
+    "/{panel_definition_id}/archive", response_model=PanelDefinitionRead
+)
+def archive_panel_definition(
+    panel_definition_id: int,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
+) -> PanelDefinition:
+    panel_definition = _get_panel_definition(panel_definition_id, db)
+    return _archive_panel_definition(panel_definition, admin, db)
+
+
+@router.post(
+    "/{panel_definition_id}/restore", response_model=PanelDefinitionRead
+)
+def restore_panel_definition(
+    panel_definition_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
+) -> PanelDefinition:
+    panel_definition = _get_panel_definition(panel_definition_id, db)
+    if panel_definition.archived_at is not None:
+        panel_definition.archived_at = None
+        panel_definition.archived_by_user_id = None
         db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
-        detail = _PANEL_DELETE_BLOCKERS.get(
-            constraint_name,
-            "Cannot delete panel definition because generated panel units are still "
-            "referenced by production records.",
-        )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
+        db.refresh(panel_definition)
+    return panel_definition

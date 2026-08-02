@@ -1,4 +1,11 @@
-from app.models.admin import AdminDashboardPermission, AdminSession, AdminUser, CommentTemplate, PauseReason
+from app.models.admin import (
+    AdminDashboardPermission,
+    AdminSession,
+    AdminUser,
+    CommentTemplate,
+    CompanyAccessSession,
+    PauseReason,
+)
 from app.models.conditions import (
     ConditionType,
     ConditionValue,
@@ -34,6 +41,7 @@ from app.models.qc import (
     QCCheckInstance,
     QCExecution,
     QCExecutionFailureMode,
+    QCEvidenceUpload,
     QCFailureModeDefinition,
     QCEvidence,
     QCNotification,
@@ -74,6 +82,7 @@ from app.models.workers import (
 __all__ = [
     "AdminUser",
     "AdminSession",
+    "CompanyAccessSession",
     "AdminDashboardPermission",
     "CommentTemplate",
     "ConditionType",
@@ -97,6 +106,7 @@ __all__ = [
     "QCCheckInstance",
     "QCExecution",
     "QCExecutionFailureMode",
+    "QCEvidenceUpload",
     "QCFailureModeDefinition",
     "QCEvidence",
     "QCNotification",

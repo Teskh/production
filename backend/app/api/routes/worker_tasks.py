@@ -64,6 +64,7 @@ def _required_panel_task_ids(
         db.execute(
             select(TaskDefinition)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
             .where(TaskDefinition.scope == TaskScope.PANEL)
         ).scalars()
     )
@@ -106,11 +107,22 @@ def _required_panel_task_ids(
 def _applicable_panel_definitions_for_work_unit(
     db: Session, work_unit: WorkUnit, work_order: WorkOrder
 ) -> list[PanelDefinition]:
+    existing_definition_ids = set(
+        db.execute(
+            select(PanelUnit.panel_definition_id).where(
+                PanelUnit.work_unit_id == work_unit.id
+            )
+        ).scalars()
+    )
+    archive_filter = PanelDefinition.archived_at.is_(None)
+    if existing_definition_ids:
+        archive_filter = archive_filter | PanelDefinition.id.in_(existing_definition_ids)
     panel_definitions = list(
         db.execute(
             select(PanelDefinition)
             .where(PanelDefinition.house_type_id == work_order.house_type_id)
             .where(PanelDefinition.module_sequence_number == work_unit.module_number)
+            .where(archive_filter)
         ).scalars()
     )
     general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
@@ -266,6 +278,7 @@ def _next_applicable_module_station(
         db.execute(
             select(TaskDefinition)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
             .where(TaskDefinition.scope == TaskScope.MODULE)
         ).scalars()
     )
@@ -555,7 +568,7 @@ def start_task(
     worker: Worker = Depends(get_current_worker),
 ) -> TaskInstance:
     task_def = db.get(TaskDefinition, payload.task_definition_id)
-    if not task_def or not task_def.active:
+    if not task_def or not task_def.active or task_def.archived_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
     if task_def.is_rework:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rework tasks are handled separately")
@@ -615,6 +628,12 @@ def start_task(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Panel definition is required",
+                )
+            panel_definition = db.get(PanelDefinition, panel_definition_id)
+            if not panel_definition or panel_definition.archived_at is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Panel definition not found",
                 )
             if not _dependencies_satisfied(
                 db,

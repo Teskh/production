@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Archive,
   ChevronDown,
   ChevronRight,
   Filter,
   ListChecks,
   Plus,
   Search,
+  RotateCcw,
   Trash2,
   Users,
   X,
@@ -31,6 +33,13 @@ type TaskDefinition = {
   concurrent_allowed: boolean;
   dependencies_json: number[] | null;
   advance_trigger: boolean;
+  archived_at: string | null;
+  archived_by_user_id: number | null;
+};
+
+type TaskDefinitionUsage = {
+  task_instances: number;
+  qc_checks: number;
 };
 
 type TaskSpecialty = {
@@ -195,7 +204,18 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    let message = text;
+    if (text) {
+      try {
+        const data = JSON.parse(text) as { detail?: string };
+        if (data?.detail) {
+          message = data.detail;
+        }
+      } catch {
+        // Fall through to the raw text.
+      }
+    }
+    throw new Error(message || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -229,7 +249,9 @@ const TaskDefs: React.FC = () => {
   const [crewModalOpen, setCrewModalOpen] = useState(false);
   const [catalogOpenGroups, setCatalogOpenGroups] = useState<Record<string, boolean>>({});
   const [scopeFilter, setScopeFilter] = useState<TaskScope | 'all'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'current' | 'active' | 'inactive' | 'archived'
+  >('current');
   const [stationFilter, setStationFilter] = useState('all');
   const [skillFilter, setSkillFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
@@ -247,7 +269,9 @@ const TaskDefs: React.FC = () => {
   }, [setHeader]);
 
   const loadTasks = async () => {
-    const taskData = await pageApiRequest<TaskDefinition[]>('/api/task-definitions');
+    const taskData = await pageApiRequest<TaskDefinition[]>(
+      '/api/task-definitions?include_archived=true'
+    );
     const sorted = sortTasks(taskData);
     setTasks(sorted);
     if (!sorted.length) {
@@ -278,7 +302,7 @@ const TaskDefs: React.FC = () => {
           ruleData,
           houseTypeData,
         ] = await Promise.all([
-          pageApiRequest<TaskDefinition[]>('/api/task-definitions'),
+          pageApiRequest<TaskDefinition[]>('/api/task-definitions?include_archived=true'),
           pageApiRequest<Skill[]>('/api/workers/skills'),
           pageApiRequest<Worker[]>('/api/workers'),
           pageApiRequest<Station[]>('/api/stations'),
@@ -567,7 +591,18 @@ const TaskDefs: React.FC = () => {
       result = result.filter((task) => task.scope === scopeFilter);
     }
     if (statusFilter !== 'all') {
-      result = result.filter((task) => (statusFilter === 'active' ? task.active : !task.active));
+      result = result.filter((task) => {
+        if (statusFilter === 'archived') {
+          return task.archived_at !== null;
+        }
+        if (statusFilter === 'current') {
+          return task.archived_at === null;
+        }
+        if (task.archived_at !== null) {
+          return false;
+        }
+        return statusFilter === 'active' ? task.active : !task.active;
+      });
     }
     if (stationFilter !== 'all') {
       result = result.filter((task) => stationFilterKeyByTaskId.get(task.id) === stationFilter);
@@ -600,6 +635,9 @@ const TaskDefs: React.FC = () => {
       draft.scope !== 'aux' && draftSequenceOrder !== null && hasSequenceData;
     return tasks
       .filter((task) => {
+        if (task.archived_at !== null) {
+          return false;
+        }
         if (task.id === draft.id) {
           return false;
         }
@@ -1128,32 +1166,60 @@ const TaskDefs: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
+  const handleArchive = async () => {
     if (!draft.id) {
-      return;
-    }
-    if (!window.confirm('Eliminar esta definicion de tarea?')) {
       return;
     }
     setSaving(true);
     setStatusMessage(null);
     try {
-      await pageApiRequest<void>(`/api/task-definitions/${draft.id}`, { method: 'DELETE' });
+      const usage = await pageApiRequest<TaskDefinitionUsage>(
+        `/api/task-definitions/${draft.id}/usage`
+      );
+      const warning = `${draft.name} has been used by ${usage.task_instances} tasks and ${usage.qc_checks} QC checks.`;
+      if (!window.confirm(`${warning}\n\n¿Archivar esta definición de tarea?`)) {
+        return;
+      }
+      await pageApiRequest<TaskDefinition>(`/api/task-definitions/${draft.id}/archive`, {
+        method: 'POST',
+      });
       await loadTasks();
-      setStatusMessage('Eliminada.');
+      setStatusMessage('Tarea archivada.');
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'No se pudo eliminar la definicion de tarea.';
+        error instanceof Error ? error.message : 'No se pudo archivar la definicion de tarea.';
       setStatusMessage(message);
     } finally {
       setSaving(false);
     }
   };
 
-  const totalTasks = tasks.length;
-  const moduleTasks = tasks.filter((task) => task.scope === 'module').length;
-  const panelTasks = tasks.filter((task) => task.scope === 'panel').length;
-  const auxTasks = tasks.filter((task) => task.scope === 'aux').length;
+  const handleRestore = async () => {
+    if (!draft.id) {
+      return;
+    }
+    setSaving(true);
+    setStatusMessage(null);
+    try {
+      await pageApiRequest<TaskDefinition>(`/api/task-definitions/${draft.id}/restore`, {
+        method: 'POST',
+      });
+      await loadTasks();
+      setStatusMessage('Tarea restaurada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo restaurar la definicion de tarea.';
+      setStatusMessage(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const currentTasks = tasks.filter((task) => task.archived_at === null);
+  const totalTasks = currentTasks.length;
+  const moduleTasks = currentTasks.filter((task) => task.scope === 'module').length;
+  const panelTasks = currentTasks.filter((task) => task.scope === 'panel').length;
+  const auxTasks = currentTasks.filter((task) => task.scope === 'aux').length;
   const allGroupsOpen = catalogGroups.every((g) => catalogOpenGroups[g.key] !== false);
 
   return (
@@ -1200,12 +1266,18 @@ const TaskDefs: React.FC = () => {
               </select>
               <select
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                onChange={(e) =>
+                  setStatusFilter(
+                    e.target.value as 'all' | 'current' | 'active' | 'inactive' | 'archived'
+                  )
+                }
                 className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm"
               >
                 <option value="all">Todos los estados</option>
+                <option value="current">No archivado</option>
                 <option value="active">Activo</option>
                 <option value="inactive">Inactivo</option>
+                <option value="archived">Archivado</option>
               </select>
               <select
                 value={stationFilter}
@@ -1314,12 +1386,22 @@ const TaskDefs: React.FC = () => {
                                     <span className="text-emerald-600 font-medium">Gatillante</span>
                                   </>
                                 )}
+                                {task.archived_at && (
+                                  <>
+                                    <span>-</span>
+                                    <span className="font-medium text-amber-700">Archivada</span>
+                                  </>
+                                )}
                               </div>
                             </div>
                             <div className="shrink-0">
                                <span
                                 className={`inline-block h-1.5 w-1.5 rounded-full ${
-                                  task.active ? 'bg-emerald-500' : 'bg-gray-300'
+                                  task.archived_at
+                                    ? 'bg-amber-500'
+                                    : task.active
+                                      ? 'bg-emerald-500'
+                                      : 'bg-gray-300'
                                 }`}
                               />
                             </div>
@@ -1726,18 +1808,28 @@ const TaskDefs: React.FC = () => {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || selectedTask?.archived_at != null}
                   className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
                 >
                   {saving ? 'Guardando...' : 'Guardar tarea'}
                 </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={saving || !draft.id}
-                  className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
-                >
-                  <Trash2 className="h-4 w-4" /> Eliminar
-                </button>
+                {selectedTask?.archived_at ? (
+                  <button
+                    onClick={handleRestore}
+                    disabled={saving || !draft.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
+                  >
+                    <RotateCcw className="h-4 w-4" /> Restaurar
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleArchive}
+                    disabled={saving || !draft.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-[var(--ink-muted)] disabled:opacity-60"
+                  >
+                    <Archive className="h-4 w-4" /> Archivar
+                  </button>
+                )}
               </div>
             </div>
           </section>

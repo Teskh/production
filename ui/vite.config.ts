@@ -12,10 +12,12 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:2340',
         changeOrigin: true,
+        xfwd: true,
       },
       '/media_gallery': {
         target: 'http://localhost:2340',
         changeOrigin: true,
+        xfwd: true,
       },
     },
   },

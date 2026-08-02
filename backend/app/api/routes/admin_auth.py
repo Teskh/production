@@ -11,17 +11,22 @@ from app.api.deps import ADMIN_SESSION_COOKIE, get_current_admin, get_db, get_op
 from app.core.config import settings
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import AdminSession, AdminUser
+from app.models.enums import AdminRole
 from app.schemas.admin import AdminLoginRequest, AdminUserRead
 from app.services.admin_bootstrap import SYSADMIN_FIRST_NAME, ensure_sysadmin_user
-from app.services import microsoft_auth
+from app.services import company_access, microsoft_auth
 
 router = APIRouter()
+microsoft_router = APIRouter()
 
 MICROSOFT_STATE_COOKIE = "admin_ms_oauth_state"
 MICROSOFT_NEXT_COOKIE = "admin_ms_oauth_next"
-MICROSOFT_COOKIE_PATH = "/api/admin/microsoft"
+MICROSOFT_PURPOSE_COOKIE = "admin_ms_oauth_purpose"
+MICROSOFT_COOKIE_PATH = "/api/auth/microsoft"
 MICROSOFT_STATE_MAX_AGE_SECONDS = 10 * 60
 _MICROSOFT_RETURN_PREFIXES = ("/admin", "/qc", "/utility/protocols")
+_MICROSOFT_PURPOSE_ADMIN = "admin"
+_MICROSOFT_PURPOSE_COMPANY = "company"
 
 
 def _normalize_return_path(value: str | None) -> str:
@@ -39,6 +44,46 @@ def _normalize_return_path(value: str | None) -> str:
     return urlunsplit(("", "", parsed.path, parsed.query, ""))
 
 
+def _normalize_company_return_path(value: str | None) -> str:
+    candidate = (value or "").strip()
+    if not candidate:
+        return "/login"
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or not parsed.path.startswith("/")
+        or parsed.path.startswith("/api")
+    ):
+        return "/login"
+    return urlunsplit(("", "", parsed.path, parsed.query, ""))
+
+
+def _normalize_microsoft_purpose(value: str | None) -> str:
+    return (
+        _MICROSOFT_PURPOSE_COMPANY
+        if (value or "").strip().lower() == _MICROSOFT_PURPOSE_COMPANY
+        else _MICROSOFT_PURPOSE_ADMIN
+    )
+
+
+def _default_role_path(admin: AdminUser) -> str:
+    normalized_role = admin.role.strip().casefold()
+    if normalized_role == AdminRole.QC.value.casefold():
+        return "/qc"
+    if normalized_role == AdminRole.PREVENCIONISTA.value.casefold():
+        return "/utility/protocols"
+    return "/admin"
+
+
+def _role_appropriate_return_path(admin: AdminUser, requested_path: str) -> str:
+    default_path = _default_role_path(admin)
+    parsed = urlsplit(requested_path)
+    if parsed.path == default_path or parsed.path.startswith(f"{default_path}/"):
+        return requested_path
+    return default_path
+
+
 def _microsoft_redirect_uri(request: Request) -> str:
     forwarded_proto = request.headers.get("x-forwarded-proto")
     forwarded_host = request.headers.get("x-forwarded-host")
@@ -47,11 +92,11 @@ def _microsoft_redirect_uri(request: Request) -> str:
         forwarded_host or request.headers.get("host") or request.url.netloc
     ).split(",", 1)[0].strip()
     origin = urlunsplit((scheme, host, "", "", ""))
-    return f"{origin}/api/admin/microsoft/callback"
+    return f"{origin}/api/auth/microsoft/callback"
 
 
 def _redirect_with_auth_error(message: str, return_path: str) -> RedirectResponse:
-    parsed = urlsplit(_normalize_return_path(return_path))
+    parsed = urlsplit(_normalize_company_return_path(return_path))
     query = parse_qsl(parsed.query, keep_blank_values=True)
     query.append(("auth_error", message))
     url = urlunsplit(("", "", parsed.path, urlencode(query), ""))
@@ -61,6 +106,7 @@ def _redirect_with_auth_error(message: str, return_path: str) -> RedirectRespons
 def _clear_microsoft_cookies(response: Response) -> None:
     response.delete_cookie(MICROSOFT_STATE_COOKIE, path=MICROSOFT_COOKIE_PATH)
     response.delete_cookie(MICROSOFT_NEXT_COOKIE, path=MICROSOFT_COOKIE_PATH)
+    response.delete_cookie(MICROSOFT_PURPOSE_COOKIE, path=MICROSOFT_COOKIE_PATH)
 
 
 def _set_admin_session_cookie(
@@ -154,15 +200,26 @@ def admin_login(
     return admin
 
 
-@router.get("/microsoft/login")
+@microsoft_router.get("/microsoft/login")
 async def microsoft_login(
     request: Request,
     next_path: str | None = Query(default=None, alias="next"),
+    purpose: str | None = None,
 ) -> RedirectResponse:
-    return_path = _normalize_return_path(next_path)
+    normalized_purpose = _normalize_microsoft_purpose(purpose)
+    return_path = (
+        _normalize_company_return_path(next_path)
+        if normalized_purpose == _MICROSOFT_PURPOSE_COMPANY
+        else _normalize_return_path(next_path)
+    )
+    error_return_path = (
+        "/login"
+        if normalized_purpose == _MICROSOFT_PURPOSE_COMPANY
+        else return_path
+    )
     if not settings.microsoft_login_enabled:
         return _redirect_with_auth_error(
-            "El ingreso con Microsoft esta deshabilitado.", return_path
+            "El ingreso con Microsoft esta deshabilitado.", error_return_path
         )
 
     config = microsoft_auth.build_config(
@@ -170,7 +227,8 @@ async def microsoft_login(
     )
     if not config.is_configured:
         return _redirect_with_auth_error(
-            "Microsoft no esta configurado. Contacta al administrador.", return_path
+            "Microsoft no esta configurado. Contacta al administrador.",
+            error_return_path,
         )
 
     state_token = secrets.token_urlsafe(32)
@@ -197,15 +255,32 @@ async def microsoft_login(
         max_age=MICROSOFT_STATE_MAX_AGE_SECONDS,
         path=MICROSOFT_COOKIE_PATH,
     )
+    response.set_cookie(
+        key=MICROSOFT_PURPOSE_COOKIE,
+        value=normalized_purpose,
+        httponly=True,
+        samesite="lax",
+        secure=secure,
+        max_age=MICROSOFT_STATE_MAX_AGE_SECONDS,
+        path=MICROSOFT_COOKIE_PATH,
+    )
     return response
 
 
-@router.get("/microsoft/callback")
+@microsoft_router.get("/microsoft/callback")
 async def microsoft_callback(
     request: Request,
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    return_path = _normalize_return_path(request.cookies.get(MICROSOFT_NEXT_COOKIE))
+    purpose = _normalize_microsoft_purpose(
+        request.cookies.get(MICROSOFT_PURPOSE_COOKIE)
+    )
+    return_path = (
+        _normalize_company_return_path(request.cookies.get(MICROSOFT_NEXT_COOKIE))
+        if purpose == _MICROSOFT_PURPOSE_COMPANY
+        else _normalize_return_path(request.cookies.get(MICROSOFT_NEXT_COOKIE))
+    )
+    error_return_path = "/login" if purpose == _MICROSOFT_PURPOSE_COMPANY else return_path
     expected_state = request.cookies.get(MICROSOFT_STATE_COOKIE)
     received_state = request.query_params.get("state")
 
@@ -216,7 +291,7 @@ async def microsoft_callback(
     ):
         response = _redirect_with_auth_error(
             "No se pudo validar la respuesta de Microsoft. Intenta nuevamente.",
-            return_path,
+            error_return_path,
         )
         _clear_microsoft_cookies(response)
         return response
@@ -225,7 +300,7 @@ async def microsoft_callback(
     if microsoft_error:
         detail = request.query_params.get("error_description") or microsoft_error
         response = _redirect_with_auth_error(
-            f"Microsoft devolvio un error: {detail}", return_path
+            f"Microsoft devolvio un error: {detail}", error_return_path
         )
         _clear_microsoft_cookies(response)
         return response
@@ -233,7 +308,7 @@ async def microsoft_callback(
     code = (request.query_params.get("code") or "").strip()
     if not code:
         response = _redirect_with_auth_error(
-            "Microsoft no devolvio un codigo de autorizacion.", return_path
+            "Microsoft no devolvio un codigo de autorizacion.", error_return_path
         )
         _clear_microsoft_cookies(response)
         return response
@@ -243,7 +318,16 @@ async def microsoft_callback(
     )
     if not settings.microsoft_login_enabled or not config.is_configured:
         response = _redirect_with_auth_error(
-            "Microsoft no esta configurado. Contacta al administrador.", return_path
+            "Microsoft no esta configurado. Contacta al administrador.",
+            error_return_path,
+        )
+        _clear_microsoft_cookies(response)
+        return response
+
+    if not company_access.storage_is_ready(db):
+        response = _redirect_with_auth_error(
+            "El acceso con Microsoft requiere una actualizacion pendiente del servidor.",
+            error_return_path,
         )
         _clear_microsoft_cookies(response)
         return response
@@ -252,27 +336,48 @@ async def microsoft_callback(
         access_token = await microsoft_auth.exchange_code_for_token(config, code=code)
         email = await microsoft_auth.fetch_user_email(access_token)
     except microsoft_auth.MicrosoftAuthError as exc:
-        response = _redirect_with_auth_error(str(exc), return_path)
+        response = _redirect_with_auth_error(str(exc), error_return_path)
         _clear_microsoft_cookies(response)
         return response
 
     admin = get_enabled_admin_by_email(db, email)
+    company_token, company_expires_at = company_access.create_company_access_session(
+        email, db
+    )
+    secure = urlsplit(config.redirect_uri).scheme.lower() == "https"
     if admin is None:
-        response = _redirect_with_auth_error(
-            "Tu correo Microsoft no esta habilitado como usuario admin.", return_path
+        response = RedirectResponse(
+            url="/login", status_code=status.HTTP_303_SEE_OTHER
+        )
+        company_access.set_company_access_cookie(
+            response,
+            company_token,
+            company_expires_at,
+            secure=secure,
         )
         _clear_microsoft_cookies(response)
         return response
 
     token, expires_at = _create_admin_session(admin, db)
+    destination = (
+        _role_appropriate_return_path(admin, return_path)
+        if purpose == _MICROSOFT_PURPOSE_COMPANY
+        else return_path
+    )
     response = RedirectResponse(
-        url=return_path, status_code=status.HTTP_303_SEE_OTHER
+        url=destination, status_code=status.HTTP_303_SEE_OTHER
     )
     _set_admin_session_cookie(
         response,
         token,
         expires_at,
-        secure=urlsplit(config.redirect_uri).scheme.lower() == "https",
+        secure=secure,
+    )
+    company_access.set_company_access_cookie(
+        response,
+        company_token,
+        company_expires_at,
+        secure=secure,
     )
     _clear_microsoft_cookies(response)
     return response

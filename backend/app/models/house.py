@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +58,12 @@ class PanelDefinition(Base):
     )
     task_durations_json: Mapped[list[float | None] | None] = mapped_column(
         JSONB, nullable=True
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
     )
 
     house_type: Mapped["HouseType"] = relationship(back_populates="panel_definitions")

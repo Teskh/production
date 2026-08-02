@@ -11,7 +11,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.api.deps import admin_page_access_allowed, require_admin_page
+from app.api.deps import admin_page_access_allowed, require_admin_page, require_sysadmin
 
 
 def admin(role: str) -> SimpleNamespace:
@@ -71,6 +71,13 @@ class AdminPageAccessTests(unittest.TestCase):
         guard = require_admin_page("stations", edit=True)
         with self.assertRaises(HTTPException) as caught:
             guard(admin("Admin"), FakeDb(rows))
+        self.assertEqual(caught.exception.status_code, 403)
+
+    def test_sysadmin_dependency_rejects_other_admin_roles(self) -> None:
+        actor = admin("SysAdmin")
+        self.assertIs(require_sysadmin(actor), actor)
+        with self.assertRaises(HTTPException) as caught:
+            require_sysadmin(admin("Admin"))
         self.assertEqual(caught.exception.status_code, 403)
 
 

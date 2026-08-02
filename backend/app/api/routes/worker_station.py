@@ -398,7 +398,11 @@ def station_snapshot(
                 TaskInstance.task_definition_id,
             )
             .where(TaskInstance.station_id == station.id)
-            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+            .where(
+                TaskInstance.status.in_(
+                    [TaskStatus.NOT_STARTED, TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]
+                )
+            )
         ).all()
     )
     for work_unit_id, panel_unit_id, instance_scope, task_definition_id in open_task_rows:
@@ -413,6 +417,7 @@ def station_snapshot(
             .where(TaskDefinition.scope == scope)
             .where(TaskDefinition.is_rework == False)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
         )
         return list(db.execute(stmt).scalars())
 
@@ -736,6 +741,10 @@ def station_snapshot(
                         panel_def
                         for panel_def in defs_for_house
                         if panel_def.module_sequence_number == work_unit.module_number
+                        and (
+                            panel_def.archived_at is None
+                            or (work_unit.id, panel_def.id) in panel_unit_map
+                        )
                     ]
                     sub_type_id = work_order.sub_type_id
                     general = [
@@ -881,6 +890,7 @@ def station_snapshot(
                     db.execute(
                         select(TaskDefinition)
                         .where(TaskDefinition.active == True)
+                        .where(TaskDefinition.archived_at.is_(None))
                         .where(TaskDefinition.scope == TaskScope.MODULE)
                         .where(TaskDefinition.is_rework == False)
                     ).scalars()
