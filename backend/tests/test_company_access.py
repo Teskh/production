@@ -24,7 +24,7 @@ from app import main
 def network_settings() -> SimpleNamespace:
     return SimpleNamespace(
         trusted_lan_cidrs="10.0.10.0/23",
-        trusted_proxy_cidrs="127.0.0.0/8,::1/128",
+        trusted_proxy_cidrs="127.0.0.0/8,::1/128,172.18.144.1/32",
         company_access_session_hours=12,
     )
 
@@ -103,6 +103,24 @@ class CompanyAccessNetworkTests(unittest.TestCase):
         )
         self.assertFalse(company_access.is_trusted_network_request(request, config))
 
+    def test_windows_wsl_proxy_uses_forwarded_lan_client(self) -> None:
+        request = make_request(
+            "172.18.144.1",
+            forwarded_for="10.0.10.84",
+        )
+        self.assertTrue(
+            company_access.is_trusted_network_request(request, network_settings())
+        )
+
+    def test_windows_wsl_proxy_does_not_trust_forwarded_public_client(self) -> None:
+        request = make_request(
+            "172.18.144.1",
+            forwarded_for="203.0.113.84",
+        )
+        self.assertFalse(
+            company_access.is_trusted_network_request(request, network_settings())
+        )
+
     def test_public_client_through_local_proxy_is_not_treated_as_localhost(self) -> None:
         request = make_request(
             "127.0.0.1",
@@ -145,6 +163,22 @@ class CompanyAccessMiddlewareTests(unittest.TestCase):
         response = asyncio.run(
             main.enforce_company_access(
                 make_request("127.0.0.1", host="localhost:5173"),
+                call_next,
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        call_next.assert_awaited_once()
+
+    def test_lan_admin_pin_login_reaches_application_through_windows_proxy(self) -> None:
+        call_next = AsyncMock(return_value=PlainTextResponse("ok"))
+        response = asyncio.run(
+            main.enforce_company_access(
+                make_request(
+                    "172.18.144.1",
+                    forwarded_for="10.0.11.20",
+                    path="/api/admin/login",
+                    method="POST",
+                ),
                 call_next,
             )
         )

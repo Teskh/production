@@ -81,7 +81,12 @@ class LabelPrinterServiceTests(unittest.TestCase):
 
         self.assertIn("^PW799", zpl)
         self.assertIn("^LL1618", zpl)
+        self.assertIn("^LS0", zpl)
+        self.assertIn("^LT0", zpl)
+        self.assertIn("^FO32,48^GB735,1522,4^FS", zpl)
+        self.assertIn("^FO32,1040^GB735,4,4^FS", zpl)
         self.assertIn("^A0R", zpl)
+        self.assertIn("^FO634,96^A0R", zpl)
         self.assertIn("PROD-1042", zpl)
         self.assertIn("M-03", zpl)
         self.assertNotIn("Parque Norte", zpl)

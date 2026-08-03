@@ -43,7 +43,7 @@ MICROSOFT_REDIRECT_URI=http://localhost:5173/api/auth/microsoft/callback
 COMPANY_ACCESS_GATE_ENABLED=true
 COMPANY_ACCESS_SESSION_HOURS=12
 TRUSTED_LAN_CIDRS=10.0.10.0/23
-TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
+TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.18.144.1/32
 ```
 
 The redirect URI must exactly match a Web redirect URI registered in Entra. Set an

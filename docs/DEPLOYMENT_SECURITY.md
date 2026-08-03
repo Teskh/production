@@ -28,7 +28,7 @@ hide the tablet's LAN address from the access policy.
 COMPANY_ACCESS_GATE_ENABLED=true
 COMPANY_ACCESS_SESSION_HOURS=12
 TRUSTED_LAN_CIDRS=10.0.10.0/23
-TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
+TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,172.18.144.1/32
 MICROSOFT_REDIRECT_URI=https://exampleurl.com/api/auth/microsoft/callback
 ```
 
@@ -53,6 +53,11 @@ exampleurl.com {
 Caddy supplies the forwarding headers used to recover the original client address and
 HTTPS origin. If another proxy or container sits between Caddy and the app, add only that
 proxy's CIDR to `TRUSTED_PROXY_CIDRS`.
+
+For the current Windows/WSL production host, Windows reports the WSL gateway as
+`172.18.144.1`; that exact `/32` address is trusted so the backend can evaluate the LAN
+client carried in `X-Forwarded-For`. If the WSL virtual network is recreated with a new
+gateway, update this value to the new exact address.
 
 Run the production application on loopback:
 

@@ -433,61 +433,67 @@ const Labels: React.FC = () => {
               }}
             >
               <div
-                className="relative grid w-full overflow-hidden border-2 border-slate-950 border-t-[8px] border-t-[#002FA7] bg-white"
-                style={{ aspectRatio: '1618 / 799', gridTemplateColumns: '1.58fr 0.72fr' }}
+                className="relative grid w-full place-items-center overflow-hidden bg-white"
+                style={{ aspectRatio: '1618 / 799' }}
               >
-                {production ? (
-                  <>
-                    <div className="flex min-w-0 flex-col border-r-2 border-slate-950 px-[5%] py-[4%]">
-                      <p className="text-[clamp(7px,0.85vw,12px)] font-bold uppercase tracking-[0.14em] text-slate-500">
-                        Etiqueta de producción
-                      </p>
-                      {selected.has('production_number') && (
-                        <div className="mt-[4%]">
-                          <p className="text-[clamp(7px,0.75vw,11px)] font-bold uppercase tracking-[0.12em] text-slate-500">N° producción</p>
-                          <p className="truncate text-[clamp(24px,4.7vw,68px)] font-bold leading-none tracking-[-0.065em]">
-                            {production.production_number}
-                          </p>
-                        </div>
-                      )}
-                      {selected.has('project_name') && (
-                        <div className="mt-auto border-t border-slate-950 pt-[3%]">
-                          <p className="text-[clamp(7px,0.75vw,11px)] font-bold uppercase tracking-[0.12em] text-slate-500">Proyecto</p>
-                          <p className="mt-1 truncate text-[clamp(13px,2.2vw,30px)] font-bold leading-none tracking-[-0.04em]">
-                            {production.project_name}
-                          </p>
-                        </div>
-                      )}
-                    </div>
+                <div
+                  className="relative grid h-[91.99%] w-[94.07%] overflow-hidden border-2 border-slate-950 font-bold"
+                  style={{
+                    gridTemplateColumns: '65.18% 34.82%',
+                    fontFamily: '"Arial Narrow", Arial, sans-serif',
+                    fontStretch: 'condensed',
+                  }}
+                >
+                  {production ? (
+                    <>
+                      <div className="flex min-w-0 flex-col border-r-2 border-slate-950 px-[3%] py-[3.2%]">
+                        {selected.has('production_number') && (
+                          <div>
+                            <p className="text-[clamp(7px,0.75vw,11px)] uppercase tracking-normal text-slate-500">N° producción</p>
+                            <p className="truncate text-[clamp(24px,4.7vw,68px)] leading-none tracking-normal">
+                              {production.production_number}
+                            </p>
+                          </div>
+                        )}
+                        {selected.has('project_name') && (
+                          <div className="mt-[6%]">
+                            <p className="text-[clamp(7px,0.75vw,11px)] uppercase tracking-normal text-slate-500">Proyecto</p>
+                            <p className="mt-1 truncate text-[clamp(13px,2.2vw,30px)] leading-none tracking-normal">
+                              {production.project_name}
+                            </p>
+                          </div>
+                        )}
+                      </div>
 
-                    <div className="flex min-w-0 flex-col px-[9%] py-[8%]">
-                      {selected.has('module_number') && (
-                        <div>
-                          <p className="text-[clamp(7px,0.75vw,11px)] font-bold uppercase tracking-[0.12em] text-slate-500">Módulo</p>
-                          <p className="text-[clamp(28px,5.5vw,78px)] font-bold leading-none tracking-[-0.075em]">
-                            M-{String(production.module_number).padStart(2, '0')}
-                          </p>
-                        </div>
-                      )}
-                      {selected.has('panel_name') && production.panel_name && (
-                        <div className="mt-auto border-t border-slate-950 pt-[7%]">
-                          <p className="text-[clamp(7px,0.75vw,11px)] font-bold uppercase tracking-[0.12em] text-slate-500">Panel</p>
-                          <p className="mt-1 truncate text-[clamp(14px,2.5vw,34px)] font-bold leading-none tracking-[-0.04em]">
-                            {production.panel_name}
-                          </p>
-                        </div>
-                      )}
-                    </div>
+                      <div className="flex min-w-0 flex-col px-[6%] py-[5%]">
+                        {selected.has('module_number') && (
+                          <div>
+                            <p className="text-[clamp(7px,0.75vw,11px)] uppercase tracking-normal text-slate-500">Módulo</p>
+                            <p className="text-[clamp(28px,5.5vw,78px)] leading-none tracking-normal">
+                              M-{String(production.module_number).padStart(2, '0')}
+                            </p>
+                          </div>
+                        )}
+                        {selected.has('panel_name') && production.panel_name && (
+                          <div className="mt-[12%] border-t border-slate-950 pt-[7%]">
+                            <p className="text-[clamp(7px,0.75vw,11px)] uppercase tracking-normal text-slate-500">Panel</p>
+                            <p className="mt-1 truncate text-[clamp(14px,2.5vw,34px)] leading-none tracking-normal">
+                              {production.panel_name}
+                            </p>
+                          </div>
+                        )}
+                      </div>
 
-                    <div className="absolute bottom-[2%] left-[2%] text-[clamp(5px,0.55vw,8px)] font-bold uppercase tracking-[0.12em] text-slate-500">
-                      ZD420 · 203 DPI · Muestra
+                      <div className="absolute bottom-[2%] left-[2%] text-[clamp(5px,0.55vw,8px)] uppercase tracking-normal text-slate-500">
+                        ZD420 / 203 DPI / MUESTRA PRODUCCION / LANDSCAPE
+                      </div>
+                    </>
+                  ) : (
+                    <div className="col-span-2 flex items-center justify-center p-8 text-center text-sm text-slate-500">
+                      No hay un módulo disponible para construir la vista previa.
                     </div>
-                  </>
-                ) : (
-                  <div className="col-span-2 flex items-center justify-center p-8 text-center text-sm font-semibold text-slate-500">
-                    No hay un módulo disponible para construir la vista previa.
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </section>

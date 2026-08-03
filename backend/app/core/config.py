@@ -106,7 +106,7 @@ class Settings:
         "TRUSTED_LAN_CIDRS", "10.0.10.0/23"
     )
     trusted_proxy_cidrs: str = os.getenv(
-        "TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128"
+        "TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128,172.18.144.1/32"
     )
     trusted_client_ip_header: str = os.getenv(
         "TRUSTED_CLIENT_IP_HEADER", "x-forwarded-for"

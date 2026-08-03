@@ -22,6 +22,11 @@ from app.schemas.labels import LabelSettings, ProductionLabelData
 PRINT_WIDTH_DOTS = 799
 LABEL_LENGTH_DOTS = 1618
 DOTS_PER_MM = 8
+SAFE_WIDTH_MARGIN_DOTS = 32
+SAFE_LENGTH_MARGIN_DOTS = 48
+OUTER_BOX_WIDTH_DOTS = PRINT_WIDTH_DOTS - (SAFE_WIDTH_MARGIN_DOTS * 2)
+OUTER_BOX_LENGTH_DOTS = LABEL_LENGTH_DOTS - (SAFE_LENGTH_MARGIN_DOTS * 2)
+SECTION_DIVIDER_DOT = 1040
 
 DEFAULT_SETTINGS = LabelSettings().model_dump()
 
@@ -305,8 +310,16 @@ def build_test_zpl(
         f"^PW{PRINT_WIDTH_DOTS}",
         f"^LL{LABEL_LENGTH_DOTS}",
         "^LH0,0",
-        "^FO24,24^GB751,1570,4^FS",
-        "^FO24,1040^GB751,4,4^FS",
+        "^LS0",
+        "^LT0",
+        (
+            f"^FO{SAFE_WIDTH_MARGIN_DOTS},{SAFE_LENGTH_MARGIN_DOTS}"
+            f"^GB{OUTER_BOX_WIDTH_DOTS},{OUTER_BOX_LENGTH_DOTS},4^FS"
+        ),
+        (
+            f"^FO{SAFE_WIDTH_MARGIN_DOTS},{SECTION_DIVIDER_DOT}"
+            f"^GB{OUTER_BOX_WIDTH_DOTS},4,4^FS"
+        ),
     ]
 
     if "production_number" in selected:
@@ -316,8 +329,8 @@ def build_test_zpl(
         )
         commands.extend(
             [
-                "^FO718,70^A0R,28,28^FDN PRODUCCION^FS",
-                f"^FO642,70^A0R,{production_font_size},{production_font_size}^FD{production_number}^FS",
+                "^FO710,96^A0R,28,28^FDN PRODUCCION^FS",
+                f"^FO634,96^A0R,{production_font_size},{production_font_size}^FD{production_number}^FS",
             ]
         )
 
@@ -328,8 +341,8 @@ def build_test_zpl(
         )
         commands.extend(
             [
-                "^FO540,70^A0R,26,26^FDPROYECTO^FS",
-                f"^FO480,70^A0R,{project_font_size},{project_font_size}^FD{project_name}^FS",
+                "^FO532,96^A0R,26,26^FDPROYECTO^FS",
+                f"^FO472,96^A0R,{project_font_size},{project_font_size}^FD{project_name}^FS",
             ]
         )
 
@@ -355,7 +368,7 @@ def build_test_zpl(
 
     commands.extend(
         [
-            "^FO78,70^A0R,22,22^FDZD420 / 203 DPI / MUESTRA PRODUCCION / LANDSCAPE^FS",
+            "^FO78,96^A0R,22,22^FDZD420 / 203 DPI / MUESTRA PRODUCCION / LANDSCAPE^FS",
             f"^PQ{label_settings.copies},0,1,N",
             "^XZ",
         ]
