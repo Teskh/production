@@ -92,6 +92,75 @@ The FastAPI application serves `ui/dist` and handles SPA route fallback.
 When HTTPS is terminated by a reverse proxy on the same machine, bind this command to
 `127.0.0.1` instead of `0.0.0.0` and expose only reverse-proxy port 443.
 
+### Patagual Windows deployment
+
+The installed production URL is `https://aplicacionph.dyndns.org/produccion/`. Keep the
+following ignored files on the production machine:
+
+`ui/.env.production.local`:
+
+```dotenv
+VITE_APP_BASE_PATH=/produccion
+VITE_API_BASE_URL=/produccion
+```
+
+`backend/microsoft.env`:
+
+```dotenv
+MICROSOFT_LOGIN_ENABLED=true
+MICROSOFT_TENANT_ID=<tenant-id>
+MICROSOFT_CLIENT_ID=<client-id>
+MICROSOFT_CLIENT_SECRET=<client-secret-value>
+MICROSOFT_REDIRECT_URI=https://aplicacionph.dyndns.org/produccion/api/auth/microsoft/callback
+APP_BASE_PATH=/produccion
+SESSION_COOKIE_SECURE=true
+COMPANY_ACCESS_GATE_ENABLED=true
+COMPANY_ACCESS_SESSION_HOURS=12
+TRUSTED_LAN_CIDRS=10.0.10.0/23
+TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128,10.0.10.236/32
+TRUSTED_CLIENT_IP_HEADER=x-iis-client-ip
+```
+
+Build, migrate, and verify a patch before restarting the installed task:
+
+```powershell
+uv sync --dev
+Push-Location ui
+npm ci
+npm run lint
+npm run build
+Pop-Location
+$env:PYTHONPATH = "backend"
+uv run alembic -c backend/alembic.ini upgrade head
+uv run python -m unittest discover -s backend/tests -p "test_*.py"
+```
+
+The scheduled task `Produccion App` runs at startup as `SYSTEM`, restarts after failure,
+and binds Uvicorn to `127.0.0.1:5174`. Restart it after deploying a patch:
+
+```powershell
+Stop-ScheduledTask -TaskName "Produccion App"
+Start-ScheduledTask -TaskName "Produccion App"
+```
+
+The installed Caddy task reads `C:\caddy\Caddyfile`. The repository templates are
+`deployment/Caddyfile.production` and `deployment/iis-web.config`. Caddy provides the old
+LAN entry page at `http://10.0.10.236:5173` and proxies IIS to the loopback-only Produccion
+listener at `https://127.0.0.1:8093`. IIS owns public HTTPS port 443 and publishes the
+`/produccion/` path. Do not expose 5174 or 8093 through the router or firewall.
+
+After a restart or patch, check:
+
+```powershell
+curl.exe -k https://127.0.0.1:8093/health
+curl.exe -I https://aplicacionph.dyndns.org/produccion/
+curl.exe -I http://10.0.10.236:5173/
+```
+
+Test one tablet on the LAN and one device on mobile data. The tablet transition page moves
+the supported browser settings to the HTTPS app, but Microsoft/login cookies and camera
+permission must be granted again once on each device.
+
 ## Zebra label printer
 
 The Etiquetas admin page uses the backend to send ZPL directly to a configured Zebra

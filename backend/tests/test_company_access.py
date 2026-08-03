@@ -34,12 +34,13 @@ def make_request(
     *,
     host: str = "exampleurl.com",
     forwarded_for: str | None = None,
+    forwarded_header: str = "x-forwarded-for",
     path: str = "/login",
     method: str = "GET",
 ) -> Request:
     headers = [(b"host", host.encode())]
     if forwarded_for:
-        headers.append((b"x-forwarded-for", forwarded_for.encode()))
+        headers.append((forwarded_header.encode(), forwarded_for.encode()))
     return Request(
         {
             "type": "http",
@@ -91,6 +92,16 @@ class CompanyAccessNetworkTests(unittest.TestCase):
         self.assertTrue(
             company_access.is_trusted_network_request(request, network_settings())
         )
+
+    def test_proxy_can_use_a_private_internal_client_header(self) -> None:
+        config = network_settings()
+        config.trusted_client_ip_header = "x-iis-client-ip"
+        request = make_request(
+            "127.0.0.1",
+            forwarded_for="203.0.113.25",
+            forwarded_header="x-iis-client-ip",
+        )
+        self.assertFalse(company_access.is_trusted_network_request(request, config))
 
     def test_public_client_through_local_proxy_is_not_treated_as_localhost(self) -> None:
         request = make_request(

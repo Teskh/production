@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import BASE_DIR, settings
+from app.core.deployment import external_path
 from app.db.session import SessionLocal
 from app.services import company_access
 from app.services import backups as backup_service
@@ -67,7 +68,7 @@ def _company_login_url(request: Request) -> str:
     return_path = request.url.path
     if request.url.query:
         return_path = f"{return_path}?{request.url.query}"
-    return "/api/auth/microsoft/login?" + urlencode(
+    return external_path("/api/auth/microsoft/login", settings) + "?" + urlencode(
         {"purpose": "company", "next": return_path}
     )
 
@@ -233,7 +234,10 @@ async def serve_ui(full_path: str, request: Request):
     if full_path.startswith(("api/", "media_gallery/")):
         if not request.url.path.endswith("/"):
             query = f"?{request.url.query}" if request.url.query else ""
-            return RedirectResponse(url=f"{request.url.path}/{query}", status_code=307)
+            return RedirectResponse(
+                url=external_path(f"{request.url.path}/{query}", settings),
+                status_code=307,
+            )
         raise HTTPException(status_code=404)
 
     if full_path in {"health", "openapi.json"} or full_path.startswith(("docs", "redoc")):

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import ADMIN_SESSION_COOKIE, get_current_admin, get_db, get_optional_admin
 from app.core.config import settings
+from app.core.deployment import external_path, internal_path, session_cookie_path
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import AdminSession, AdminUser
 from app.models.enums import AdminRole
@@ -22,7 +23,6 @@ microsoft_router = APIRouter()
 MICROSOFT_STATE_COOKIE = "admin_ms_oauth_state"
 MICROSOFT_NEXT_COOKIE = "admin_ms_oauth_next"
 MICROSOFT_PURPOSE_COOKIE = "admin_ms_oauth_purpose"
-MICROSOFT_COOKIE_PATH = "/api/auth/microsoft"
 MICROSOFT_STATE_MAX_AGE_SECONDS = 10 * 60
 _MICROSOFT_RETURN_PREFIXES = ("/admin", "/qc", "/utility/protocols")
 _MICROSOFT_PURPOSE_ADMIN = "admin"
@@ -33,7 +33,7 @@ def _normalize_return_path(value: str | None) -> str:
     candidate = (value or "").strip()
     if not candidate:
         return "/admin"
-    parsed = urlsplit(candidate)
+    parsed = urlsplit(internal_path(candidate, settings))
     if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
         return "/admin"
     if not any(
@@ -48,7 +48,7 @@ def _normalize_company_return_path(value: str | None) -> str:
     candidate = (value or "").strip()
     if not candidate:
         return "/login"
-    parsed = urlsplit(candidate)
+    parsed = urlsplit(internal_path(candidate, settings))
     if (
         parsed.scheme
         or parsed.netloc
@@ -92,34 +92,41 @@ def _microsoft_redirect_uri(request: Request) -> str:
         forwarded_host or request.headers.get("host") or request.url.netloc
     ).split(",", 1)[0].strip()
     origin = urlunsplit((scheme, host, "", "", ""))
-    return f"{origin}/api/auth/microsoft/callback"
+    return f"{origin}{external_path('/api/auth/microsoft/callback', settings)}"
 
 
 def _redirect_with_auth_error(message: str, return_path: str) -> RedirectResponse:
     parsed = urlsplit(_normalize_company_return_path(return_path))
     query = parse_qsl(parsed.query, keep_blank_values=True)
     query.append(("auth_error", message))
-    url = urlunsplit(("", "", parsed.path, urlencode(query), ""))
+    url = external_path(
+        urlunsplit(("", "", parsed.path, urlencode(query), "")), settings
+    )
     return RedirectResponse(url=url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 def _clear_microsoft_cookies(response: Response) -> None:
-    response.delete_cookie(MICROSOFT_STATE_COOKIE, path=MICROSOFT_COOKIE_PATH)
-    response.delete_cookie(MICROSOFT_NEXT_COOKIE, path=MICROSOFT_COOKIE_PATH)
-    response.delete_cookie(MICROSOFT_PURPOSE_COOKIE, path=MICROSOFT_COOKIE_PATH)
+    cookie_path = external_path("/api/auth/microsoft", settings)
+    response.delete_cookie(MICROSOFT_STATE_COOKIE, path=cookie_path)
+    response.delete_cookie(MICROSOFT_NEXT_COOKIE, path=cookie_path)
+    response.delete_cookie(MICROSOFT_PURPOSE_COOKIE, path=cookie_path)
 
 
 def _set_admin_session_cookie(
-    response: Response, token: str, expires_at: datetime, *, secure: bool = False
+    response: Response, token: str, expires_at: datetime, *, secure: bool | None = None
 ) -> None:
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
         value=token,
         httponly=True,
         samesite="lax",
-        secure=secure,
+        secure=(
+            bool(getattr(settings, "session_cookie_secure", False))
+            if secure is None
+            else secure
+        ),
         max_age=int((expires_at - utc_now()).total_seconds()),
-        path="/",
+        path=session_cookie_path(settings),
     )
 
 
@@ -237,6 +244,7 @@ async def microsoft_login(
         status_code=status.HTTP_303_SEE_OTHER,
     )
     secure = urlsplit(config.redirect_uri).scheme.lower() == "https"
+    cookie_path = external_path("/api/auth/microsoft", settings)
     response.set_cookie(
         key=MICROSOFT_STATE_COOKIE,
         value=state_token,
@@ -244,7 +252,7 @@ async def microsoft_login(
         samesite="lax",
         secure=secure,
         max_age=MICROSOFT_STATE_MAX_AGE_SECONDS,
-        path=MICROSOFT_COOKIE_PATH,
+        path=cookie_path,
     )
     response.set_cookie(
         key=MICROSOFT_NEXT_COOKIE,
@@ -253,7 +261,7 @@ async def microsoft_login(
         samesite="lax",
         secure=secure,
         max_age=MICROSOFT_STATE_MAX_AGE_SECONDS,
-        path=MICROSOFT_COOKIE_PATH,
+        path=cookie_path,
     )
     response.set_cookie(
         key=MICROSOFT_PURPOSE_COOKIE,
@@ -262,7 +270,7 @@ async def microsoft_login(
         samesite="lax",
         secure=secure,
         max_age=MICROSOFT_STATE_MAX_AGE_SECONDS,
-        path=MICROSOFT_COOKIE_PATH,
+        path=cookie_path,
     )
     return response
 
@@ -347,7 +355,8 @@ async def microsoft_callback(
     secure = urlsplit(config.redirect_uri).scheme.lower() == "https"
     if admin is None:
         response = RedirectResponse(
-            url="/login", status_code=status.HTTP_303_SEE_OTHER
+            url=external_path("/login", settings),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
         company_access.set_company_access_cookie(
             response,
@@ -365,7 +374,8 @@ async def microsoft_callback(
         else return_path
     )
     response = RedirectResponse(
-        url=destination, status_code=status.HTTP_303_SEE_OTHER
+        url=external_path(destination, settings),
+        status_code=status.HTTP_303_SEE_OTHER,
     )
     _set_admin_session_cookie(
         response,
@@ -405,7 +415,7 @@ def admin_logout(
         if session and session.revoked_at is None:
             session.revoked_at = utc_now()
             db.commit()
-    response.delete_cookie(ADMIN_SESSION_COOKIE, path="/")
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path=session_cookie_path(settings))
 
 
 @router.get("/me", response_model=AdminUserRead)

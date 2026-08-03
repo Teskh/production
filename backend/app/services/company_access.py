@@ -11,6 +11,7 @@ from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, settings
+from app.core.deployment import session_cookie_path
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import CompanyAccessSession
 
@@ -71,11 +72,15 @@ def effective_client_address(
     if not _in_networks(peer, trusted_proxies):
         return peer
 
+    client_ip_header = str(
+        getattr(config, "trusted_client_ip_header", "x-forwarded-for")
+        or "x-forwarded-for"
+    ).strip().lower()
     forwarded = [
         address
         for address in (
             _address(value)
-            for value in request.headers.get("x-forwarded-for", "").split(",")
+            for value in request.headers.get(client_ip_header, "").split(",")
         )
         if address is not None
     ]
@@ -167,5 +172,5 @@ def set_company_access_cookie(
         samesite="lax",
         secure=secure,
         max_age=max(int((_ensure_aware(expires_at) - utc_now()).total_seconds()), 0),
-        path="/",
+        path=session_cookie_path(settings),
     )

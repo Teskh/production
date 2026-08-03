@@ -18,7 +18,8 @@ from app.api.deps import (
     get_optional_admin,
     get_optional_supervisor,
 )
-from app.core.config import BASE_DIR
+from app.core.config import BASE_DIR, settings
+from app.core.deployment import session_cookie_path
 from app.core.security import hash_token, new_session_token, session_expiry, utc_now
 from app.models.admin import AdminUser
 from app.models.enums import AdminRole
@@ -626,8 +627,9 @@ def protocol_supervisor_login(
         value=token,
         httponly=True,
         samesite="lax",
+        secure=settings.session_cookie_secure,
         max_age=int((expires_at - utc_now()).total_seconds()),
-        path="/",
+        path=session_cookie_path(settings),
     )
     return ProtocolSupervisorSessionRead(
         supervisor=_protocol_supervisor_summary(supervisor),
@@ -646,7 +648,9 @@ def protocol_supervisor_logout(
     if token:
         session.revoked_at = utc_now()
         db.commit()
-    response.delete_cookie(SUPERVISOR_SESSION_COOKIE, path="/")
+    response.delete_cookie(
+        SUPERVISOR_SESSION_COOKIE, path=session_cookie_path(settings)
+    )
 
 
 @router.get("/supervisor/me", response_model=ProtocolSupervisorSessionRead)

@@ -43,7 +43,7 @@ def make_request(
     )
 
 
-def configured_settings() -> SimpleNamespace:
+def configured_settings(*, app_base_path: str = "") -> SimpleNamespace:
     return SimpleNamespace(
         microsoft_login_enabled=True,
         microsoft_tenant_id="tenant-id",
@@ -51,6 +51,8 @@ def configured_settings() -> SimpleNamespace:
         microsoft_client_secret="client-secret",
         microsoft_redirect_uri="http://localhost:5173/api/auth/microsoft/callback",
         company_access_session_hours=12,
+        app_base_path=app_base_path,
+        session_cookie_secure=bool(app_base_path),
     )
 
 
@@ -91,10 +93,32 @@ class MicrosoftAuthHelperTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(
-            admin_auth._microsoft_redirect_uri(request),
-            "https://production.example/api/auth/microsoft/callback",
+        with patch.object(admin_auth, "settings", configured_settings()):
+            self.assertEqual(
+                admin_auth._microsoft_redirect_uri(request),
+                "https://production.example/api/auth/microsoft/callback",
+            )
+
+    def test_redirect_uri_and_return_path_support_subpath_deployment(self) -> None:
+        request = make_request(
+            "/api/auth/microsoft/login",
+            headers=[
+                (b"host", b"backend:2340"),
+                (b"x-forwarded-proto", b"https"),
+                (b"x-forwarded-host", b"production.example"),
+            ],
         )
+        with patch.object(
+            admin_auth, "settings", configured_settings(app_base_path="/produccion")
+        ):
+            self.assertEqual(
+                admin_auth._microsoft_redirect_uri(request),
+                "https://production.example/produccion/api/auth/microsoft/callback",
+            )
+            self.assertEqual(
+                admin_auth._normalize_return_path("/produccion/qc?tab=open"),
+                "/qc?tab=open",
+            )
 
     def test_company_entry_uses_role_appropriate_defaults(self) -> None:
         self.assertEqual(

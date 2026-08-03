@@ -18,6 +18,10 @@ load_dotenv(BASE_DIR / "microsoft.env", override=False)
 
 @dataclass(frozen=True)
 class Settings:
+    app_base_path: str = os.getenv("APP_BASE_PATH", "")
+    session_cookie_secure: bool = (
+        os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+    )
     database_url: str = os.getenv(
         "DATABASE_URL",
         "postgresql+psycopg2://postgres:postgres@localhost:5432/scp",
@@ -103,6 +107,9 @@ class Settings:
     )
     trusted_proxy_cidrs: str = os.getenv(
         "TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128"
+    )
+    trusted_client_ip_header: str = os.getenv(
+        "TRUSTED_CLIENT_IP_HEADER", "x-forwarded-for"
     )
     camera_rtsp_username: str = os.getenv("CAMERA_RTSP_USERNAME", "admin")
     camera_rtsp_password: str = os.getenv("CAMERA_RTSP_PASSWORD", "Geoforce.2030.$")

@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import WORKER_SESSION_COOKIE, get_current_worker_session, get_db
+from app.core.config import settings
+from app.core.deployment import session_cookie_path
 from app.core.security import (
     DEFAULT_SESSION_EXPIRY_HOURS,
     hash_token,
@@ -52,8 +54,9 @@ def worker_login(
         value=token,
         httponly=True,
         samesite="lax",
+        secure=settings.session_cookie_secure,
         max_age=int((expires_at - utc_now()).total_seconds()),
-        path="/",
+        path=session_cookie_path(settings),
     )
     return WorkerSessionRead(
         worker=worker,
@@ -74,7 +77,7 @@ def worker_logout(
     if token:
         session.revoked_at = utc_now()
         db.commit()
-    response.delete_cookie(WORKER_SESSION_COOKIE, path="/")
+    response.delete_cookie(WORKER_SESSION_COOKIE, path=session_cookie_path(settings))
 
 
 @router.get("/me", response_model=WorkerSessionRead)

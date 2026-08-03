@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Produccion</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Arial, sans-serif; background: #f5f7fa; color: #172033; }
+      main { width: min(30rem, calc(100% - 3rem)); padding: 2rem; border: 1px solid #ccd3dc; background: white; }
+      a { color: #075fa8; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Produccion cambio de direccion</h1>
+      <p>Abriendo la nueva aplicacion segura...</p>
+      <p><a id="continue" href="https://aplicacionph.dyndns.org/produccion/">Continuar a Produccion</a></p>
+    </main>
+    <script>
+      (() => {
+        const target = 'https://aplicacionph.dyndns.org/produccion/';
+        const keys = [
+          'selectedStationContext',
+          'selectedSpecificStationId',
+          'login_qr_scanning_enabled',
+          'station_change_protection_enabled',
+          'panel_daily_goal',
+        ];
+        const values = {};
+        keys.forEach((key) => {
+          const value = window.localStorage.getItem(key);
+          if (value !== null) values[key] = value;
+        });
+        const destination = Object.keys(values).length
+          ? `${target}#legacy-tablet=${encodeURIComponent(JSON.stringify(values))}`
+          : target;
+        document.getElementById('continue').href = destination;
+        window.location.replace(destination);
+      })();
+    </script>
+  </body>
+</html>

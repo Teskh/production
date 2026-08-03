@@ -19,6 +19,9 @@ import {
 } from './pages/admin/dashboards/dashboardVisibility';
 
 const CHUNK_RELOAD_KEY = 'scp-route-chunk-reload';
+const APP_BASE_PATH = (import.meta.env.VITE_APP_BASE_PATH ?? '')
+  .trim()
+  .replace(/^\/+|\/+$/g, '');
 
 const lazyRoute = <T extends ComponentType<Record<string, unknown>>>(
   loader: () => Promise<{ default: T }>,
@@ -192,7 +195,7 @@ const QCDashboardPermissionRoute = ({
 
 function App() {
   return (
-    <Router>
+    <Router basename={APP_BASE_PATH ? `/${APP_BASE_PATH}` : undefined}>
       <Suspense fallback={<RouteLoadingFallback />}>
         <Routes>
         <Route path="/login" element={<Login />} />
