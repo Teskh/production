@@ -305,6 +305,13 @@ class QCManualCheckCreate(BaseModel):
     station_id: int | None = None
 
 
+class QCManualCheckOption(BaseModel):
+    id: int
+    name: str
+    guidance_text: str | None = None
+    has_open_instance: bool = False
+
+
 class QCReworkStartRequest(BaseModel):
     worker_ids: list[int] | None = None
     station_id: int | None = None

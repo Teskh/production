@@ -22,6 +22,7 @@ from app.models.admin import AdminDashboardPermission, AdminUser
 from app.models.enums import (
     AdminRole,
     PanelUnitStatus,
+    QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
     QCExecutionOutcome,
@@ -75,6 +76,7 @@ from app.schemas.qc_runtime import (
     QCLibraryWorkUnitDetail,
     QCLibraryWorkUnitSummary,
     QCManualCheckCreate,
+    QCManualCheckOption,
     QCNotificationSummary,
     QCPlantModuleSummary,
     QCPlantPanelSummary,
@@ -89,6 +91,7 @@ from app.services.qc_runtime import (
     apply_failure_modes,
     create_notifications_for_task,
     enforce_no_active_tasks,
+    manual_check_scope_for_status,
     resolve_qc_applicability,
     update_sampling_from_execution,
 )
@@ -1380,6 +1383,146 @@ def execute_qc_check(
     return execution_read
 
 
+def _manual_check_target(
+    db: Session,
+    work_unit_id: int,
+    panel_unit_id: int | None,
+    *,
+    for_update: bool = False,
+) -> tuple[WorkUnit, WorkOrder, TaskScope, str | None]:
+    work_unit = (
+        db.execute(
+            select(WorkUnit)
+            .where(WorkUnit.id == work_unit_id)
+            .with_for_update()
+        )
+        .scalars()
+        .one_or_none()
+        if for_update
+        else db.get(WorkUnit, work_unit_id)
+    )
+    if not work_unit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
+
+    scope = manual_check_scope_for_status(work_unit.status)
+    if scope is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Las inspecciones manuales requieren un módulo actualmente en producción",
+        )
+
+    panel_group = None
+    if scope == TaskScope.PANEL:
+        if panel_unit_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Debe seleccionar un panel mientras el módulo está en Paneles",
+            )
+        panel = db.get(PanelUnit, panel_unit_id)
+        if not panel or panel.work_unit_id != work_unit_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel unit not found")
+        panel_group = panel.panel_definition.group
+    elif panel_unit_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se puede seleccionar un panel mientras el módulo está en Paneles",
+        )
+
+    work_order = db.get(WorkOrder, work_unit.work_order_id)
+    if not work_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work order not found")
+    return work_unit, work_order, scope, panel_group
+
+
+def _applicability_rows(db: Session, check_definition_id: int) -> list[QCApplicability]:
+    return list(
+        db.execute(
+            select(QCApplicability)
+            .options(
+                selectinload(QCApplicability.house_type_links),
+                selectinload(QCApplicability.sub_type_links),
+                selectinload(QCApplicability.panel_group_links),
+            )
+            .where(QCApplicability.check_definition_id == check_definition_id)
+        ).scalars()
+    )
+
+
+@router.get("/manual-check-options", response_model=list[QCManualCheckOption])
+def manual_check_options(
+    work_unit_id: int,
+    panel_unit_id: int | None = None,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> list[QCManualCheckOption]:
+    _require_qc_admin(admin)
+    _work_unit, work_order, scope, panel_group = _manual_check_target(
+        db, work_unit_id, panel_unit_id
+    )
+    definitions = list(
+        db.execute(
+            select(QCCheckDefinition)
+            .where(QCCheckDefinition.kind == QCCheckKind.MANUAL_TEMPLATE)
+            .where(QCCheckDefinition.active.is_(True))
+            .where(QCCheckDefinition.archived_at.is_(None))
+            .order_by(QCCheckDefinition.name, QCCheckDefinition.id)
+        ).scalars()
+    )
+    if not definitions:
+        return []
+
+    applicability_by_definition: dict[int, list[QCApplicability]] = {}
+    applicability_rows = list(
+        db.execute(
+            select(QCApplicability)
+            .options(
+                selectinload(QCApplicability.house_type_links),
+                selectinload(QCApplicability.sub_type_links),
+                selectinload(QCApplicability.panel_group_links),
+            )
+            .where(
+                QCApplicability.check_definition_id.in_(
+                    definition.id for definition in definitions
+                )
+            )
+        ).scalars()
+    )
+    for applicability in applicability_rows:
+        applicability_by_definition.setdefault(applicability.check_definition_id, []).append(
+            applicability
+        )
+
+    target_open_definition_ids = set(
+        db.execute(
+            select(QCCheckInstance.check_definition_id)
+            .where(QCCheckInstance.work_unit_id == work_unit_id)
+            .where(QCCheckInstance.panel_unit_id == panel_unit_id)
+            .where(QCCheckInstance.scope == scope)
+            .where(QCCheckInstance.status == QCCheckStatus.OPEN)
+            .where(QCCheckInstance.check_definition_id.isnot(None))
+        ).scalars()
+    )
+
+    options: list[QCManualCheckOption] = []
+    for definition in definitions:
+        if not resolve_qc_applicability(
+            applicability_by_definition.get(definition.id, []),
+            work_order.house_type_id,
+            work_order.sub_type_id,
+            panel_group,
+        ):
+            continue
+        options.append(
+            QCManualCheckOption(
+                id=definition.id,
+                name=definition.name,
+                guidance_text=definition.guidance_text,
+                has_open_instance=definition.id in target_open_definition_ids,
+            )
+        )
+    return options
+
+
 @router.post("/check-instances/manual", response_model=QCCheckInstanceSummary, status_code=status.HTTP_201_CREATED)
 def create_manual_check(
     payload: QCManualCheckCreate,
@@ -1387,17 +1530,14 @@ def create_manual_check(
     db: Session = Depends(get_db),
 ) -> QCCheckInstanceSummary:
     admin = _require_qc_admin(admin)
-    work_unit = db.get(WorkUnit, payload.work_unit_id)
-    if not work_unit:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
-    if payload.scope == TaskScope.PANEL and payload.panel_unit_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Panel unit required for panel checks")
-    if payload.scope != TaskScope.PANEL and payload.panel_unit_id is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Panel unit only allowed for panel checks")
-    if payload.panel_unit_id:
-        panel = db.get(PanelUnit, payload.panel_unit_id)
-        if not panel or panel.work_unit_id != payload.work_unit_id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Panel unit not found")
+    work_unit, work_order, expected_scope, panel_group = _manual_check_target(
+        db, payload.work_unit_id, payload.panel_unit_id, for_update=True
+    )
+    if payload.scope != expected_scope:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El alcance de la inspección no coincide con el estado actual del módulo",
+        )
     check_def = None
     if payload.check_definition_id:
         check_def = db.get(QCCheckDefinition, payload.check_definition_id)
@@ -1416,27 +1556,8 @@ def create_manual_check(
     if not payload.ad_hoc_title and not check_def:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Manual check title required")
 
-    work_order = db.get(WorkOrder, work_unit.work_order_id)
-    if not work_order:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work order not found")
-
-    panel_group = None
-    if payload.panel_unit_id:
-        panel = db.get(PanelUnit, payload.panel_unit_id)
-        panel_group = panel.panel_definition.group if panel else None
-
     if check_def:
-        applicability = list(
-            db.execute(
-                select(QCApplicability)
-                .options(
-                    selectinload(QCApplicability.house_type_links),
-                    selectinload(QCApplicability.sub_type_links),
-                    selectinload(QCApplicability.panel_group_links),
-                )
-                .where(QCApplicability.check_definition_id == check_def.id)
-            ).scalars()
-        )
+        applicability = _applicability_rows(db, check_def.id)
         applies = resolve_qc_applicability(
             applicability,
             work_order.house_type_id,
@@ -1445,6 +1566,24 @@ def create_manual_check(
         )
         if not applies:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Check does not apply")
+        existing_open = (
+            db.execute(
+                select(QCCheckInstance.id)
+                .where(QCCheckInstance.check_definition_id == check_def.id)
+                .where(QCCheckInstance.work_unit_id == payload.work_unit_id)
+                .where(QCCheckInstance.panel_unit_id == payload.panel_unit_id)
+                .where(QCCheckInstance.scope == expected_scope)
+                .where(QCCheckInstance.status == QCCheckStatus.OPEN)
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        if existing_open is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Esta inspección ya está abierta para el objetivo seleccionado",
+            )
 
     current_station_id, current_station_name = _resolve_current_station(
         db, payload.work_unit_id, payload.panel_unit_id

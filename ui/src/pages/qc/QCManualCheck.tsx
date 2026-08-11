@@ -40,12 +40,19 @@ type ManualCheckResponse = {
 };
 
 type ProductionQueueModuleStatus = {
+  status: string;
   current_station_id: number | null;
   current_station_name: string | null;
   panels: PanelStatus[];
 };
 
 type ManualMode = 'ad_hoc' | 'definition';
+
+const inspectionScopeForStatus = (status: string | null | undefined): TaskScope | null => {
+  if (status === 'Panels') return 'panel';
+  if (status === 'Magazine' || status === 'Assembly') return 'module';
+  return null;
+};
 
 const apiRequest = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -80,7 +87,6 @@ const QCManualCheck: React.FC = () => {
   const [moduleStatusLoading, setModuleStatusLoading] = useState(false);
 
   const [mode, setMode] = useState<ManualMode>('ad_hoc');
-  const [scope, setScope] = useState<TaskScope>('module');
   const [workUnitId, setWorkUnitId] = useState<number | null>(null);
   const [panelUnitId, setPanelUnitId] = useState<number | null>(null);
   const [checkDefinitionId, setCheckDefinitionId] = useState<number | null>(null);
@@ -102,7 +108,7 @@ const QCManualCheck: React.FC = () => {
         if (!active) {
           return;
         }
-        setWorkUnits(queue);
+        setWorkUnits(queue.filter((item) => inspectionScopeForStatus(item.status) !== null));
         setCheckDefinitions(defs.filter((item) => item.active && !item.archived_at));
         setErrorMessage(null);
       } catch (error) {
@@ -131,6 +137,8 @@ const QCManualCheck: React.FC = () => {
     }
     let active = true;
     const loadModuleStatus = async () => {
+      setModuleStatus(null);
+      setPanels([]);
       setModuleStatusLoading(true);
       try {
         const status = await apiRequest<ProductionQueueModuleStatus>(
@@ -158,12 +166,6 @@ const QCManualCheck: React.FC = () => {
     };
   }, [workUnitId]);
 
-  useEffect(() => {
-    if (scope !== 'panel') {
-      setPanelUnitId(null);
-    }
-  }, [scope]);
-
   const sortedDefinitions = useMemo(
     () => [...checkDefinitions].sort((a, b) => a.name.localeCompare(b.name)),
     [checkDefinitions]
@@ -172,6 +174,11 @@ const QCManualCheck: React.FC = () => {
     () => panels.find((panel) => panel.panel_unit_id === panelUnitId) ?? null,
     [panelUnitId, panels]
   );
+  const selectedWorkUnit = useMemo(
+    () => workUnits.find((item) => item.id === workUnitId) ?? null,
+    [workUnitId, workUnits]
+  );
+  const scope = inspectionScopeForStatus(moduleStatus?.status ?? selectedWorkUnit?.status);
   const currentStationName =
     scope === 'panel'
       ? selectedPanel?.current_station_name ?? moduleStatus?.current_station_name ?? null
@@ -181,7 +188,9 @@ const QCManualCheck: React.FC = () => {
   const canSubmit =
     canCreate &&
     !submitting &&
+    !moduleStatusLoading &&
     !!workUnitId &&
+    scope !== null &&
     (!requiresPanel || !!panelUnitId) &&
     (mode === 'definition' ? !!checkDefinitionId : adHocTitle.trim().length > 0);
 
@@ -341,18 +350,16 @@ const QCManualCheck: React.FC = () => {
               </div>
               <div className="grid gap-5 p-5 sm:p-6">
                 <div className="grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
-                  <label className="qc-field">
+                  <div className="qc-field">
                     Alcance
-                    <select
-                      value={scope}
-                      onChange={(event) => setScope(event.target.value as TaskScope)}
-                      className="qc-input"
-                    >
-                      <option value="module">Módulo</option>
-                      <option value="panel">Panel</option>
-                      <option value="aux">Auxiliar</option>
-                    </select>
-                  </label>
+                    <div className="qc-readout">
+                      {workUnitId
+                        ? scope === 'panel'
+                          ? 'Panel · definido por estado Paneles'
+                          : 'Módulo · definido por estado de producción'
+                        : 'Se definirá al seleccionar un módulo'}
+                    </div>
+                  </div>
 
                   <label className="qc-field">
                     Módulo objetivo

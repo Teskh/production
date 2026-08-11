@@ -12,7 +12,9 @@ from app.models.enums import (
     QCExecutionOutcome,
     QCNotificationStatus,
     QCTriggerEventType,
+    TaskScope,
     TaskStatus,
+    WorkUnitStatus,
 )
 from app.models.qc import (
     QCApplicability,
@@ -27,6 +29,14 @@ from app.models.qc import (
 )
 from app.models.tasks import TaskDefinition, TaskInstance, TaskParticipation
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
+
+
+def manual_check_scope_for_status(status: WorkUnitStatus) -> TaskScope | None:
+    if status == WorkUnitStatus.PANELS:
+        return TaskScope.PANEL
+    if status in (WorkUnitStatus.MAGAZINE, WorkUnitStatus.ASSEMBLY):
+        return TaskScope.MODULE
+    return None
 
 def _hash_to_rate(seed: str) -> float:
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()

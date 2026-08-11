@@ -227,6 +227,10 @@ const QCExecution: React.FC = () => {
   const checkIdParam = queryParams.get('check');
   const reworkIdParam = queryParams.get('rework');
   const reworkState = location.state?.rework as QCReworkState | undefined;
+  const returnTo =
+    typeof location.state?.returnTo === 'string' && location.state.returnTo.startsWith('/qc/')
+      ? location.state.returnTo
+      : '/qc';
   const checkId =
     Number(checkIdParam ?? location.state?.checkId ?? reworkState?.check_instance_id ?? 0) || null;
 
@@ -1071,7 +1075,7 @@ const QCExecution: React.FC = () => {
         `/api/qc/check-instances/${checkId}/execute`,
         payload
       );
-      navigate('/qc');
+      navigate(returnTo);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo completar la revision.';
       setActionError(message);
@@ -1483,7 +1487,7 @@ const QCExecution: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => navigate('/qc')}
+              onClick={() => navigate(returnTo)}
               disabled={isSubmitting}
               className="qc-execution__tool"
             >

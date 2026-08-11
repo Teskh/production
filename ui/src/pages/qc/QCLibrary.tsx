@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   ChevronRight,
   ExternalLink,
   FileImage,
+  Loader2,
   MessageSquareText,
   Plus,
   Search,
@@ -20,7 +21,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
 // const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024;
-const QC_DELETE_ROLES = new Set(['Calidad', 'QC']);
+const QC_ACTION_ROLES = new Set(['Calidad', 'QC']);
 const SEARCH_DEBOUNCE_MS = 300;
 
 type QCExecutionOutcome = 'Pass' | 'Fail' | 'Waive' | 'Skip';
@@ -29,6 +30,7 @@ type TaskScope = 'panel' | 'module' | 'aux';
 type QCReworkStatus = 'Open' | 'InProgress' | 'Done' | 'Canceled';
 type TaskStatus = 'NotStarted' | 'InProgress' | 'Paused' | 'Completed';
 type QCSeverity = 'baja' | 'media' | 'critica';
+type WorkUnitStatus = 'Planned' | 'Panels' | 'Magazine' | 'Assembly' | 'Completed';
 
 type AdminUserRead = {
   id: number;
@@ -44,7 +46,7 @@ type QCLibraryWorkUnitSummary = {
   house_identifier: string | null;
   project_name: string;
   house_type_name: string;
-  status: string;
+  status: WorkUnitStatus;
   open_checks: number;
   open_rework: number;
   last_outcome: QCExecutionOutcome | null;
@@ -123,7 +125,7 @@ type QCLibraryWorkUnitDetail = {
   house_identifier: string | null;
   project_name: string;
   house_type_name: string;
-  status: string;
+  status: WorkUnitStatus;
   checks: QCCheckInstanceSummary[];
   executions: QCExecutionRead[];
   rework_tasks: QCReworkTaskSummary[];
@@ -172,6 +174,30 @@ type QCCheckInstanceDetail = {
   trigger_task: QCTaskInstanceWithWorkersSummary | null;
 };
 
+type ProductionQueuePanelStatus = {
+  panel_unit_id: number | null;
+  panel_code: string | null;
+  status: string;
+  current_station_name: string | null;
+};
+
+type ProductionQueueModuleStatus = {
+  status: WorkUnitStatus;
+  current_station_name: string | null;
+  panels: ProductionQueuePanelStatus[];
+};
+
+type QCManualCheckOption = {
+  id: number;
+  name: string;
+  guidance_text: string | null;
+  has_open_instance: boolean;
+};
+
+type QCManualCheckResponse = {
+  id: number;
+};
+
 const parseApiErrorMessage = (text: string): string => {
   try {
     const parsed = JSON.parse(text) as { detail?: string };
@@ -184,8 +210,16 @@ const parseApiErrorMessage = (text: string): string => {
   return text;
 };
 
-const apiRequest = async <T,>(path: string): Promise<T> => {
-  const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
   if (!response.ok) {
     const text = await response.text();
     if (text) throw new Error(parseApiErrorMessage(text));
@@ -250,6 +284,15 @@ const scopeLabel: Record<TaskScope, string> = {
   panel: 'Panel',
   module: 'Modulo',
   aux: 'Aux',
+};
+
+const workUnitStatusLabel = (status: string): string =>
+  status.toLowerCase() === 'assembly' ? 'Armado' : status;
+
+const inspectionScopeForStatus = (status: WorkUnitStatus): 'panel' | 'module' | null => {
+  if (status === 'Panels') return 'panel';
+  if (status === 'Magazine' || status === 'Assembly') return 'module';
+  return null;
 };
 
 const severityLabel: Record<QCSeverity, string> = {
@@ -555,6 +598,7 @@ type HouseGroup = {
 };
 
 const QCLibrary: React.FC = () => {
+  const navigate = useNavigate();
   const qcSession = useOptionalQCSession();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -582,6 +626,16 @@ const QCLibrary: React.FC = () => {
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const [sheetStatusFilter, setSheetStatusFilter] = useState<'all' | 'open' | 'fail'>('all');
   const [sheetScopeFilter, setSheetScopeFilter] = useState<string>('__all__');
+
+  const [inspectionCreatorOpen, setInspectionCreatorOpen] = useState(false);
+  const [inspectionTarget, setInspectionTarget] = useState<ProductionQueueModuleStatus | null>(null);
+  const [inspectionOptions, setInspectionOptions] = useState<QCManualCheckOption[]>([]);
+  const [inspectionPanelId, setInspectionPanelId] = useState<number | null>(null);
+  const [inspectionDefinitionId, setInspectionDefinitionId] = useState<number | null>(null);
+  const [inspectionLoading, setInspectionLoading] = useState(false);
+  const [inspectionOptionsLoading, setInspectionOptionsLoading] = useState(false);
+  const [inspectionSubmitting, setInspectionSubmitting] = useState(false);
+  const [inspectionError, setInspectionError] = useState<string | null>(null);
 
   const [checkDetail, setCheckDetail] = useState<QCCheckInstanceDetail | null>(null);
   const [loadingCheckDetail, setLoadingCheckDetail] = useState(false);
@@ -611,6 +665,12 @@ const QCLibrary: React.FC = () => {
     setSearchParams(next, { replace: true });
     setWorkUnitDetail(null);
     setDetailError(null);
+    setInspectionCreatorOpen(false);
+    setInspectionTarget(null);
+    setInspectionOptions([]);
+    setInspectionPanelId(null);
+    setInspectionDefinitionId(null);
+    setInspectionError(null);
   }, [searchParams, setSearchParams]);
 
   const openModuleOverlay = (workUnitId: number) => {
@@ -618,6 +678,25 @@ const QCLibrary: React.FC = () => {
     next.set('module', String(workUnitId));
     next.delete('check');
     setSearchParams(next, { replace: true });
+  };
+
+  const closeInspectionCreator = useCallback(() => {
+    if (inspectionSubmitting) return;
+    setInspectionCreatorOpen(false);
+    setInspectionTarget(null);
+    setInspectionOptions([]);
+    setInspectionPanelId(null);
+    setInspectionDefinitionId(null);
+    setInspectionError(null);
+  }, [inspectionSubmitting]);
+
+  const openInspectionCreator = () => {
+    setInspectionCreatorOpen(true);
+    setInspectionTarget(null);
+    setInspectionOptions([]);
+    setInspectionPanelId(null);
+    setInspectionDefinitionId(null);
+    setInspectionError(null);
   };
 
   const closeCheckOverlay = useCallback(() => {
@@ -781,6 +860,96 @@ const QCLibrary: React.FC = () => {
     setSheetStatusFilter('all');
     setSheetScopeFilter('__all__');
   }, [selectedWorkUnitId]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!inspectionCreatorOpen || !selectedWorkUnitId) return () => {
+      mounted = false;
+    };
+
+    const loadInspectionTarget = async () => {
+      setInspectionLoading(true);
+      setInspectionError(null);
+      try {
+        const target = await apiRequest<ProductionQueueModuleStatus>(
+          `/api/production-queue/items/${selectedWorkUnitId}/status`
+        );
+        if (!mounted) return;
+        const scope = inspectionScopeForStatus(target.status);
+        if (!scope) {
+          throw new Error('Solo se pueden agregar inspecciones a módulos actualmente en producción.');
+        }
+        setInspectionTarget(target);
+        const availablePanels = target.panels.filter((panel) => panel.panel_unit_id !== null);
+        setInspectionPanelId(
+          scope === 'panel' && availablePanels.length === 1
+            ? availablePanels[0].panel_unit_id
+            : null
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setInspectionTarget(null);
+        setInspectionError(
+          error instanceof Error ? error.message : 'No se pudo cargar el objetivo de inspección.'
+        );
+      } finally {
+        if (mounted) setInspectionLoading(false);
+      }
+    };
+    void loadInspectionTarget();
+    return () => {
+      mounted = false;
+    };
+  }, [inspectionCreatorOpen, selectedWorkUnitId]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!inspectionCreatorOpen || !inspectionTarget || !selectedWorkUnitId) return () => {
+      mounted = false;
+    };
+    const scope = inspectionScopeForStatus(inspectionTarget.status);
+    if (!scope || (scope === 'panel' && !inspectionPanelId)) {
+      setInspectionOptions([]);
+      setInspectionDefinitionId(null);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    const loadInspectionOptions = async () => {
+      setInspectionOptionsLoading(true);
+      setInspectionError(null);
+      try {
+        const params = new URLSearchParams({ work_unit_id: String(selectedWorkUnitId) });
+        if (scope === 'panel' && inspectionPanelId) {
+          params.set('panel_unit_id', String(inspectionPanelId));
+        }
+        const options = await apiRequest<QCManualCheckOption[]>(
+          `/api/qc/manual-check-options?${params.toString()}`
+        );
+        if (!mounted) return;
+        setInspectionOptions(options);
+        setInspectionDefinitionId((current) =>
+          current && options.some((option) => option.id === current && !option.has_open_instance)
+            ? current
+            : null
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setInspectionOptions([]);
+        setInspectionDefinitionId(null);
+        setInspectionError(
+          error instanceof Error ? error.message : 'No se pudieron cargar las pautas aplicables.'
+        );
+      } finally {
+        if (mounted) setInspectionOptionsLoading(false);
+      }
+    };
+    void loadInspectionOptions();
+    return () => {
+      mounted = false;
+    };
+  }, [inspectionCreatorOpen, inspectionPanelId, inspectionTarget, selectedWorkUnitId]);
 
   useEffect(() => {
     let mounted = true;
@@ -1015,6 +1184,48 @@ const QCLibrary: React.FC = () => {
     });
   }, [checkStories, sheetScopeFilter, sheetStatusFilter]);
 
+  const handleCreateInspection = async () => {
+    if (
+      !selectedWorkUnitId ||
+      !inspectionTarget ||
+      !inspectionDefinitionId ||
+      inspectionSubmitting
+    ) {
+      return;
+    }
+    const scope = inspectionScopeForStatus(inspectionTarget.status);
+    if (!scope || (scope === 'panel' && !inspectionPanelId)) return;
+
+    setInspectionSubmitting(true);
+    setInspectionError(null);
+    try {
+      const created = await apiRequest<QCManualCheckResponse>('/api/qc/check-instances/manual', {
+        method: 'POST',
+        body: JSON.stringify({
+          check_definition_id: inspectionDefinitionId,
+          ad_hoc_title: null,
+          ad_hoc_guidance: null,
+          scope,
+          work_unit_id: selectedWorkUnitId,
+          panel_unit_id: scope === 'panel' ? inspectionPanelId : null,
+          station_id: null,
+        }),
+      });
+      navigate(`/qc/execute?check=${created.id}`, {
+        state: {
+          checkId: created.id,
+          returnTo: `/qc/library?module=${selectedWorkUnitId}`,
+        },
+      });
+    } catch (error) {
+      setInspectionError(
+        error instanceof Error ? error.message : 'No se pudo iniciar la inspección.'
+      );
+    } finally {
+      setInspectionSubmitting(false);
+    }
+  };
+
   // ------------------------------------------------------------------
   // Escape closes the topmost overlay
   // ------------------------------------------------------------------
@@ -1033,15 +1244,24 @@ const QCLibrary: React.FC = () => {
     closeOnEscapeRef.current = () => {
       if (mediaViewer) return setMediaViewer(null);
       if (selectedCheckId) return closeCheckOverlay();
+      if (inspectionCreatorOpen) return closeInspectionCreator();
       if (selectedWorkUnitId) return closeModuleOverlay();
     };
-  }, [closeCheckOverlay, closeModuleOverlay, mediaViewer, selectedCheckId, selectedWorkUnitId]);
+  }, [
+    closeCheckOverlay,
+    closeInspectionCreator,
+    closeModuleOverlay,
+    inspectionCreatorOpen,
+    mediaViewer,
+    selectedCheckId,
+    selectedWorkUnitId,
+  ]);
 
   // ------------------------------------------------------------------
   // Check management (delete check, add/remove evidence)
   // ------------------------------------------------------------------
 
-  const hasDeleteRole = qcSession ? QC_DELETE_ROLES.has(qcSession.role) : false;
+  const hasQcRole = qcSession ? QC_ACTION_ROLES.has(qcSession.role) : false;
   const hasFailedExecution =
     checkDetail?.executions.some((execution) => execution.outcome === 'Fail') ?? false;
   const checkNotes = useMemo(() => {
@@ -1070,7 +1290,7 @@ const QCLibrary: React.FC = () => {
 
   const checkDeleteBlockedReason = useMemo(() => {
     if (!checkDetail) return 'No hay check seleccionado.';
-    if (!hasDeleteRole) return 'Solo personal QC puede eliminar checks.';
+    if (!hasQcRole) return 'Solo personal QC puede eliminar checks.';
     if (checkDeleteWindowExpired) {
       return 'Solo se pueden eliminar checks dentro de 48 horas desde su apertura.';
     }
@@ -1078,16 +1298,16 @@ const QCLibrary: React.FC = () => {
       return 'No se puede eliminar un check fallido con rework asociado.';
     }
     return null;
-  }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole, hasFailedExecution, hasReworkTask]);
+  }, [checkDetail, checkDeleteWindowExpired, hasQcRole, hasFailedExecution, hasReworkTask]);
 
   const evidenceManageBlockedReason = useMemo(() => {
     if (!checkDetail) return 'No hay check seleccionado.';
-    if (!hasDeleteRole) return 'Solo personal QC puede gestionar evidencia.';
+    if (!hasQcRole) return 'Solo personal QC puede gestionar evidencia.';
     if (checkDeleteWindowExpired) {
       return 'Solo se puede gestionar evidencia dentro de 48 horas desde la apertura del check.';
     }
     return null;
-  }, [checkDetail, checkDeleteWindowExpired, hasDeleteRole]);
+  }, [checkDetail, checkDeleteWindowExpired, hasQcRole]);
 
   const handleDeleteCheck = useCallback(async () => {
     if (!checkDetail) return;
@@ -1303,7 +1523,7 @@ const QCLibrary: React.FC = () => {
               <option value="__all__">Todos los estados</option>
               {statusOptions.map((status) => (
                 <option key={status} value={status}>
-                  {status}
+                  {workUnitStatusLabel(status)}
                 </option>
               ))}
             </select>
@@ -1386,7 +1606,7 @@ const QCLibrary: React.FC = () => {
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                        <span className="text-sm font-medium">{unit.status}</span>
+                        <span className="text-sm font-medium">{workUnitStatusLabel(unit.status)}</span>
                         {unit.last_outcome ? (
                           <Tag tone={outcomeTone[unit.last_outcome]}>
                             {outcomeLabel[unit.last_outcome]}
@@ -1447,18 +1667,32 @@ const QCLibrary: React.FC = () => {
                 </h3>
                 <div className="qcl-mono mt-2 text-[10.5px] uppercase tracking-[0.06em] text-[var(--qcl-ink-2)]">
                   {workUnitDetail
-                    ? `${workUnitDetail.project_name} · ${workUnitDetail.house_type_name} · ${workUnitDetail.status}`
+                    ? `${workUnitDetail.project_name} · ${workUnitDetail.house_type_name} · ${workUnitStatusLabel(workUnitDetail.status)}`
                     : 'Cargando...'}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={closeModuleOverlay}
-                className="qcl-btn qcl-btn--icon"
-                aria-label="Cerrar"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {hasQcRole &&
+                workUnitDetail &&
+                inspectionScopeForStatus(workUnitDetail.status) ? (
+                  <button
+                    type="button"
+                    onClick={openInspectionCreator}
+                    className="qcl-btn qcl-btn--primary"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Nueva inspección
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeModuleOverlay}
+                  className="qcl-btn qcl-btn--icon"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -1553,6 +1787,173 @@ const QCLibrary: React.FC = () => {
               ) : null}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {inspectionCreatorOpen && selectedWorkUnitId ? (
+        <div className="qcl-overlay fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(16,23,32,0.6)] px-4 py-6">
+          <div className="absolute inset-0" onClick={closeInspectionCreator} />
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCreateInspection();
+            }}
+            className="qcl-modal relative flex max-h-full w-full max-w-xl flex-col overflow-hidden rounded-md border border-[var(--qcl-line)] bg-[var(--qcl-paper)] shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--qcl-ink)] bg-[var(--qcl-card)] px-5 py-4">
+              <div>
+                <p className="qcl-eyebrow">Inspección manual · MD {workUnitDetail?.module_number}</p>
+                <h3 className="qcl-display mt-1.5 text-2xl font-semibold uppercase leading-none tracking-[0.02em]">
+                  Nueva inspección
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeInspectionCreator}
+                disabled={inspectionSubmitting}
+                className="qcl-btn qcl-btn--icon"
+                aria-label="Cerrar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+              {inspectionLoading ? (
+                <div className="flex items-center gap-2 text-sm text-[var(--qcl-ink-2)]">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Consultando ubicación actual…
+                </div>
+              ) : null}
+
+              {inspectionTarget ? (
+                <div className="qcl-card grid gap-3 bg-[var(--qcl-paper-2)] p-4 sm:grid-cols-2">
+                  <div>
+                    <p className="qcl-eyebrow">Alcance automático</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {inspectionScopeForStatus(inspectionTarget.status) === 'panel'
+                        ? 'Panel'
+                        : 'Módulo'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="qcl-eyebrow">Ubicación actual</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {inspectionTarget.current_station_name ??
+                        workUnitStatusLabel(inspectionTarget.status)}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+
+              {inspectionTarget && inspectionScopeForStatus(inspectionTarget.status) === 'panel' ? (
+                <label className="block text-xs font-semibold uppercase tracking-[0.08em] text-[var(--qcl-ink-2)]">
+                  Panel objetivo
+                  <select
+                    value={inspectionPanelId ?? ''}
+                    onChange={(event) => {
+                      setInspectionPanelId(Number(event.target.value) || null);
+                      setInspectionDefinitionId(null);
+                    }}
+                    disabled={inspectionSubmitting}
+                    className="qcl-input mt-1.5 w-full"
+                  >
+                    <option value="">Seleccionar panel…</option>
+                    {inspectionTarget.panels
+                      .filter((panel) => panel.panel_unit_id !== null)
+                      .map((panel) => (
+                        <option key={panel.panel_unit_id} value={panel.panel_unit_id ?? ''}>
+                          {panel.panel_code ?? `Panel ${panel.panel_unit_id}`}
+                          {panel.current_station_name ? ` · ${panel.current_station_name}` : ''}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {inspectionTarget ? (
+                <label className="block text-xs font-semibold uppercase tracking-[0.08em] text-[var(--qcl-ink-2)]">
+                  Pauta manual aplicable
+                  <select
+                    value={inspectionDefinitionId ?? ''}
+                    onChange={(event) =>
+                      setInspectionDefinitionId(Number(event.target.value) || null)
+                    }
+                    disabled={
+                      inspectionSubmitting ||
+                      inspectionOptionsLoading ||
+                      (inspectionScopeForStatus(inspectionTarget.status) === 'panel' &&
+                        !inspectionPanelId)
+                    }
+                    className="qcl-input mt-1.5 w-full"
+                  >
+                    <option value="">
+                      {inspectionOptionsLoading ? 'Cargando pautas…' : 'Seleccionar pauta…'}
+                    </option>
+                    {inspectionOptions.map((option) => (
+                      <option
+                        key={option.id}
+                        value={option.id}
+                        disabled={option.has_open_instance}
+                      >
+                        {option.name}{option.has_open_instance ? ' · Ya abierta' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+
+              {inspectionTarget &&
+              !inspectionOptionsLoading &&
+              (inspectionScopeForStatus(inspectionTarget.status) !== 'panel' || inspectionPanelId) &&
+              inspectionOptions.length === 0 ? (
+                <div className="qcl-empty px-4 py-4 text-sm">
+                  No hay pautas manuales aplicables para este objetivo.
+                </div>
+              ) : null}
+
+              {inspectionDefinitionId ? (
+                <p className="text-sm text-[var(--qcl-ink-2)]">
+                  {inspectionOptions.find((option) => option.id === inspectionDefinitionId)
+                    ?.guidance_text ??
+                    'La pauta se abrirá directamente en la pantalla de ejecución.'}
+                </p>
+              ) : null}
+
+              {inspectionError ? <div className="qcl-error">{inspectionError}</div> : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--qcl-line)] bg-[var(--qcl-paper-2)] px-5 py-4">
+              <button
+                type="button"
+                onClick={closeInspectionCreator}
+                disabled={inspectionSubmitting}
+                className="qcl-btn"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  inspectionLoading ||
+                  inspectionOptionsLoading ||
+                  inspectionSubmitting ||
+                  !inspectionDefinitionId ||
+                  !inspectionTarget ||
+                  (inspectionScopeForStatus(inspectionTarget.status) === 'panel' &&
+                    !inspectionPanelId)
+                }
+                className="qcl-btn qcl-btn--primary"
+              >
+                {inspectionSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="h-4 w-4" />
+                )}
+                {inspectionSubmitting ? 'Iniciando…' : 'Iniciar inspección'}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
 
