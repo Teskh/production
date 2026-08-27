@@ -1,0 +1,1468 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Lock, MapPin, QrCode, Settings, User } from 'lucide-react';
+import LoginSettings from './LoginSettings';
+import QRCodeScannerModal from '../components/QRCodeScannerModal';
+import PanelStationGoalPanel from '../components/PanelStationGoalPanel';
+import { consumeMicrosoftAuthError } from '../utils/microsoftAuth';
+import type { StationContext } from '../utils/stationContext';
+import {
+  SPECIFIC_STATION_ID_STORAGE_KEY,
+  STATION_CONTEXT_STORAGE_KEY,
+  formatStationContext,
+  formatStationLabel,
+  getAssemblySequenceOrders,
+  getStationsForContext,
+  isStationInContext,
+  parseStationContext,
+} from '../utils/stationContext';
+import {
+  STATION_CHANGE_AUTH_WINDOW_MS,
+  readStationChangeAuthExpiresAt,
+  readStationChangeProtectionEnabled,
+  writeStationChangeAuthExpiresAt,
+} from '../utils/stationChangeProtection';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+const QR_SCANNING_STORAGE_KEY = 'login_qr_scanning_enabled';
+
+const createRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+};
+
+type Station = {
+  id: number;
+  name: string;
+  role: string;
+  line_type: string | null;
+  sequence_order: number | null;
+};
+
+type TaskScope = 'panel' | 'module' | 'aux';
+
+type TaskDefinition = {
+  id: number;
+  scope: TaskScope;
+  default_station_sequence: number | null;
+  active?: boolean;
+};
+
+type Worker = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  pin: string | null;
+  login_required: boolean;
+  active: boolean;
+  assigned_station_ids: number[] | null;
+};
+
+const firstNamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  return trimmed.split(/\s+/)[0] ?? '';
+};
+
+const surnamePart = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 2) {
+    return parts[0] ?? '';
+  }
+  return parts[parts.length - 2] ?? '';
+};
+
+const formatWorkerDisplayName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string => {
+  const first = firstNamePart(worker.first_name);
+  const last = surnamePart(worker.last_name);
+  return [first, last].filter(Boolean).join(' ');
+};
+
+const formatWorkerFullName = (worker: Pick<Worker, 'first_name' | 'last_name'>): string =>
+  `${worker.first_name} ${worker.last_name}`.trim();
+
+const normalizeQrValue = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const findWorkerByQrValue = (value: string, list: Worker[]): Worker | null => {
+  const normalized = normalizeQrValue(value);
+  if (!normalized) {
+    return null;
+  }
+  const fullMatch =
+    list.find(
+      (worker) => normalizeQrValue(formatWorkerFullName(worker)) === normalized
+    ) ?? null;
+  if (fullMatch) {
+    return fullMatch;
+  }
+  return (
+    list.find(
+      (worker) => normalizeQrValue(formatWorkerDisplayName(worker)) === normalized
+    ) ?? null
+  );
+};
+
+type WorkerSessionResponse = {
+  worker: Worker;
+  station_id: number | null;
+  require_pin_change: boolean;
+  idle_timeout_seconds: number | null;
+};
+
+const WORKER_THRESHOLD = 20;
+
+const workerNameTextSizeClass = (name: string): string => {
+  const length = name.trim().length;
+  if (length > 26) {
+    return 'text-xs';
+  }
+  if (length > 20) {
+    return 'text-sm';
+  }
+  return 'text-base';
+};
+
+type TaskCoverage = {
+  panelSequences: Set<number>;
+  moduleSequences: Set<number>;
+  auxSequences: Set<number>;
+  auxUnassigned: boolean;
+  moduleUnassigned: boolean;
+};
+
+type PendingStationChangeAction =
+  | {
+      type: 'group';
+      context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number };
+      label: string;
+    }
+  | {
+      type: 'specific';
+      stationId: number;
+      label: string;
+    };
+
+type PendingStationChangeRequest =
+  | {
+      type: 'group';
+      context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number };
+    }
+  | {
+      type: 'specific';
+      stationId: number;
+    };
+
+const splitAdminFullName = (
+  value: string
+): { firstName: string; lastName: string } | null => {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) {
+    return null;
+  }
+  return {
+    firstName: parts[0] ?? '',
+    lastName: parts.slice(1).join(' '),
+  };
+};
+
+const buildTaskCoverage = (tasks: TaskDefinition[]): TaskCoverage => {
+  const coverage: TaskCoverage = {
+    panelSequences: new Set<number>(),
+    moduleSequences: new Set<number>(),
+    auxSequences: new Set<number>(),
+    auxUnassigned: false,
+    moduleUnassigned: false,
+  };
+
+  tasks.forEach((task) => {
+    if (task.active === false) {
+      return;
+    }
+    if (task.default_station_sequence === null) {
+      if (task.scope === 'aux') {
+        coverage.auxUnassigned = true;
+      }
+      if (task.scope === 'module') {
+        coverage.moduleUnassigned = true;
+      }
+      return;
+    }
+    if (task.scope === 'panel') {
+      coverage.panelSequences.add(task.default_station_sequence);
+      return;
+    }
+    if (task.scope === 'module') {
+      coverage.moduleSequences.add(task.default_station_sequence);
+      return;
+    }
+    if (task.scope === 'aux') {
+      coverage.auxSequences.add(task.default_station_sequence);
+    }
+  });
+
+  return coverage;
+};
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const requestId = createRequestId();
+  const headers = buildHeaders(options);
+  headers.set('x-request-id', requestId);
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const parseStoredStationId = (value: string | null): number | null => {
+  if (!value) {
+    return null;
+  }
+  const id = Number(value);
+  return Number.isNaN(id) ? null : id;
+};
+
+const formatStationChangeTargetLabel = (
+  action: PendingStationChangeRequest,
+  stations: Station[]
+): string => {
+  if (action.type === 'specific') {
+    const station = stations.find((item) => item.id === action.stationId) ?? null;
+    return station ? formatStationLabel(station) : `Estacion ${action.stationId}`;
+  }
+  if (action.context.kind === 'panel_line') {
+    return 'Linea de paneles';
+  }
+  if (action.context.kind === 'aux') {
+    return 'Auxiliar';
+  }
+  if (action.context.kind === 'assembly_sequence') {
+    return `Ensamble - secuencia ${action.context.sequenceOrder}`;
+  }
+  return 'Cambio de contexto';
+};
+
+const resolveAuthErrorMessage = (
+  error: unknown,
+  fallback: string,
+  invalidCredentialsMessage: string
+): string => {
+  const rawMessage = error instanceof Error ? error.message.trim() : '';
+  const normalized = rawMessage.toLowerCase();
+
+  if (!rawMessage) {
+    return fallback;
+  }
+
+  const isConnectivityError =
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('network request failed');
+  if (isConnectivityError) {
+    return 'No se pudo conectar con el servidor. Verifica tu conexion e intenta nuevamente.';
+  }
+
+  const isCredentialError =
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid credential') ||
+    normalized.includes('invalid password') ||
+    normalized.includes('wrong password') ||
+    normalized.includes('incorrect password') ||
+    normalized.includes('invalid pin') ||
+    normalized.includes('incorrect pin') ||
+    normalized.includes('credenciales') ||
+    normalized.includes('contrasena') ||
+    normalized.includes('password');
+  if (isCredentialError) {
+    return invalidCredentialsMessage;
+  }
+
+  return rawMessage;
+};
+
+const persistStationContext = (context: StationContext | null) => {
+  if (!context) {
+    localStorage.removeItem(STATION_CONTEXT_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(STATION_CONTEXT_STORAGE_KEY, formatStationContext(context));
+};
+
+const persistSpecificStationId = (stationId: number | null) => {
+  if (stationId === null) {
+    localStorage.removeItem(SPECIFIC_STATION_ID_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(SPECIFIC_STATION_ID_STORAGE_KEY, String(stationId));
+};
+
+const Login: React.FC = () => {
+  const navigate = useNavigate();
+  const [stations, setStations] = useState<Station[]>([]);
+  const [taskDefinitions, setTaskDefinitions] = useState<TaskDefinition[]>([]);
+  const [taskDefinitionsReady, setTaskDefinitionsReady] = useState(false);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
+  const [stationContext, setStationContext] = useState<StationContext | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showStationPicker, setShowStationPicker] = useState(false);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<number | null>(null);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinModalWorkerId, setPinModalWorkerId] = useState<number | null>(null);
+  const [pinModalValue, setPinModalValue] = useState('');
+  const [pinModalError, setPinModalError] = useState<string | null>(null);
+  const [showAllWorkers, setShowAllWorkers] = useState(false);
+  const [workerInputValue, setWorkerInputValue] = useState('');
+  const [workerOptionsOpen, setWorkerOptionsOpen] = useState(false);
+  const [adminFirstName, setAdminFirstName] = useState('');
+  const [adminLastName, setAdminLastName] = useState('');
+  const [adminPin, setAdminPin] = useState('');
+  const [useSysadmin, setUseSysadmin] = useState(false);
+  const [adminSubmitting, setAdminSubmitting] = useState(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [pinChangeOpen, setPinChangeOpen] = useState(false);
+  const [pinChangeWorkerId, setPinChangeWorkerId] = useState<number | null>(null);
+  const [pinChangeDraft, setPinChangeDraft] = useState('');
+  const [pinChangeConfirm, setPinChangeConfirm] = useState('');
+  const [pinChangeError, setPinChangeError] = useState<string | null>(null);
+  const [qrScanningEnabled, setQrScanningEnabled] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return localStorage.getItem(QR_SCANNING_STORAGE_KEY) === 'true';
+  });
+  const [stationChangeProtectionEnabled] = useState(() =>
+    readStationChangeProtectionEnabled()
+  );
+  const [stationChangeAuthExpiresAt, setStationChangeAuthExpiresAt] = useState<
+    number | null
+  >(() => readStationChangeAuthExpiresAt());
+  const [pendingStationChange, setPendingStationChange] =
+    useState<PendingStationChangeAction | null>(null);
+  const [stationChangeAuthOpen, setStationChangeAuthOpen] = useState(false);
+  const [stationChangeAuthName, setStationChangeAuthName] = useState('');
+  const [stationChangeAuthPin, setStationChangeAuthPin] = useState('');
+  const [stationChangeAuthSubmitting, setStationChangeAuthSubmitting] = useState(false);
+  const [stationChangeAuthError, setStationChangeAuthError] = useState<string | null>(
+    null
+  );
+  const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const lastTapRef = useRef(0);
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return (
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      'ontouchstart' in window
+    );
+  }, []);
+
+  useEffect(() => {
+    const authError = consumeMicrosoftAuthError();
+    if (authError) {
+      setAdminError(authError);
+      setShowSettings(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!stationChangeAuthExpiresAt) {
+      return;
+    }
+    if (stationChangeAuthExpiresAt <= Date.now()) {
+      writeStationChangeAuthExpiresAt(null);
+      setStationChangeAuthExpiresAt(null);
+      return;
+    }
+    const timeoutMs = stationChangeAuthExpiresAt - Date.now();
+    const timeoutId = window.setTimeout(() => {
+      writeStationChangeAuthExpiresAt(null);
+      setStationChangeAuthExpiresAt(null);
+    }, timeoutMs);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [stationChangeAuthExpiresAt]);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const taskPromise = apiRequest<TaskDefinition[]>('/api/task-definitions').then(
+          (data) => ({ ok: true, data }),
+          () => ({ ok: false, data: [] as TaskDefinition[] })
+        );
+        const [stationData, workerData, taskResult] = await Promise.all([
+          apiRequest<Station[]>('/api/stations'),
+          apiRequest<Worker[]>('/api/workers'),
+          taskPromise,
+        ]);
+        setStations(stationData);
+        setWorkers(workerData.filter((worker) => worker.active));
+        setTaskDefinitions(taskResult.data);
+        setTaskDefinitionsReady(taskResult.ok);
+        const storedContext = parseStationContext(
+          localStorage.getItem(STATION_CONTEXT_STORAGE_KEY)
+        );
+        const storedStationId = parseStoredStationId(
+          localStorage.getItem(SPECIFIC_STATION_ID_STORAGE_KEY)
+        );
+        let resolvedContext = storedContext;
+        if (!resolvedContext && storedStationId) {
+          const exists = stationData.some((station) => station.id === storedStationId);
+          if (exists) {
+            resolvedContext = { kind: 'station', stationId: storedStationId };
+            persistStationContext(resolvedContext);
+          }
+        }
+        let normalizedContext = resolvedContext;
+        if (normalizedContext && normalizedContext.kind === 'station') {
+          const stationId = normalizedContext.stationId;
+          const exists = stationData.some((station) => station.id === stationId);
+          if (!exists) {
+            normalizedContext = null;
+          }
+        }
+        setStationContext(normalizedContext);
+        let resolvedStationId: number | null = null;
+        if (normalizedContext && normalizedContext.kind === 'station') {
+          resolvedStationId = normalizedContext.stationId;
+        } else if (normalizedContext && storedStationId) {
+          const station = stationData.find((item) => item.id === storedStationId) ?? null;
+          if (station && isStationInContext(station, normalizedContext)) {
+            resolvedStationId = storedStationId;
+          } else {
+            persistSpecificStationId(null);
+          }
+        }
+        setSelectedStationId(resolvedStationId);
+        if (!normalizedContext) {
+          setShowSettings(true);
+        } else if (normalizedContext.kind !== 'station' && !resolvedStationId) {
+          setShowStationPicker(true);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'No se pudo cargar la informacion de inicio de sesion.';
+        setStatusMessage(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    setFullscreenAvailable(Boolean(root?.requestFullscreen));
+  }, []);
+
+  useEffect(() => {
+    if (!fullscreenAvailable || !isTouchDevice) {
+      return;
+    }
+    const attemptFullscreen = () => {
+      if (document.fullscreenElement || document.visibilityState !== 'visible') {
+        return;
+      }
+      const root = document.documentElement;
+      if (!root?.requestFullscreen) {
+        return;
+      }
+      root.requestFullscreen().catch(() => {
+        // Ignore failures; fullscreen may require a recent user gesture.
+      });
+    };
+    const intervalId = window.setInterval(attemptFullscreen, 10_000);
+    return () => window.clearInterval(intervalId);
+  }, [fullscreenAvailable]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    localStorage.setItem(QR_SCANNING_STORAGE_KEY, String(qrScanningEnabled));
+  }, [qrScanningEnabled]);
+
+  useEffect(() => {
+    if (!showAllWorkers) {
+      setWorkerInputValue('');
+      setWorkerOptionsOpen(false);
+    }
+  }, [showAllWorkers]);
+
+  const selectedStation = useMemo(
+    () => stations.find((station) => station.id === selectedStationId) ?? null,
+    [stations, selectedStationId]
+  );
+
+  const selectedWorker = useMemo(
+    () => workers.find((worker) => worker.id === selectedWorkerId) ?? null,
+    [workers, selectedWorkerId]
+  );
+
+  const availableWorkers = useMemo(() => {
+    if (showAllWorkers || !selectedStationId) {
+      return workers;
+    }
+    return workers.filter((worker) =>
+      (worker.assigned_station_ids ?? []).includes(selectedStationId)
+    );
+  }, [workers, selectedStationId, showAllWorkers]);
+
+  const normalizedWorkerSearch = useMemo(
+    () => normalizeQrValue(workerInputValue),
+    [workerInputValue]
+  );
+
+  const filteredWorkers = useMemo(() => {
+    if (!normalizedWorkerSearch) {
+      return availableWorkers;
+    }
+    const terms = normalizedWorkerSearch.split(' ').filter(Boolean);
+    return availableWorkers.filter((worker) => {
+      const haystack = normalizeQrValue(
+        `${formatWorkerFullName(worker)} ${formatWorkerDisplayName(worker)}`
+      );
+      return terms.every((term) => haystack.includes(term));
+    });
+  }, [availableWorkers, normalizedWorkerSearch]);
+
+  const shouldUseDropdown = showAllWorkers || availableWorkers.length > WORKER_THRESHOLD;
+
+  const taskCoverage = useMemo(() => buildTaskCoverage(taskDefinitions), [taskDefinitions]);
+
+  const stationHasTasks = React.useCallback(
+    (station: Station): boolean => {
+      if (!taskDefinitionsReady) {
+        return true;
+      }
+      if (station.role === 'Panels') {
+        return (
+          station.sequence_order !== null &&
+          taskCoverage.panelSequences.has(station.sequence_order)
+        );
+      }
+      if (station.role === 'Assembly') {
+        return (
+          station.sequence_order !== null &&
+          taskCoverage.moduleSequences.has(station.sequence_order)
+        );
+      }
+      if (station.role === 'AUX') {
+        if (
+          station.sequence_order !== null &&
+          (taskCoverage.auxSequences.has(station.sequence_order) ||
+            taskCoverage.moduleSequences.has(station.sequence_order))
+        ) {
+          return true;
+        }
+        return taskCoverage.auxUnassigned || taskCoverage.moduleUnassigned;
+      }
+      return true;
+    },
+    [taskCoverage, taskDefinitionsReady]
+  );
+
+  const stationLabel = selectedStation ? formatStationLabel(selectedStation) : 'Sin estacion seleccionada';
+  const stationIndicatorLabel = selectedStation ? formatStationLabel(selectedStation) : 'Selecciona estacion';
+  const canSelectStation = stationContext !== null && stationContext.kind !== 'station';
+  const stationSelectionRequired = canSelectStation && !selectedStationId;
+
+  const assemblySequenceOrders = useMemo(() => {
+    const orders = getAssemblySequenceOrders(stations);
+    if (!taskDefinitionsReady) {
+      return orders;
+    }
+    return orders.filter((order) => taskCoverage.moduleSequences.has(order));
+  }, [stations, taskCoverage, taskDefinitionsReady]);
+
+  const sessionStations = useMemo(() => {
+    if (!stationContext || stationContext.kind === 'station') {
+      return [];
+    }
+    return getStationsForContext(stations, stationContext);
+  }, [stationContext, stations]);
+
+  const sessionStationOptions = useMemo(
+    () => sessionStations.filter((station) => stationHasTasks(station)),
+    [sessionStations, stationHasTasks]
+  );
+
+  const panelStations = useMemo(() => {
+    return [...stations]
+      .filter((station) => station.role === 'Panels')
+      .filter((station) => stationHasTasks(station))
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0));
+  }, [stations, stationHasTasks]);
+
+  const assemblyStations = useMemo(() => {
+    return [...stations]
+      .filter((station) => station.role === 'Assembly')
+      .filter((station) => stationHasTasks(station))
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0));
+  }, [stations, stationHasTasks]);
+
+  const resetWorkerSelection = () => {
+    setSelectedWorkerId(null);
+    setShowAllWorkers(false);
+    setWorkerInputValue('');
+    setWorkerOptionsOpen(false);
+  };
+
+  const applyStationContext = (context: StationContext | null) => {
+    setStationContext(context);
+    persistStationContext(context);
+    resetWorkerSelection();
+  };
+
+  const applyGroupContextSelect = (
+    context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => {
+    applyStationContext(context);
+    setSelectedStationId(null);
+    persistSpecificStationId(null);
+    setShowSettings(false);
+    setShowStationPicker(true);
+  };
+
+  const applySpecificStationSelect = (stationId: number) => {
+    const context: StationContext = { kind: 'station', stationId };
+    applyStationContext(context);
+    setSelectedStationId(stationId);
+    persistSpecificStationId(stationId);
+    setShowSettings(false);
+    setShowStationPicker(false);
+  };
+
+  const resetStationChangeAuthPrompt = () => {
+    setStationChangeAuthOpen(false);
+    setPendingStationChange(null);
+    setStationChangeAuthPin('');
+    setStationChangeAuthError(null);
+    setStationChangeAuthSubmitting(false);
+  };
+
+  const handleCloseSettings = () => {
+    setShowSettings(false);
+    resetStationChangeAuthPrompt();
+  };
+
+  const isStationChangeAlreadyApplied = (action: PendingStationChangeAction): boolean => {
+    if (action.type === 'specific') {
+      return (
+        stationContext?.kind === 'station' &&
+        stationContext.stationId === action.stationId &&
+        selectedStationId === action.stationId
+      );
+    }
+    return (
+      stationContext !== null &&
+      formatStationContext(stationContext) === formatStationContext(action.context) &&
+      selectedStationId === null
+    );
+  };
+
+  const applyPendingStationChange = (action: PendingStationChangeAction) => {
+    if (action.type === 'group') {
+      applyGroupContextSelect(action.context);
+      return;
+    }
+    applySpecificStationSelect(action.stationId);
+  };
+
+  const requestProtectedStationChange = (
+    action: PendingStationChangeRequest
+  ) => {
+    const resolvedAction: PendingStationChangeAction = {
+      ...action,
+      label: formatStationChangeTargetLabel(action, stations),
+    };
+    if (isStationChangeAlreadyApplied(resolvedAction)) {
+      return;
+    }
+    const expiresAt = readStationChangeAuthExpiresAt();
+    setStationChangeAuthExpiresAt(expiresAt);
+    if (
+      !stationChangeProtectionEnabled ||
+      (expiresAt !== null && expiresAt > Date.now())
+    ) {
+      applyPendingStationChange(resolvedAction);
+      return;
+    }
+    setPendingStationChange(resolvedAction);
+    setStationChangeAuthError(null);
+    setStationChangeAuthName('');
+    setStationChangeAuthPin('');
+    setStationChangeAuthOpen(true);
+  };
+
+  const handleGroupContextSelect = (
+    context: { kind: 'panel_line' } | { kind: 'aux' } | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => {
+    requestProtectedStationChange({ type: 'group', context });
+  };
+
+  const handleSpecificStationSelect = (stationId: number) => {
+    requestProtectedStationChange({ type: 'specific', stationId });
+  };
+
+  const handleStationChangeAuthorization = async () => {
+    if (!pendingStationChange || stationChangeAuthSubmitting) {
+      return;
+    }
+    const parsedName = splitAdminFullName(stationChangeAuthName);
+    if (!parsedName) {
+      setStationChangeAuthError('Ingresa nombre y apellido.');
+      return;
+    }
+    setStationChangeAuthSubmitting(true);
+    setStationChangeAuthError(null);
+    try {
+      await apiRequest('/api/admin/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: parsedName.firstName,
+          last_name: parsedName.lastName,
+          pin: stationChangeAuthPin,
+        }),
+      });
+      const expiresAt = Date.now() + STATION_CHANGE_AUTH_WINDOW_MS;
+      writeStationChangeAuthExpiresAt(expiresAt);
+      setStationChangeAuthExpiresAt(expiresAt);
+      const action = pendingStationChange;
+      resetStationChangeAuthPrompt();
+      applyPendingStationChange(action);
+    } catch (error) {
+      const message = resolveAuthErrorMessage(
+        error,
+        'No se pudo validar el cambio de estacion.',
+        'Usuario o contrasena incorrectos. Intenta nuevamente.'
+      );
+      setStationChangeAuthError(message);
+    } finally {
+      setStationChangeAuthSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!canSelectStation || showStationPicker || showSettings || pinModalOpen || pinChangeOpen) {
+      return;
+    }
+    if (!selectedStationId) {
+      setShowStationPicker(true);
+      return;
+    }
+    let timer = window.setTimeout(() => setShowStationPicker(true), 45000);
+    const resetTimer = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setShowStationPicker(true), 45000);
+    };
+    const events: Array<keyof WindowEventMap> = [
+      'mousemove',
+      'mousedown',
+      'touchstart',
+      'keydown',
+      'scroll',
+    ];
+    events.forEach((event) => window.addEventListener(event, resetTimer));
+    return () => {
+      window.clearTimeout(timer);
+      events.forEach((event) => window.removeEventListener(event, resetTimer));
+    };
+  }, [canSelectStation, pinChangeOpen, pinModalOpen, selectedStationId, showSettings, showStationPicker]);
+
+  useEffect(() => {
+    if (!taskDefinitionsReady || !canSelectStation || !selectedStationId) {
+      return;
+    }
+    const station = stations.find((item) => item.id === selectedStationId);
+    if (station && !stationHasTasks(station)) {
+      setSelectedStationId(null);
+      persistSpecificStationId(null);
+      setShowStationPicker(true);
+    }
+  }, [canSelectStation, selectedStationId, stationHasTasks, stations, taskDefinitionsReady]);
+
+  const handleSessionStationSelect = (stationId: number) => {
+    setSelectedStationId(stationId);
+    persistSpecificStationId(stationId);
+    resetWorkerSelection();
+    setShowStationPicker(false);
+  };
+
+  const handleAdminLogin = async () => {
+    setAdminSubmitting(true);
+    setAdminError(null);
+    try {
+      await apiRequest('/api/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          first_name: adminFirstName.trim(),
+          last_name: adminLastName.trim(),
+          pin: adminPin,
+        }),
+      });
+      navigate('/admin');
+    } catch (error) {
+      const message = resolveAuthErrorMessage(
+        error,
+        'Fallo el inicio de sesion de admin.',
+        'Usuario o contrasena incorrectos. Intenta nuevamente.'
+      );
+      setAdminError(message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  };
+
+  const handleSysadminToggle = (checked: boolean) => {
+    setUseSysadmin(checked);
+    setAdminError(null);
+    if (checked) {
+      setAdminFirstName('sysadmin');
+      setAdminLastName('sysadmin');
+      setAdminPin('');
+      return;
+    }
+    setAdminFirstName('');
+    setAdminLastName('');
+    setAdminPin('');
+  };
+
+  const handleOpenQcDashboard = () => {
+    setShowSettings(false);
+    navigate('/qc');
+  };
+
+  const openPinChange = (workerId: number) => {
+    setPinChangeWorkerId(workerId);
+    setPinChangeDraft('');
+    setPinChangeConfirm('');
+    setPinChangeError(null);
+    setPinChangeOpen(true);
+  };
+
+  const handleWorkerLogin = async (
+    worker: Worker,
+    workerPin?: string | null,
+    options?: { skipPinRequirement?: boolean }
+  ) => {
+    if (!selectedStationId) {
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
+      return;
+    }
+    if (worker.login_required && !workerPin && !options?.skipPinRequirement) {
+      setLoginError('Se requiere PIN para este trabajador.');
+      return;
+    }
+    setSubmitting(true);
+    setLoginError(null);
+    setPinModalError(null);
+    try {
+      const response = await apiRequest<WorkerSessionResponse>('/api/worker-sessions/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          worker_id: worker.id,
+          pin: worker.login_required && !options?.skipPinRequirement ? workerPin : null,
+          station_id: selectedStationId,
+        }),
+      });
+      if (response.require_pin_change) {
+        setPinModalOpen(false);
+        setPinModalWorkerId(null);
+        setPinModalValue('');
+        openPinChange(worker.id);
+        return;
+      }
+      setPinModalOpen(false);
+      setPinModalWorkerId(null);
+      setPinModalValue('');
+      navigate('/worker/stationWorkspace');
+    } catch (error) {
+      const message = resolveAuthErrorMessage(
+        error,
+        'Fallo el inicio de sesion del trabajador.',
+        'PIN incorrecto. Verificalo e intenta nuevamente.'
+      );
+      setLoginError(message);
+      setPinModalError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleQrDetected = (value: string) => {
+    const matchedWorker = findWorkerByQrValue(value, workers);
+    if (submitting) {
+      return;
+    }
+    if (!matchedWorker) {
+      return;
+    }
+    setSelectedWorkerId(matchedWorker.id);
+    if (!selectedStationId) {
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
+      setShowStationPicker(true);
+      return;
+    }
+    void handleWorkerLogin(matchedWorker, null, { skipPinRequirement: true });
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!fullscreenAvailable || document.fullscreenElement) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, input, textarea, select, a')) {
+      return;
+    }
+    const now = Date.now();
+    const lastTap = lastTapRef.current;
+    lastTapRef.current = now;
+    if (now - lastTap < 300) {
+      void document.documentElement.requestFullscreen();
+      lastTapRef.current = 0;
+    }
+  };
+
+  const handlePinUpdate = async () => {
+    if (!pinChangeWorkerId) {
+      return;
+    }
+    if (pinChangeDraft.trim().length < 4) {
+      setPinChangeError('El nuevo PIN debe tener al menos 4 digitos.');
+      return;
+    }
+    if (pinChangeDraft !== pinChangeConfirm) {
+      setPinChangeError('Los PIN no coinciden.');
+      return;
+    }
+    setSubmitting(true);
+    setPinChangeError(null);
+    try {
+      await apiRequest(`/api/workers/${pinChangeWorkerId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ pin: pinChangeDraft }),
+      });
+      if (selectedStationId) {
+        await apiRequest('/api/worker-sessions/login', {
+          method: 'POST',
+          body: JSON.stringify({
+            worker_id: pinChangeWorkerId,
+            pin: pinChangeDraft,
+            station_id: selectedStationId,
+          }),
+        });
+      }
+      setPinChangeOpen(false);
+      navigate('/worker/stationWorkspace');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo actualizar el PIN.';
+      setPinChangeError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openPinModal = (workerId: number) => {
+    setPinModalWorkerId(workerId);
+    setPinModalValue('');
+    setPinModalError(null);
+    setPinModalOpen(true);
+  };
+
+  const closePinModal = () => {
+    setPinModalOpen(false);
+    setPinModalWorkerId(null);
+    setPinModalValue('');
+    setPinModalError(null);
+  };
+
+  const handleWorkerSelection = (workerId: number) => {
+    if (submitting) {
+      return;
+    }
+    const worker = workers.find((item) => item.id === workerId);
+    if (!worker) {
+      return;
+    }
+    setSelectedWorkerId(workerId);
+    setLoginError(null);
+    if (!selectedStationId) {
+      setLoginError('Selecciona una estacion antes de iniciar tu turno.');
+      return;
+    }
+    if (worker.login_required) {
+      openPinModal(workerId);
+      return;
+    }
+    void handleWorkerLogin(worker, null);
+  };
+
+  const handlePinSubmit = async () => {
+    if (!pinModalWorkerId) {
+      return;
+    }
+    const worker = workers.find((item) => item.id === pinModalWorkerId);
+    if (!worker) {
+      setPinModalError('Trabajador no encontrado.');
+      return;
+    }
+    if (!pinModalValue.trim()) {
+      setPinModalError('Se requiere PIN para este trabajador.');
+      return;
+    }
+    await handleWorkerLogin(worker, pinModalValue.trim());
+  };
+
+  return (
+    <div
+      className="min-h-screen bg-gray-100 flex flex-col lg:flex-row"
+      onTouchEnd={handleTouchEnd}
+    >
+      <div className="flex-1 flex flex-col justify-center px-4 sm:px-6 lg:px-20 xl:px-24 bg-white shadow-xl z-10">
+        <div className="mx-auto w-full max-w-3xl">
+          <div className="flex items-center justify-between gap-4">
+            <button
+              type="button"
+              disabled={!canSelectStation}
+              onClick={() => {
+                if (canSelectStation) {
+                  setShowStationPicker(true);
+                }
+              }}
+              className={`flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                canSelectStation
+                  ? 'border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-900'
+                  : 'border-slate-200 text-slate-500'
+              }`}
+            >
+              <MapPin className="h-4 w-4" />
+              <span>{stationIndicatorLabel}</span>
+            </button>
+            <div className="flex items-center gap-3">
+              <span
+                className="flex h-9 w-9 items-center justify-center"
+                title={qrScanningEnabled ? 'Escaneo QR activo' : 'Escaneo QR inactivo'}
+                aria-hidden="true"
+              >
+                <QrCode
+                  className={`h-4 w-4 ${
+                    qrScanningEnabled ? 'text-slate-900' : 'text-slate-300'
+                  }`}
+                />
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowSettings(true)}
+                className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
+                aria-label="Abrir ajustes"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-8 mb-6">
+            <h2 className="text-3xl font-extrabold text-gray-900">Ingreso a plataforma</h2>
+          </div>
+
+          {statusMessage && (
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+              {statusMessage}
+            </div>
+          )}
+
+          {loginError && (
+            <div className="mb-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+              {loginError}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+              Cargando lista de estaciones...
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div>
+                <label htmlFor="worker" className="sr-only">
+                  Quien eres?
+                </label>
+                {shouldUseDropdown ? (
+                  <div className="relative">
+                    <input
+                      id="worker"
+                      type="text"
+                      className="block w-full rounded-md border border-gray-300 bg-white py-4 pl-4 pr-10 text-base focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                      placeholder="Escribe o selecciona tu nombre"
+                      value={workerInputValue}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setWorkerInputValue(nextValue);
+                        setSelectedWorkerId(null);
+                        setWorkerOptionsOpen(true);
+                      }}
+                      onFocus={() => setWorkerOptionsOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setWorkerOptionsOpen(false), 120);
+                      }}
+                      autoComplete="off"
+                    />
+                    {workerOptionsOpen && (
+                      <div className="absolute z-10 mt-2 w-full rounded-md border border-gray-200 bg-white shadow-lg">
+                        <div className="max-h-56 overflow-auto py-1">
+                          {filteredWorkers.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-gray-500">
+                              No hay coincidencias
+                            </div>
+                          ) : (
+                            filteredWorkers.map((worker) => (
+                              <button
+                                key={worker.id}
+                                type="button"
+                                className="w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-blue-50"
+                                onMouseDown={() => {
+                                  setWorkerInputValue(formatWorkerDisplayName(worker));
+                                  handleWorkerSelection(worker.id);
+                                  setWorkerOptionsOpen(false);
+                                }}
+                              >
+                                {formatWorkerDisplayName(worker)}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                      <User className="h-5 w-5 text-gray-400" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                    {availableWorkers.map((worker) => (
+                      <button
+                        key={worker.id}
+                        onClick={() => handleWorkerSelection(worker.id)}
+                        className={`w-full rounded-md border px-4 py-4 text-left transition-colors flex items-center justify-between ${
+                          selectedWorkerId === worker.id
+                            ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500'
+                            : 'border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span
+                          className={`block min-w-0 flex-1 truncate whitespace-nowrap pr-2 font-medium ${workerNameTextSizeClass(
+                            formatWorkerDisplayName(worker)
+                          )} ${
+                            selectedWorkerId === worker.id ? 'text-blue-900' : 'text-gray-900'
+                          }`}
+                          title={formatWorkerFullName(worker)}
+                        >
+                          {formatWorkerDisplayName(worker)}
+                        </span>
+                        {selectedWorkerId === worker.id && (
+                          <span className="h-2 w-2 rounded-full bg-blue-500" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <button
+                  onClick={() => setShowAllWorkers((prev) => !prev)}
+                  className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                >
+                  No estás en tu estación? Inicia sesión
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {selectedStation?.role === 'Panels' && (
+        <PanelStationGoalPanel stationId={selectedStation.id} stationLabel={stationLabel} />
+      )}
+
+      <LoginSettings
+        open={showSettings}
+        onClose={handleCloseSettings}
+        stationContext={stationContext}
+        selectedStation={selectedStation}
+        panelStations={panelStations}
+        assemblyStations={assemblyStations}
+        assemblySequenceOrders={assemblySequenceOrders}
+        onSelectGroupContext={handleGroupContextSelect}
+        onSelectSpecificStation={handleSpecificStationSelect}
+        onOpenQc={handleOpenQcDashboard}
+        onAdminLogin={handleAdminLogin}
+        adminFirstName={adminFirstName}
+        adminLastName={adminLastName}
+        adminPin={adminPin}
+        adminError={adminError}
+        adminSubmitting={adminSubmitting}
+        useSysadmin={useSysadmin}
+        onAdminFirstNameChange={setAdminFirstName}
+        onAdminLastNameChange={setAdminLastName}
+        onAdminPinChange={setAdminPin}
+        onUseSysadminChange={handleSysadminToggle}
+        qrScanningEnabled={qrScanningEnabled}
+        onQrScanningChange={setQrScanningEnabled}
+        stationChangeAuthOpen={stationChangeAuthOpen}
+        stationChangeAuthTargetLabel={pendingStationChange?.label ?? null}
+        stationChangeAuthName={stationChangeAuthName}
+        stationChangeAuthPin={stationChangeAuthPin}
+        stationChangeAuthError={stationChangeAuthError}
+        stationChangeAuthSubmitting={stationChangeAuthSubmitting}
+        onStationChangeAuthNameChange={setStationChangeAuthName}
+        onStationChangeAuthPinChange={setStationChangeAuthPin}
+        onStationChangeAuthSubmit={handleStationChangeAuthorization}
+        onStationChangeAuthClose={resetStationChangeAuthPrompt}
+      />
+
+      <QRCodeScannerModal
+        open={qrScanningEnabled}
+        onClose={() => setQrScanningEnabled(false)}
+        onDetected={handleQrDetected}
+        variant="background"
+      />
+
+      {showStationPicker && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div className="absolute inset-0 bg-gray-500 opacity-75" />
+            </div>
+
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">
+              &#8203;
+            </span>
+
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full">
+              <div className="bg-white px-8 pt-10 pb-8 sm:p-12">
+                <div className="flex flex-col gap-10">
+                  <div className="flex flex-col items-center gap-4 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+                      <MapPin className="h-8 w-8 text-blue-600" />
+                    </div>
+                    {sessionStationOptions.length > 0 && sessionStationOptions[0].role === 'Assembly' && (
+                      <h3 className="text-2xl font-semibold text-gray-900">
+                        {sessionStationOptions[0].name} - Seleccionar línea
+                      </h3>
+                    )}
+                    {!(sessionStationOptions.length > 0 && sessionStationOptions[0].role === 'Assembly') && (
+                      <h3 className="text-2xl font-semibold text-gray-900">
+                        Seleccionar estacion
+                      </h3>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-6">
+                    {[...sessionStationOptions].sort((a, b) => {
+                      const aLine = a.line_type ? parseInt(a.line_type, 10) : 0;
+                      const bLine = b.line_type ? parseInt(b.line_type, 10) : 0;
+                      return bLine - aLine;
+                    }).map((station) => {
+                      const isAssembly = station.role === 'Assembly';
+                      const hasLineType = Boolean(station.line_type);
+                      return (
+                        <button
+                          key={station.id}
+                          onClick={() => handleSessionStationSelect(station.id)}
+                          className="flex flex-col items-center justify-center rounded-2xl border-2 border-gray-200 bg-white px-8 py-14 transition-all hover:bg-blue-50 hover:border-blue-500"
+                        >
+                          {isAssembly && hasLineType ? (
+                            <>
+                              <span className="text-8xl font-bold text-gray-900">{station.line_type}</span>
+                              <span className="mt-3 text-xl text-gray-500">línea</span>
+                            </>
+                          ) : (
+                            <>
+                              {hasLineType && (
+                                <span className="rounded-full bg-slate-100 px-4 py-1.5 text-base font-semibold text-slate-600">
+                                  Linea {station.line_type}
+                                </span>
+                              )}
+                              <span className="mt-2 text-xl font-semibold text-gray-900">{station.name}</span>
+                              <span className="mt-1 text-base text-gray-500">{station.role}</span>
+                            </>
+                          )}
+                        </button>
+                      );
+                    })}
+                    {sessionStationOptions.length === 0 && (
+                      <div className="col-span-full rounded-md border border-dashed border-gray-200 px-4 py-4 text-sm text-gray-500">
+                        No hay estaciones con tareas definidas para este contexto.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {!stationSelectionRequired && (
+                <div className="bg-gray-50 px-6 py-4 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 sm:w-auto"
+                    onClick={() => setShowStationPicker(false)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pinModalOpen && pinModalWorkerId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-gray-500/70" onClick={closePinModal} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900">PIN requerido</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Ingresa el PIN de{' '}
+              {selectedWorker
+                ? formatWorkerDisplayName(selectedWorker)
+                : 'este trabajador'}{' '}
+              para continuar.
+            </p>
+            {pinModalError && (
+              <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                {pinModalError}
+              </div>
+            )}
+            <div className="mt-4">
+              <label htmlFor="pin-modal" className="block text-sm font-medium text-gray-700">
+                Codigo PIN
+              </label>
+              <div className="mt-1 relative rounded-md shadow-sm">
+                <input
+                  type="password"
+                  id="pin-modal"
+                  className="block w-full rounded-md border border-gray-300 py-3 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                  placeholder="Ingresa PIN"
+                  value={pinModalValue}
+                  onChange={(event) => setPinModalValue(event.target.value)}
+                  autoFocus
+                />
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={closePinModal}
+                className="flex-1 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handlePinSubmit}
+                className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                disabled={submitting}
+              >
+                Entrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pinChangeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-gray-500/70" />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900">Cambio de PIN requerido</h3>
+            <p className="mt-2 text-sm text-gray-500">
+              Tu cuenta aun usa el PIN predeterminado. Define uno nuevo para continuar.
+            </p>
+            {pinChangeError && (
+              <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                {pinChangeError}
+              </div>
+            )}
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Nuevo PIN</label>
+                <input
+                  type="password"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                  value={pinChangeDraft}
+                  onChange={(event) => setPinChangeDraft(event.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Confirmar PIN</label>
+                <input
+                  type="password"
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                  value={pinChangeConfirm}
+                  onChange={(event) => setPinChangeConfirm(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setPinChangeOpen(false)}
+                className="flex-1 rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handlePinUpdate}
+                className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                disabled={submitting}
+              >
+                Actualizar PIN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};
+
+export default Login;

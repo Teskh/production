@@ -1,0 +1,877 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, Eye, FileSignature, MapPin, Maximize2, Minimize2, QrCode, Shield, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import MicrosoftAdminLoginButton from '../components/MicrosoftAdminLoginButton';
+import type { StationContext } from '../utils/stationContext';
+import { formatStationContext, formatStationLabel } from '../utils/stationContext';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+type Station = {
+  id: number;
+  name: string;
+  role: string;
+  line_type: string | null;
+  sequence_order: number | null;
+};
+
+type ContextMode = 'group' | 'specific' | null;
+type SpecificType = 'panel' | 'assembly' | null;
+type GroupMode = 'panel_line' | 'assembly_sequence' | 'aux' | null;
+
+type InitialContextState = {
+  contextMode: ContextMode;
+  specificType: SpecificType;
+  groupMode: GroupMode;
+};
+
+type ProtocolSupervisorSessionStatus = {
+  pending_protocol_count: number;
+};
+
+type LoginSettingsProps = {
+  open: boolean;
+  stationContext: StationContext | null;
+  selectedStation: Station | null;
+  panelStations: Station[];
+  assemblyStations: Station[];
+  assemblySequenceOrders: number[];
+  onSelectGroupContext: (
+    context:
+      | { kind: 'panel_line' }
+      | { kind: 'aux' }
+      | { kind: 'assembly_sequence'; sequenceOrder: number }
+  ) => void;
+  onSelectSpecificStation: (stationId: number) => void;
+  onOpenQc: () => void;
+  onAdminLogin: () => void;
+  adminFirstName: string;
+  adminLastName: string;
+  adminPin: string;
+  adminError: string | null;
+  adminSubmitting: boolean;
+  useSysadmin: boolean;
+  onAdminFirstNameChange: (value: string) => void;
+  onAdminLastNameChange: (value: string) => void;
+  onAdminPinChange: (value: string) => void;
+  onUseSysadminChange: (checked: boolean) => void;
+  qrScanningEnabled: boolean;
+  onQrScanningChange: (enabled: boolean) => void;
+  stationChangeAuthOpen: boolean;
+  stationChangeAuthTargetLabel: string | null;
+  stationChangeAuthName: string;
+  stationChangeAuthPin: string;
+  stationChangeAuthError: string | null;
+  stationChangeAuthSubmitting: boolean;
+  onStationChangeAuthNameChange: (value: string) => void;
+  onStationChangeAuthPinChange: (value: string) => void;
+  onStationChangeAuthSubmit: () => void;
+  onStationChangeAuthClose: () => void;
+  onClose: () => void;
+};
+
+const normalizeStationName = (station: Station) => {
+  const trimmed = station.name.trim();
+  if (!station.line_type) {
+    return trimmed;
+  }
+  const pattern = new RegExp(`^(Linea|Line)\\s*${station.line_type}\\s*-\\s*`, 'i');
+  const normalized = trimmed.replace(pattern, '').trim();
+  return normalized || trimmed;
+};
+
+const resolveAdminErrorMessage = (adminError: string | null): string | null => {
+  if (!adminError) {
+    return null;
+  }
+  const normalized = adminError.trim().toLowerCase();
+  const isCredentialError =
+    normalized.includes('401') ||
+    normalized.includes('403') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid credential') ||
+    normalized.includes('invalid password') ||
+    normalized.includes('wrong password') ||
+    normalized.includes('incorrect password') ||
+    normalized.includes('invalid pin') ||
+    normalized.includes('incorrect pin') ||
+    normalized.includes('credenciales') ||
+    normalized.includes('contrasena') ||
+    normalized.includes('password');
+  if (isCredentialError) {
+    return 'Usuario o contrasena incorrectos. Intenta nuevamente.';
+  }
+  return adminError;
+};
+
+const buildInitialContextState = (
+  stationContext: StationContext | null,
+  selectedStation: Station | null
+): InitialContextState => {
+  if (!stationContext) {
+    return {
+      contextMode: null,
+      specificType: null,
+      groupMode: null,
+    };
+  }
+  if (stationContext.kind === 'station') {
+    let specificType: 'panel' | 'assembly' | null = null;
+    if (selectedStation?.role === 'Panels') {
+      specificType = 'panel';
+    } else if (selectedStation?.role === 'Assembly') {
+      specificType = 'assembly';
+    }
+    return {
+      contextMode: 'specific',
+      specificType,
+      groupMode: null,
+    };
+  }
+  const groupMode =
+    stationContext.kind === 'panel_line'
+      ? 'panel_line'
+      : stationContext.kind === 'aux'
+      ? 'aux'
+      : 'assembly_sequence';
+  return {
+    contextMode: 'group',
+    specificType: null,
+    groupMode,
+  };
+};
+
+const LoginSettingsContent: React.FC<LoginSettingsProps> = ({
+  open,
+  stationContext,
+  selectedStation,
+  panelStations,
+  assemblyStations,
+  assemblySequenceOrders,
+  onSelectGroupContext,
+  onSelectSpecificStation,
+  onOpenQc,
+  onAdminLogin,
+  adminFirstName,
+  adminLastName,
+  adminPin,
+  adminError,
+  adminSubmitting,
+  useSysadmin,
+  onAdminFirstNameChange,
+  onAdminLastNameChange,
+  onAdminPinChange,
+  onUseSysadminChange,
+  qrScanningEnabled,
+  onQrScanningChange,
+  stationChangeAuthOpen,
+  stationChangeAuthTargetLabel,
+  stationChangeAuthName,
+  stationChangeAuthPin,
+  stationChangeAuthError,
+  stationChangeAuthSubmitting,
+  onStationChangeAuthNameChange,
+  onStationChangeAuthPinChange,
+  onStationChangeAuthSubmit,
+  onStationChangeAuthClose,
+  onClose,
+}) => {
+  const initialState = buildInitialContextState(stationContext, selectedStation);
+  const [contextMode, setContextMode] = useState<ContextMode>(
+    initialState.contextMode
+  );
+  const [specificType, setSpecificType] = useState<SpecificType>(
+    initialState.specificType
+  );
+  const [groupMode, setGroupMode] = useState<GroupMode>(
+    initialState.groupMode
+  );
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
+  const [protocolPendingCount, setProtocolPendingCount] = useState(0);
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return (
+      window.matchMedia?.('(pointer: coarse)').matches ||
+      'ontouchstart' in window
+    );
+  }, []);
+
+  const currentContextLabel = useMemo(() => {
+    if (!stationContext) {
+      return 'Sin contexto definido';
+    }
+    if (stationContext.kind === 'panel_line') {
+      return 'Linea de paneles';
+    }
+    if (stationContext.kind === 'aux') {
+      return 'Auxiliar';
+    }
+    if (stationContext.kind === 'assembly_sequence') {
+      return `Ensamble - secuencia ${stationContext.sequenceOrder}`;
+    }
+    if (selectedStation) {
+      return formatStationLabel(selectedStation);
+    }
+    return 'Estacion especifica';
+  }, [selectedStation, stationContext]);
+
+  const specificStations = specificType === 'panel' ? panelStations : assemblyStations;
+  const resolvedAdminError = useMemo(
+    () => resolveAdminErrorMessage(adminError),
+    [adminError]
+  );
+  const resolvedStationChangeAuthError = useMemo(
+    () => resolveAdminErrorMessage(stationChangeAuthError),
+    [stationChangeAuthError]
+  );
+
+  useEffect(() => {
+    if (adminError) {
+      setAdminOpen(true);
+    }
+  }, [adminError]);
+  const assemblySequenceLabelByOrder = useMemo(() => {
+    const entries = new Map<number, Set<string>>();
+    assemblyStations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      const normalized = normalizeStationName(station);
+      const existing = entries.get(station.sequence_order) ?? new Set<string>();
+      existing.add(normalized);
+      entries.set(station.sequence_order, existing);
+    });
+    const map = new Map<number, string>();
+    entries.forEach((names, sequence) => {
+      map.set(sequence, names.size ? Array.from(names).join(' / ') : `Secuencia ${sequence}`);
+    });
+    return map;
+  }, [assemblyStations]);
+
+  useEffect(() => {
+    if (contextMode !== 'specific' || !specificType) {
+      return;
+    }
+    if (specificStations.length === 0) {
+      setSpecificType(null);
+    }
+  }, [contextMode, specificStations.length, specificType]);
+
+  const handleAdminSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (adminSubmitting) {
+      return;
+    }
+    onAdminLogin();
+  };
+
+  const handleStationChangeAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (stationChangeAuthSubmitting) {
+      return;
+    }
+    onStationChangeAuthSubmit();
+  };
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const canFullscreen = Boolean(root?.requestFullscreen);
+    setFullscreenAvailable(canFullscreen);
+
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    handleFullscreenChange();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open || !fullscreenAvailable || !isTouchDevice) {
+      return;
+    }
+    const attemptFullscreen = () => {
+      if (document.fullscreenElement || document.visibilityState !== 'visible') {
+        return;
+      }
+      const root = document.documentElement;
+      if (!root?.requestFullscreen) {
+        return;
+      }
+      root.requestFullscreen().catch(() => {
+        // Ignore failures; fullscreen may require a recent user gesture.
+      });
+    };
+    const intervalId = window.setInterval(attemptFullscreen, 10_000);
+    return () => window.clearInterval(intervalId);
+  }, [fullscreenAvailable, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let active = true;
+    const loadProtocolPendingStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/protocols/supervisor/session`, {
+          credentials: 'include',
+        });
+        if (!active) {
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('No se pudo cargar el estado de protocolos.');
+        }
+        const data = (await response.json()) as ProtocolSupervisorSessionStatus | null;
+        setProtocolPendingCount(data?.pending_protocol_count ?? 0);
+      } catch {
+        if (active) {
+          setProtocolPendingCount(0);
+        }
+      }
+    };
+    void loadProtocolPendingStatus();
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
+  const handleToggleFullscreen = async () => {
+    if (!fullscreenAvailable) {
+      return;
+    }
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await document.documentElement.requestFullscreen();
+  };
+
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto">
+      <div className="flex min-h-screen items-center justify-center px-4 text-center sm:block sm:p-0">
+        <div className="fixed inset-0 bg-slate-900/60" onClick={onClose} aria-hidden="true" />
+
+        <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">
+          &#8203;
+        </span>
+
+        <div className="relative inline-block w-full transform overflow-hidden rounded-xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:align-middle sm:max-w-5xl">
+          <div className="flex items-start justify-between border-b border-slate-200 px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Ajustes</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Configura accesos rapidos y el contexto de estacion.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/supervisor/panel-line"
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Vista de supervisor"
+                title="Vista de supervisor"
+              >
+                <MapPin className="h-5 w-5" />
+              </Link>
+              <Link
+                to="/utility/floor-status"
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Abrir estado de planta"
+                title="Abrir estado de planta"
+              >
+                <Activity className="h-5 w-5" />
+              </Link>
+              <Link
+                to="/utility/protocols"
+                className="relative rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Abrir protocolos"
+                title="Abrir protocolos"
+              >
+                <FileSignature className="h-5 w-5" />
+                {protocolPendingCount > 0 && (
+                  <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                    {protocolPendingCount > 9 ? '9+' : protocolPendingCount}
+                  </span>
+                )}
+              </Link>
+              <button
+                type="button"
+                onClick={handleToggleFullscreen}
+                disabled={!fullscreenAvailable}
+                className={`rounded-full p-2 transition ${
+                  fullscreenAvailable
+                    ? 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'
+                    : 'cursor-not-allowed text-slate-300'
+                }`}
+                aria-label={isFullscreen ? 'Salir pantalla completa' : 'Activar pantalla completa'}
+                title={isFullscreen ? 'Salir pantalla completa' : 'Activar pantalla completa'}
+              >
+                {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Cerrar ajustes"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1fr_1.4fr]">
+            <section className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Accesos
+                </h3>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={onOpenQc}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    <span>Calidad</span>
+                    <Eye className="h-4 w-4 text-slate-400" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminOpen((prev) => !prev)}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    <span>Menú Admin</span>
+                    <Shield className="h-4 w-4 text-slate-400" />
+                  </button>
+                </div>
+
+                {adminOpen && (
+                  <form className="mt-5 space-y-3" onSubmit={handleAdminSubmit}>
+                    <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      <label className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={useSysadmin}
+                          onChange={(event) => onUseSysadminChange(event.target.checked)}
+                        />
+                        Usar sysadmin
+                      </label>
+                      <span>SYS_ADMIN_PASSWORD</span>
+                    </div>
+
+                    {resolvedAdminError && (
+                      <div className="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                        {resolvedAdminError}
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Nombre
+                        </label>
+                        <input
+                          type="text"
+                          className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                          value={adminFirstName}
+                          onChange={(event) => onAdminFirstNameChange(event.target.value)}
+                          disabled={useSysadmin}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Apellido
+                        </label>
+                        <input
+                          type="text"
+                          className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                          value={adminLastName}
+                          onChange={(event) => onAdminLastNameChange(event.target.value)}
+                          disabled={useSysadmin}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        {useSysadmin ? 'Contraseña' : 'PIN'}
+                      </label>
+                      <input
+                        type="password"
+                        autoComplete={useSysadmin ? 'current-password' : 'current-password'}
+                        className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                        value={adminPin}
+                        onChange={(event) => onAdminPinChange(event.target.value)}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={adminSubmitting}
+                      className={`w-full rounded-md px-4 py-2 text-sm font-semibold text-white transition ${
+                        adminSubmitting ? 'bg-slate-400' : 'bg-slate-900 hover:bg-slate-800'
+                      }`}
+                    >
+                      Entrar a Admin
+                    </button>
+                    <div className="flex items-center gap-3 py-1 text-[11px] uppercase tracking-wider text-slate-400">
+                      <span className="h-px flex-1 bg-slate-200" />
+                      o
+                      <span className="h-px flex-1 bg-slate-200" />
+                    </div>
+                    <MicrosoftAdminLoginButton returnTo="/admin" />
+                  </form>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-slate-500" />
+                      <h3 className="text-sm font-semibold text-slate-800">Escaneo QR</h3>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Activa el escaneo continuo para inicio rapido.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={qrScanningEnabled}
+                    onClick={() => onQrScanningChange(!qrScanningEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
+                      qrScanningEnabled
+                        ? 'border-slate-900 bg-slate-900'
+                        : 'border-slate-200 bg-slate-200'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                        qrScanningEnabled ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                  <span
+                    className={`h-2 w-2 rounded-full ${
+                      qrScanningEnabled ? 'bg-emerald-400' : 'bg-slate-300'
+                    }`}
+                  />
+                  {qrScanningEnabled ? 'Activo' : 'Inactivo'}
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-slate-500" />
+                  <h3 className="text-sm font-semibold text-slate-800">Contexto de estacion</h3>
+                </div>
+                <div className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-700">Actual:</span> {currentContextLabel}
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMode('group');
+                      setGroupMode(null);
+                    }}
+                    className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                      contextMode === 'group'
+                        ? 'border-blue-500 bg-blue-50 text-blue-900'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    Grupo de estaciones
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMode('specific');
+                      setSpecificType(null);
+                    }}
+                    className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                      contextMode === 'specific'
+                        ? 'border-blue-500 bg-blue-50 text-blue-900'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    Estacion especifica
+                  </button>
+                </div>
+
+                {contextMode === 'group' && (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGroupMode('panel_line');
+                          onSelectGroupContext({ kind: 'panel_line' });
+                        }}
+                        className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                          groupMode === 'panel_line'
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Linea de paneles
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGroupMode('assembly_sequence')}
+                        className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                          groupMode === 'assembly_sequence'
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Armado & Terminaciones
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGroupMode('aux');
+                          onSelectGroupContext({ kind: 'aux' });
+                        }}
+                        className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                          groupMode === 'aux'
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Auxiliar
+                      </button>
+                    </div>
+
+                    {groupMode === 'assembly_sequence' && (
+                      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                        {assemblySequenceOrders.map((order) => {
+                          const label = assemblySequenceLabelByOrder.get(order);
+                          return (
+                            <button
+                              key={order}
+                              type="button"
+                              onClick={() =>
+                                onSelectGroupContext({
+                                  kind: 'assembly_sequence',
+                                  sequenceOrder: order,
+                                })
+                              }
+                              className="rounded-md border border-slate-200 px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                            >
+                              <span className="block">
+                                {label ?? `Secuencia ${order}`}
+                              </span>
+                              {label && (
+                                <span className="mt-1 block text-xs text-slate-500">
+                                  Secuencia {order}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {assemblySequenceOrders.length === 0 && (
+                          <div className="col-span-full rounded-md border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+                            No hay secuencias con tareas definidas.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {contextMode === 'specific' && (
+                  <div className="mt-4 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setSpecificType('panel')}
+                        className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                          specificType === 'panel'
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Panel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpecificType('assembly')}
+                        className={`rounded-lg border px-4 py-3 text-left text-sm font-semibold transition ${
+                          specificType === 'assembly'
+                            ? 'border-blue-500 bg-blue-50 text-blue-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        Ensamble
+                      </button>
+                    </div>
+
+                    {specificType && (
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {specificStations.map((station) => {
+                          const isAssembly = specificType === 'assembly';
+                          const showSmallName = isAssembly && station.line_type;
+                          const mainLabel =
+                            isAssembly && station.line_type
+                              ? `Linea ${station.line_type}`
+                              : station.name;
+                          return (
+                            <button
+                              key={station.id}
+                              type="button"
+                              onClick={() => onSelectSpecificStation(station.id)}
+                              className={`rounded-md border px-3 py-3 text-left text-sm font-semibold transition ${
+                                selectedStation?.id === station.id
+                                  ? 'border-blue-500 bg-blue-50 text-blue-900'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span className={isAssembly ? 'text-lg font-semibold' : undefined}>
+                                {mainLabel}
+                              </span>
+                              {showSmallName && (
+                                <span className="mt-1 block text-xs text-slate-500">
+                                  {station.name}
+                                </span>
+                              )}
+                              {!isAssembly && station.line_type && (
+                                <span className="mt-1 block text-xs text-slate-500">
+                                  Linea {station.line_type}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                        {specificStations.length === 0 && (
+                          <div className="col-span-full rounded-md border border-dashed border-slate-200 px-3 py-2 text-xs text-slate-500">
+                            No hay estaciones con tareas definidas.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+            </section>
+          </div>
+        </div>
+
+        {stationChangeAuthOpen && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/35 px-4 py-6">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
+                    Validacion requerida
+                  </p>
+                  <h3 className="mt-1 text-lg font-semibold text-slate-900">
+                    Autorizar cambio de estacion
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {stationChangeAuthTargetLabel
+                      ? `Confirma un admin para cambiar a ${stationChangeAuthTargetLabel}.`
+                      : 'Confirma un admin para aplicar este cambio.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onStationChangeAuthClose}
+                  className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Cerrar validacion de estacion"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form className="mt-5 space-y-3" onSubmit={handleStationChangeAuthSubmit}>
+                {resolvedStationChangeAuthError && (
+                  <div className="rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">
+                    {resolvedStationChangeAuthError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Usuario
+                  </label>
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                    placeholder="Nombre Apellido"
+                    value={stationChangeAuthName}
+                    onChange={(event) => onStationChangeAuthNameChange(event.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    PIN
+                  </label>
+                  <input
+                    type="password"
+                    className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
+                    value={stationChangeAuthPin}
+                    onChange={(event) => onStationChangeAuthPinChange(event.target.value)}
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={onStationChangeAuthClose}
+                    className="rounded-md px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={stationChangeAuthSubmitting}
+                    className={`rounded-md px-4 py-2 text-sm font-semibold text-white transition ${
+                      stationChangeAuthSubmitting
+                        ? 'bg-slate-400'
+                        : 'bg-slate-900 hover:bg-slate-800'
+                    }`}
+                  >
+                    {stationChangeAuthSubmitting ? 'Validando...' : 'Autorizar cambio'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const LoginSettings: React.FC<LoginSettingsProps> = (props) => {
+  if (!props.open) {
+    return null;
+  }
+  const contextKey = `${props.stationContext ? formatStationContext(props.stationContext) : 'none'}:${
+    props.selectedStation?.id ?? 'none'
+  }`;
+  return <LoginSettingsContent key={contextKey} {...props} />;
+};
+
+export default LoginSettings;

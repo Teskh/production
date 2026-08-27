@@ -1,0 +1,2904 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ChevronDown,
+  Filter,
+  Image,
+  Pencil,
+  Plus,
+  Search,
+  Settings2,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { useOptionalAdminHeader } from '../../../layouts/AdminLayoutContext';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+
+type QCCheckKind = 'triggered' | 'manual_template';
+type QCTriggerEventType = 'task_completed';
+type QCSeverityLevelKey = 'baja' | 'media' | 'critica';
+type QCCheckMediaType = 'guidance' | 'reference';
+
+type QCCheckDefinition = {
+  id: number;
+  name: string;
+  active: boolean;
+  guidance_text: string | null;
+  version: number;
+  kind: QCCheckKind;
+  category_id: number | null;
+  archived_at?: string | null;
+};
+
+type QCCheckCategory = {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  active: boolean;
+  sort_order: number | null;
+};
+
+type QCFailureMode = {
+  id: number;
+  check_definition_id: number | null;
+  name: string;
+  description: string | null;
+  default_severity_level: QCSeverityLevelKey | null;
+  default_rework_description: string | null;
+};
+
+type QCCheckMediaAsset = {
+  id: number;
+  check_definition_id: number;
+  media_type: QCCheckMediaType;
+  uri: string;
+  created_at: string | null;
+};
+
+type QCTrigger = {
+  id: number;
+  check_definition_id: number;
+  event_type: QCTriggerEventType;
+  params_json: Record<string, number[]> | null;
+  sampling_rate: number;
+  sampling_autotune: boolean;
+  sampling_step: number;
+};
+
+type QCApplicability = {
+  id: number;
+  check_definition_id: number;
+  house_type_ids: number[];
+  sub_type_ids: number[];
+  panel_groups: string[];
+};
+
+type HouseType = {
+  id: number;
+  name: string;
+  number_of_modules: number;
+};
+
+type HouseSubType = {
+  id: number;
+  house_type_id: number;
+  name: string;
+};
+
+type PanelDefinition = {
+  id: number;
+  house_type_id: number;
+  module_sequence_number: number;
+  sub_type_id: number | null;
+  group: string;
+  panel_code: string;
+};
+
+type TaskDefinition = {
+  id: number;
+  name: string;
+  scope: 'panel' | 'module' | 'aux';
+  default_station_sequence: number | null;
+  active: boolean;
+};
+
+type Station = {
+  id: number;
+  name: string;
+  role: 'Panels' | 'Magazine' | 'Assembly' | 'AUX';
+  line_type: '1' | '2' | '3' | null;
+  sequence_order: number | null;
+};
+
+type CheckDraft = {
+  id?: number;
+  name: string;
+  active: boolean;
+  guidance_text: string;
+  version: number;
+  kind: QCCheckKind;
+  category_id: number | null;
+};
+
+type CategoryDraft = {
+  id?: number;
+  name: string;
+  parent_id: number | null;
+  active: boolean;
+  sort_order: string;
+};
+
+type FailureModeDraft = {
+  id?: number;
+  check_definition_id: number | null;
+  name: string;
+  description: string;
+  default_severity_level: QCSeverityLevelKey | null;
+  default_rework_description: string;
+};
+
+type TriggerDraft = {
+  id?: number;
+  event_type: QCTriggerEventType;
+  sampling_rate: string;
+  sampling_step: string;
+  sampling_autotune: boolean;
+  task_definition_ids: number[];
+};
+
+type TriggerTaskIssue = {
+  trigger_id: number;
+  check_definition_id: number;
+  check_name: string;
+  task_definition_id: number;
+  task_name: string;
+  kind: 'inactive' | 'missing';
+};
+
+type DraftTaskIssue = {
+  task_definition_id: number;
+  task_name: string;
+  kind: 'inactive' | 'missing';
+};
+
+type ApplicabilityDraft = {
+  id?: number;
+  house_type_ids: number[];
+  sub_type_ids: number[];
+  panel_groups: string[];
+};
+
+const emptyCheckDraft = (): CheckDraft => ({
+  name: '',
+  active: true,
+  guidance_text: '',
+  version: 1,
+  kind: 'triggered',
+  category_id: null,
+});
+
+const emptyCategoryDraft = (): CategoryDraft => ({
+  name: '',
+  parent_id: null,
+  active: true,
+  sort_order: '',
+});
+
+const emptyFailureModeDraft = (checkDefinitionId: number | null): FailureModeDraft => ({
+  check_definition_id: checkDefinitionId,
+  name: '',
+  description: '',
+  default_severity_level: null,
+  default_rework_description: '',
+});
+
+const severityOptions: Array<{ value: QCSeverityLevelKey; label: string }> = [
+  { value: 'baja', label: 'Baja' },
+  { value: 'media', label: 'Media' },
+  { value: 'critica', label: 'Crítica' },
+];
+
+const emptyTriggerDraft = (): TriggerDraft => ({
+  event_type: 'task_completed',
+  sampling_rate: '1',
+  sampling_step: '0.2',
+  sampling_autotune: false,
+  task_definition_ids: [],
+});
+
+const emptyApplicabilityDraft = (): ApplicabilityDraft => ({
+  house_type_ids: [],
+  sub_type_ids: [],
+  panel_groups: [],
+});
+
+const buildHeaders = (options: RequestInit): Headers => {
+  const headers = new Headers(options.headers);
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return headers;
+};
+
+const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options),
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Solicitud fallida (${response.status})`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+};
+
+const normalizeSearch = (value: string): string =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const resolveMediaUrl = (uri: string): string => {
+  if (!uri) {
+    return '';
+  }
+  if (/^(https?:)?\/\//i.test(uri) || uri.startsWith('data:') || uri.startsWith('blob:')) {
+    return uri;
+  }
+  if (!API_BASE_URL) {
+    return uri;
+  }
+  if (uri.startsWith('/')) {
+    return `${API_BASE_URL}${uri}`;
+  }
+  return `${API_BASE_URL}/${uri}`;
+};
+
+const normalizeStationName = (station: Station) => {
+  const trimmed = station.name.trim();
+  if (!station.line_type) {
+    return trimmed;
+  }
+  const pattern = new RegExp(`^(Linea|Line)\\s*${station.line_type}\\s*-\\s*`, 'i');
+  const normalized = trimmed.replace(pattern, '').trim();
+  return normalized || trimmed;
+};
+
+const sortByName = <T extends { name: string }>(list: T[]) =>
+  [...list].sort((a, b) => a.name.localeCompare(b.name));
+
+const sortByOrderThenName = <T extends { name: string; sort_order: number | null }>(
+  list: T[]
+) =>
+  [...list].sort((a, b) => {
+    const orderCompare = (a.sort_order ?? 9999) - (b.sort_order ?? 9999);
+    if (orderCompare !== 0) {
+      return orderCompare;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+const toggleSelection = <T,>(values: T[], value: T) =>
+  values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+
+const summarizeSelection = <T,>(
+  selected: T[],
+  emptyLabel: string,
+  singleLabel: (value: T) => string
+) => {
+  if (selected.length === 0) {
+    return emptyLabel;
+  }
+  if (selected.length === 1) {
+    return singleLabel(selected[0]);
+  }
+  return `${selected.length} seleccionados`;
+};
+
+const QCChecks: React.FC = () => {
+  const adminHeader = useOptionalAdminHeader();
+  const navigate = useNavigate();
+  const [checks, setChecks] = useState<QCCheckDefinition[]>([]);
+  const [categories, setCategories] = useState<QCCheckCategory[]>([]);
+  const [failureModes, setFailureModes] = useState<QCFailureMode[]>([]);
+  const [checkMedia, setCheckMedia] = useState<QCCheckMediaAsset[]>([]);
+  const [triggers, setTriggers] = useState<QCTrigger[]>([]);
+  const [applicability, setApplicability] = useState<QCApplicability[]>([]);
+  const [tasks, setTasks] = useState<TaskDefinition[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [houseTypes, setHouseTypes] = useState<HouseType[]>([]);
+  const [houseSubTypes, setHouseSubTypes] = useState<HouseSubType[]>([]);
+  const [panelDefinitions, setPanelDefinitions] = useState<PanelDefinition[]>([]);
+  const [selectedCheckId, setSelectedCheckId] = useState<number | null>(null);
+  const [checkDraft, setCheckDraft] = useState<CheckDraft>(emptyCheckDraft());
+  const [selectedTab, setSelectedTab] = useState<
+    'definition' | 'failure_modes' | 'triggers' | 'references' | 'applicability'
+  >('definition');
+  const [checkSearch, setCheckSearch] = useState('');
+  const [showInactiveChecks, setShowInactiveChecks] = useState(false);
+  const [checkStatus, setCheckStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [categoryDraft, setCategoryDraft] = useState<CategoryDraft>(emptyCategoryDraft());
+  const [categoryStatus, setCategoryStatus] = useState<string | null>(null);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+
+  const [selectedFailureId, setSelectedFailureId] = useState<number | null>(null);
+  const [isFailureModeDraftNew, setIsFailureModeDraftNew] = useState(false);
+  const [failureDraft, setFailureDraft] = useState<FailureModeDraft>(
+    emptyFailureModeDraft(null)
+  );
+  const [failureStatus, setFailureStatus] = useState<string | null>(null);
+
+  const [selectedTriggerId, setSelectedTriggerId] = useState<number | null>(null);
+  const [triggerDraft, setTriggerDraft] = useState<TriggerDraft>(emptyTriggerDraft());
+  const [triggerStatus, setTriggerStatus] = useState<string | null>(null);
+  const [triggerSearch, setTriggerSearch] = useState('');
+
+  const [mediaStatus, setMediaStatus] = useState<string | null>(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<QCCheckMediaAsset | null>(null);
+
+  const [selectedApplicabilityId, setSelectedApplicabilityId] = useState<number | null>(null);
+  const [applicabilityDraft, setApplicabilityDraft] = useState<ApplicabilityDraft>(
+    emptyApplicabilityDraft()
+  );
+  const [applicabilityStatus, setApplicabilityStatus] = useState<string | null>(null);
+  const [openApplicabilityDropdown, setOpenApplicabilityDropdown] = useState<
+    'house' | 'sub' | 'panel' | null
+  >(null);
+
+  useEffect(() => {
+    if (!previewMedia) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPreviewMedia(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewMedia]);
+
+  useEffect(() => {
+    if (!openApplicabilityDropdown) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-applicability-dropdown]')) {
+        return;
+      }
+      setOpenApplicabilityDropdown(null);
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [openApplicabilityDropdown]);
+
+  useEffect(() => {
+    if (!adminHeader) {
+      return;
+    }
+    adminHeader.setHeader({
+      title: 'Definicion de revisiones QC',
+      kicker: 'Calidad / Revisiones QC',
+    });
+  }, [adminHeader]);
+
+  const handleExit = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/admin/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch {
+      // Ignore logout errors and still send the user to login.
+    } finally {
+      navigate('/login');
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const [
+          checkData,
+          categoryData,
+          failureData,
+          checkMediaData,
+          triggerData,
+          applicabilityData,
+          taskData,
+          stationData,
+          houseTypeData,
+          panelData,
+        ] = await Promise.all([
+          apiRequest<QCCheckDefinition[]>('/api/qc/check-definitions'),
+          apiRequest<QCCheckCategory[]>('/api/qc/categories'),
+          apiRequest<QCFailureMode[]>('/api/qc/failure-modes'),
+          apiRequest<QCCheckMediaAsset[]>('/api/qc/check-media'),
+          apiRequest<QCTrigger[]>('/api/qc/triggers'),
+          apiRequest<QCApplicability[]>('/api/qc/applicability'),
+          apiRequest<TaskDefinition[]>('/api/task-definitions'),
+          apiRequest<Station[]>('/api/stations'),
+          apiRequest<HouseType[]>('/api/house-types'),
+          apiRequest<PanelDefinition[]>('/api/panel-definitions'),
+        ]);
+        const subtypeResponses = await Promise.all(
+          houseTypeData.map((house) =>
+            apiRequest<HouseSubType[]>(`/api/house-types/${house.id}/subtypes`)
+          )
+        );
+        if (!active) {
+          return;
+        }
+        const sortedChecks = sortByName(checkData);
+        setChecks(sortedChecks);
+        setCategories(sortByOrderThenName(categoryData));
+        setFailureModes(sortByName(failureData));
+        setCheckMedia(checkMediaData);
+        setTriggers(triggerData);
+        setApplicability(applicabilityData);
+        setTasks(sortByName(taskData));
+        setStations(stationData);
+        setHouseTypes(sortByName(houseTypeData));
+        setHouseSubTypes(subtypeResponses.flat());
+        setPanelDefinitions(panelData);
+        const firstActiveCheck = sortedChecks.find((check) => check.active) ?? null;
+        setSelectedCheckId(firstActiveCheck?.id ?? null);
+      } catch (error) {
+        if (active) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'No se pudo cargar la configuracion de QC.';
+          setCheckStatus(message);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories]
+  );
+  const houseTypeNameById = useMemo(
+    () => new Map(houseTypes.map((house) => [house.id, house.name])),
+    [houseTypes]
+  );
+  const houseSubTypeNameById = useMemo(
+    () => new Map(houseSubTypes.map((sub) => [sub.id, sub.name])),
+    [houseSubTypes]
+  );
+
+  const filteredChecks = useMemo(() => {
+    const query = normalizeSearch(checkSearch.trim());
+    return checks.filter((check) => {
+      if (!showInactiveChecks && !check.active) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      const categoryName = check.category_id
+        ? categoryNameById.get(check.category_id) ?? ''
+        : '';
+      const haystack = normalizeSearch(`${check.name} ${check.kind} ${categoryName}`);
+      return haystack.includes(query);
+    });
+  }, [checkSearch, checks, categoryNameById, showInactiveChecks]);
+
+  useEffect(() => {
+    if (showInactiveChecks || selectedCheckId === null) {
+      return;
+    }
+    const selected = checks.find((check) => check.id === selectedCheckId);
+    if (selected && selected.active) {
+      return;
+    }
+    const firstActiveCheck = checks.find((check) => check.active) ?? null;
+    setSelectedCheckId(firstActiveCheck?.id ?? null);
+  }, [showInactiveChecks, selectedCheckId, checks]);
+
+  const checksByCategoryId = useMemo(() => {
+    const map = new Map<number, QCCheckDefinition[]>();
+    filteredChecks.forEach((check) => {
+      if (check.category_id == null) {
+        return;
+      }
+      const list = map.get(check.category_id) ?? [];
+      list.push(check);
+      map.set(check.category_id, list);
+    });
+    return map;
+  }, [filteredChecks]);
+
+  const checksWithoutCategory = useMemo(
+    () => filteredChecks.filter((check) => check.category_id == null),
+    [filteredChecks]
+  );
+
+  const categoryChildren = useMemo(() => {
+    const map = new Map<number | null, QCCheckCategory[]>();
+    categories.forEach((category) => {
+      const parent = category.parent_id ?? null;
+      const list = map.get(parent) ?? [];
+      list.push(category);
+      map.set(parent, list);
+    });
+    return map;
+  }, [categories]);
+
+  const checkMediaForSelected = useMemo(() => {
+    if (!selectedCheckId) {
+      return [];
+    }
+    return checkMedia.filter((media) => media.check_definition_id === selectedCheckId);
+  }, [checkMedia, selectedCheckId]);
+
+  const guidanceMedia = useMemo(
+    () => checkMediaForSelected.filter((media) => media.media_type === 'guidance'),
+    [checkMediaForSelected]
+  );
+
+  const referenceMedia = useMemo(
+    () => checkMediaForSelected.filter((media) => media.media_type === 'reference'),
+    [checkMediaForSelected]
+  );
+
+  const selectedCheck = useMemo(
+    () => checks.find((check) => check.id === selectedCheckId) ?? null,
+    [checks, selectedCheckId]
+  );
+
+  const filteredFailureModes = useMemo(() => {
+    if (selectedCheckId === null) {
+      return [];
+    }
+    return failureModes.filter((mode) => mode.check_definition_id === selectedCheckId);
+  }, [failureModes, selectedCheckId]);
+
+  const filteredTriggers = useMemo(
+    () =>
+      triggers.filter((trigger) =>
+        selectedCheckId ? trigger.check_definition_id === selectedCheckId : false
+      ),
+    [triggers, selectedCheckId]
+  );
+
+  const checkNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    checks.forEach((check) => map.set(check.id, check.name));
+    return map;
+  }, [checks]);
+
+  const taskById = useMemo(() => {
+    const map = new Map<number, TaskDefinition>();
+    tasks.forEach((task) => map.set(task.id, task));
+    return map;
+  }, [tasks]);
+
+  const taskNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    tasks.forEach((task) => map.set(task.id, task.name));
+    return map;
+  }, [tasks]);
+
+  const triggerTaskIssues = useMemo(() => {
+    const seen = new Set<string>();
+    const issues: TriggerTaskIssue[] = [];
+    triggers.forEach((trigger) => {
+      const checkName =
+        checkNameById.get(trigger.check_definition_id) ?? `Check ${trigger.check_definition_id}`;
+      const taskIds = trigger.params_json?.task_definition_ids ?? [];
+      taskIds.forEach((taskId) => {
+        const task = taskById.get(taskId);
+        if (!task) {
+          const key = `${trigger.id}-missing-${taskId}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            issues.push({
+              trigger_id: trigger.id,
+              check_definition_id: trigger.check_definition_id,
+              check_name: checkName,
+              task_definition_id: taskId,
+              task_name: `Tarea ${taskId}`,
+              kind: 'missing',
+            });
+          }
+          return;
+        }
+        if (!task.active) {
+          const key = `${trigger.id}-inactive-${task.id}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            issues.push({
+              trigger_id: trigger.id,
+              check_definition_id: trigger.check_definition_id,
+              check_name: checkName,
+              task_definition_id: task.id,
+              task_name: task.name,
+              kind: 'inactive',
+            });
+          }
+        }
+      });
+    });
+    return issues;
+  }, [checkNameById, taskById, triggers]);
+
+  const triggerIssueCountById = useMemo(() => {
+    const map = new Map<number, number>();
+    triggerTaskIssues.forEach((issue) => {
+      map.set(issue.trigger_id, (map.get(issue.trigger_id) ?? 0) + 1);
+    });
+    return map;
+  }, [triggerTaskIssues]);
+
+  const selectedCheckTriggerIssues = useMemo(() => {
+    if (!selectedCheckId) {
+      return [];
+    }
+    return triggerTaskIssues.filter((issue) => issue.check_definition_id === selectedCheckId);
+  }, [selectedCheckId, triggerTaskIssues]);
+
+  const triggerDraftTaskIssues = useMemo(() => {
+    const seen = new Set<string>();
+    const issues: DraftTaskIssue[] = [];
+    triggerDraft.task_definition_ids.forEach((taskId) => {
+      const task = taskById.get(taskId);
+      if (!task) {
+        const key = `missing-${taskId}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            task_definition_id: taskId,
+            task_name: `Tarea ${taskId}`,
+            kind: 'missing',
+          });
+        }
+        return;
+      }
+      if (!task.active) {
+        const key = `inactive-${task.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            task_definition_id: task.id,
+            task_name: task.name,
+            kind: 'inactive',
+          });
+        }
+      }
+    });
+    return issues;
+  }, [taskById, triggerDraft.task_definition_ids]);
+
+  const triggerTaskLabel = (trigger: QCTrigger) => {
+    const taskIds = trigger.params_json?.task_definition_ids ?? [];
+    if (!taskIds.length) {
+      return 'Sin tareas (inactivo)';
+    }
+    return taskIds
+      .map((taskId) => {
+        const task = taskById.get(taskId);
+        if (!task) {
+          return `Tarea ${taskId} (no encontrada)`;
+        }
+        if (!task.active) {
+          return `${task.name} (inactiva)`;
+        }
+        return task.name;
+      })
+      .join(', ');
+  };
+
+  const filteredApplicability = useMemo(
+    () =>
+      applicability.filter((rule) =>
+        selectedCheckId ? rule.check_definition_id === selectedCheckId : false
+      ),
+    [applicability, selectedCheckId]
+  );
+
+  useEffect(() => {
+    if (!categories.length) {
+      setSelectedCategoryId(null);
+      setCategoryDraft(emptyCategoryDraft());
+      return;
+    }
+    if (selectedCategoryId && categories.some((category) => category.id === selectedCategoryId)) {
+      return;
+    }
+    const first = categories[0];
+    setSelectedCategoryId(first.id);
+    setCategoryDraft({
+      id: first.id,
+      name: first.name,
+      parent_id: first.parent_id,
+      active: first.active,
+      sort_order: first.sort_order !== null ? String(first.sort_order) : '',
+    });
+  }, [categories, selectedCategoryId]);
+
+  useEffect(() => {
+    if (!selectedCheck) {
+      setCheckDraft(emptyCheckDraft());
+      setFailureDraft(emptyFailureModeDraft(null));
+      setSelectedFailureId(null);
+      setIsFailureModeDraftNew(false);
+      setMediaStatus(null);
+      return;
+    }
+    setCheckDraft({
+      id: selectedCheck.id,
+      name: selectedCheck.name,
+      active: selectedCheck.active,
+      guidance_text: selectedCheck.guidance_text ?? '',
+      version: selectedCheck.version,
+      kind: selectedCheck.kind,
+      category_id: selectedCheck.category_id ?? null,
+    });
+    setFailureDraft(emptyFailureModeDraft(selectedCheck.id));
+    setSelectedFailureId(null);
+    setIsFailureModeDraftNew(false);
+    setSelectedTriggerId(null);
+    setTriggerDraft(emptyTriggerDraft());
+    setSelectedApplicabilityId(null);
+    setApplicabilityDraft(emptyApplicabilityDraft());
+    setMediaStatus(null);
+  }, [selectedCheck]);
+
+  useEffect(() => {
+    if (isFailureModeDraftNew) {
+      return;
+    }
+    if (!filteredFailureModes.length) {
+      setSelectedFailureId(null);
+      setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+      return;
+    }
+    if (selectedFailureId && filteredFailureModes.some((mode) => mode.id === selectedFailureId)) {
+      return;
+    }
+    const first = filteredFailureModes[0];
+    setSelectedFailureId(first.id);
+    setFailureDraft({
+      id: first.id,
+      check_definition_id: first.check_definition_id,
+      name: first.name,
+      description: first.description ?? '',
+      default_severity_level: first.default_severity_level,
+      default_rework_description: first.default_rework_description ?? '',
+    });
+  }, [filteredFailureModes, isFailureModeDraftNew, selectedFailureId, selectedCheckId]);
+
+  const summaryLabel = useMemo(() => {
+    const activeCount = checks.filter((check) => check.active).length;
+    return `${checks.length} revisiones / ${activeCount} activas`;
+  }, [checks]);
+
+  const updateCheckDraft = (patch: Partial<CheckDraft>) => {
+    setCheckDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleAddCheck = () => {
+    setSelectedCheckId(null);
+    setCheckDraft(emptyCheckDraft());
+    setSelectedTab('definition');
+    setCheckStatus(null);
+  };
+
+  const handleSaveCheck = async () => {
+    const name = checkDraft.name.trim();
+    if (!name) {
+      setCheckStatus('Se requiere el nombre de la revision.');
+      return;
+    }
+    if (!Number.isInteger(checkDraft.version) || checkDraft.version < 1) {
+      setCheckStatus('La version debe ser un numero entero positivo.');
+      return;
+    }
+    setSaving(true);
+    setCheckStatus(null);
+    try {
+      const payload = {
+        name,
+        active: checkDraft.active,
+        guidance_text: checkDraft.guidance_text.trim() || null,
+        version: checkDraft.version,
+        kind: checkDraft.kind,
+        category_id: checkDraft.category_id,
+      };
+      let saved: QCCheckDefinition;
+      if (checkDraft.id) {
+        saved = await apiRequest<QCCheckDefinition>(
+          `/api/qc/check-definitions/${checkDraft.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          }
+        );
+        setChecks((prev) => sortByName(prev.map((check) => (check.id === saved.id ? saved : check))));
+      } else {
+        saved = await apiRequest<QCCheckDefinition>('/api/qc/check-definitions', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setChecks((prev) => sortByName([...prev, saved]));
+      }
+      setSelectedCheckId(saved.id);
+      setCheckStatus('Revision guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la revision.';
+      setCheckStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCheck = async () => {
+    if (!checkDraft.id) {
+      return;
+    }
+    setSaving(true);
+    setCheckStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/check-definitions/${checkDraft.id}`, {
+        method: 'DELETE',
+      });
+      setChecks((prev) => {
+        const updated = prev.filter((check) => check.id !== checkDraft.id);
+        const next = updated[0] ?? null;
+        if (next) {
+          setSelectedCheckId(next.id);
+        } else {
+          setSelectedCheckId(null);
+          setCheckDraft(emptyCheckDraft());
+        }
+        return updated;
+      });
+      setTriggers((prev) => prev.filter((trigger) => trigger.check_definition_id !== checkDraft.id));
+      setApplicability((prev) =>
+        prev.filter((rule) => rule.check_definition_id !== checkDraft.id)
+      );
+      setFailureModes((prev) =>
+        prev.filter((mode) => mode.check_definition_id !== checkDraft.id)
+      );
+      setCheckStatus('Revision eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la revision.';
+      setCheckStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    const name = categoryDraft.name.trim();
+    if (!name) {
+      setCategoryStatus('Se requiere el nombre de la categoria.');
+      return;
+    }
+    const rawSortOrder = categoryDraft.sort_order.trim();
+    const sortOrder = rawSortOrder ? Number(rawSortOrder) : null;
+    if (rawSortOrder && !Number.isInteger(Number(rawSortOrder))) {
+      setCategoryStatus('El orden debe ser un numero entero.');
+      return;
+    }
+    setCategoryStatus(null);
+    try {
+      const payload = {
+        name,
+        parent_id: categoryDraft.parent_id,
+        active: categoryDraft.active,
+        sort_order: sortOrder,
+      };
+      let saved: QCCheckCategory;
+      if (categoryDraft.id) {
+        saved = await apiRequest<QCCheckCategory>(`/api/qc/categories/${categoryDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setCategories((prev) =>
+          sortByOrderThenName(prev.map((category) => (category.id === saved.id ? saved : category)))
+        );
+      } else {
+        saved = await apiRequest<QCCheckCategory>('/api/qc/categories', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setCategories((prev) => sortByOrderThenName([...prev, saved]));
+      }
+      setSelectedCategoryId(saved.id);
+      setCategoryDraft({
+        id: saved.id,
+        name: saved.name,
+        parent_id: saved.parent_id,
+        active: saved.active,
+        sort_order: saved.sort_order !== null ? String(saved.sort_order) : '',
+      });
+      setCategoryStatus(null);
+      setIsCategoryModalOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la categoria.';
+      setCategoryStatus(message);
+    }
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!categoryDraft.id) {
+      return;
+    }
+    setCategoryStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/categories/${categoryDraft.id}`, { method: 'DELETE' });
+      setCategories((prev) => prev.filter((category) => category.id !== categoryDraft.id));
+      setSelectedCategoryId(null);
+      setCategoryDraft(emptyCategoryDraft());
+      setCategoryStatus(null);
+      setIsCategoryModalOpen(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la categoria.';
+      setCategoryStatus(message);
+    }
+  };
+
+  const handleSaveFailureMode = async () => {
+    const name = failureDraft.name.trim();
+    if (!name) {
+      setFailureStatus('Se requiere el nombre del modo de falla.');
+      return;
+    }
+    const checkDefinitionId = failureDraft.check_definition_id ?? selectedCheckId;
+    if (!checkDefinitionId) {
+      setFailureStatus('Seleccione una revision antes de guardar el modo de falla.');
+      return;
+    }
+    setFailureStatus(null);
+    try {
+      const payload = {
+        check_definition_id: checkDefinitionId,
+        name,
+        description: failureDraft.description.trim() || null,
+        default_severity_level: failureDraft.default_severity_level,
+        default_rework_description: failureDraft.default_rework_description.trim() || null,
+      };
+      let saved: QCFailureMode;
+      if (failureDraft.id) {
+        saved = await apiRequest<QCFailureMode>(`/api/qc/failure-modes/${failureDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setFailureModes((prev) =>
+          sortByName(prev.map((mode) => (mode.id === saved.id ? saved : mode)))
+        );
+      } else {
+        saved = await apiRequest<QCFailureMode>('/api/qc/failure-modes', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setFailureModes((prev) => sortByName([...prev, saved]));
+      }
+      setSelectedFailureId(saved.id);
+      setIsFailureModeDraftNew(false);
+      setFailureDraft({
+        id: saved.id,
+        check_definition_id: saved.check_definition_id,
+        name: saved.name,
+        description: saved.description ?? '',
+        default_severity_level: saved.default_severity_level,
+        default_rework_description: saved.default_rework_description ?? '',
+      });
+      setFailureStatus('Modo de falla guardado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar el modo de falla.';
+      setFailureStatus(message);
+    }
+  };
+
+  const handleDeleteFailureMode = async () => {
+    if (!failureDraft.id) {
+      return;
+    }
+    setFailureStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/failure-modes/${failureDraft.id}`, { method: 'DELETE' });
+      setFailureModes((prev) => prev.filter((mode) => mode.id !== failureDraft.id));
+      setSelectedFailureId(null);
+      setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+      setFailureStatus('Modo de falla eliminado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar el modo de falla.';
+      setFailureStatus(message);
+    }
+  };
+
+  const uploadCheckMedia = async (files: File[], mediaType: QCCheckMediaType) => {
+    if (!selectedCheckId) {
+      setMediaStatus('Seleccione una revision antes de cargar imagenes.');
+      return;
+    }
+    if (!files.length) {
+      return;
+    }
+    setUploadingMedia(true);
+    setMediaStatus(null);
+    try {
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('check_definition_id', String(selectedCheckId));
+        formData.append('media_type', mediaType);
+        const response = await fetch(`${API_BASE_URL}/api/qc/check-media`, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || 'No se pudo guardar la imagen.');
+        }
+        const saved = (await response.json()) as QCCheckMediaAsset;
+        setCheckMedia((prev) => [...prev, saved]);
+      }
+      setMediaStatus('Imagen guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la imagen.';
+      setMediaStatus(message);
+    } finally {
+      setUploadingMedia(false);
+    }
+  };
+
+  const handleMediaInput = (
+    event: React.ChangeEvent<HTMLInputElement>,
+    mediaType: QCCheckMediaType
+  ) => {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    event.target.value = '';
+    void uploadCheckMedia(files, mediaType);
+  };
+
+  const handleMediaDrop = (
+    event: React.DragEvent<HTMLDivElement>,
+    mediaType: QCCheckMediaType
+  ) => {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer.files ?? []).filter((file) =>
+      file.type.startsWith('image/')
+    );
+    void uploadCheckMedia(files, mediaType);
+  };
+
+  const handleDeleteCheckMedia = async (mediaId: number) => {
+    setMediaStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/check-media/${mediaId}`, { method: 'DELETE' });
+      setCheckMedia((prev) => prev.filter((media) => media.id !== mediaId));
+      setMediaStatus('Imagen eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la imagen.';
+      setMediaStatus(message);
+    }
+  };
+
+  const handleSaveTrigger = async () => {
+    if (!selectedCheckId) {
+      setTriggerStatus('Seleccione una revision antes de crear un gatillante.');
+      return;
+    }
+    if (triggerDraft.task_definition_ids.length === 0) {
+      setTriggerStatus('Seleccione al menos una tarea para el gatillante.');
+      return;
+    }
+    const samplingRate = Number(triggerDraft.sampling_rate);
+    const samplingStep = Number(triggerDraft.sampling_step);
+    if (Number.isNaN(samplingRate) || samplingRate < 0 || samplingRate > 1) {
+      setTriggerStatus('La tasa debe estar entre 0 y 1.');
+      return;
+    }
+    if (Number.isNaN(samplingStep) || samplingStep < 0 || samplingStep > 1) {
+      setTriggerStatus('El paso de ajuste debe estar entre 0 y 1.');
+      return;
+    }
+    setTriggerStatus(null);
+    try {
+      const paramsJson = { task_definition_ids: triggerDraft.task_definition_ids };
+      const payload = {
+        check_definition_id: selectedCheckId,
+        event_type: triggerDraft.event_type,
+        params_json: paramsJson,
+        sampling_rate: samplingRate,
+        sampling_autotune: triggerDraft.sampling_autotune,
+        sampling_step: samplingStep,
+      };
+      let saved: QCTrigger;
+      if (triggerDraft.id) {
+        saved = await apiRequest<QCTrigger>(`/api/qc/triggers/${triggerDraft.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        setTriggers((prev) => prev.map((trigger) => (trigger.id === saved.id ? saved : trigger)));
+      } else {
+        saved = await apiRequest<QCTrigger>('/api/qc/triggers', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setTriggers((prev) => [...prev, saved]);
+      }
+      setSelectedTriggerId(saved.id);
+      setTriggerDraft({
+        id: saved.id,
+        event_type: saved.event_type,
+        sampling_rate: String(saved.sampling_rate),
+        sampling_step: String(saved.sampling_step),
+        sampling_autotune: saved.sampling_autotune,
+        task_definition_ids: saved.params_json?.task_definition_ids ?? [],
+      });
+      setTriggerStatus('Gatillante guardado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar el gatillante.';
+      setTriggerStatus(message);
+    }
+  };
+
+  const handleDeleteTrigger = async () => {
+    if (!triggerDraft.id) {
+      return;
+    }
+    setTriggerStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/triggers/${triggerDraft.id}`, { method: 'DELETE' });
+      setTriggers((prev) => prev.filter((trigger) => trigger.id !== triggerDraft.id));
+      setSelectedTriggerId(null);
+      setTriggerDraft(emptyTriggerDraft());
+      setTriggerStatus('Gatillante eliminado.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar el gatillante.';
+      setTriggerStatus(message);
+    }
+  };
+
+  const handleSaveApplicability = async () => {
+    if (!selectedCheckId) {
+      setApplicabilityStatus('Seleccione una revision antes de crear una regla.');
+      return;
+    }
+    setApplicabilityStatus(null);
+    try {
+      const payload = {
+        check_definition_id: selectedCheckId,
+        house_type_ids: applicabilityDraft.house_type_ids,
+        sub_type_ids: applicabilityDraft.sub_type_ids,
+        panel_groups: applicabilityDraft.panel_groups,
+      };
+      let saved: QCApplicability;
+      if (applicabilityDraft.id) {
+        saved = await apiRequest<QCApplicability>(
+          `/api/qc/applicability/${applicabilityDraft.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          }
+        );
+        setApplicability((prev) => prev.map((rule) => (rule.id === saved.id ? saved : rule)));
+      } else {
+        saved = await apiRequest<QCApplicability>('/api/qc/applicability', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        setApplicability((prev) => [...prev, saved]);
+      }
+      setSelectedApplicabilityId(saved.id);
+      setApplicabilityDraft({
+        id: saved.id,
+        house_type_ids: saved.house_type_ids,
+        sub_type_ids: saved.sub_type_ids,
+        panel_groups: saved.panel_groups,
+      });
+      setApplicabilityStatus('Regla guardada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo guardar la regla.';
+      setApplicabilityStatus(message);
+    }
+  };
+
+  const handleDeleteApplicability = async () => {
+    if (!applicabilityDraft.id) {
+      return;
+    }
+    setApplicabilityStatus(null);
+    try {
+      await apiRequest<void>(`/api/qc/applicability/${applicabilityDraft.id}`, {
+        method: 'DELETE',
+      });
+      setApplicability((prev) => prev.filter((rule) => rule.id !== applicabilityDraft.id));
+      setSelectedApplicabilityId(null);
+      setApplicabilityDraft(emptyApplicabilityDraft());
+      setApplicabilityStatus('Regla eliminada.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo eliminar la regla.';
+      setApplicabilityStatus(message);
+    }
+  };
+
+  const selectTrigger = (trigger: QCTrigger) => {
+    setSelectedTriggerId(trigger.id);
+    setTriggerDraft({
+      id: trigger.id,
+      event_type: trigger.event_type,
+      sampling_rate: String(trigger.sampling_rate),
+      sampling_step: String(trigger.sampling_step),
+      sampling_autotune: trigger.sampling_autotune,
+      task_definition_ids: trigger.params_json?.task_definition_ids ?? [],
+    });
+    setTriggerStatus(null);
+  };
+
+  const selectApplicability = (rule: QCApplicability) => {
+    setSelectedApplicabilityId(rule.id);
+    setApplicabilityDraft({
+      id: rule.id,
+      house_type_ids: rule.house_type_ids,
+      sub_type_ids: rule.sub_type_ids,
+      panel_groups: rule.panel_groups,
+    });
+    setApplicabilityStatus(null);
+  };
+
+  const selectCategory = (category: QCCheckCategory) => {
+    setSelectedCategoryId(category.id);
+    setCategoryDraft({
+      id: category.id,
+      name: category.name,
+      parent_id: category.parent_id,
+      active: category.active,
+      sort_order: category.sort_order !== null ? String(category.sort_order) : '',
+    });
+    setCategoryStatus(null);
+  };
+
+  const openCategoryModal = (draft: CategoryDraft, selectedId: number | null) => {
+    setSelectedCategoryId(selectedId);
+    setCategoryDraft(draft);
+    setCategoryStatus(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const startNewCategory = () => {
+    openCategoryModal(
+      emptyCategoryDraft(),
+      selectedCategoryId ?? (categories[0]?.id ?? null)
+    );
+  };
+
+  const startSubcategory = (parent: QCCheckCategory) => {
+    openCategoryModal({ ...emptyCategoryDraft(), parent_id: parent.id }, parent.id);
+  };
+
+  const startEditCategory = (category: QCCheckCategory) => {
+    openCategoryModal(
+      {
+        id: category.id,
+        name: category.name,
+        parent_id: category.parent_id,
+        active: category.active,
+        sort_order: category.sort_order !== null ? String(category.sort_order) : '',
+      },
+      category.id
+    );
+  };
+
+  const selectFailureMode = (mode: QCFailureMode) => {
+    setSelectedFailureId(mode.id);
+    setIsFailureModeDraftNew(false);
+    setFailureDraft({
+      id: mode.id,
+      check_definition_id: mode.check_definition_id,
+      name: mode.name,
+      description: mode.description ?? '',
+      default_severity_level: mode.default_severity_level,
+      default_rework_description: mode.default_rework_description ?? '',
+    });
+    setFailureStatus(null);
+  };
+
+  const removeTaskFromTriggerDraft = (taskId: number) => {
+    setTriggerDraft((prev) => ({
+      ...prev,
+      task_definition_ids: prev.task_definition_ids.filter((id) => id !== taskId),
+    }));
+  };
+
+  const activeTasks = useMemo(() => tasks.filter((task) => task.active), [tasks]);
+
+  const filteredTasks = useMemo(() => {
+    const query = normalizeSearch(triggerSearch.trim());
+    if (!query) {
+      return activeTasks;
+    }
+    return activeTasks.filter((task) => normalizeSearch(task.name).includes(query));
+  }, [activeTasks, triggerSearch]);
+
+  const catalogSequenceLabelByOrder = useMemo(() => {
+    const entries = new Map<number, Set<string>>();
+    stations.forEach((station) => {
+      if (station.sequence_order === null) {
+        return;
+      }
+      const normalized = normalizeStationName(station);
+      const existing = entries.get(station.sequence_order) ?? new Set<string>();
+      existing.add(normalized);
+      entries.set(station.sequence_order, existing);
+    });
+    const map = new Map<number, string>();
+    entries.forEach((names, sequence) => {
+      map.set(
+        sequence,
+        names.size ? Array.from(names).join(' / ') : `Secuencia ${sequence}`
+      );
+    });
+    return map;
+  }, [stations]);
+
+  const groupedTasks = useMemo(() => {
+    const groups = new Map<
+      string,
+      { key: string; sequence: number | null; name: string; tasks: TaskDefinition[] }
+    >();
+    filteredTasks.forEach((task) => {
+      const sequence = task.default_station_sequence ?? null;
+      const key = sequence === null ? 'unscheduled' : `seq-${sequence}`;
+      const name =
+        sequence === null
+          ? 'Sin secuencia'
+          : catalogSequenceLabelByOrder.get(sequence) ?? `Secuencia ${sequence}`;
+      const group = groups.get(key);
+      if (group) {
+        group.tasks.push(task);
+      } else {
+        groups.set(key, { key, sequence, name, tasks: [task] });
+      }
+    });
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        tasks: [...group.tasks].sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => {
+        const aSeq = a.sequence ?? Number.POSITIVE_INFINITY;
+        const bSeq = b.sequence ?? Number.POSITIVE_INFINITY;
+        if (aSeq !== bSeq) {
+          return aSeq - bSeq;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [catalogSequenceLabelByOrder, filteredTasks]);
+
+  const subTypesForHouse = useMemo(() => {
+    if (!applicabilityDraft.house_type_ids.length) {
+      return houseSubTypes;
+    }
+    return houseSubTypes.filter((sub) =>
+      applicabilityDraft.house_type_ids.includes(sub.house_type_id)
+    );
+  }, [houseSubTypes, applicabilityDraft.house_type_ids]);
+
+  useEffect(() => {
+    if (!applicabilityDraft.house_type_ids.length) {
+      return;
+    }
+    const allowed = new Set(subTypesForHouse.map((sub) => sub.id));
+    setApplicabilityDraft((prev) => {
+      const filtered = prev.sub_type_ids.filter((id) => allowed.has(id));
+      if (filtered.length === prev.sub_type_ids.length) {
+        return prev;
+      }
+      return { ...prev, sub_type_ids: filtered };
+    });
+  }, [subTypesForHouse, applicabilityDraft.house_type_ids]);
+
+  const panelGroupOptions = useMemo(() => {
+    const groups = new Set(applicabilityDraft.panel_groups);
+    panelDefinitions.forEach((panel) => {
+      if (
+        applicabilityDraft.house_type_ids.length &&
+        !applicabilityDraft.house_type_ids.includes(panel.house_type_id)
+      ) {
+        return;
+      }
+      if (
+        applicabilityDraft.sub_type_ids.length &&
+        (panel.sub_type_id === null ||
+          !applicabilityDraft.sub_type_ids.includes(panel.sub_type_id))
+      ) {
+        return;
+      }
+      if (panel.group) {
+        groups.add(panel.group);
+      }
+    });
+    return Array.from(groups).sort((a, b) => a.localeCompare(b));
+  }, [
+    panelDefinitions,
+    applicabilityDraft.house_type_ids,
+    applicabilityDraft.sub_type_ids,
+    applicabilityDraft.panel_groups,
+  ]);
+
+  const houseTypeSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.house_type_ids,
+        'Todos',
+        (id) => houseTypeNameById.get(id) ?? `Tipo ${id}`
+      ),
+    [applicabilityDraft.house_type_ids, houseTypeNameById]
+  );
+
+  const subTypeSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.sub_type_ids,
+        'Cualquier subtipo',
+        (id) => houseSubTypeNameById.get(id) ?? `Subtipo ${id}`
+      ),
+    [applicabilityDraft.sub_type_ids, houseSubTypeNameById]
+  );
+
+  const panelGroupSelectionLabel = useMemo(
+    () =>
+      summarizeSelection(
+        applicabilityDraft.panel_groups,
+        'Todos los paneles',
+        (group) => group
+      ),
+    [applicabilityDraft.panel_groups]
+  );
+
+  const renderCheckRow = (check: QCCheckDefinition) => {
+    const isSelected = selectedCheckId === check.id;
+    const categoryLabel = check.category_id
+      ? categoryNameById.get(check.category_id) ?? 'Sin categoria'
+      : 'Sin categoria';
+    return (
+      <button
+        key={check.id}
+        onClick={() => setSelectedCheckId(check.id)}
+        className={`group flex w-full items-center justify-between border-l-[3px] px-4 py-3 text-left transition-colors ${
+          isSelected
+            ? 'border-l-[var(--qc-open)] bg-[#edf4fc]'
+            : 'border-l-transparent bg-white hover:bg-[var(--qc-paper-raised)]'
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className={`truncate text-sm font-semibold ${isSelected ? 'text-[var(--qc-open)]' : 'text-[var(--qc-ink)]'}`}>
+              {check.name}
+            </p>
+            {!check.active && (
+              <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                Inactivo
+              </span>
+            )}
+          </div>
+          <p className="truncate text-xs text-gray-500">
+            {check.kind === 'triggered' ? 'Disparado' : 'Plantilla manual'} · {categoryLabel}
+          </p>
+        </div>
+        <span
+          className={`inline-block h-2 w-2 rounded-full ${
+            check.active ? 'bg-emerald-500' : 'bg-gray-300'
+          }`}
+        />
+      </button>
+    );
+  };
+
+  const renderCategoryTree = (parentId: number | null, depth = 0) => {
+    const children = categoryChildren.get(parentId) ?? [];
+    if (!children.length) {
+      return null;
+    }
+    return children.map((category) => {
+      const checksForCategory = checksByCategoryId.get(category.id) ?? [];
+      return (
+        <div key={category.id} className="space-y-1">
+          <div
+            className="flex items-center justify-between gap-2 group"
+            style={{ marginLeft: depth * 12 }}
+          >
+            <button
+              onClick={() => selectCategory(category)}
+              className={`flex-1 text-left px-2 py-1 text-xs rounded ${
+                selectedCategoryId === category.id
+                  ? 'bg-blue-100 text-blue-800'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              {category.name}
+              {!category.active && <span className="ml-1 text-gray-400">(inactivo)</span>}
+            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => startEditCategory(category)}
+                className="opacity-0 group-hover:opacity-100 text-[10px] text-gray-500 hover:text-gray-700 px-1"
+                title="Editar categoria"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              <button
+                onClick={() => startSubcategory(category)}
+                className="opacity-0 group-hover:opacity-100 text-[10px] text-blue-600 hover:text-blue-800 px-1"
+                title="Nueva subcategoria"
+              >
+                + sub
+              </button>
+            </div>
+          </div>
+          {checksForCategory.length > 0 && (
+            <div className="space-y-1" style={{ marginLeft: depth * 12 + 12 }}>
+              {checksForCategory.map(renderCheckRow)}
+            </div>
+          )}
+          {renderCategoryTree(category.id, depth + 1)}
+        </div>
+      );
+    });
+  };
+
+  const tabs: Array<{
+    key: 'definition' | 'failure_modes' | 'triggers' | 'references' | 'applicability';
+    label: string;
+    icon?: typeof Image;
+  }> = [
+    { key: 'definition', label: 'Definicion' },
+    { key: 'failure_modes', label: 'Modos de falla' },
+    { key: 'triggers', label: 'Gatillantes' },
+    { key: 'references', label: 'Referencias', icon: Image },
+    { key: 'applicability', label: 'Aplicabilidad' },
+  ];
+
+  return (
+    <div className="qc-page qc-page--wide space-y-5">
+      <header className="qc-page__header">
+        <div>
+          <p className="qc-page__eyebrow">Configuración QC · Fuente maestra</p>
+          <h2 className="qc-page__title">Catálogo de checks</h2>
+          <p className="qc-page__intro">
+            Defina la pauta una vez: contenido, fallas, gatillantes, referencias y alcance viven
+            juntos en este editor.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            onClick={handleAddCheck}
+            className="qc-btn qc-btn--primary"
+          >
+            <Plus className="h-4 w-4" /> Agregar check
+          </button>
+          <button
+            type="button"
+            onClick={handleExit}
+            className="qc-btn"
+          >
+            Salir
+          </button>
+          <div className="ml-2 hidden items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--qc-muted)] xl:flex">
+            <Filter className="h-3.5 w-3.5" /> {summaryLabel}
+          </div>
+        </div>
+      </header>
+
+      {triggerTaskIssues.length > 0 && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <p className="text-sm font-semibold text-amber-900">
+            Hay gatillantes QC vinculados a tareas inactivas o no encontradas.
+          </p>
+          <p className="mt-1 text-xs text-amber-800">
+            Revise y actualice estos enlaces para evitar configuraciones obsoletas.
+          </p>
+          <div className="mt-2 max-h-36 overflow-auto space-y-1 pr-1 text-xs text-amber-900">
+            {triggerTaskIssues.map((issue) => (
+              <p key={`${issue.trigger_id}-${issue.kind}-${issue.task_definition_id}`}>
+                {issue.check_name} · Gatillante #{issue.trigger_id} · {issue.task_name}
+                {issue.kind === 'inactive' ? ' (inactiva)' : ' (no encontrada)'}
+              </p>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <div className="grid items-start gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <section className="qc-card overflow-hidden xl:sticky xl:top-[86px]">
+          <div className="qc-card__header flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="qc-section-title">Índice de checks</h3>
+              <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.06em] text-[var(--qc-muted)]">{summaryLabel}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-gray-400" />
+                <input
+                  type="search"
+                  placeholder="Buscar..."
+                  className="qc-input qc-input--with-icon min-h-8 w-36 py-1.5 text-xs"
+                  value={checkSearch}
+                  onChange={(event) => setCheckSearch(event.target.value)}
+                />
+              </label>
+              <label className="inline-flex select-none items-center gap-2 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={showInactiveChecks}
+                  onChange={(event) => setShowInactiveChecks(event.target.checked)}
+                />
+                Mostrar inactivos
+              </label>
+            </div>
+          </div>
+
+          <div className="border-b border-[var(--qc-line)] px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                Categorias y checks
+              </p>
+              <button
+                type="button"
+                onClick={startNewCategory}
+                className="font-mono text-[9px] font-semibold uppercase tracking-[0.07em] text-[var(--qc-open)] hover:underline"
+              >
+                <Plus className="h-3 w-3" /> Nueva categoria
+              </button>
+            </div>
+            <div className="max-h-[420px] overflow-auto space-y-3 pr-1">
+              {renderCategoryTree(null)}
+              {checksWithoutCategory.length > 0 && (
+                <div className="space-y-1">
+                  <div className="px-2 py-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Sin categoria
+                  </div>
+                  <div className="space-y-1">
+                    {checksWithoutCategory.map(renderCheckRow)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {loading && (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
+              Cargando revisiones...
+            </div>
+          )}
+          {!loading && filteredChecks.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">
+              No hay revisiones que coincidan con esa busqueda.
+            </div>
+          )}
+
+          {!loading && filteredChecks.length > 0 && (
+            <div className="px-4 pb-4 text-[11px] text-gray-400">
+              {filteredChecks.length} checks visibles en el arbol.
+            </div>
+          )}
+        </section>
+
+        <aside className="space-y-5">
+          <section className="qc-card p-5 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="qc-page__eyebrow">
+                  Editor de check
+                </p>
+                <h2 className="mt-1 font-display text-2xl font-semibold uppercase tracking-[0.03em] text-[var(--ink)]">
+                  {checkDraft.name.trim() ||
+                    (checkDraft.id ? `Check #${checkDraft.id}` : 'Nuevo Check')}
+                </h2>
+              </div>
+              <Settings2 className="h-5 w-5 text-[var(--ink-muted)]" />
+            </div>
+
+            <div className="mt-5 flex flex-wrap border-b border-[var(--qc-line)]">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setSelectedTab(tab.key)}
+                  className={`border-b-2 px-4 py-2 font-display text-xs font-semibold uppercase tracking-[0.07em] transition ${
+                    selectedTab === tab.key
+                      ? 'border-[var(--qc-ink)] text-[var(--qc-ink)]'
+                      : 'border-transparent text-[var(--qc-muted)] hover:text-[var(--qc-ink)]'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    {tab.icon && <tab.icon className="h-4 w-4" />}
+                    {tab.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {selectedTab === 'definition' && (
+              <div className="mt-6 space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Nombre
+                    <input
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.name}
+                      onChange={(event) => updateCheckDraft({ name: event.target.value })}
+                    />
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Categoria
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.category_id ?? ''}
+                      onChange={(event) =>
+                        updateCheckDraft({
+                          category_id: event.target.value ? Number(event.target.value) : null,
+                        })
+                      }
+                    >
+                      <option value="">Sin categoria</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Tipo
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.kind}
+                      onChange={(event) =>
+                        updateCheckDraft({ kind: event.target.value as QCCheckKind })
+                      }
+                    >
+                      <option value="triggered">Disparado</option>
+                      <option value="manual_template">Plantilla manual</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Estado
+                    <select
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.active ? 'Activo' : 'Inactivo'}
+                      onChange={(event) =>
+                        updateCheckDraft({ active: event.target.value === 'Activo' })
+                      }
+                    >
+                      <option value="Activo">Activo</option>
+                      <option value="Inactivo">Inactivo</option>
+                    </select>
+                  </label>
+                  <label className="text-sm text-[var(--ink-muted)]">
+                    Version
+                    <input
+                      type="number"
+                      className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                      value={checkDraft.version}
+                      onChange={(event) =>
+                        updateCheckDraft({ version: Number(event.target.value) || 1 })
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="text-sm text-[var(--ink-muted)]">
+                  Guia
+                  <textarea
+                    className="mt-2 min-h-[96px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                    value={checkDraft.guidance_text}
+                    onChange={(event) =>
+                      updateCheckDraft({ guidance_text: event.target.value })
+                    }
+                  />
+                </label>
+
+                {checkStatus && (
+                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                    {checkStatus}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={handleSaveCheck}
+                    disabled={saving}
+                    className="qc-btn qc-btn--primary"
+                  >
+                    {saving ? 'Guardando...' : 'Guardar revision'}
+                  </button>
+                  <button
+                    onClick={handleDeleteCheck}
+                    disabled={saving || !checkDraft.id}
+                    className="qc-btn qc-btn--danger"
+                  >
+                    <Trash2 className="h-4 w-4" /> Eliminar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'failure_modes' && (
+              <div className="mt-6 space-y-5">
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Modos de falla
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        {selectedCheckId
+                          ? 'Asignados a la revision.'
+                          : 'Cree una revision para asignar modos de falla.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFailureId(null);
+                        setIsFailureModeDraftNew(true);
+                        setFailureDraft(emptyFailureModeDraft(selectedCheckId));
+                        setFailureStatus(null);
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Nuevo
+                    </button>
+                  </div>
+                  <div className="mt-4 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                    <div className="max-h-52 overflow-auto rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                      {filteredFailureModes.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          No hay modos de falla registrados.
+                        </p>
+                      ) : (
+                        filteredFailureModes.map((mode) => (
+                          <button
+                            key={mode.id}
+                            onClick={() => selectFailureMode(mode)}
+                            className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                              selectedFailureId === mode.id ? 'bg-white' : 'bg-transparent'
+                            }`}
+                          >
+                            <span className="truncate text-[var(--ink)]">{mode.name}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Nombre
+                        <input
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.name}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Severidad sugerida
+                        <select
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.default_severity_level ?? ''}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              default_severity_level: event.target.value
+                                ? (event.target.value as QCSeverityLevelKey)
+                                : null,
+                            }))
+                          }
+                        >
+                          <option value="">Sin severidad</option>
+                          {severityOptions.map((level) => (
+                            <option key={level.value} value={level.value}>
+                              {level.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Descripcion
+                        <textarea
+                          className="mt-2 min-h-[80px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.description}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              description: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        Re-trabajo sugerido
+                        <textarea
+                          className="mt-2 min-h-[80px] w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={failureDraft.default_rework_description}
+                          onChange={(event) =>
+                            setFailureDraft((prev) => ({
+                              ...prev,
+                              default_rework_description: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      {failureStatus && (
+                        <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                          {failureStatus}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={handleSaveFailureMode}
+                          className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                        >
+                          Guardar modo
+                        </button>
+                        <button
+                          onClick={handleDeleteFailureMode}
+                          disabled={!failureDraft.id}
+                          className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" /> Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'references' && (
+              <div className="mt-6 space-y-5">
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Guias
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        Ejemplos de como se debe ejecutar el trabajo.
+                      </p>
+                    </div>
+                    <label
+                      className={`inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                        !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      Subir
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => handleMediaInput(event, 'guidance')}
+                      />
+                    </label>
+                  </div>
+                  {guidanceMedia.length > 0 ? (
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div
+                        className={`flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 text-center text-xs text-[var(--ink-muted)] sm:h-48 ${
+                          !selectedCheckId ? 'opacity-50' : ''
+                        }`}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => handleMediaDrop(event, 'guidance')}
+                      >
+                        <Image className="h-5 w-5 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta guias aqui.
+                        </p>
+                        <label
+                          className={`mt-1 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'guidance')}
+                          />
+                        </label>
+                      </div>
+                      {guidanceMedia.map((media) => (
+                        <div
+                          key={media.id}
+                          className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMedia(media)}
+                            className="block w-full"
+                            aria-label="Vista previa de guia"
+                          >
+                            <img
+                              src={resolveMediaUrl(media.uri)}
+                              alt="Guia"
+                              className="h-40 w-full cursor-zoom-in object-cover sm:h-48"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCheckMedia(media.id)}
+                            className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 p-1.5 text-[var(--ink)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className={`mt-4 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-8 text-center text-xs text-[var(--ink-muted)] ${
+                        !selectedCheckId ? 'opacity-50' : ''
+                      }`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleMediaDrop(event, 'guidance')}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <Image className="h-6 w-6 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta imagenes aqui.
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          O haz clic en el boton para agregar nuevas guias.
+                        </p>
+                        <label
+                          className={`mt-2 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'guidance')}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-black/5 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                        Referencias
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                        Ejemplos de fallas y de como deben ser tomadas las fotos de evidencia
+                      </p>
+                    </div>
+                    <label
+                      className={`inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                        !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                      }`}
+                    >
+                      Subir
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => handleMediaInput(event, 'reference')}
+                      />
+                    </label>
+                  </div>
+                  {referenceMedia.length > 0 ? (
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div
+                        className={`flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 text-center text-xs text-[var(--ink-muted)] sm:h-48 ${
+                          !selectedCheckId ? 'opacity-50' : ''
+                        }`}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => handleMediaDrop(event, 'reference')}
+                      >
+                        <Image className="h-5 w-5 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta referencias aqui.
+                        </p>
+                        <label
+                          className={`mt-1 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'reference')}
+                          />
+                        </label>
+                      </div>
+                      {referenceMedia.map((media) => (
+                        <div
+                          key={media.id}
+                          className="relative overflow-hidden rounded-2xl border border-black/5 bg-white"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setPreviewMedia(media)}
+                            className="block w-full"
+                            aria-label="Vista previa de referencia"
+                          >
+                            <img
+                              src={resolveMediaUrl(media.uri)}
+                              alt="Referencia"
+                              className="h-40 w-full cursor-zoom-in object-cover sm:h-48"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCheckMedia(media.id)}
+                            className="absolute right-2 top-2 rounded-full border border-black/10 bg-white/90 p-1.5 text-[var(--ink)]"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className={`mt-4 rounded-2xl border border-dashed border-black/10 bg-[rgba(201,215,245,0.2)] px-4 py-8 text-center text-xs text-[var(--ink-muted)] ${
+                        !selectedCheckId ? 'opacity-50' : ''
+                      }`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleMediaDrop(event, 'reference')}
+                    >
+                      <div className="flex flex-col items-center gap-2">
+                        <Image className="h-6 w-6 text-[var(--ink-muted)]" />
+                        <p className="text-xs font-semibold text-[var(--ink)]">
+                          Arrastra y suelta imagenes aqui.
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          O haz clic en el boton para agregar nuevas referencias.
+                        </p>
+                        <label
+                          className={`mt-2 inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold text-[var(--ink)] ${
+                            !selectedCheckId ? 'opacity-50 pointer-events-none' : ''
+                          }`}
+                        >
+                          <Plus className="h-3.5 w-3.5" /> Agregar imagenes
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(event) => handleMediaInput(event, 'reference')}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {mediaStatus && (
+                  <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                    {mediaStatus}
+                  </p>
+                )}
+
+                {uploadingMedia && (
+                  <p className="text-xs text-[var(--ink-muted)]">Subiendo imagenes...</p>
+                )}
+              </div>
+            )}
+
+            {selectedTab === 'triggers' && (
+              <div className="mt-6 space-y-5">
+                {selectedCheckId && selectedCheckTriggerIssues.length > 0 && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                    <p className="font-semibold">
+                      Esta revision tiene gatillantes ligados a tareas inactivas o no encontradas.
+                    </p>
+                    <p className="mt-1">
+                      Seleccione un gatillante y quite esas tareas para remediar.
+                    </p>
+                  </div>
+                )}
+                <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                    <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                          Gatillantes actuales
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {filteredTriggers.length} configurados
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTriggerId(null);
+                          setTriggerDraft(emptyTriggerDraft());
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Nuevo
+                      </button>
+                    </div>
+                    <div className="max-h-60 overflow-auto">
+                      {filteredTriggers.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          No hay gatillantes configurados.
+                        </p>
+                      ) : (
+                        filteredTriggers.map((trigger) => (
+                          <button
+                            key={trigger.id}
+                            onClick={() => selectTrigger(trigger)}
+                            className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                              selectedTriggerId === trigger.id ? 'bg-white' : 'bg-transparent'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <span className="block truncate text-[var(--ink)]">
+                                {triggerTaskLabel(trigger)}
+                              </span>
+                              {(triggerIssueCountById.get(trigger.id) ?? 0) > 0 && (
+                                <span className="block text-[10px] text-amber-700">
+                                  {(triggerIssueCountById.get(trigger.id) ?? 0)} enlace(s) con
+                                  tarea inactiva/no encontrada
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-[var(--ink-muted)]">
+                              {Math.round(trigger.sampling_rate * 100)}%
+                            </span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        <span className="inline-flex items-center gap-2">
+                          Tasa base
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                            title="Porcentaje base de muestreo (0 a 1) para disparar la revision."
+                          >
+                            i
+                          </span>
+                        </span>
+                        <input
+                          className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                          value={triggerDraft.sampling_rate}
+                          onChange={(event) =>
+                            setTriggerDraft((prev) => ({
+                              ...prev,
+                              sampling_rate: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="text-sm text-[var(--ink-muted)]">
+                        <span className="inline-flex items-center gap-2">
+                          Paso de ajuste
+                          <span
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                            title="Incremento/decremento aplicado cuando el muestreo adaptativo esta activo (0 a 1)."
+                          >
+                            i
+                          </span>
+                        </span>
+                        <input
+                          className={`mt-2 w-full rounded-xl border px-3 py-2 text-sm ${
+                            triggerDraft.sampling_autotune
+                              ? 'border-black/10'
+                              : 'border-black/5 bg-gray-100 text-gray-400'
+                          }`}
+                          value={triggerDraft.sampling_step}
+                          onChange={(event) =>
+                            setTriggerDraft((prev) => ({
+                              ...prev,
+                              sampling_step: event.target.value,
+                            }))
+                          }
+                          disabled={!triggerDraft.sampling_autotune}
+                        />
+                      </label>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-[var(--ink)]">
+                      <input
+                        type="checkbox"
+                        checked={triggerDraft.sampling_autotune}
+                        onChange={(event) =>
+                          setTriggerDraft((prev) => ({
+                            ...prev,
+                            sampling_autotune: event.target.checked,
+                          }))
+                        }
+                      />
+                      <span className="inline-flex items-center gap-2">
+                        Muestreo adaptativo
+                        <span
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-black/10 text-[10px] font-semibold text-[var(--ink-muted)]"
+                          title="Permite ajustar automaticamente la tasa base usando el paso de ajuste."
+                        >
+                          i
+                        </span>
+                      </span>
+                    </label>
+
+                    {triggerDraftTaskIssues.length > 0 && (
+                      <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold text-amber-900">
+                          Este gatillante incluye tareas inactivas o no encontradas.
+                        </p>
+                        <div className="mt-2 space-y-2">
+                          {triggerDraftTaskIssues.map((issue) => (
+                            <div
+                              key={`${issue.kind}-${issue.task_definition_id}`}
+                              className="flex items-center justify-between gap-2 text-xs"
+                            >
+                              <span className="text-amber-900">
+                                {issue.task_name}
+                                {issue.kind === 'inactive'
+                                  ? ' (inactiva)'
+                                  : ' (no encontrada)'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeTaskFromTriggerDraft(issue.task_definition_id)
+                                }
+                                className="rounded-full border border-amber-700 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.15)] p-3">
+                      <label className="flex items-center gap-2 text-xs text-[var(--ink-muted)]">
+                        <Search className="h-3.5 w-3.5" />
+                        <input
+                          placeholder="Filtrar..."
+                          value={triggerSearch}
+                          onChange={(event) => setTriggerSearch(event.target.value)}
+                          className="w-full bg-transparent text-xs outline-none"
+                        />
+                      </label>
+                      <div className="mt-2 max-h-40 overflow-auto text-xs">
+                        {groupedTasks.length === 0 ? (
+                          <p className="text-[var(--ink-muted)]">No hay tareas disponibles.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {groupedTasks.map((group) => (
+                              <div key={group.key}>
+                                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                                  {group.name}
+                                </p>
+                                <div className="space-y-1">
+                                  {group.tasks.map((task) => (
+                                    <label key={task.id} className="flex items-center gap-2 py-1">
+                                      <input
+                                        type="checkbox"
+                                        checked={triggerDraft.task_definition_ids.includes(task.id)}
+                                        onChange={() =>
+                                          setTriggerDraft((prev) => {
+                                            const selected = new Set(prev.task_definition_ids);
+                                            if (selected.has(task.id)) {
+                                              selected.delete(task.id);
+                                            } else {
+                                              selected.add(task.id);
+                                            }
+                                            return {
+                                              ...prev,
+                                              task_definition_ids: Array.from(selected),
+                                            };
+                                          })
+                                        }
+                                      />
+                                      <span className="text-[var(--ink)]">
+                                        {taskNameById.get(task.id) ?? task.name}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {triggerStatus && (
+                      <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                        {triggerStatus}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleSaveTrigger}
+                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Guardar gatillante
+                      </button>
+                      <button
+                        onClick={handleDeleteTrigger}
+                        disabled={!triggerDraft.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                      >
+                        <Trash2 className="h-4 w-4" /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTab === 'applicability' && (
+              <div className="mt-6 space-y-5">
+                <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                  <div className="rounded-2xl border border-black/5 bg-[rgba(201,215,245,0.2)]">
+                    <div className="flex items-center justify-between border-b border-black/5 px-4 py-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                          Reglas vigentes
+                        </p>
+                        <p className="text-xs text-[var(--ink-muted)]">
+                          {filteredApplicability.length} reglas
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedApplicabilityId(null);
+                          setApplicabilityDraft(emptyApplicabilityDraft());
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-3 py-1.5 text-xs font-semibold text-[var(--ink)]"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Nueva
+                      </button>
+                    </div>
+                    <div className="max-h-60 overflow-auto">
+                      {filteredApplicability.length === 0 ? (
+                        <p className="px-4 py-3 text-xs text-[var(--ink-muted)]">
+                          Sin reglas configuradas.
+                        </p>
+                      ) : (
+                        filteredApplicability.map((rule) => {
+                          const houseLabel = rule.house_type_ids.length
+                            ? rule.house_type_ids
+                                .map(
+                                  (houseId) =>
+                                    houseTypeNameById.get(houseId) ?? `Tipo ${houseId}`
+                                )
+                                .join(', ')
+                            : 'Todos';
+                          const subLabel = rule.sub_type_ids.length
+                            ? rule.sub_type_ids
+                                .map(
+                                  (subId) =>
+                                    houseSubTypeNameById.get(subId) ?? `Subtipo ${subId}`
+                                )
+                                .join(', ')
+                            : 'Cualquier subtipo';
+                          const panelLabel = rule.panel_groups.length
+                            ? rule.panel_groups.join(', ')
+                            : 'Todos los paneles';
+                          return (
+                            <button
+                              key={rule.id}
+                              onClick={() => selectApplicability(rule)}
+                              className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs ${
+                                selectedApplicabilityId === rule.id ? 'bg-white' : 'bg-transparent'
+                              }`}
+                            >
+                              <span className="truncate text-[var(--ink)]">
+                                {houseLabel} · {subLabel} · {panelLabel}
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Tipo de casa
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              house_type_ids: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'house'}
+                          aria-controls="applicability-house-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'house' ? null : 'house'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{houseTypeSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'house' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'house' && (
+                          <div
+                            id="applicability-house-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {houseTypes.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay tipos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {houseTypes.map((house) => (
+                                  <label key={house.id} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.house_type_ids.includes(house.id)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          house_type_ids: toggleSelection(
+                                            prev.house_type_ids,
+                                            house.id
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{house.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Subtipo
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              sub_type_ids: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'sub'}
+                          aria-controls="applicability-subtype-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'sub' ? null : 'sub'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{subTypeSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'sub' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'sub' && (
+                          <div
+                            id="applicability-subtype-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {subTypesForHouse.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay subtipos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {subTypesForHouse.map((sub) => (
+                                  <label key={sub.id} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.sub_type_ids.includes(sub.id)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          sub_type_ids: toggleSelection(
+                                            prev.sub_type_ids,
+                                            sub.id
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{sub.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-black/10 bg-white px-3 py-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)]">
+                          Tipo de panel
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setApplicabilityDraft((prev) => ({
+                              ...prev,
+                              panel_groups: [],
+                            }))
+                          }
+                          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                        >
+                          Todos
+                        </button>
+                      </div>
+                      <div className="relative mt-2 text-xs" data-applicability-dropdown>
+                        <button
+                          type="button"
+                          aria-expanded={openApplicabilityDropdown === 'panel'}
+                          aria-controls="applicability-panel-options"
+                          onClick={() =>
+                            setOpenApplicabilityDropdown((prev) =>
+                              prev === 'panel' ? null : 'panel'
+                            )
+                          }
+                          className="flex w-full items-center justify-between rounded-xl border border-black/10 bg-white px-3 py-2 text-left text-xs text-[var(--ink)]"
+                        >
+                          <span className="truncate">{panelGroupSelectionLabel}</span>
+                          <ChevronDown
+                            className={`h-4 w-4 text-[var(--ink-muted)] transition ${
+                              openApplicabilityDropdown === 'panel' ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </button>
+                        {openApplicabilityDropdown === 'panel' && (
+                          <div
+                            id="applicability-panel-options"
+                            className="absolute left-0 right-0 z-10 mt-2 max-h-40 overflow-auto rounded-xl border border-black/10 bg-white p-2 text-xs shadow-xl"
+                          >
+                            {panelGroupOptions.length === 0 ? (
+                              <p className="px-2 py-1 text-[var(--ink-muted)]">
+                                No hay grupos disponibles.
+                              </p>
+                            ) : (
+                              <div className="space-y-1">
+                                {panelGroupOptions.map((group) => (
+                                  <label key={group} className="flex items-center gap-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={applicabilityDraft.panel_groups.includes(group)}
+                                      onChange={() =>
+                                        setApplicabilityDraft((prev) => ({
+                                          ...prev,
+                                          panel_groups: toggleSelection(
+                                            prev.panel_groups,
+                                            group
+                                          ),
+                                        }))
+                                      }
+                                    />
+                                    <span className="text-[var(--ink)]">{group}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {applicabilityStatus && (
+                      <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                        {applicabilityStatus}
+                      </p>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={handleSaveApplicability}
+                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                      >
+                        Guardar regla
+                      </button>
+                      <button
+                        onClick={handleDeleteApplicability}
+                        disabled={!applicabilityDraft.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                      >
+                        <Trash2 className="h-4 w-4" /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        </aside>
+      </div>
+
+      {previewMedia && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewMedia(null)}
+        >
+          <div
+            className="relative w-full max-w-5xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="rounded-3xl bg-black/90 p-3 shadow-2xl">
+              <img
+                src={resolveMediaUrl(previewMedia.uri)}
+                alt={previewMedia.media_type === 'guidance' ? 'Guia' : 'Referencia'}
+                className="max-h-[75vh] w-full rounded-2xl object-contain"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setPreviewMedia(null)}
+              className="absolute -right-2 -top-2 rounded-full border border-white/20 bg-black/80 p-1.5 text-white"
+              aria-label="Cerrar vista previa"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--ink-muted)]">
+                  Categorias
+                </p>
+                <h3 className="text-lg font-display text-[var(--ink)]">
+                  {categoryDraft.id
+                    ? 'Editar categoria'
+                    : categoryDraft.parent_id
+                      ? 'Nueva subcategoria'
+                      : 'Nueva categoria'}
+                </h3>
+                {categoryDraft.parent_id && (
+                  <p className="text-xs text-[var(--ink-muted)]">
+                    Subcategoria de{' '}
+                    {categoryNameById.get(categoryDraft.parent_id) ?? 'Categoria'}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(false)}
+                className="rounded-full p-1 text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <label className="text-sm text-[var(--ink-muted)]">
+                Nombre
+                <input
+                  className="mt-2 w-full rounded-xl border border-black/10 px-3 py-2 text-sm"
+                  placeholder="Nombre de categoria"
+                  value={categoryDraft.name}
+                  onChange={(e) =>
+                    setCategoryDraft((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                />
+              </label>
+
+              {categoryStatus && (
+                <p className="rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink-muted)]">
+                  {categoryStatus}
+                </p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleSaveCategory}
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Guardar categoria
+                </button>
+                <button
+                  onClick={handleDeleteCategory}
+                  disabled={!categoryDraft.id}
+                  className="inline-flex items-center gap-2 rounded-full border border-black/10 px-4 py-2 text-sm font-semibold text-[var(--ink)] disabled:opacity-60"
+                >
+                  <Trash2 className="h-4 w-4" /> Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default QCChecks;
