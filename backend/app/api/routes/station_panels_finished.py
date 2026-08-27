@@ -36,6 +36,7 @@ from app.schemas.analytics import (
     StationPanelsFinishedPanel,
     StationPanelsFinishedPanelSummary,
     StationPanelsFinishedResponse,
+    StationPanelsFinishedShiftWindow,
     StationPanelsFinishedTask,
     StationPanelsFinishedWorkerEntry,
 )
@@ -896,18 +897,39 @@ def get_station_panels_finished(
         )
 
     mask_start_date, mask_end_date = _mask_query_bounds(task_rows, pause_map)
+    if start_dt is not None:
+        request_start_date = start_dt.date()
+        mask_start_date = (
+            request_start_date
+            if mask_start_date is None
+            else min(mask_start_date, request_start_date)
+        )
+    if end_dt is not None:
+        request_end_date = end_dt.date()
+        mask_end_date = (
+            request_end_date
+            if mask_end_date is None
+            else max(mask_end_date, request_end_date)
+        )
     shift_masks = ShiftMaskResolver.load(
         db,
         station_role=StationRole.PANELS,
-        station_ids={
-            instance.station_id
-            for instance, *_rest in task_rows
-            if instance.station_id is not None
-        },
+        station_ids={station_id},
         start_date=mask_start_date,
         end_date=mask_end_date,
         algorithm_version=ALGORITHM_VERSION,
     )
+    response_shift_windows: list[StationPanelsFinishedShiftWindow] = []
+    if start_dt is not None and end_dt is not None:
+        response_shift_segments = shift_masks.masked_segments(
+            station_id,
+            start_dt,
+            end_dt,
+        )
+        response_shift_windows = [
+            StationPanelsFinishedShiftWindow(started_at=start, ended_at=end)
+            for start, end in (response_shift_segments or [])
+        ]
 
     panel_builds: dict[int, dict[str, object]] = {}
 
@@ -1152,8 +1174,14 @@ def get_station_panels_finished(
             for item in task_list
             if item.get("actual_minutes") is not None
         )
+        has_actual_total = any(
+            item.get("actual_minutes") is not None for item in task_list
+        )
         paused_total = sum(
             float(item.get("paused_minutes", 0.0)) for item in task_list
+        )
+        has_paused_total = any(
+            item.get("paused_minutes") is not None for item in task_list
         )
 
         started_at_candidates = [
@@ -1204,8 +1232,8 @@ def get_station_panels_finished(
             station_finished_at=station_finished_at,
             finished_at=station_finished_at,
             expected_minutes=round(expected_total, 2) if expected_total else None,
-            actual_minutes=round(actual_total, 2) if actual_total else None,
-            paused_minutes=round(paused_total, 2) if paused_total else None,
+            actual_minutes=round(actual_total, 2) if has_actual_total else None,
+            paused_minutes=round(paused_total, 2) if has_paused_total else None,
             pauses=pause_entries,
             tasks=panel_task_entries,
             house_identifier=house_identifier,
@@ -1442,4 +1470,5 @@ def get_station_panels_finished(
         panels_passed_today_count=len(panels_summary),
         panels_passed_today_list=panels_summary,
         panels_passed_today_area_sum=round(area_total, 2),
+        shift_windows=response_shift_windows,
     )

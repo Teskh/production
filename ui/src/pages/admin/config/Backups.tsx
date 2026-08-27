@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Clock, CloudUpload, Database, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Clock, CloudDownload, CloudUpload, Database, HardDrive, RefreshCw, ShieldCheck } from 'lucide-react';
 import {
   assertAdminPageMutationAllowed,
+  isSysadminUser,
+  useAdminSession,
   useAdminHeader,
   useAdminPageAccess,
 } from '../../../layouts/AdminLayoutContext';
@@ -36,6 +38,17 @@ type BackupRestoreResponse = {
   pruned: string[];
 };
 
+type DatabaseSyncStatus = {
+  available: boolean;
+  source_url: string;
+  reason?: string | null;
+};
+
+type DatabaseSyncResponse = BackupRestoreResponse & {
+  source_url: string;
+  downloaded_size_bytes: number;
+};
+
 const buildHeaders = (options: RequestInit): Headers => {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) {
@@ -52,7 +65,18 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    let message = text || `Solicitud fallida (${response.status})`;
+    if (text) {
+      try {
+        const payload = JSON.parse(text) as { detail?: unknown };
+        if (typeof payload.detail === 'string') {
+          message = payload.detail;
+        }
+      } catch {
+        message = text;
+      }
+    }
+    throw new Error(message);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -86,9 +110,17 @@ const formatDate = (value: string | null): string => {
   return date.toLocaleString();
 };
 
+const isLoopbackHostname = (): boolean => {
+  const hostname = window.location.hostname.toLowerCase();
+  return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
+};
+
+
 const Backups: React.FC = () => {
   const { setHeader } = useAdminHeader();
   const { canEdit } = useAdminPageAccess();
+  const admin = useAdminSession();
+  const databaseSyncVisible = isLoopbackHostname() && isSysadminUser(admin);
   const pageApiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
     assertAdminPageMutationAllowed(canEdit, options);
     return apiRequest<T>(path, options);
@@ -103,6 +135,8 @@ const Backups: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [databaseSyncStatus, setDatabaseSyncStatus] = useState<DatabaseSyncStatus | null>(null);
+  const [databaseSyncing, setDatabaseSyncing] = useState(false);
 
   useEffect(() => {
     setHeader({
@@ -117,13 +151,24 @@ const Backups: React.FC = () => {
     }
     setStatusMessage(null);
     try {
-      const [settingsData, backupsData] = await Promise.all([
+      const [settingsData, backupsData, syncStatusData] = await Promise.all([
         pageApiRequest<BackupSettings>('/api/backups/settings'),
         pageApiRequest<BackupRecord[]>('/api/backups'),
+        databaseSyncVisible
+          ? pageApiRequest<DatabaseSyncStatus>('/api/backups/sync-status').catch((error) => ({
+              available: false,
+              source_url: '',
+              reason:
+                error instanceof Error
+                  ? error.message
+                  : 'No se pudo verificar la configuracion de sincronizacion.',
+            }))
+          : Promise.resolve(null),
       ]);
       setSettings(settingsData);
       setSettingsDraft(settingsData);
       setBackups(backupsData);
+      setDatabaseSyncStatus(syncStatusData);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'No se pudieron cargar las copias de seguridad.';
@@ -216,6 +261,36 @@ const Backups: React.FC = () => {
     }
   };
 
+  const handleDatabaseSync = async () => {
+    const confirmation = window.prompt(
+      'Esta accion reemplazara tu base de datos local con produccion y cerrara todas las sesiones. ' +
+        'Escribe SINCRONIZAR para continuar.'
+    );
+    if (confirmation !== 'SINCRONIZAR') {
+      return;
+    }
+
+    setDatabaseSyncing(true);
+    setStatusMessage(null);
+    try {
+      const response = await pageApiRequest<DatabaseSyncResponse>('/api/backups/sync', {
+        method: 'POST',
+      });
+      window.alert(
+        'Sincronizacion completa. La base local anterior quedo archivada como ' +
+          `"${response.archived_db}" y el control se guardo como ` +
+          `"${response.checkpoint_backup.filename}". Debes iniciar sesion nuevamente.`
+      );
+      window.location.reload();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Fallo la sincronizacion desde produccion.';
+      setStatusMessage(message);
+    } finally {
+      setDatabaseSyncing(false);
+    }
+  };
+
   const handleSaveSettings = async () => {
     if (!settingsDraft) {
       return;
@@ -272,6 +347,47 @@ const Backups: React.FC = () => {
 
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="space-y-6">
+          {databaseSyncVisible && (
+            <section className="rounded-3xl border border-[rgba(242,98,65,0.25)] bg-white/90 p-6 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(242,98,65,0.12)] text-[var(--accent)]">
+                    <CloudDownload className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-display text-[var(--ink)]">
+                      Sincronizar base desde produccion
+                    </h2>
+                    <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                      Reemplaza la base local y conserva una copia de control antes del cambio.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleDatabaseSync}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!databaseSyncStatus?.available || databaseSyncing}
+                >
+                  <CloudDownload className="h-4 w-4" />
+                  {databaseSyncing ? 'Sincronizando...' : 'Traer base de produccion'}
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-2xl bg-[rgba(15,27,45,0.05)] px-4 py-3 text-xs text-[var(--ink-muted)]">
+                <p className="font-semibold text-[var(--ink)]">
+                  Solo base de datos: imagenes, evidencia QC, archivos multimedia y configuracion
+                  local de esta maquina no se sincronizan.
+                </p>
+                <p className="mt-2 break-all">
+                  Origen: {databaseSyncStatus?.source_url || 'Verificando configuracion...'}
+                </p>
+                {databaseSyncStatus?.reason && (
+                  <p className="mt-2 text-[var(--accent)]">{databaseSyncStatus.reason}</p>
+                )}
+              </div>
+            </section>
+          )}
+
           <section className="rounded-3xl border border-black/5 bg-white/90 p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">

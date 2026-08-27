@@ -59,6 +59,7 @@ _COMPANY_GATE_PUBLIC_PATHS = {
     "/api/auth/microsoft/callback",
     "/favicon.ico",
     "/robots.txt",
+    "/api/backups/sync-export",
     "/vite.svg",
 }
 _COMPANY_GATE_PUBLIC_PREFIXES = ("/assets/",)
@@ -158,6 +159,12 @@ async def _run_backup_scheduler() -> None:
         await asyncio.sleep(poll_seconds)
 
 
+def _run_shift_estimate_compute(target_date) -> None:
+    with backup_service.database_maintenance_lock():
+        shift_estimate_scheduler_service.run_compute_for_date(target_date)
+
+
+
 async def _run_shift_estimate_scheduler() -> None:
     poll_seconds = max(settings.shift_estimate_scheduler_poll_seconds, 10)
     lock = asyncio.Lock()
@@ -170,7 +177,7 @@ async def _run_shift_estimate_scheduler() -> None:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None,
-                        shift_estimate_scheduler_service.run_compute_for_date,
+                        _run_shift_estimate_compute,
                         target_date,
                     )
         except Exception as exc:  # pragma: no cover - defensive against scheduler errors

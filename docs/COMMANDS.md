@@ -161,6 +161,44 @@ Test one tablet on the LAN and one device on mobile data. The tablet transition 
 the supported browser settings to the HTTPS app, but Microsoft/login cookies and camera
 permission must be granted again once on each device.
 
+## Database-only production sync
+
+The Backups page can pull a fresh PostgreSQL dump from production into a local
+development installation. The control is visible only to a SysAdmin browsing through
+`localhost`, `127.0.0.1`, or `::1`. Both sides are disabled by default.
+
+First deploy the export endpoint to production. Add this to the production
+`backend/microsoft.env` and restart the application:
+
+```dotenv
+DATABASE_SYNC_EXPORT_ENABLED=true
+DATABASE_SYNC_TOKEN=<same-random-secret-of-at-least-32-characters>
+```
+
+Keep the application port private. The export endpoint is reachable through the existing
+HTTPS reverse proxy, but it returns a dump only when the shared token is present.
+
+On the development machine, add this to the ignored root or `backend/.env` file and
+restart the backend:
+
+```dotenv
+DATABASE_SYNC_PULL_ENABLED=true
+DATABASE_SYNC_SOURCE_URL=https://aplicacionph.dyndns.org/produccion
+DATABASE_SYNC_TOKEN=<same-random-secret-of-at-least-32-characters>
+DATABASE_SYNC_TIMEOUT_SECONDS=600
+DATABASE_SYNC_MAX_BYTES=2147483648
+```
+
+The sync downloads a custom-format dump over HTTPS, rejects redirects and oversized or
+invalid files, creates a checkpoint dump of the current local database, restores
+production into a temporary database, applies this checkout's Alembic migrations, removes
+all copied login sessions, and swaps databases. The prior local database remains available
+under the archived database name shown after the operation. A new login is required.
+
+This is intentionally database-only. It does not copy `media_gallery`, QC evidence,
+complaint files, other uploaded media, ignored environment files, printer/camera settings,
+or machine-local runtime configuration.
+
 ## Zebra label printer
 
 The Etiquetas admin page uses the backend to send ZPL directly to a configured Zebra

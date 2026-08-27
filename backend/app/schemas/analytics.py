@@ -103,6 +103,33 @@ class PauseSummaryResponse(BaseModel):
     pause_reasons: list[PauseSummaryReason]
 
 
+class PauseSummaryContribution(BaseModel):
+    pause_id: int
+    task_instance_id: int
+    task_definition_id: int | None = None
+    task_name: str
+    station_id: int
+    station_name: str
+    project_name: str | None = None
+    house_identifier: str | None = None
+    module_number: int | None = None
+    panel_code: str | None = None
+    paused_at: datetime
+    resumed_at: datetime
+    duration_minutes: float
+
+
+class PauseSummaryDetailsResponse(BaseModel):
+    from_date: str | None = None
+    to_date: str | None = None
+    reason: str
+    station_id: int | None = None
+    total_pause_minutes: float
+    occurrence_count: int
+    contributions: list[PauseSummaryContribution]
+
+
+
 class PanelTaskHistoryPause(BaseModel):
     paused_at: datetime | None = None
     resumed_at: datetime | None = None
@@ -185,6 +212,11 @@ class StationPanelsFinishedPanelSummary(BaseModel):
     satisfied_at: datetime | None = None
 
 
+class StationPanelsFinishedShiftWindow(BaseModel):
+    started_at: datetime
+    ended_at: datetime
+
+
 class StationPanelsFinishedPanel(BaseModel):
     plan_id: int | None = None
     panel_definition_id: int | None = None
@@ -224,3 +256,4 @@ class StationPanelsFinishedResponse(BaseModel):
     panels_passed_today_count: int | None = None
     panels_passed_today_list: list[StationPanelsFinishedPanelSummary] | None = None
     panels_passed_today_area_sum: float | None = None
+    shift_windows: list[StationPanelsFinishedShiftWindow] | None = None

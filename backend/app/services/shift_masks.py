@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import StationRole
 from app.models.shift_estimates import ShiftEstimate
+
+
+FALLBACK_SHIFT_START = time(8, 20)
+FALLBACK_SHIFT_END = time(17, 0)
 
 
 @dataclass
@@ -58,11 +62,11 @@ class ShiftMaskResolver:
         else:
             stmt = stmt.where(or_(*target_filters))
 
-        rows = list(
-            db.execute(stmt).scalars()
-        )
+        rows = list(db.execute(stmt).scalars())
 
-        masks_by_station_day: dict[int, dict[date, tuple[datetime, datetime] | None]] = {}
+        masks_by_station_day: dict[
+            int, dict[date, tuple[datetime, datetime] | None]
+        ] = {}
         masks_by_sequence_day: dict[
             tuple[StationRole, int], dict[date, tuple[datetime, datetime] | None]
         ] = {}
@@ -121,21 +125,32 @@ class ShiftMaskResolver:
             return None
 
         day_map = (
-            self.masks_by_station_day.get(station_id) if station_id is not None else None
+            self.masks_by_station_day.get(station_id)
+            if station_id is not None
+            else None
         )
         if day_map is None and sequence_order is not None and station_role is not None:
             day_map = self.masks_by_sequence_day.get((station_role, sequence_order))
-        if not day_map:
+        has_target = station_id is not None or (
+            sequence_order is not None and station_role is not None
+        )
+        if day_map is None and not has_target:
             return None
 
+        day_map = day_map or {}
         segments: list[tuple[datetime, datetime]] = []
         day_cursor = start_dt.date()
         end_day = end_dt.date()
         while day_cursor <= end_day:
-            if day_cursor not in day_map:
-                # Missing cache row for any covered day triggers raw fallback.
-                return None
-            mask = day_map[day_cursor]
+            if day_cursor in day_map:
+                mask = day_map[day_cursor]
+            elif day_cursor.weekday() < 5:
+                mask = (
+                    datetime.combine(day_cursor, FALLBACK_SHIFT_START),
+                    datetime.combine(day_cursor, FALLBACK_SHIFT_END),
+                )
+            else:
+                mask = None
             if mask is not None:
                 work_start, work_end = mask
                 overlap_start = max(start_dt, work_start)

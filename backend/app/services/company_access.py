@@ -101,6 +101,15 @@ def _is_local_dev_request(request: Request, client: IPAddress) -> bool:
     return (parsed.hostname or "").lower() in _LOCAL_DEV_HOSTS and port in _LOCAL_DEV_PORTS
 
 
+def is_local_development_request(
+    request: Request,
+    config: Settings = settings,
+) -> bool:
+    """Return whether a proxy-aware request really originated on loopback."""
+    client = effective_client_address(request, config)
+    return bool(client is not None and _is_local_dev_request(request, client))
+
+
 def is_trusted_network_request(
     request: Request,
     config: Settings = settings,

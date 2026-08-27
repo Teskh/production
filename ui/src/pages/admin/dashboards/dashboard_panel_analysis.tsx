@@ -43,6 +43,15 @@ type PanelsFinishedApiResponse = PanelsFinishedResponse & {
   panels_passed_today_count?: number | null;
   panels_passed_today_list?: PanelsFinishedPanelSummary[] | null;
   panels_passed_today_area_sum?: number | null;
+  shift_windows?: Array<{
+    started_at?: string | null;
+    ended_at?: string | null;
+  }> | null;
+};
+
+type TimeSegment = {
+  start: number;
+  end: number;
 };
 
 const DATE_KEY = 'stationPanelsFinishedSelectedDate';
@@ -92,11 +101,39 @@ const escapeCsv = (value: unknown) => {
   return raw;
 };
 
+const clipSegmentsToWindows = <T extends TimeSegment,>(
+  segments: T[],
+  windows: TimeSegment[]
+): T[] => {
+  if (!segments.length || !windows.length) return [];
+  return segments.flatMap((segment) =>
+    windows.flatMap((window) => {
+      const start = Math.max(segment.start, window.start);
+      const end = Math.min(segment.end, window.end);
+      return end > start ? [{ ...segment, start, end }] : [];
+    })
+  );
+};
+
+const durationWithinWindowsMs = (
+  start: number,
+  end: number,
+  windows: TimeSegment[]
+) => {
+  if (end <= start) return 0;
+  return clipSegmentsToWindows([{ start, end }], windows).reduce(
+    (total, segment) => total + segment.end - segment.start,
+    0
+  );
+};
+
 const DashboardPanelAnalysis: React.FC = () => {
   const { setHeader } = useAdminHeader();
   const [stations, setStations] = useState<Station[]>([]);
+  const [stationsLoading, setStationsLoading] = useState(true);
   const [stationsError, setStationsError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [hasResolvedData, setHasResolvedData] = useState(false);
   const [error, setError] = useState('');
   const [exportError, setExportError] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -121,6 +158,8 @@ const DashboardPanelAnalysis: React.FC = () => {
 
   useEffect(() => {
     let active = true;
+    setStationsLoading(true);
+    setStationsError('');
     apiRequest<Station[]>('/api/stations')
       .then((result) => {
         if (!active) return;
@@ -130,6 +169,10 @@ const DashboardPanelAnalysis: React.FC = () => {
         if (!active) return;
         const message = err instanceof Error ? err.message : 'Error cargando estaciones';
         setStationsError(message);
+      })
+      .finally(() => {
+        if (!active) return;
+        setStationsLoading(false);
       });
     return () => {
       active = false;
@@ -154,6 +197,7 @@ const DashboardPanelAnalysis: React.FC = () => {
   const fetchData = async (stationId = selectedStationId, date = selectedDate) => {
     if (!stationId) return;
     setLoading(true);
+    setHasResolvedData(false);
     setError('');
     setExportError('');
     try {
@@ -170,14 +214,17 @@ const DashboardPanelAnalysis: React.FC = () => {
       setData({ houses: [] });
     } finally {
       setLoading(false);
+      setHasResolvedData(true);
     }
   };
 
   useEffect(() => {
-    if (!selectedStationId) return;
+    if (stationsLoading || !selectedStationId) return;
+    const exists = panelStations.some((station) => String(station.id) === selectedStationId);
+    if (!exists) return;
     fetchData(selectedStationId, selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStationId]);
+  }, [panelStations, selectedStationId, stationsLoading]);
 
   const changeDay = (delta: number) => {
     const [y, m, d] = selectedDate.split('-').map((value) => Number.parseInt(value, 10));
@@ -268,15 +315,15 @@ const DashboardPanelAnalysis: React.FC = () => {
     }
   };
 
-  const dayStartTs = useMemo(() => {
+  const selectedDayStartTs = useMemo(() => {
     try {
-      return new Date(`${selectedDate}T08:20:00`).getTime();
+      return new Date(`${selectedDate}T00:00:00`).getTime();
     } catch {
       return null;
     }
   }, [selectedDate]);
 
-  const dayEndTs = useMemo(() => {
+  const selectedDayEndTs = useMemo(() => {
     try {
       return new Date(`${selectedDate}T23:59:59.999`).getTime();
     } catch {
@@ -284,9 +331,33 @@ const DashboardPanelAnalysis: React.FC = () => {
     }
   }, [selectedDate]);
 
+  const shiftWindowSegments = useMemo(() => {
+    if (Array.isArray(data.shift_windows)) {
+      return data.shift_windows
+        .map((window) => {
+          const start = toTs(window?.started_at ?? null);
+          const end = toTs(window?.ended_at ?? null);
+          return start != null && end != null && end > start ? { start, end } : null;
+        })
+        .filter((window): window is TimeSegment => window != null)
+        .sort((a, b) => a.start - b.start);
+    }
+    if (selectedDayStartTs == null) return [];
+    const fallbackStart = new Date(`${selectedDate}T08:20:00`).getTime();
+    const fallbackEnd = new Date(`${selectedDate}T17:00:00`).getTime();
+    if (!Number.isFinite(fallbackStart) || !Number.isFinite(fallbackEnd)) return [];
+    return [{ start: fallbackStart, end: fallbackEnd }];
+  }, [data.shift_windows, selectedDate, selectedDayStartTs]);
+
+  const dayStartTs = shiftWindowSegments[0]?.start ?? selectedDayStartTs;
+  const dayEndTs = shiftWindowSegments.length
+    ? shiftWindowSegments[shiftWindowSegments.length - 1].end
+    : selectedDayEndTs;
+  const hasShiftWindow = shiftWindowSegments.length > 0;
+
   const panelDetails = useMemo(() => {
-    const dailyStartBound = dayStartTs ?? Number.NEGATIVE_INFINITY;
-    const dailyEndBound = dayEndTs ?? Number.POSITIVE_INFINITY;
+    const dailyStartBound = selectedDayStartTs ?? Number.NEGATIVE_INFINITY;
+    const dailyEndBound = selectedDayEndTs ?? Number.POSITIVE_INFINITY;
 
     return flatPanels.map((rawPanel) => {
       const availableTs = toTs(rawPanel.available_at ?? null);
@@ -352,14 +423,22 @@ const DashboardPanelAnalysis: React.FC = () => {
         }
       }
 
-      const workTotalMs = workSegments.reduce((acc, seg) => acc + Math.max(0, seg.end - seg.start), 0);
-      const pauseTotalMs = pauseSegments.reduce((acc, seg) => acc + Math.max(0, seg.end - seg.start), 0);
+      const maskedWorkSegments = clipSegmentsToWindows(workSegments, shiftWindowSegments);
+      const maskedPauseSegments = clipSegmentsToWindows(pauseSegments, shiftWindowSegments);
+      const workTotalMs = maskedWorkSegments.reduce(
+        (acc, seg) => acc + Math.max(0, seg.end - seg.start),
+        0
+      );
+      const pauseTotalMs = maskedPauseSegments.reduce(
+        (acc, seg) => acc + Math.max(0, seg.end - seg.start),
+        0
+      );
 
       const expectedMinutes = toFiniteNumber(rawPanel.expected_minutes);
       const expectedMs = expectedMinutes != null ? expectedMinutes * 60000 : null;
 
       const includeInDailySummary =
-        startedTs != null && finishedTs != null && startedTs >= dailyStartBound && finishedTs <= dailyEndBound;
+        finishedTs != null && finishedTs >= dailyStartBound && finishedTs <= dailyEndBound;
 
       const clampSegmentToDay = (seg: { start: number; end: number } | null) => {
         if (!seg) return null;
@@ -370,19 +449,14 @@ const DashboardPanelAnalysis: React.FC = () => {
       };
 
       const dailyWorkSegments = includeInDailySummary
-        ? workSegments
+        ? maskedWorkSegments
             .map(clampSegmentToDay)
             .filter((seg): seg is { start: number; end: number } => Boolean(seg))
         : [];
 
       const dailyPauseSegments = includeInDailySummary
-        ? pauseSegments
-            .map((seg) => {
-              if (seg.start < dailyStartBound || seg.end > dailyEndBound) {
-                return null;
-              }
-              return clampSegmentToDay(seg);
-            })
+        ? maskedPauseSegments
+            .map(clampSegmentToDay)
             .filter((seg): seg is { start: number; end: number } => Boolean(seg))
         : [];
 
@@ -395,79 +469,61 @@ const DashboardPanelAnalysis: React.FC = () => {
         0
       );
 
+      const apiWorkMinutes = toFiniteNumber(rawPanel.actual_minutes);
+      const apiPausedMinutes = toFiniteNumber(rawPanel.paused_minutes);
       const dailyPausedMinutes = includeInDailySummary
-        ? dailyPauseTotalMs > 0
-          ? dailyPauseTotalMs / 60000
-          : 0
+        ? apiPausedMinutes ?? dailyPauseTotalMs / 60000
         : null;
-
       const actualWorkMinutes = includeInDailySummary
-        ? dailyWorkTotalMs > 0
-          ? dailyWorkTotalMs / 60000
-          : Number.isFinite(rawPanel.actual_minutes)
-            ? rawPanel.actual_minutes
-            : null
+        ? apiWorkMinutes ?? (dailyWorkTotalMs > 0 ? dailyWorkTotalMs / 60000 : null)
         : null;
-
-      const totalWorkMinutes = workTotalMs > 0
-        ? workTotalMs / 60000
-        : Number.isFinite(rawPanel.actual_minutes)
-          ? rawPanel.actual_minutes
-          : null;
-
-      const totalPausedMinutes = pauseTotalMs > 0
-        ? pauseTotalMs / 60000
-        : Number.isFinite(rawPanel.paused_minutes)
-          ? rawPanel.paused_minutes
-          : 0;
+      const totalWorkMinutes = apiWorkMinutes ?? (workTotalMs > 0 ? workTotalMs / 60000 : null);
+      const totalPausedMinutes = apiPausedMinutes ?? pauseTotalMs / 60000;
 
       let overtimeMs = 0;
       let savedMs = 0;
       let overtimeStartTs: number | null = null;
       let expectedFinishTs: number | null = finishedTs ?? null;
 
-      if (expectedMs != null && startedTs != null && workSegments.length > 0) {
-        const workDurationsMs = workSegments.map((seg) => Math.max(0, seg.end - seg.start));
-        const workCumulative = workDurationsMs.reduce((acc, val) => acc + val, 0);
+      if (expectedMs != null && actualWorkMinutes != null && maskedWorkSegments.length > 0) {
+        const countedWorkMs = actualWorkMinutes * 60000;
+        const workDurationsMs = maskedWorkSegments.map((seg) => Math.max(0, seg.end - seg.start));
+        const timelineWorkMs = workDurationsMs.reduce((acc, val) => acc + val, 0);
 
-        if (workCumulative > expectedMs) {
-          overtimeMs = workCumulative - expectedMs;
-        } else if (workCumulative < expectedMs) {
-          savedMs = expectedMs - workCumulative;
-        }
-
-        let consumed = 0;
-        let thresholdFound = false;
-        for (let i = 0; i < workSegments.length; i += 1) {
-          const seg = workSegments[i];
-          const segDuration = workDurationsMs[i];
-          if (segDuration <= 0) {
-            continue;
-          }
-          if (!thresholdFound && consumed + segDuration >= expectedMs) {
-            const offset = expectedMs - consumed;
-            expectedFinishTs = seg.start + offset;
-            overtimeStartTs = expectedFinishTs < seg.end ? expectedFinishTs : seg.end;
-            thresholdFound = true;
-            break;
-          }
-          consumed += segDuration;
-        }
-
-        if (!thresholdFound) {
+        if (countedWorkMs > expectedMs) {
+          overtimeMs = countedWorkMs - expectedMs;
+        } else if (countedWorkMs < expectedMs) {
+          savedMs = expectedMs - countedWorkMs;
           if (finishedTs != null) {
-            expectedFinishTs = finishedTs + (expectedMs - workCumulative);
-            overtimeStartTs = null;
+            expectedFinishTs = finishedTs + savedMs;
           }
         }
-      } else if (expectedMs != null && startedTs != null && finishedTs != null) {
-        const elapsedMs = Math.max(0, finishedTs - startedTs);
-        if (elapsedMs > expectedMs) {
-          overtimeMs = elapsedMs - expectedMs;
-          overtimeStartTs = startedTs + expectedMs;
-          expectedFinishTs = startedTs + expectedMs;
-        } else {
-          savedMs = expectedMs - elapsedMs;
+
+        if (countedWorkMs > expectedMs) {
+          const timelineThresholdMs = Math.min(
+            timelineWorkMs,
+            expectedMs * (timelineWorkMs / countedWorkMs)
+          );
+          let consumed = 0;
+          for (let i = 0; i < maskedWorkSegments.length; i += 1) {
+            const seg = maskedWorkSegments[i];
+            const segDuration = workDurationsMs[i];
+            if (segDuration <= 0) continue;
+            if (consumed + segDuration >= timelineThresholdMs) {
+              const offset = timelineThresholdMs - consumed;
+              expectedFinishTs = seg.start + offset;
+              overtimeStartTs = expectedFinishTs < seg.end ? expectedFinishTs : seg.end;
+              break;
+            }
+            consumed += segDuration;
+          }
+        }
+      } else if (expectedMs != null && actualWorkMinutes != null) {
+        const countedWorkMs = actualWorkMinutes * 60000;
+        if (countedWorkMs > expectedMs) {
+          overtimeMs = countedWorkMs - expectedMs;
+        } else if (finishedTs != null) {
+          savedMs = expectedMs - countedWorkMs;
           expectedFinishTs = finishedTs + savedMs;
         }
       }
@@ -493,8 +549,8 @@ const DashboardPanelAnalysis: React.FC = () => {
         available_ts: availableTs,
         started_ts: startedTs,
         finished_ts: finishedTs,
-        workSegments,
-        pauseSegments,
+        workSegments: maskedWorkSegments,
+        pauseSegments: maskedPauseSegments,
         workTotalMs,
         pausedMinutes: Number.isFinite(dailyPausedMinutes) ? dailyPausedMinutes : null,
         total_paused_minutes: Number.isFinite(totalPausedMinutes) ? totalPausedMinutes : null,
@@ -517,7 +573,7 @@ const DashboardPanelAnalysis: React.FC = () => {
         daily_actual_work_minutes: Number.isFinite(actualWorkMinutes) ? actualWorkMinutes : null,
       };
     });
-  }, [flatPanels, dayStartTs, dayEndTs]);
+  }, [flatPanels, selectedDayEndTs, selectedDayStartTs, shiftWindowSegments]);
 
   const panelTaskRows = useMemo(() => {
     return flatPanels.flatMap((panel) => {
@@ -664,7 +720,7 @@ const DashboardPanelAnalysis: React.FC = () => {
   }, []);
 
   const scoreSummary = useMemo(() => {
-    if (!Array.isArray(panelDetails) || panelDetails.length === 0) {
+    if (!hasShiftWindow || !Array.isArray(panelDetails) || panelDetails.length === 0) {
       return {
         idleMinutes: 0,
         overtimeMinutes: 0,
@@ -738,8 +794,15 @@ const DashboardPanelAnalysis: React.FC = () => {
       if (prevFinishTs != null) {
         const idleStart = availableTs != null ? Math.max(prevFinishTs, availableTs) : prevFinishTs;
         if (startTs > idleStart) {
-          idleMinutes += (startTs - idleStart) / 60000;
-          hasTimingData = true;
+          const maskedIdleMinutes = durationWithinWindowsMs(
+            idleStart,
+            startTs,
+            shiftWindowSegments
+          ) / 60000;
+          if (maskedIdleMinutes > 0) {
+            idleMinutes += maskedIdleMinutes;
+            hasTimingData = true;
+          }
         }
       }
 
@@ -759,7 +822,7 @@ const DashboardPanelAnalysis: React.FC = () => {
       scoreMinutes: round2(adjustedScore),
       hasData: hasTimingData,
     };
-  }, [panelDetails]);
+  }, [hasShiftWindow, panelDetails, shiftWindowSegments]);
 
   const displaySummary = useMemo(() => {
     return {
@@ -789,11 +852,16 @@ const DashboardPanelAnalysis: React.FC = () => {
         minT = dayStartTs;
       }
     }
+    if (dayEndTs != null) {
+      if (maxT == null || maxT > dayEndTs) {
+        maxT = dayEndTs;
+      }
+    }
     if (minT != null && maxT != null && maxT <= minT) {
       maxT = minT + 60 * 1000;
     }
     return { minT, maxT };
-  }, [panelDetails, dayStartTs]);
+  }, [dayEndTs, dayStartTs, panelDetails]);
 
   const percent = (t: number | null) => {
     const { minT, maxT } = timelineBounds;
@@ -842,6 +910,27 @@ const DashboardPanelAnalysis: React.FC = () => {
       ].join('\n')
     : 'Sin datos de tiempo';
 
+  const waitingForData =
+    stationsLoading || loading || (!hasResolvedData && panelStations.length > 0);
+  const showResults = hasResolvedData && !loading && !error;
+  const showMissingStations =
+    !stationsLoading && !stationsError && panelStations.length === 0;
+  const shiftWindowLabel = hasShiftWindow
+    ? shiftWindowSegments
+        .map((window) => {
+          const start = new Date(window.start).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          const end = new Date(window.end).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+          return `${start} - ${end}`;
+        })
+        .join(', ')
+    : 'Sin turno contabilizable';
+
   return (
     <div className="space-y-6">
       <section className="rounded-2xl border border-black/5 bg-white/90 p-6 shadow-sm">
@@ -858,7 +947,7 @@ const DashboardPanelAnalysis: React.FC = () => {
               type="button"
               className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ink)]"
               onClick={() => fetchData(selectedStationId, selectedDate)}
-              disabled={loading}
+              disabled={waitingForData || !selectedStationId}
             >
               <RefreshCcw className="h-4 w-4" />
               Actualizar
@@ -867,7 +956,7 @@ const DashboardPanelAnalysis: React.FC = () => {
               type="button"
               className="inline-flex items-center gap-2 rounded-full bg-[var(--ink)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
               onClick={handleExport}
-              disabled={loading || exporting}
+              disabled={waitingForData || exporting || !showResults}
             >
               <Download className="h-4 w-4" />
               {exporting ? 'Generando...' : 'Exportar CSV'}
@@ -881,6 +970,7 @@ const DashboardPanelAnalysis: React.FC = () => {
             <select
               value={selectedStationId}
               onChange={(event) => onStationChange(event.target.value)}
+              disabled={stationsLoading || loading}
               className="mt-2 w-full rounded-lg border border-black/10 bg-white/90 px-3 py-2 text-sm text-[var(--ink)] shadow-sm focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(242,98,65,0.2)]"
             >
               {panelStations.map((station) => (
@@ -898,7 +988,7 @@ const DashboardPanelAnalysis: React.FC = () => {
                 type="button"
                 className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink)]"
                 onClick={() => changeDay(-1)}
-                disabled={loading}
+                disabled={waitingForData || !selectedStationId}
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -907,12 +997,13 @@ const DashboardPanelAnalysis: React.FC = () => {
                 type="date"
                 value={selectedDate}
                 onChange={(event) => onDateChange(event.target.value)}
+                disabled={waitingForData || !selectedStationId}
               />
               <button
                 type="button"
                 className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-3 py-2 text-xs text-[var(--ink)]"
                 onClick={() => changeDay(1)}
-                disabled={loading}
+                disabled={waitingForData || !selectedStationId}
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -927,76 +1018,100 @@ const DashboardPanelAnalysis: React.FC = () => {
         )}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Paneles diarios</p>
-          <p
-            className="mt-2 text-2xl font-semibold text-[var(--ink)]"
-            title={panelsPassedTooltip || undefined}
-          >
-            {panelsPassedCount}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Superficie producida</p>
-          <p
-            className="mt-2 text-2xl font-semibold text-[var(--ink)]"
-            title={panelsPassedTooltip || undefined}
-          >
-            {panelsPassedAreaDisplay} m2
-          </p>
-        </div>
-        <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">{scoreDescriptor}</p>
-          <p
-            className="mt-2 text-2xl font-semibold"
-            title={scoreTooltip}
-            style={{ color: scoreColor }}
-          >
-            {scoreValueLabel}
-          </p>
-          <div
-            className="mt-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]"
-            style={{ color: scoreColor, background: scoreBackground, borderColor: scoreBorder }}
-          >
-            Balance diario
+      {waitingForData && (
+        <section
+          className="flex min-h-48 items-center justify-center rounded-2xl border border-black/5 bg-white/90 p-6 shadow-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-3 text-sm text-[var(--ink-muted)]">
+            <RefreshCcw className="h-5 w-5 animate-spin" aria-hidden="true" />
+            <span>Cargando informacion del analisis...</span>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
-      <section className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
-        <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-5 border border-black/20 bg-[#bbb]" />
-            Tiempo disponible pre ejecucion
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-5 border border-black/20 bg-[#4a90e2]" />
-            Tiempo de ejecucion
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-5 border border-black/20" style={{ background: PAUSE_COLOR }} />
-            Tiempo en pausa
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="relative inline-block h-3 w-4">
-              <span className="absolute left-0 right-0 top-0 h-0.5" style={{ background: GAP_COLOR }} />
-              <span className="absolute bottom-0 left-1/2 top-0 w-0.5" style={{ background: GAP_COLOR }} />
+      {showMissingStations && (
+        <section className="rounded-2xl border border-black/5 bg-white/90 p-6 text-sm text-[var(--ink-muted)] shadow-sm">
+          No hay estaciones de paneles disponibles.
+        </section>
+      )}
+
+      {showResults && (
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Paneles diarios</p>
+            <p
+              className="mt-2 text-2xl font-semibold text-[var(--ink)]"
+              title={panelsPassedTooltip || undefined}
+            >
+              {panelsPassedCount}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">Superficie producida</p>
+            <p
+              className="mt-2 text-2xl font-semibold text-[var(--ink)]"
+              title={panelsPassedTooltip || undefined}
+            >
+              {panelsPassedAreaDisplay} m2
+            </p>
+          </div>
+          <div className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.2em] text-[var(--ink-muted)]">{scoreDescriptor}</p>
+            <p
+              className="mt-2 text-2xl font-semibold"
+              title={scoreTooltip}
+              style={{ color: scoreColor }}
+            >
+              {scoreValueLabel}
+            </p>
+            <div
+              className="mt-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em]"
+              style={{ color: scoreColor, background: scoreBackground, borderColor: scoreBorder }}
+            >
+              Balance diario
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showResults && (
+        <section className="rounded-2xl border border-black/5 bg-white/90 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--ink-muted)]">
+            <span className="font-semibold text-[var(--ink)]">Turno: {shiftWindowLabel}</span>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-5 border border-black/20 bg-[#bbb]" />
+              Tiempo disponible pre ejecucion
             </span>
-            Tiempo ocioso entre paneles
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-5 border border-black/20 bg-[#ff0000]" />
-            Minutos extra vs esperado
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="h-2 w-5 border border-black/20 bg-[#52c41a]" />
-            Minutos ahorrados vs esperado
-          </span>
-        </div>
-      </section>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-5 border border-black/20 bg-[#4a90e2]" />
+              Tiempo de ejecucion
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-5 border border-black/20" style={{ background: PAUSE_COLOR }} />
+              Tiempo en pausa
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="relative inline-block h-3 w-4">
+                <span className="absolute left-0 right-0 top-0 h-0.5" style={{ background: GAP_COLOR }} />
+                <span className="absolute bottom-0 left-1/2 top-0 w-0.5" style={{ background: GAP_COLOR }} />
+              </span>
+              Tiempo ocioso entre paneles
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-5 border border-black/20 bg-[#ff0000]" />
+              Minutos extra vs esperado
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2 w-5 border border-black/20 bg-[#52c41a]" />
+              Minutos ahorrados vs esperado
+            </span>
+          </div>
+        </section>
+      )}
 
-      {(() => {
+      {showResults && (() => {
         const sorted = [...panelDetails].sort((a, b) => {
           const sa = a.started_ts ?? Number.POSITIVE_INFINITY;
           const sb = b.started_ts ?? Number.POSITIVE_INFINITY;
@@ -1035,7 +1150,7 @@ const DashboardPanelAnalysis: React.FC = () => {
               style={{ gridTemplateColumns: '300px 260px 1fr' }}
             >
               <div>Panel</div>
-              <div>Duracion (vs esperado)</div>
+              <div>Trabajo en turno (vs esperado)</div>
               <div className="text-[11px] text-[var(--ink-muted)]">
                 {axis && (
                   <div className="flex items-center justify-between">
@@ -1067,12 +1182,18 @@ const DashboardPanelAnalysis: React.FC = () => {
                 const prevFinishPct = percent(prevFinishRaw);
                 const gapMs = prevFinishRaw != null && startTsRaw != null ? startTsRaw - prevFinishRaw : null;
                 const gapElement = (() => {
-                  if (gapMs == null) return null;
-                  const labelDuration = formatGapDuration(Math.abs(gapMs));
+                  if (gapMs == null || shiftWindowSegments.length === 0) return null;
+                  const maskedGapMs = durationWithinWindowsMs(
+                    Math.min(prevFinishRaw ?? 0, startTsRaw ?? 0),
+                    Math.max(prevFinishRaw ?? 0, startTsRaw ?? 0),
+                    shiftWindowSegments
+                  );
+                  if (maskedGapMs <= 0) return null;
+                  const labelDuration = formatGapDuration(maskedGapMs);
                   const titleText =
                     gapMs >= 0
-                      ? `Tiempo entre fin anterior e inicio: ${labelDuration}`
-                      : `Este panel empezo ${labelDuration} antes de terminar el anterior`;
+                      ? `Tiempo dentro del turno entre fin anterior e inicio: ${labelDuration}`
+                      : `Solapamiento dentro del turno: ${labelDuration}`;
                   const spanLeft = Math.min(startPct, prevFinishPct);
                   const spanWidth = Math.abs(startPct - prevFinishPct);
                   const extendsLeft = startPct >= prevFinishPct;
@@ -1159,10 +1280,10 @@ const DashboardPanelAnalysis: React.FC = () => {
                     if (width <= 0) return null;
                     const durationMs = seg.end - seg.start;
                     const reason = seg.reason ? `Motivo: ${seg.reason}` : 'Sin motivo';
-                    const titleText = `${reason}\n${formatTsLabel(seg.start, seg.rawStart ?? null)} -> ${formatTsLabel(
+                    const titleText = `${reason}\nDentro del turno: ${formatTsLabel(seg.start, null)} -> ${formatTsLabel(
                       seg.end,
-                      seg.rawEnd ?? null
-                    )}\nDuracion: ${formatGapDuration(durationMs)}`;
+                      null
+                    )}\nDuracion contabilizada: ${formatGapDuration(durationMs)}`;
                     return (
                       <div
                         key={`pause-${pauseIdx}`}
@@ -1247,16 +1368,14 @@ const DashboardPanelAnalysis: React.FC = () => {
                   startTsNum != null && finishTsNum != null && finishTsNum > startTsNum
                     ? finishTsNum - startTsNum
                     : null;
-                const spanMinutes = durationMs != null ? durationMs / 60000 : null;
-                const durationLabel = Number.isFinite(spanMinutes) ? formatMinutesShort(spanMinutes) : '-';
-                const durationDetailedLabel = durationMs != null ? formatGapDuration(durationMs) : '-';
+                const elapsedDetailedLabel = durationMs != null ? formatGapDuration(durationMs) : '-';
                 const expectedMinutes = (() => {
                   const byMinutes = toFiniteNumber(panel.expected_minutes);
                   if (byMinutes != null) return byMinutes;
                   const expectedMs = toFiniteNumber(panel.expectedMs);
                   return expectedMs != null ? expectedMs / 60000 : null;
                 })();
-                const hasExpected = expectedMinutes != null;
+                const hasExpected = hasShiftWindow && expectedMinutes != null;
                 const workedMinutes = (() => {
                   const dailyActual = toFiniteNumber(panel.daily_actual_work_minutes);
                   if (dailyActual != null) return dailyActual;
@@ -1264,8 +1383,14 @@ const DashboardPanelAnalysis: React.FC = () => {
                   if (totalWork != null) return totalWork;
                   return toFiniteNumber(panel.actual_minutes);
                 })();
+                const durationLabel = workedMinutes != null ? formatMinutesShort(workedMinutes) : '-';
+                const durationDetailedLabel = workedMinutes != null
+                  ? formatMinutesDetailed(workedMinutes)
+                  : '-';
                 const diffMinutes =
-                  workedMinutes != null && expectedMinutes != null ? workedMinutes - expectedMinutes : null;
+                  workedMinutes != null && hasExpected && expectedMinutes != null
+                    ? workedMinutes - expectedMinutes
+                    : null;
                 const diffLabel = diffMinutes != null ? formatMinutesShort(diffMinutes, true) : '-';
                 const diffColor =
                   diffMinutes != null
@@ -1292,11 +1417,11 @@ const DashboardPanelAnalysis: React.FC = () => {
                   `Inicio: ${panel.station_started_at ? formatDateTime(panel.station_started_at) : '-'}`,
                   `Fin: ${panel.station_finished_at ? formatDateTime(panel.station_finished_at) : '-'}`,
                 ];
-                if (durationDetailedLabel !== '-') {
-                  durationTitleLines.push(`Duracion: ${durationDetailedLabel}`);
+                if (elapsedDetailedLabel !== '-') {
+                  durationTitleLines.push(`Ventana cronologica: ${elapsedDetailedLabel}`);
                 }
-                if (Number.isFinite(workedMinutes)) {
-                  durationTitleLines.push(`Trabajo efectivo: ${formatMinutesDetailed(workedMinutes)}`);
+                if (durationDetailedLabel !== '-') {
+                  durationTitleLines.push(`Trabajo dentro del turno: ${durationDetailedLabel}`);
                 }
                 if (hasExpected) {
                   durationTitleLines.push(`Esperado: ${formatMinutesDetailed(expectedMinutes)}`);
@@ -1364,7 +1489,7 @@ const DashboardPanelAnalysis: React.FC = () => {
                           borderRadius: 0,
                         }}
                       >
-                        {availableTs != null && startTsRaw != null && waitWidth > 0 && (
+                        {shiftWindowSegments.length > 0 && availableTs != null && startTsRaw != null && waitWidth > 0 && (
                           <div
                             style={{
                               position: 'absolute',
@@ -1499,11 +1624,13 @@ const DashboardPanelAnalysis: React.FC = () => {
                             taskStartTs != null && taskEndTs != null && taskEndTs > taskStartTs
                               ? taskEndTs - taskStartTs
                               : null;
-                          const taskDurationMinutes = taskDurationMs != null ? taskDurationMs / 60000 : null;
-                          const taskDurationLabel =
-                            Number.isFinite(taskDurationMinutes) ? formatMinutesShort(taskDurationMinutes) : '-';
-                          const taskDurationDetailedLabel =
+                          const taskElapsedDetailedLabel =
                             taskDurationMs != null ? formatGapDuration(taskDurationMs) : '-';
+                          const taskDurationMinutes = toFiniteNumber(task.actual_minutes);
+                          const taskDurationLabel =
+                            taskDurationMinutes != null ? formatMinutesShort(taskDurationMinutes) : '-';
+                          const taskDurationDetailedLabel =
+                            taskDurationMinutes != null ? formatMinutesDetailed(taskDurationMinutes) : '-';
                           const baseExpectedCandidates = [
                             task && task.expected_minutes,
                             (task as PanelsFinishedTask & { expectedMinutes?: number }).expectedMinutes,
@@ -1526,9 +1653,9 @@ const DashboardPanelAnalysis: React.FC = () => {
                               break;
                             }
                           }
-                          const taskHasExpected = taskExpectedMinutes != null;
+                          const taskHasExpected = hasShiftWindow && taskExpectedMinutes != null;
                           const taskDiffMinutes =
-                            taskDurationMinutes != null && taskExpectedMinutes != null
+                            taskDurationMinutes != null && taskHasExpected && taskExpectedMinutes != null
                               ? taskDurationMinutes - taskExpectedMinutes
                               : null;
                           const taskDiffLabel = taskDiffMinutes != null ? formatMinutesShort(taskDiffMinutes, true) : '-';
@@ -1546,7 +1673,12 @@ const DashboardPanelAnalysis: React.FC = () => {
                           const taskTimeTitle = `Inicio: ${earliestStart ? formatDateTime(earliestStart.raw) : '-'}\nFin: ${
                             latestEnd ? formatDateTime(latestEnd.raw) : '-'
                           }`;
-                          const taskDurationTitleParts = [`Duracion exacta: ${taskDurationDetailedLabel}`];
+                          const taskDurationTitleParts = [
+                            `Trabajo dentro del turno: ${taskDurationDetailedLabel}`,
+                          ];
+                          if (taskElapsedDetailedLabel !== '-') {
+                            taskDurationTitleParts.push(`Ventana cronologica: ${taskElapsedDetailedLabel}`);
+                          }
                           if (taskHasExpected) {
                             taskDurationTitleParts.push(`Esperado: ${formatMinutesDetailed(taskExpectedMinutes)}`);
                           }
@@ -1567,7 +1699,7 @@ const DashboardPanelAnalysis: React.FC = () => {
                                 Tiempo: {taskStartLabel} {'->'} {taskEndLabel}
                               </div>
                               <div className="mt-1 text-xs text-[var(--ink)]" title={taskDurationTitle}>
-                                Duracion: {taskDurationLabel}
+                                Trabajo en turno: {taskDurationLabel}
                                 {' ('}
                                 <span style={{ color: taskHasExpected ? taskDiffColor : '#999' }}>
                                   {taskHasExpected ? taskDiffLabel : '-'}

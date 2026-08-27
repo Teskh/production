@@ -32,7 +32,7 @@ class BackupCreateRequest(BaseModel):
 class BackupCreateResponse(BaseModel):
     backup: BackupRecord
     settings: BackupSettings
-    pruned: list[str] = []
+    pruned: list[str] = Field(default_factory=list)
 
 
 class BackupRestoreRequest(BaseModel):
@@ -45,4 +45,15 @@ class BackupRestoreResponse(BaseModel):
     archived_db: str
     restored_from: str
     checkpoint_backup: BackupRecord
-    pruned: list[str] = []
+    pruned: list[str] = Field(default_factory=list)
+
+
+class DatabaseSyncStatus(BaseModel):
+    available: bool
+    source_url: str
+    reason: str | None = None
+
+
+class DatabaseSyncResponse(BackupRestoreResponse):
+    source_url: str
+    downloaded_size_bytes: int

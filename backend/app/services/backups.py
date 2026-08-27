@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import copy
 import json
 import os
@@ -8,7 +9,8 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from threading import RLock
+from typing import Any, Callable
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
@@ -27,6 +29,17 @@ DEFAULT_METADATA: dict[str, Any] = {"items": {}}
 VALID_DB_NAME = re.compile(r"^[A-Za-z0-9_]+$")
 VALID_BACKUP_SUFFIXES = {".dump"}
 LISTABLE_BACKUP_SUFFIXES = {".dump", ".sql"}
+
+_DATABASE_MAINTENANCE_LOCK = RLock()
+
+
+@contextmanager
+def database_maintenance_lock():
+    """Serialize dump, restore, swap, and scheduled database maintenance."""
+    with _DATABASE_MAINTENANCE_LOCK:
+        yield
+
+
 
 
 @dataclass(frozen=True)
@@ -252,16 +265,9 @@ def prune_backups(retention_count: int) -> list[str]:
     return removed
 
 
-def create_backup(label: str | None = None) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+def _run_pg_dump(output_path: Path) -> Path:
     db_name, username, host, port, password = _resolve_db_connection()
-    timestamp = _local_now()
-    safe_label = _sanitize_label(label) if label else ""
-    label_part = f"_{safe_label}" if safe_label else ""
-    filename = f"{db_name}_backup_{timestamp.strftime('%Y%m%d_%H%M%S')}{label_part}.dump"
-
-    paths = get_backup_paths()
-    output_path = paths.root / filename
-
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         settings.pg_dump_path,
         "--format=custom",
@@ -277,39 +283,68 @@ def create_backup(label: str | None = None) -> tuple[dict[str, Any], dict[str, A
     if username:
         cmd.extend(["--username", username])
     cmd.append(db_name)
+    try:
+        result = subprocess.run(
+            cmd,
+            env=_pg_env(password),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or "pg_dump failed"
+            raise RuntimeError(stderr)
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
+    return output_path
 
-    result = subprocess.run(
-        cmd,
-        env=_pg_env(password),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or "pg_dump failed"
-        raise RuntimeError(stderr)
 
-    metadata = load_backup_metadata()
-    metadata.setdefault("items", {})[filename] = {
-        "label": label.strip() if label else None,
-    }
-    save_backup_metadata(metadata)
+def create_database_dump(output_path: Path) -> Path:
+    """Create a custom-format dump without registering it in backup retention."""
+    with database_maintenance_lock():
+        return _run_pg_dump(Path(output_path))
 
-    settings_data = load_backup_settings()
-    settings_data["last_backup_at"] = timestamp.isoformat()
-    settings_data = save_backup_settings(settings_data)
 
-    retention_count = int(settings_data.get("retention_count") or 0)
-    pruned = prune_backups(retention_count)
+def create_backup(
+    label: str | None = None,
+    *,
+    prune: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    with database_maintenance_lock():
+        db_name, _, _, _, _ = _resolve_db_connection()
+        timestamp = _local_now()
+        safe_label = _sanitize_label(label) if label else ""
+        label_part = f"_{safe_label}" if safe_label else ""
+        filename = (
+            f"{db_name}_backup_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+            f"{label_part}.dump"
+        )
 
-    stats = output_path.stat()
-    backup_record = {
-        "filename": filename,
-        "size_bytes": stats.st_size,
-        "created_at": _local_from_timestamp(stats.st_mtime),
-        "label": label.strip() if label else None,
-    }
-    return backup_record, settings_data, pruned
+        paths = get_backup_paths()
+        output_path = _run_pg_dump(paths.root / filename)
+
+        metadata = load_backup_metadata()
+        metadata.setdefault("items", {})[filename] = {
+            "label": label.strip() if label else None,
+        }
+        save_backup_metadata(metadata)
+
+        settings_data = load_backup_settings()
+        settings_data["last_backup_at"] = timestamp.isoformat()
+        settings_data = save_backup_settings(settings_data)
+
+        retention_count = int(settings_data.get("retention_count") or 0)
+        pruned = prune_backups(retention_count) if prune else []
+
+        stats = output_path.stat()
+        backup_record = {
+            "filename": filename,
+            "size_bytes": stats.st_size,
+            "created_at": _local_from_timestamp(stats.st_mtime),
+            "label": label.strip() if label else None,
+        }
+        return backup_record, settings_data, pruned
 
 
 def parse_last_backup_at(value: str | None) -> datetime | None:
@@ -373,79 +408,107 @@ def swap_databases(primary_db: str, secondary_db: str, force_disconnect: bool = 
         engine.dispose()
 
 
+def _cleanup_database(name: str) -> None:
+    engine = _admin_engine()
+    try:
+        with engine.connect() as conn:
+            _terminate_connections(conn, [name])
+            _drop_database(conn, name)
+    finally:
+        engine.dispose()
+
+
+def restore_dump_file(
+    backup_path: Path,
+    *,
+    restored_from: str,
+    force_disconnect: bool = True,
+    checkpoint_label: str | None = None,
+    prepare_database: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    backup_path = Path(backup_path)
+    if not backup_path.is_file():
+        raise ValueError("Backup file not found.")
+    if backup_path.suffix not in VALID_BACKUP_SUFFIXES:
+        raise ValueError("Only .dump backups are supported for restore.")
+
+    with database_maintenance_lock():
+        primary_db, username, host, port, password = _resolve_db_connection()
+        _validate_db_name(primary_db)
+        restore_db = _restore_db_name(primary_db, _local_now())
+        _validate_db_name(restore_db)
+
+        label = checkpoint_label or f"Restore checkpoint for {restored_from}"
+        checkpoint_backup, checkpoint_settings, _ = create_backup(label, prune=False)
+
+        engine = _admin_engine()
+        try:
+            with engine.connect() as conn:
+                if _database_exists(conn, restore_db):
+                    raise ValueError("Restore database name already exists.")
+                _create_database(conn, restore_db, username)
+        finally:
+            engine.dispose()
+
+        cmd = [
+            settings.pg_restore_path,
+            "--format=custom",
+            "--no-owner",
+            "--no-privileges",
+            "--dbname",
+            restore_db,
+        ]
+        if host:
+            cmd.extend(["--host", host])
+        if port:
+            cmd.extend(["--port", str(port)])
+        if username:
+            cmd.extend(["--username", username])
+        cmd.append(str(backup_path))
+
+        try:
+            result = subprocess.run(
+                cmd,
+                env=_pg_env(password),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                stderr = result.stderr.strip() or "pg_restore failed"
+                raise RuntimeError(stderr)
+            if prepare_database is not None:
+                prepare_database(restore_db)
+        except Exception:
+            _cleanup_database(restore_db)
+            raise
+
+        swap_databases(primary_db, restore_db, force_disconnect=force_disconnect)
+        retention_count = int(checkpoint_settings.get("retention_count") or 0)
+        pruned = prune_backups(retention_count)
+        return {
+            "primary_db": primary_db,
+            "archived_db": restore_db,
+            "restored_from": restored_from,
+            "checkpoint_backup": checkpoint_backup,
+            "pruned": pruned,
+        }
+
+
 def restore_backup(
     filename: str,
     *,
     force_disconnect: bool = True,
     checkpoint_label: str | None = None,
 ) -> dict[str, Any]:
+    filename_path = Path(filename)
+    if filename_path.is_absolute() or filename_path.name != filename:
+        raise ValueError("Invalid backup filename.")
     paths = get_backup_paths()
-    backup_path = paths.root / filename
-    if not backup_path.exists():
-        raise ValueError("Backup file not found.")
-    if backup_path.suffix not in VALID_BACKUP_SUFFIXES:
-        raise ValueError("Only .dump backups are supported for restore.")
-
-    primary_db, username, host, port, password = _resolve_db_connection()
-    _validate_db_name(primary_db)
-    timestamp = _local_now()
-    restore_db = _restore_db_name(primary_db, timestamp)
-    _validate_db_name(restore_db)
-
-    label = checkpoint_label or f"Manual restore checkpoint for {filename}"
-    checkpoint_backup, _, pruned = create_backup(label)
-
-    engine = _admin_engine()
-    created = False
-    try:
-        with engine.connect() as conn:
-            if _database_exists(conn, restore_db):
-                raise ValueError("Restore database name already exists.")
-            _create_database(conn, restore_db, username)
-            created = True
-    finally:
-        engine.dispose()
-
-    cmd = [
-        settings.pg_restore_path,
-        "--format=custom",
-        "--no-owner",
-        "--no-privileges",
-        "--dbname",
-        restore_db,
-        str(backup_path),
-    ]
-    if host:
-        cmd.extend(["--host", host])
-    if port:
-        cmd.extend(["--port", str(port)])
-    if username:
-        cmd.extend(["--username", username])
-
-    result = subprocess.run(
-        cmd,
-        env=_pg_env(password),
-        check=False,
-        capture_output=True,
-        text=True,
+    return restore_dump_file(
+        paths.root / filename,
+        restored_from=filename,
+        force_disconnect=force_disconnect,
+        checkpoint_label=checkpoint_label
+        or f"Manual restore checkpoint for {filename}",
     )
-    if result.returncode != 0:
-        stderr = result.stderr.strip() or "pg_restore failed"
-        if created:
-            cleanup_engine = _admin_engine()
-            try:
-                with cleanup_engine.connect() as conn:
-                    _terminate_connections(conn, [restore_db])
-                    _drop_database(conn, restore_db)
-            finally:
-                cleanup_engine.dispose()
-        raise RuntimeError(stderr)
-
-    swap_databases(primary_db, restore_db, force_disconnect=force_disconnect)
-    return {
-        "primary_db": primary_db,
-        "archived_db": restore_db,
-        "restored_from": filename,
-        "checkpoint_backup": checkpoint_backup,
-        "pruned": pruned,
-    }

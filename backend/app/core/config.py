@@ -59,6 +59,23 @@ class Settings:
     backup_admin_db: str = os.getenv("BACKUP_ADMIN_DB", "postgres")
     pg_dump_path: str = os.getenv("PG_DUMP_PATH", "pg_dump")
     pg_restore_path: str = os.getenv("PG_RESTORE_PATH", "pg_restore")
+    database_sync_pull_enabled: bool = (
+        os.getenv("DATABASE_SYNC_PULL_ENABLED", "false").lower() == "true"
+    )
+    database_sync_export_enabled: bool = (
+        os.getenv("DATABASE_SYNC_EXPORT_ENABLED", "false").lower() == "true"
+    )
+    database_sync_source_url: str = os.getenv(
+        "DATABASE_SYNC_SOURCE_URL",
+        "https://aplicacionph.dyndns.org/produccion",
+    ).strip()
+    database_sync_token: str | None = os.getenv("DATABASE_SYNC_TOKEN")
+    database_sync_timeout_seconds: float = float(
+        os.getenv("DATABASE_SYNC_TIMEOUT_SECONDS", "600")
+    )
+    database_sync_max_bytes: int = int(
+        os.getenv("DATABASE_SYNC_MAX_BYTES", str(2 * 1024 * 1024 * 1024))
+    )
     backup_scheduler_enabled: bool = (
         os.getenv("BACKUP_SCHEDULER_ENABLED", "true").lower() == "true"
     )

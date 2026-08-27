@@ -39,6 +39,7 @@ ALGORITHM_VERSION = 1
 SLEEP_SECONDS = 0.15
 CHUNK_DAYS = 14
 MAX_RANGE_DAYS = 365
+MAX_MANUAL_REQUEST_DAYS = CHUNK_DAYS
 
 DATE_KEYS = ["Fecha", "fecha", "Date", "date", "Dia", "dia", "Day", "day"]
 ENTRY_KEYS = [
@@ -433,7 +434,8 @@ def _compute_range(
 ) -> ShiftEstimateComputeResponse:
     if start_date > end_date:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="from_date must be before to_date"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="from_date must be before to_date",
         )
     range_days = (end_date - start_date).days + 1
     if range_days > MAX_RANGE_DAYS:
@@ -550,7 +552,9 @@ def _compute_range(
                         if state.exit and (last_exit is None or state.exit > last_exit):
                             last_exit = state.exit
 
-                    estimated_start = _build_shift_start(day) if present_count > 0 else None
+                    estimated_start = (
+                        _build_shift_start(day) if present_count > 0 else None
+                    )
                     estimated_end = (
                         last_exit - timedelta(minutes=SHIFT_END_OFFSET_MINUTES)
                         if last_exit
@@ -687,7 +691,9 @@ def update_shift_estimate_scheduler_settings(
     try:
         return shift_estimate_scheduler_service.update_settings(update)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.get("", response_model=ShiftEstimateDay)
@@ -711,18 +717,22 @@ def get_shift_estimates_for_day(
 
     estimates = list(
         db.execute(
-            select(ShiftEstimate).where(
+            select(ShiftEstimate)
+            .where(
                 ShiftEstimate.date == date_value,
                 ShiftEstimate.algorithm_version == ALGORITHM_VERSION,
-            ).order_by(ShiftEstimate.group_key)
+            )
+            .order_by(ShiftEstimate.group_key)
         ).scalars()
     )
     worker_presence_rows = list(
         db.execute(
-            select(ShiftEstimateWorkerPresence).where(
+            select(ShiftEstimateWorkerPresence)
+            .where(
                 ShiftEstimateWorkerPresence.date == date_value,
                 ShiftEstimateWorkerPresence.algorithm_version == ALGORITHM_VERSION,
-            ).order_by(
+            )
+            .order_by(
                 ShiftEstimateWorkerPresence.group_key,
                 ShiftEstimateWorkerPresence.worker_id,
             )
@@ -742,7 +752,9 @@ def get_shift_estimates_for_day(
     estimates_payload: list[ShiftEstimateRead] = []
     for item in estimates:
         payload = ShiftEstimateRead.model_validate(item)
-        payload.present_worker_ids = sorted(present_worker_ids_by_group.get(item.group_key, set()))
+        payload.present_worker_ids = sorted(
+            present_worker_ids_by_group.get(item.group_key, set())
+        )
         estimates_payload.append(payload)
 
     cached_count = len(estimates)
@@ -768,7 +780,8 @@ def get_shift_estimate_coverage(
 ) -> list[ShiftEstimateCoverageDay]:
     if from_date > to_date:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="from_date must be before to_date"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="from_date must be before to_date",
         )
     if (to_date - from_date).days + 1 > MAX_RANGE_DAYS:
         raise HTTPException(
@@ -801,4 +814,13 @@ def compute_shift_estimates(
     payload: ShiftEstimateComputeRequest,
     db: Session = Depends(get_db),
 ) -> ShiftEstimateComputeResponse:
+    range_days = (payload.to_date - payload.from_date).days + 1
+    if range_days > MAX_MANUAL_REQUEST_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Manual compute requests cannot exceed {MAX_MANUAL_REQUEST_DAYS} days; "
+                "split the range into sequential requests"
+            ),
+        )
     return compute_shift_estimate_range(db, payload.from_date, payload.to_date)

@@ -824,6 +824,11 @@ const HouseConfigurator: React.FC = () => {
     );
   }, [panelStatusFilter, panels, selectedTypeId, selectedModuleNumber]);
 
+  const sequenceSortedPanels = useMemo(
+    () => sortPanels(filteredPanels),
+    [filteredPanels]
+  );
+
   const groupedPanels = useMemo(() => {
     const groups = PANEL_GROUPS.map((name) => ({ name, items: [] as PanelDefinition[] }));
     const groupIndex = new Map<string, number>();
@@ -3064,7 +3069,7 @@ const HouseConfigurator: React.FC = () => {
                             Definicion de tarea
                           </span>
                         </th>
-                        {filteredPanels.map((panel) => (
+                        {sequenceSortedPanels.map((panel) => (
                           <th
                             key={panel.id}
                             className="min-w-[160px] w-40 border-b border-black/5 bg-slate-50/95 px-4 py-4 text-left backdrop-blur-sm"
@@ -3103,7 +3108,7 @@ const HouseConfigurator: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          {filteredPanels.map((panel) => {
+                          {sequenceSortedPanels.map((panel) => {
                             const state = matrixDraft[panel.id];
                             const applies = state?.applicable_task_ids.has(task.id) ?? true;
                             const duration = state?.task_durations[task.id] ?? '';

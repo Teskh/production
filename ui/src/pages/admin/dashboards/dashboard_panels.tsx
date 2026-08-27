@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, Eye, EyeOff, Filter, RefreshCcw } from 'lucide-react';
+import { Download, Eye, EyeOff, Filter, RefreshCcw, X } from 'lucide-react';
 import { useAdminHeader } from '../../../layouts/AdminLayoutContext';
 import { formatMinutesWithUnit } from '../../../utils/timeUtils';
 
@@ -57,6 +57,37 @@ type PauseSummaryResponse = {
   pause_reasons?: PauseSummaryReason[] | null;
 };
 
+type PauseSummaryContribution = {
+  pause_id: number;
+  task_instance_id: number;
+  task_definition_id?: number | null;
+  task_name: string;
+  station_id: number;
+  station_name: string;
+  project_name?: string | null;
+  house_identifier?: string | null;
+  module_number?: number | null;
+  panel_code?: string | null;
+  paused_at: string;
+  resumed_at: string;
+  duration_minutes: number;
+};
+
+type PauseSummaryDetailsResponse = {
+  from_date?: string | null;
+  to_date?: string | null;
+  reason: string;
+  station_id?: number | null;
+  total_pause_minutes: number;
+  occurrence_count: number;
+  contributions: PauseSummaryContribution[];
+};
+
+type PauseDetailSelection = {
+  reason: string;
+  stationName: string;
+};
+
 const DEFAULT_MIN_MULTIPLIER = 0.5;
 const DEFAULT_MAX_MULTIPLIER = 2.0;
 
@@ -91,6 +122,13 @@ const formatDuration = (totalMinutes: number | null | undefined) => {
   }
   return `${mins}m`;
 };
+
+const dateTimeFormatter = new Intl.DateTimeFormat('es-CL', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+
+const formatDateTime = (value: string) => dateTimeFormatter.format(new Date(value));
 
 const formatPanelLengthMeters = (value: number | null | undefined) => {
   if (value == null) return '-';
@@ -178,6 +216,11 @@ const DashboardPanels: React.FC = () => {
   const [pauseLoading, setPauseLoading] = useState(false);
   const [pauseError, setPauseError] = useState('');
   const [pauseStationData, setPauseStationData] = useState<Record<string, PauseSummaryResponse>>({});
+
+  const [pauseDetailSelection, setPauseDetailSelection] = useState<PauseDetailSelection | null>(null);
+  const [pauseDetails, setPauseDetails] = useState<PauseSummaryDetailsResponse | null>(null);
+  const [pauseDetailsLoading, setPauseDetailsLoading] = useState(false);
+  const [pauseDetailsError, setPauseDetailsError] = useState('');
 
   const effectiveDateRange = useMemo(() => {
     if (fromDate && toDate && fromDate > toDate) {
@@ -315,6 +358,10 @@ const DashboardPanels: React.FC = () => {
   const fetchPauseData = async () => {
     setPauseLoading(true);
     setPauseError('');
+    setPauseDetailSelection(null);
+    setPauseDetails(null);
+    setPauseDetailsError('');
+    setPauseDetailsLoading(false);
     try {
       const params = new URLSearchParams();
       if (effectiveDateRange.from) params.set('from_date', effectiveDateRange.from);
@@ -367,6 +414,41 @@ const DashboardPanels: React.FC = () => {
     fetchPauseData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveDateRange.from, effectiveDateRange.to, selectedHouseTypeId, panelStations]);
+
+  const openPauseDetails = async (reason: string, station?: Station) => {
+    setPauseDetailSelection({
+      reason,
+      stationName: station ? stationHeaderName(String(station.id)) : 'Todas las estaciones',
+    });
+    setPauseDetails(null);
+    setPauseDetailsError('');
+    setPauseDetailsLoading(true);
+
+    try {
+      const params = new URLSearchParams();
+      params.set('reason', reason);
+      if (effectiveDateRange.from) params.set('from_date', effectiveDateRange.from);
+      if (effectiveDateRange.to) params.set('to_date', effectiveDateRange.to);
+      if (selectedHouseTypeId) params.set('house_type_id', selectedHouseTypeId);
+      if (station) params.set('station_id', String(station.id));
+      const result = await apiRequest<PauseSummaryDetailsResponse>(
+        `/api/pause-summary/details?${params.toString()}`
+      );
+      setPauseDetails(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error cargando el detalle de pausas';
+      setPauseDetailsError(message);
+    } finally {
+      setPauseDetailsLoading(false);
+    }
+  };
+
+  const closePauseDetails = () => {
+    setPauseDetailSelection(null);
+    setPauseDetails(null);
+    setPauseDetailsError('');
+    setPauseDetailsLoading(false);
+  };
 
   const allRows = useMemo(() => {
     if (!tableData?.rows) return [];
@@ -884,6 +966,9 @@ const DashboardPanels: React.FC = () => {
               Periodo: {pauseData.from_date || '-'} al {pauseData.to_date || '-'} | Total pausas:{' '}
               {formatDuration(pauseData.total_pause_minutes ?? null)}
             </div>
+            <div className="text-xs text-[var(--ink-muted)]">
+              Haz clic en un motivo o una cifra para ver las tareas que componen ese total.
+            </div>
             <div className="overflow-x-auto border rounded-xl border-black/5 bg-white/50">
               <table className="w-full border-collapse text-[13px]">
                 <thead>
@@ -924,21 +1009,68 @@ const DashboardPanels: React.FC = () => {
                   )}
                   {pauseData.pause_reasons?.map((pause, idx) => (
                     <tr key={`${pause.reason}-${idx}`} className="border-b border-black/5 hover:bg-black/[0.02] transition-colors">
-                      <td className="px-3 py-1.5 text-[var(--ink)]">{pause.reason}</td>
-                      <td className="px-3 py-1.5 text-[var(--ink)] tabular-nums">
-                        {formatDuration(pause.total_duration_minutes)}
+                      <td className="p-0 text-[var(--ink)]">
+                        <button
+                          type="button"
+                          className="w-full px-3 py-1.5 text-left transition hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                          onClick={() => void openPauseDetails(pause.reason)}
+                          title="Ver tareas que componen esta pausa"
+                        >
+                          {pause.reason}
+                        </button>
                       </td>
-                      <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums">{pause.occurrence_count}</td>
+                      <td className="p-0 text-[var(--ink)] tabular-nums">
+                        <button
+                          type="button"
+                          className="w-full px-3 py-1.5 text-left transition hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                          onClick={() => void openPauseDetails(pause.reason)}
+                          title="Ver tareas que componen este tiempo"
+                        >
+                          {formatDuration(pause.total_duration_minutes)}
+                        </button>
+                      </td>
+                      <td className="p-0 text-center text-[var(--ink)] tabular-nums">
+                        <button
+                          type="button"
+                          className="w-full px-3 py-1.5 text-center transition hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                          onClick={() => void openPauseDetails(pause.reason)}
+                          title="Ver las ocurrencias de esta pausa"
+                        >
+                          {pause.occurrence_count}
+                        </button>
+                      </td>
                       {pauseStationsWithData.map((station) => {
                         const stationId = String(station.id);
                         const stationReason = pauseReasonsByStation[stationId]?.[pause.reason];
                         return (
                           <React.Fragment key={stationId}>
-                            <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
-                              {stationReason ? formatDuration(stationReason.total_duration_minutes) : '-'}
+                            <td className="p-0 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
+                              {stationReason ? (
+                                <button
+                                  type="button"
+                                  className="w-full px-3 py-1.5 text-center transition hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                                  onClick={() => void openPauseDetails(pause.reason, station)}
+                                  title={`Ver tareas en ${stationHeaderName(stationId)}`}
+                                >
+                                  {formatDuration(stationReason.total_duration_minutes)}
+                                </button>
+                              ) : (
+                                '-'
+                              )}
                             </td>
-                            <td className="px-3 py-1.5 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
-                              {stationReason ? stationReason.occurrence_count : '-'}
+                            <td className="p-0 text-center text-[var(--ink)] tabular-nums border-l border-black/[0.03]">
+                              {stationReason ? (
+                                <button
+                                  type="button"
+                                  className="w-full px-3 py-1.5 text-center transition hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+                                  onClick={() => void openPauseDetails(pause.reason, station)}
+                                  title={`Ver ocurrencias en ${stationHeaderName(stationId)}`}
+                                >
+                                  {stationReason.occurrence_count}
+                                </button>
+                              ) : (
+                                '-'
+                              )}
                             </td>
                           </React.Fragment>
                         );
@@ -957,6 +1089,128 @@ const DashboardPanels: React.FC = () => {
           </div>
         )}
       </div>
+
+      {pauseDetailSelection && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pause-detail-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePauseDetails();
+          }}
+        >
+          <div className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-black/10 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-black/10 px-5 py-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-[var(--ink-muted)]">
+                  Detalle de pausas
+                </p>
+                <h2 id="pause-detail-title" className="mt-1 text-xl font-semibold text-[var(--ink)]">
+                  {pauseDetailSelection.reason}
+                </h2>
+                <p className="mt-1 text-sm text-[var(--ink-muted)]">
+                  {pauseDetailSelection.stationName} · {effectiveDateRange.from || '-'} al{' '}
+                  {effectiveDateRange.to || '-'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePauseDetails}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/10 text-[var(--ink-muted)] transition hover:border-black/20 hover:text-[var(--ink)]"
+                aria-label="Cerrar detalle de pausas"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto p-5">
+              {pauseDetailsLoading && (
+                <div className="rounded-xl border border-black/5 bg-black/[0.02] px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                  Cargando tareas que componen la pausa...
+                </div>
+              )}
+
+              {pauseDetailsError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {pauseDetailsError}
+                </div>
+              )}
+
+              {!pauseDetailsLoading && pauseDetails && (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    <span className="rounded-full bg-black/[0.04] px-3 py-1 text-[var(--ink)]">
+                      Tiempo: <strong>{formatDuration(pauseDetails.total_pause_minutes)}</strong>
+                    </span>
+                    <span className="rounded-full bg-black/[0.04] px-3 py-1 text-[var(--ink)]">
+                      Ocurrencias: <strong>{pauseDetails.occurrence_count}</strong>
+                    </span>
+                  </div>
+
+                  {pauseDetails.contributions.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-black/10 px-4 py-8 text-center text-sm text-[var(--ink-muted)]">
+                      No se encontraron tareas para esta celda con los filtros actuales.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-black/10">
+                      <table className="w-full min-w-[980px] border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b border-black/10 bg-black/[0.02] text-left text-[11px] font-bold uppercase tracking-wider text-[var(--ink-muted)]">
+                            <th className="px-3 py-2">Tarea</th>
+                            <th className="px-3 py-2">Proyecto / casa</th>
+                            <th className="px-3 py-2">Módulo / panel</th>
+                            <th className="px-3 py-2">Estación</th>
+                            <th className="px-3 py-2">Inicio</th>
+                            <th className="px-3 py-2">Fin</th>
+                            <th className="px-3 py-2 text-right">Duración</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pauseDetails.contributions.map((contribution) => (
+                            <tr
+                              key={contribution.pause_id}
+                              className="border-b border-black/5 last:border-b-0 hover:bg-black/[0.02]"
+                            >
+                              <td className="px-3 py-2 text-[var(--ink)]">
+                                <div className="font-medium">{contribution.task_name}</div>
+                                <div className="text-[11px] text-[var(--ink-muted)]">
+                                  Tarea #{contribution.task_instance_id}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-[var(--ink)]">
+                                <div>{contribution.project_name || '-'}</div>
+                                {contribution.house_identifier && (
+                                  <div className="text-[11px] text-[var(--ink-muted)]">
+                                    {contribution.house_identifier}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-[var(--ink)]">
+                                M{contribution.module_number ?? '-'} · {contribution.panel_code || '-'}
+                              </td>
+                              <td className="px-3 py-2 text-[var(--ink)]">{contribution.station_name}</td>
+                              <td className="whitespace-nowrap px-3 py-2 text-[var(--ink)]">
+                                {formatDateTime(contribution.paused_at)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-[var(--ink)]">
+                                {formatDateTime(contribution.resumed_at)}
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2 text-right font-semibold tabular-nums text-[var(--ink)]">
+                                {formatDuration(contribution.duration_minutes)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

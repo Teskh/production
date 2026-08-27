@@ -351,7 +351,7 @@ const DashboardStations: React.FC = () => {
           params.set('to_date', rangeEnd);
         }
         params.set('scope', scope);
-        params.set('limit', '500');
+        params.set('limit', '2000');
         params.set('sort_by', 'started_at');
         params.set('sort_order', 'desc');
 

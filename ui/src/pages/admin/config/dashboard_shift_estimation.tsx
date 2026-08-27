@@ -13,6 +13,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 const SHIFT_START_HOUR = 8;
 const SHIFT_START_MINUTE = 20;
+const MANUAL_COMPUTE_CHUNK_DAYS = 14;
+const MANUAL_COMPUTE_REQUEST_GAP_MS = 750;
 
 const DATE_STORAGE_KEY = 'dashboard.shiftEstimation.date';
 
@@ -34,6 +36,39 @@ const isoDaysAgo = (days: number) => {
   now.setDate(now.getDate() - days);
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 };
+
+const parseIsoDateUtc = (value: string) => {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+};
+
+const formatIsoDateUtc = (value: Date) =>
+  `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}`;
+
+const buildComputeChunks = (fromDate: string, toDate: string) => {
+  if (!fromDate || !toDate || fromDate > toDate) return [];
+  const chunks: Array<{ fromDate: string; toDate: string }> = [];
+  let cursor = parseIsoDateUtc(fromDate);
+  const end = parseIsoDateUtc(toDate);
+
+  while (cursor <= end) {
+    const chunkStart = new Date(cursor);
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + MANUAL_COMPUTE_CHUNK_DAYS - 1);
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+    chunks.push({
+      fromDate: formatIsoDateUtc(chunkStart),
+      toDate: formatIsoDateUtc(chunkEnd),
+    });
+    cursor = new Date(chunkEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return chunks;
+};
+
+const wait = (milliseconds: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
 const clampDateToYesterday = (value: string) => {
   if (!value) return yesterdayStr();
@@ -328,23 +363,62 @@ const DashboardShiftEstimation: React.FC = () => {
   const computeRange = useCallback(
     async (fromDate: string, toDate: string, silent = false) => {
       if (!fromDate || !toDate) return null;
+      const chunks = buildComputeChunks(fromDate, toDate);
+      if (chunks.length === 0) {
+        if (!silent) setComputeMessage('La fecha inicial debe ser anterior a la fecha final.');
+        return null;
+      }
       setLoadingCompute(true);
       if (!silent) setComputeMessage('');
+      const aggregate: ComputeResponse = {
+        from_date: fromDate,
+        to_date: toDate,
+        processed_days: 0,
+        computed_count: 0,
+        computed_worker_rows: 0,
+        skipped_existing: 0,
+        excluded_days: 0,
+        worker_errors: 0,
+      };
       try {
-        const response = await apiRequest<ComputeResponse>('/api/shift-estimates/compute', {
-          method: 'POST',
-          body: JSON.stringify({ from_date: fromDate, to_date: toDate }),
-        });
+        for (let index = 0; index < chunks.length; index += 1) {
+          const chunk = chunks[index];
+          if (!silent) {
+            setComputeMessage(
+              `Calculando bloque ${index + 1} de ${chunks.length}: ${chunk.fromDate} al ${chunk.toDate}...`
+            );
+          }
+          const response = await apiRequest<ComputeResponse>('/api/shift-estimates/compute', {
+            method: 'POST',
+            body: JSON.stringify({
+              from_date: chunk.fromDate,
+              to_date: chunk.toDate,
+            }),
+          });
+          aggregate.processed_days += response.processed_days;
+          aggregate.computed_count += response.computed_count;
+          aggregate.computed_worker_rows += response.computed_worker_rows;
+          aggregate.skipped_existing += response.skipped_existing;
+          aggregate.excluded_days += response.excluded_days;
+          aggregate.worker_errors += response.worker_errors;
+
+          if (index < chunks.length - 1) {
+            await wait(MANUAL_COMPUTE_REQUEST_GAP_MS);
+          }
+        }
         if (!silent) {
           setComputeMessage(
-            `Cache actualizado: +${response.computed_count} grupos y +${response.computed_worker_rows} filas worker (${response.processed_days} dias).`
+            `Cache actualizado en ${chunks.length} bloque${chunks.length === 1 ? '' : 's'}: ` +
+              `+${aggregate.computed_count} grupos y +${aggregate.computed_worker_rows} filas worker ` +
+              `(${aggregate.processed_days} dias, ${aggregate.worker_errors} errores de marcaje).`
           );
         }
-        return response;
+        return aggregate;
       } catch (err) {
         if (!silent) {
           setComputeMessage(
-            err instanceof Error ? err.message : 'No se pudo calcular el rango solicitado.'
+            `El calculo se detuvo; los bloques terminados quedaron guardados. ` +
+              (err instanceof Error ? err.message : 'No se pudo calcular el rango solicitado.')
           );
         }
         return null;
@@ -676,7 +750,8 @@ const DashboardShiftEstimation: React.FC = () => {
             </button>
           </div>
           <div className="text-xs text-[var(--ink-muted)]">
-            {computeMessage || 'Calcula solo dias anteriores a hoy.'}
+            {computeMessage ||
+              `Calcula solo dias anteriores a hoy, en bloques secuenciales de hasta ${MANUAL_COMPUTE_CHUNK_DAYS} dias.`}
           </div>
         </div>
 
