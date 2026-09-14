@@ -22,7 +22,6 @@ from app.models.admin import AdminDashboardPermission, AdminUser
 from app.models.enums import (
     AdminRole,
     PanelUnitStatus,
-    QCCheckKind,
     QCCheckOrigin,
     QCCheckStatus,
     QCExecutionOutcome,
@@ -1462,7 +1461,6 @@ def manual_check_options(
     definitions = list(
         db.execute(
             select(QCCheckDefinition)
-            .where(QCCheckDefinition.kind == QCCheckKind.MANUAL_TEMPLATE)
             .where(QCCheckDefinition.active.is_(True))
             .where(QCCheckDefinition.archived_at.is_(None))
             .order_by(QCCheckDefinition.name, QCCheckDefinition.id)
