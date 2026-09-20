@@ -210,12 +210,13 @@ ZEBRA_PRINTER_PORT=9100
 ZEBRA_PRINTER_TIMEOUT_SECONDS=3
 ```
 
-Restart the backend after changing these values. The page selects the active production
-task, then the most recent task activity, and finally the first non-completed queue item as
-a fallback. It previews the production number, project, module, and conditional panel code
-in landscape orientation. Until `ZEBRA_PRINTER_HOST` is set, layout configuration and the
-preview remain available while status and sample-print actions report that the printer is
-not configured.
+Restart the backend after changing these values. Operators logged into Framing use the
+printer icon for their selected panel. The dialog previews description, project, model,
+module, Correlativo, panel area, date, and process before sending the label. Missing area
+or house-number data must be corrected in the catalogue or work order. The admin Etiquetas page previews the panel with
+the most recent task activity, with a panel-unit fallback when no activity exists.
+Until `ZEBRA_PRINTER_HOST` is set, preview remains available and print actions report that
+the printer is not configured. See `docs/PANEL_LABELS.md` for field sources and access rules.
 
 ## Maintenance example
 

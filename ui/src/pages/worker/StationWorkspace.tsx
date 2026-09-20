@@ -8,10 +8,13 @@ import {
   MessageSquare,
   Pause,
   Play,
+  Printer,
   Users,
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { PanelLabelDialog } from '../../components/PanelLabel';
+import type { PanelLabelTarget } from '../../components/PanelLabel';
 import { useNavigate } from 'react-router-dom';
 import type { StationContext } from '../../utils/stationContext';
 import {
@@ -366,6 +369,7 @@ const StationWorkspace: React.FC = () => {
   const [stationContext, setStationContext] = useState<StationContext | null>(null);
   const [snapshot, setSnapshot] = useState<StationSnapshot | null>(null);
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
+  const [labelTarget, setLabelTarget] = useState<PanelLabelTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2530,6 +2534,12 @@ const StationWorkspace: React.FC = () => {
                     </div>
                   )}
                 </div>
+                {worker && selectedStation?.role === 'Panels' && selectedStation.name.trim().toLowerCase() === 'framing' && selectedWorkItem.panel_definition_id && (
+                  <button aria-label="Imprimir etiqueta" title="Imprimir etiqueta" className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-700 text-white hover:bg-blue-800"
+                    onClick={() => setLabelTarget({ work_unit_id: selectedWorkItem.work_unit_id, panel_definition_id: selectedWorkItem.panel_definition_id! })}>
+                    <Printer size={24} aria-hidden="true" />
+                  </button>
+                )}
                 {!isMagazineStation && selectedWorkItem.other_tasks.length > 0 && (
                   <button
                     onClick={() => setActiveModal('other_tasks')}
@@ -2718,6 +2728,7 @@ const StationWorkspace: React.FC = () => {
         </div>
       )}
 
+      {labelTarget && <PanelLabelDialog target={labelTarget} onClose={() => setLabelTarget(null)} />}
       {activeModal === 'pause' && selectedTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40" onClick={closeModal} />

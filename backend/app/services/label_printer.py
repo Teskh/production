@@ -385,8 +385,12 @@ def send_test_label(
         if isinstance(payload, LabelSettings)
         else LabelSettings.model_validate(payload)
     )
-    host, port, timeout = _printer_target()
     zpl = build_test_zpl(label_settings, production)
+    return send_zpl(zpl, label_settings.copies)
+
+
+def send_zpl(zpl: str, copies: int) -> dict[str, Any]:
+    host, port, timeout = _printer_target()
     encoded = zpl.encode("utf-8")
     try:
         with socket.create_connection((host, port), timeout=timeout) as connection:
@@ -394,11 +398,12 @@ def send_test_label(
             connection.sendall(encoded)
     except OSError as exc:
         raise PrinterConnectionError(
-            f"No se pudo enviar la muestra a {host}:{port}: {exc}"
+            "No se pudo confirmar el envío. Revisa la impresora antes de reintentar "
+            f"para evitar duplicados: {exc}"
         ) from exc
     return {
         "sent": True,
-        "message": f"Etiqueta de prueba enviada a {host}:{port}.",
+        "message": "Etiqueta enviada a la impresora. Verifica la salida impresa.",
         "bytes_sent": len(encoded),
-        "copies": label_settings.copies,
+        "copies": copies,
     }
