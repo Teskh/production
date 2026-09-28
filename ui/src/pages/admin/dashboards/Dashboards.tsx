@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   BarChart3,
   Camera,
+  Calculator,
   ClipboardList,
   Clock,
   Eye,
@@ -45,6 +46,15 @@ type DashboardPermissionUpdate = {
 };
 
 const dashboards: DashboardCard[] = [
+  {
+    id: 'project-costs',
+    name: 'Gastos generales',
+    description: 'Costos por proyecto en UF/m², ritmo de producción y dotación.',
+    path: '/admin/dashboards/project-costs',
+    status: 'ready',
+    tags: ['Costos', 'Proyectos', 'Dotación'],
+    icon: Calculator,
+  },
   {
     id: 'plant-view',
     name: 'Vista de planta',

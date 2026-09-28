@@ -25,6 +25,7 @@ from app.api.routes import (
     pause_reasons,
     pause_summary,
     production_queue,
+    project_costs,
     qc_config,
     qc_complaints,
     qc_runtime,
@@ -43,6 +44,7 @@ from app.api.routes import (
 )
 
 api_router = APIRouter()
+api_router.include_router(project_costs.router, prefix="/project-costs", tags=["project-costs"])
 
 api_router.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
 api_router.include_router(

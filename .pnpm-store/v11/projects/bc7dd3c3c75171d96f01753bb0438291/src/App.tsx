@@ -78,6 +78,9 @@ const DashboardAssistance = lazyRoute(
 const DashboardLineAttendanceThroughput = lazyRoute(
   () => import('./pages/admin/dashboards/dashboard_line_attendance_throughput'),
 );
+const DashboardProjectCosts = lazyRoute(
+  () => import('./pages/admin/dashboards/dashboard_project_costs'),
+);
 const DashboardPlantView = lazyRoute(
   () => import('./pages/admin/dashboards/dashboard_plant_view'),
 );
@@ -319,6 +322,10 @@ function App() {
           <Route
             path="dashboards/performance"
             element={<Navigate to="/admin/dashboards" replace />}
+          />
+          <Route
+            path="dashboards/project-costs"
+            element={<DashboardPermissionRoute dashboardId="project-costs" element={<DashboardProjectCosts />} />}
           />
           <Route
             path="dashboards/line-attendance-throughput"
