@@ -452,7 +452,9 @@ def list_active_tasks(
     work_units = {
         unit.id: unit
         for unit in db.execute(
-            select(WorkUnit).where(WorkUnit.id.in_(work_unit_ids))
+            select(WorkUnit)
+            .options(selectinload(WorkUnit.work_order))
+            .where(WorkUnit.id.in_(work_unit_ids))
         ).scalars()
     }
     panel_units = {
@@ -482,6 +484,7 @@ def list_active_tasks(
         current_station_id = panel_unit.current_station_id if panel_unit else None
         if current_station_id is None and work_unit:
             current_station_id = work_unit.current_station_id
+        work_order = work_unit.work_order if work_unit else None
         payloads.append(
             WorkerActiveTaskRead(
                 task_instance_id=instance.id,
@@ -495,6 +498,8 @@ def list_active_tasks(
                 work_unit_id=instance.work_unit_id,
                 panel_unit_id=instance.panel_unit_id,
                 module_number=work_unit.module_number if work_unit else None,
+                project_name=work_order.project_name if work_order else None,
+                house_identifier=work_order.house_identifier if work_order else None,
                 panel_code=(
                     panel_unit.panel_definition.panel_code
                     if panel_unit and panel_unit.panel_definition

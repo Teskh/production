@@ -147,6 +147,8 @@ class WorkerActiveTaskRead(BaseModel):
     work_unit_id: int
     panel_unit_id: int | None = None
     module_number: int | None = None
+    project_name: str | None = None
+    house_identifier: str | None = None
     panel_code: str | None = None
     status: TaskStatus
     started_at: datetime | None = None
