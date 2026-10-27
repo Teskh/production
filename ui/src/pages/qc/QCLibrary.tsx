@@ -15,12 +15,12 @@ import {
 } from 'lucide-react';
 import { useOptionalQCSession } from '../../layouts/QCLayoutContext';
 import { formatDateTimeShort } from '../../utils/timeUtils';
+import { formatVideoDuration, readVideoDuration, validateVideoTotal } from '../../utils/qcEvidence';
 import './QCLibrary.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const PAGE_SIZE = 50;
 // const CHECK_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000;
-const MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const QC_ACTION_ROLES = new Set(['Calidad', 'QC']);
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -116,6 +116,7 @@ type QCEvidenceSummary = {
   media_asset_id: number;
   uri: string;
   mime_type: string | null;
+  duration_seconds: number | null;
   captured_at: string;
 };
 
@@ -647,6 +648,7 @@ const QCLibrary: React.FC = () => {
   const [uploadingEvidenceExecutionIds, setUploadingEvidenceExecutionIds] = useState<Set<number>>(
     new Set()
   );
+  const uploadingEvidenceRef = useRef(new Set<number>());
 
   const [mediaViewer, setMediaViewer] = useState<{
     uri: string;
@@ -1376,6 +1378,7 @@ const QCLibrary: React.FC = () => {
 
   const handleAddEvidence = useCallback(
     async (executionId: number, files: File[]) => {
+      if (uploadingEvidenceRef.current.has(executionId)) return;
       if (evidenceManageBlockedReason) {
         setCheckDeleteError(evidenceManageBlockedReason);
         return;
@@ -1387,21 +1390,26 @@ const QCLibrary: React.FC = () => {
         setCheckDeleteError('Seleccione imagenes o videos para adjuntar como evidencia.');
         return;
       }
-      const oversized = acceptedFiles.find((file) => file.size > MAX_QC_EVIDENCE_BYTES);
-      if (oversized) {
-        setCheckDeleteError(
-          `"${oversized.name}" excede el limite de ${MAX_QC_EVIDENCE_BYTES / (1024 * 1024)} MB.`
-        );
-        return;
-      }
-
+      uploadingEvidenceRef.current.add(executionId);
       setUploadingEvidenceExecutionIds((prev) => {
         const next = new Set(prev);
         next.add(executionId);
         return next;
       });
       setCheckDeleteError(null);
+      let uploadedCount = 0;
       try {
+        const newVideos = acceptedFiles.filter((file) => file.type.startsWith('video/'));
+        if (newVideos.length) {
+          const existingVideos = (checkDetail?.evidence ?? []).filter(
+            (item) => item.execution_id === executionId && item.mime_type?.startsWith('video/')
+          );
+          const durations = await Promise.all([
+            ...existingVideos.map((item) => item.duration_seconds ?? readVideoDuration(resolveMediaUri(item.uri))),
+            ...newVideos.map(readVideoDuration),
+          ]);
+          validateVideoTotal(durations);
+        }
         for (const file of acceptedFiles) {
           const formData = new FormData();
           formData.append('file', file);
@@ -1414,14 +1422,18 @@ const QCLibrary: React.FC = () => {
             const text = await response.text();
             throw new Error(parseApiErrorMessage(text) || 'No se pudo agregar la evidencia.');
           }
+          uploadedCount += 1;
         }
-        setCheckRefreshToken((prev) => prev + 1);
-        setDetailRefreshToken((prev) => prev + 1);
       } catch (error) {
         const message =
           error instanceof Error ? error.message : 'No se pudo agregar la evidencia.';
         setCheckDeleteError(message);
       } finally {
+        uploadingEvidenceRef.current.delete(executionId);
+        if (uploadedCount > 0) {
+          setCheckRefreshToken((prev) => prev + 1);
+          setDetailRefreshToken((prev) => prev + 1);
+        }
         setUploadingEvidenceExecutionIds((prev) => {
           const next = new Set(prev);
           next.delete(executionId);
@@ -1429,7 +1441,7 @@ const QCLibrary: React.FC = () => {
         });
       }
     },
-    [evidenceManageBlockedReason]
+    [evidenceManageBlockedReason, checkDetail]
   );
 
   const openMediaForEvidence = useCallback((item: QCEvidenceSummary) => {
@@ -2181,6 +2193,11 @@ const QCLibrary: React.FC = () => {
                                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                                   <div className="qcl-mono text-[10.5px] font-semibold uppercase tracking-[0.08em]">
                                     Evidencia ({evidence.length})
+                                    <span className="ml-2 normal-case font-normal">
+                                      Videos {evidence.some((item) => item.mime_type?.startsWith('video/') && item.duration_seconds == null)
+                                        ? 'max. 2:30 en total'
+                                        : `${formatVideoDuration(evidence.reduce((total, item) => total + (item.duration_seconds ?? 0), 0))} / 2:30`}
+                                    </span>
                                   </div>
                                   <label
                                     className={clsx(

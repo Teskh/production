@@ -227,6 +227,8 @@ type WorkerActiveTask = {
   work_unit_id: number;
   panel_unit_id: number | null;
   module_number: number | null;
+  project_name: string | null;
+  house_identifier: string | null;
   panel_code: string | null;
   status: string;
   started_at: string | null;
@@ -511,6 +513,8 @@ const StationWorkspace: React.FC = () => {
             autoFocusTargetStation.line_type ? ` - Linea ${autoFocusTargetStation.line_type}` : ''
           }`
         : null,
+      projectLabel: autoFocusTarget.project_name,
+      houseLabel: autoFocusTarget.house_identifier,
       moduleLabel:
         autoFocusTarget.module_number !== null ? `Modulo ${autoFocusTarget.module_number}` : null,
       panelLabel: autoFocusTarget.panel_code ? `Panel ${autoFocusTarget.panel_code}` : null,
@@ -3530,12 +3534,22 @@ const StationWorkspace: React.FC = () => {
                     <h4 className="mt-1 text-2xl font-bold text-gray-900 truncate">
                       {activeTaskProxy.name}
                     </h4>
+                    {autoFocusNoticeDetails?.projectLabel && (
+                      <p className="mt-1 text-sm font-medium text-gray-600 truncate">
+                        {autoFocusNoticeDetails.projectLabel}
+                      </p>
+                    )}
 
                     {autoFocusNoticeDetails && (
                       <div className="mt-4 flex flex-wrap gap-2">
                         {autoFocusNoticeDetails.stationLabel && (
                           <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-bold text-gray-900 shadow-sm">
                             {autoFocusNoticeDetails.stationLabel}
+                          </span>
+                        )}
+                        {autoFocusNoticeDetails.houseLabel && (
+                          <span className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-sm font-bold text-indigo-700 shadow-sm">
+                            Casa {autoFocusNoticeDetails.houseLabel}
                           </span>
                         )}
                         {autoFocusNoticeDetails.moduleLabel && (

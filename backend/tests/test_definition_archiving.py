@@ -16,6 +16,7 @@ from app.api.routes.panel_definitions import (
     delete_panel_definition,
     restore_panel_definition,
 )
+from app.api.routes.station_panels_finished import _load_panel_task_applicability
 from app.api.routes.task_definitions import (
     _task_usage,
     archive_task_definition,
@@ -115,6 +116,18 @@ class DefinitionArchivingTests(unittest.TestCase):
         archive_task_definition(task.id, task_db, self.admin)  # type: ignore[arg-type]
         archive_task_definition(task.id, task_db, self.admin)  # type: ignore[arg-type]
         self.assertEqual(task_db.commit_count, 1)
+
+    def test_station_panels_finished_ignores_archived_tasks(self) -> None:
+        statements: list[object] = []
+
+        class CapturingDb:
+            def execute(self, statement: object) -> SimpleNamespace:
+                statements.append(statement)
+                return SimpleNamespace(scalars=lambda: [])
+
+        _load_panel_task_applicability(CapturingDb())  # type: ignore[arg-type]
+
+        self.assertIn("archived_at IS NULL", str(statements[0]))
 
 
 if __name__ == "__main__":

@@ -231,6 +231,7 @@ class QCEvidenceSummary(BaseModel):
     media_asset_id: int
     uri: str
     mime_type: str | None = None
+    duration_seconds: float | None = None
     captured_at: datetime
 
 
@@ -240,6 +241,7 @@ class QCEvidenceUploadRead(BaseModel):
     uri: str
     mime_type: str
     size_bytes: int
+    duration_seconds: float | None = None
     created_at: datetime
 
 

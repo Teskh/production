@@ -5,6 +5,7 @@ description = "Production planning, worker execution, and quality control applic
 requires-python = ">=3.11"
 dependencies = [
   "alembic",
+  "av>=18.1.0",
   "fastapi",
   "httpx",
   "openpyxl",

@@ -125,6 +125,9 @@ type PanelDraft = {
 
 type MatrixPanelState = {
   applicable_task_ids: Set<number>;
+  // Resolved applicability shown when the matrix opened. It can differ from the
+  // panel's applicable_task_ids metadata, so saves must compare against it too.
+  initial_applicable_task_ids: Set<number>;
   task_durations: Record<number, string>;
 };
 
@@ -1588,8 +1591,10 @@ const HouseConfigurator: React.FC = () => {
   const handleOpenMatrix = () => {
     const nextDraft: Record<number, MatrixPanelState> = {};
     filteredPanels.forEach((panel) => {
+      const resolved = resolvePanelTaskSet(panel, panelTasks, applicabilityByTask);
       nextDraft[panel.id] = {
-        applicable_task_ids: resolvePanelTaskSet(panel, panelTasks, applicabilityByTask),
+        applicable_task_ids: resolved,
+        initial_applicable_task_ids: new Set(resolved),
         task_durations: buildDurationsMap(panel, panelTasks),
       };
     });
@@ -1672,7 +1677,12 @@ const HouseConfigurator: React.FC = () => {
             panel.task_durations_json ?? null,
             payload.task_durations_json
           );
-          if (!applicableChanged && !durationChanged) {
+          const displayedChanged =
+            state.applicable_task_ids.size !== state.initial_applicable_task_ids.size ||
+            [...state.applicable_task_ids].some(
+              (taskId) => !state.initial_applicable_task_ids.has(taskId)
+            );
+          if (!applicableChanged && !durationChanged && !displayedChanged) {
             return panel;
           }
 
@@ -2958,7 +2968,44 @@ const HouseConfigurator: React.FC = () => {
                   </p>
                 )}
                 {panelTasks.length > 0 && (
-                  <div className="mt-3 max-h-64 space-y-2 overflow-auto pr-2 text-sm">
+                  <label className="mt-3 flex items-center gap-2 border-b border-black/5 pb-2 text-sm font-medium text-[var(--ink)]">
+                    <input
+                      type="checkbox"
+                      checked={panelTasks.every((task) =>
+                        panelDraft.applicable_task_ids.has(task.id)
+                      )}
+                      ref={(input) => {
+                        if (input) {
+                          const selectedCount = panelTasks.filter((task) =>
+                            panelDraft.applicable_task_ids.has(task.id)
+                          ).length;
+                          input.indeterminate =
+                            selectedCount > 0 && selectedCount < panelTasks.length;
+                        }
+                      }}
+                      onChange={(event) => {
+                        const selectAll = event.target.checked;
+                        setPanelDraft((prev) => {
+                          if (!prev) {
+                            return prev;
+                          }
+                          const nextSet = new Set(prev.applicable_task_ids);
+                          panelTasks.forEach((task) => {
+                            if (selectAll) {
+                              nextSet.add(task.id);
+                            } else {
+                              nextSet.delete(task.id);
+                            }
+                          });
+                          return { ...prev, applicable_task_ids: nextSet };
+                        });
+                      }}
+                    />
+                    <span>Todas</span>
+                  </label>
+                )}
+                {panelTasks.length > 0 && (
+                  <div className="mt-2 max-h-64 space-y-2 overflow-auto pr-2 text-sm">
                     {panelTasks.map((task) => (
                       <label key={task.id} className="flex items-center gap-2">
                         <input

@@ -161,6 +161,28 @@ Test one tablet on the LAN and one device on mobile data. The tablet transition 
 the supported browser settings to the HTTPS app, but Microsoft/login cookies and camera
 permission must be granted again once on each device.
 
+### QC video evidence uploads
+
+Each QC execution accepts videos totaling at most 150 seconds. The server reads playback
+timestamps from the files and includes existing evidence when adding videos through the
+Library. Photos do not count toward the time limit. QC evidence has no application byte
+limit; other upload endpoints retain their own rules.
+
+Deploy this change with `uv sync --dev`, a frontend build, and Alembic upgrade to
+`0050_qc_video_duration` before restarting the app. PyAV is installed through `uv.lock`
+and does not require a separate FFmpeg executable. Existing videos are measured when
+adding video evidence to their execution.
+
+Apply the `produccion/api/qc` location block from `deployment/iis-web.config` to the live
+IIS site's configuration. It sets `maxAllowedContentLength` to `4294967295`, the maximum
+IIS value, instead of its default 30,000,000-byte ceiling. IIS still has that platform
+ceiling of just under 4 GiB per request. The block affects QC routes only.
+
+Verify through the public HTTPS URL that a video larger than 50 MiB and shorter than
+2:30 uploads successfully. Check that two clips totaling exactly 2:30 succeed and that
+adding another video reports the time limit. Also check gallery uploads and camera
+recordings on a tablet.
+
 ## Database-only production sync
 
 The Backups page can pull a fresh PostgreSQL dump from production into a local

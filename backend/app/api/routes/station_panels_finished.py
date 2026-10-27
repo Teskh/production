@@ -184,6 +184,7 @@ def _load_panel_task_applicability(
             select(TaskDefinition)
             .where(TaskDefinition.scope == TaskScope.PANEL)
             .where(TaskDefinition.active == True)
+            .where(TaskDefinition.archived_at.is_(None))
         ).scalars()
     )
     applicability_map: dict[int, list[TaskApplicability]] = {}

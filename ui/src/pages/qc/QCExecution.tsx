@@ -14,6 +14,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import './QCSystem.css';
+import { MAX_QC_VIDEO_SECONDS, QC_VIDEO_LIMIT_MESSAGE, formatVideoDuration, readVideoDuration, validateVideoTotal } from '../../utils/qcEvidence';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const QC_ROLE_VALUES = new Set(['Calidad', 'QC']);
@@ -94,6 +95,7 @@ type EvidenceItem = {
   id: string;
   type: 'image' | 'video';
   file: File;
+  durationSeconds?: number;
   uploadId?: number;
   uploadStatus: EvidenceUploadStatus;
   uploadError?: string;
@@ -105,6 +107,7 @@ type QCEvidenceUploadResponse = {
   uri: string;
   mime_type: string;
   size_bytes: number;
+  duration_seconds: number | null;
   created_at: string;
 };
 
@@ -191,20 +194,12 @@ const SEVERITY_LEVELS = [
   { id: 'sev_critica', name: 'Critica', color: 'bg-red-600 text-white' },
 ];
 
-const MAX_VIDEO_DURATION_SECONDS = 120;
-const MAX_VIDEO_EVIDENCE_BYTES = 50 * 1024 * 1024;
 const VIDEO_RECORDING_MIME_TYPES = [
   'video/webm;codecs=vp9',
   'video/webm;codecs=vp8',
   'video/webm',
   'video/mp4',
 ];
-
-const formatDuration = (seconds: number) => {
-  const mins = String(Math.floor(seconds / 60)).padStart(2, '0');
-  const secs = String(seconds % 60).padStart(2, '0');
-  return `${mins}:${secs}`;
-};
 
 const getSupportedVideoRecordingMimeType = (): string | null => {
   if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
@@ -252,11 +247,17 @@ const QCExecution: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingRecording, setIsProcessingRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isReadingEvidence, setIsReadingEvidence] = useState(false);
+  const readingEvidenceRef = useRef(false);
 
   const [refImageIndex, setRefImageIndex] = useState(0);
   const [guideImageIndex, setGuideImageIndex] = useState(0);
 
   const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
+  const evidenceRef = useRef(evidence);
+  useEffect(() => { evidenceRef.current = evidence; }, [evidence]);
+  const totalVideoSeconds = evidence.reduce((total, item) => total + (item.durationSeconds ?? 0), 0);
+  const remainingVideoSeconds = Math.max(0, MAX_QC_VIDEO_SECONDS - totalVideoSeconds);
   const [notes, setNotes] = useState('');
   const [selectedFailureModeIds, setSelectedFailureModeIds] = useState<string[]>([]);
   const [selectedSeverityId, setSelectedSeverityId] = useState<string | null>(null);
@@ -270,6 +271,7 @@ const QCExecution: React.FC = () => {
   const discardRecordingOnStopRef = useRef(false);
   const recordingIntervalRef = useRef<number | null>(null);
   const recordingTimeoutRef = useRef<number | null>(null);
+  const recordingStartedAtRef = useRef(0);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [captureFlash, setCaptureFlash] = useState(false);
@@ -799,7 +801,8 @@ const QCExecution: React.FC = () => {
     recorder.stop();
   };
 
-  const addEvidenceFiles = (files: File[]) => {
+  const addEvidenceFiles = async (files: File[]) => {
+    if (readingEvidenceRef.current || isRecording || isProcessingRecording || isSubmitting) return;
     const acceptedFiles = files.filter(
       (file) => file.type.startsWith('image/') || file.type.startsWith('video/')
     );
@@ -809,30 +812,40 @@ const QCExecution: React.FC = () => {
       return;
     }
 
-    const oversized = acceptedFiles.find((file) => file.size > MAX_VIDEO_EVIDENCE_BYTES);
-    if (oversized) {
-      const message = `"${oversized.name}" excede 50 MB.`;
+    readingEvidenceRef.current = true;
+    setIsReadingEvidence(true);
+    try {
+      const durations = await Promise.all(acceptedFiles.map((file) =>
+        file.type.startsWith('video/') ? readVideoDuration(file) : Promise.resolve(undefined)
+      ));
+      validateVideoTotal([
+        ...evidenceRef.current.filter((item) => item.type === 'video').map((item) => item.durationSeconds ?? NaN),
+        ...durations.filter((duration): duration is number => duration !== undefined),
+      ]);
+      const items = acceptedFiles.map((file, index): EvidenceItem => {
+        const type: EvidenceItem['type'] = file.type.startsWith('video/') ? 'video' : 'image';
+        const url = URL.createObjectURL(file);
+        evidenceUrlsRef.current.add(url);
+        return {
+          id: createEvidenceId(),
+          url,
+          type,
+          file,
+          durationSeconds: durations[index],
+          uploadStatus: 'pending',
+        };
+      });
+      setEvidence((prev) => [...prev, ...items]);
+      setEvidenceGateError(null);
+      setActionError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo agregar la evidencia.';
       setEvidenceGateError(message);
       setActionError(message);
-      return;
+    } finally {
+      readingEvidenceRef.current = false;
+      setIsReadingEvidence(false);
     }
-
-    const items = acceptedFiles.map((file): EvidenceItem => {
-      const type: EvidenceItem['type'] = file.type.startsWith('video/') ? 'video' : 'image';
-      const url = URL.createObjectURL(file);
-      evidenceUrlsRef.current.add(url);
-      return {
-        id: createEvidenceId(),
-        url,
-        type,
-        file,
-        uploadStatus: 'pending',
-      };
-    });
-
-    setEvidence((prev) => [...prev, ...items]);
-    setEvidenceGateError(null);
-    setActionError(null);
   };
 
   const startVideoRecording = () => {
@@ -844,7 +857,11 @@ const QCExecution: React.FC = () => {
       setCameraError('Este navegador no soporta grabacion de video.');
       return;
     }
-    if (isProcessingRecording) {
+    if (isProcessingRecording || isReadingEvidence) {
+      return;
+    }
+    if (remainingVideoSeconds <= 0) {
+      setCameraError(QC_VIDEO_LIMIT_MESSAGE);
       return;
     }
     try {
@@ -869,7 +886,8 @@ const QCExecution: React.FC = () => {
         setCameraError('No se pudo grabar el video.');
       };
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
+        const elapsedSeconds = (performance.now() - recordingStartedAtRef.current) / 1000;
         clearRecordingTimers();
         setIsRecording(false);
         setRecordingSeconds(0);
@@ -893,8 +911,21 @@ const QCExecution: React.FC = () => {
           setIsProcessingRecording(false);
           return;
         }
-        if (blob.size > MAX_VIDEO_EVIDENCE_BYTES) {
-          setCameraError('El video excede 50 MB. Grabe un clip mas corto.');
+        let durationSeconds: number;
+        try {
+          durationSeconds = await readVideoDuration(blob);
+        } catch {
+          // The server measures packet timestamps when the browser cannot read
+          // the duration of its own WebM recording.
+          durationSeconds = elapsedSeconds;
+        }
+        try {
+          validateVideoTotal([
+            ...evidenceRef.current.filter((item) => item.type === 'video').map((item) => item.durationSeconds ?? NaN),
+            durationSeconds,
+          ]);
+        } catch (error) {
+          setCameraError(error instanceof Error ? error.message : QC_VIDEO_LIMIT_MESSAGE);
           setIsProcessingRecording(false);
           return;
         }
@@ -914,6 +945,7 @@ const QCExecution: React.FC = () => {
             url,
             type: 'video',
             file,
+            durationSeconds,
             uploadStatus: 'pending',
           },
         ]);
@@ -924,20 +956,17 @@ const QCExecution: React.FC = () => {
       };
 
       recorder.start(1000);
+      recordingStartedAtRef.current = performance.now();
       setCameraError(null);
       setIsRecording(true);
       setRecordingSeconds(0);
       recordingIntervalRef.current = window.setInterval(() => {
-        setRecordingSeconds((prev) => {
-          if (prev >= MAX_VIDEO_DURATION_SECONDS) {
-            return MAX_VIDEO_DURATION_SECONDS;
-          }
-          return prev + 1;
-        });
+        setRecordingSeconds(Math.floor((performance.now() - recordingStartedAtRef.current) / 1000));
       }, 1000);
       recordingTimeoutRef.current = window.setTimeout(() => {
         stopVideoRecording();
-      }, MAX_VIDEO_DURATION_SECONDS * 1000);
+        // Leave time for the final recorded frame before the playback limit.
+      }, Math.max(0, remainingVideoSeconds * 1000 - 250));
     } catch {
       setCameraError('No se pudo iniciar la grabacion.');
     }
@@ -948,7 +977,7 @@ const QCExecution: React.FC = () => {
 
   const updateEvidenceUploadState = (
     id: string,
-    patch: Partial<Pick<EvidenceItem, 'uploadId' | 'uploadStatus' | 'uploadError'>>
+    patch: Partial<Pick<EvidenceItem, 'uploadId' | 'uploadStatus' | 'uploadError' | 'durationSeconds'>>
   ) => {
     setEvidence((prev) =>
       prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
@@ -991,6 +1020,7 @@ const QCExecution: React.FC = () => {
       const uploaded = (await response.json()) as QCEvidenceUploadResponse;
       updateEvidenceUploadState(item.id, {
         uploadId: uploaded.id,
+        durationSeconds: uploaded.duration_seconds ?? undefined,
         uploadStatus: 'uploaded',
         uploadError: undefined,
       });
@@ -1031,7 +1061,7 @@ const QCExecution: React.FC = () => {
       setActionError('No se encontro la revision para completar.');
       return;
     }
-    if (isSubmitting) {
+    if (isSubmitting || isReadingEvidence || isRecording || isProcessingRecording) {
       return;
     }
     if (evidenceRequiredForOutcome(outcome) && evidence.length === 0) {
@@ -1423,6 +1453,7 @@ const QCExecution: React.FC = () => {
           <div className="qc-execution__evidence-rail">
             <div className="qc-execution__evidence-label">
               Registros <span>{evidence.length}</span>
+              <span>Videos {formatVideoDuration(totalVideoSeconds)} / 2:30</span>
             </div>
             <div className="qc-execution__evidence-list">
               {evidence.map((item, index) => (
@@ -1514,11 +1545,11 @@ const QCExecution: React.FC = () => {
                 accept="image/*,video/*"
                 multiple
                 className="hidden"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isReadingEvidence || isRecording || isProcessingRecording}
                 onChange={(event) => {
                   const files = event.target.files ? Array.from(event.target.files) : [];
                   event.target.value = '';
-                  addEvidenceFiles(files);
+                  void addEvidenceFiles(files);
                 }}
               />
             </label>
@@ -1615,10 +1646,11 @@ const QCExecution: React.FC = () => {
                   accept="image/*,video/*"
                   multiple
                   className="hidden"
+                  disabled={isReadingEvidence || isRecording || isProcessingRecording}
                   onChange={(event) => {
                     const files = event.target.files ? Array.from(event.target.files) : [];
                     event.target.value = '';
-                    addEvidenceFiles(files);
+                    void addEvidenceFiles(files);
                     setShowEvidenceRequiredModal(false);
                   }}
                 />
@@ -1663,8 +1695,8 @@ const QCExecution: React.FC = () => {
                   {captureMode === 'video' && (
                     <div className="absolute top-3 right-3 rounded-full bg-black/60 px-3 py-1 text-[11px] font-semibold text-white">
                       {isRecording
-                        ? `Grabando ${formatDuration(recordingSeconds)} / ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`
-                        : `Max ${formatDuration(MAX_VIDEO_DURATION_SECONDS)}`}
+                        ? `Grabando ${formatVideoDuration(recordingSeconds)} / ${formatVideoDuration(remainingVideoSeconds)}`
+                        : `Disponible ${formatVideoDuration(remainingVideoSeconds)}`}
                     </div>
                   )}
                   {torchError && (
@@ -1782,7 +1814,7 @@ const QCExecution: React.FC = () => {
                     {captureMode === 'video' ? (
                       <>
                         <div>Videos sin audio</div>
-                        <div className="text-slate-400">Hasta 2 min por video</div>
+                        <div className="text-slate-400">Videos {formatVideoDuration(totalVideoSeconds)} / 2:30 en total</div>
                       </>
                     ) : (
                       <>
@@ -1801,7 +1833,7 @@ const QCExecution: React.FC = () => {
                   {captureMode === 'photo' ? (
                     <button
                       onClick={handleCameraCapture}
-                      disabled={!cameraReady || isProcessingRecording}
+                      disabled={!cameraReady || isProcessingRecording || isReadingEvidence}
                       className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${
                         cameraReady && !isProcessingRecording
                           ? 'border-white hover:scale-105'
@@ -1820,6 +1852,8 @@ const QCExecution: React.FC = () => {
                       disabled={
                         !cameraReady ||
                         isProcessingRecording ||
+                        isReadingEvidence ||
+                        (!isRecording && remainingVideoSeconds <= 0) ||
                         !videoRecordingMimeType
                       }
                       className={`w-20 h-20 rounded-full border-4 flex items-center justify-center transition-transform ${

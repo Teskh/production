@@ -95,6 +95,7 @@ from app.services.qc_runtime import (
     update_sampling_from_execution,
 )
 from app.services.qc_excel_report import build_qc_dashboard_excel_report
+from app.services.qc_evidence import validate_video_total, video_duration_seconds
 from app.services.qc_dashboard_metrics import (
     build_qc_metric_window,
     summarize_qc_failure_rows,
@@ -108,7 +109,6 @@ MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"
 QC_EVIDENCE_DIR = MEDIA_GALLERY_DIR / "qc_evidence"
 QC_ROLE_VALUES = {"Calidad", "QC"}
 # QC_DELETE_WINDOW = timedelta(hours=48)
-MAX_QC_EVIDENCE_BYTES = 50 * 1024 * 1024
 QC_EVIDENCE_MIME_PREFIXES = ("image/", "video/")
 QC_EVIDENCE_UPLOAD_TTL = timedelta(hours=24)
 QC_QUALITY_METRICS_DASHBOARD_ID = "qc-quality-compliance"
@@ -186,16 +186,48 @@ def _store_qc_evidence_upload(file: UploadFile, dest_path: Path) -> int:
                 if not chunk:
                     break
                 size_bytes += len(chunk)
-                if size_bytes > MAX_QC_EVIDENCE_BYTES:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"QC evidence exceeds {MAX_QC_EVIDENCE_BYTES // (1024 * 1024)} MB limit",
-                    )
                 buffer.write(chunk)
-    except HTTPException:
+    except Exception:
         _delete_media_file(dest_path.relative_to(MEDIA_GALLERY_DIR).as_posix())
         raise
     return size_bytes
+
+
+def _qc_media_duration(media: MediaAsset) -> float | None:
+    if not media.mime_type.startswith("video/"):
+        return None
+    if media.duration_seconds is None:
+        # Existing evidence is measured when adding files to its execution.
+        media.duration_seconds = video_duration_seconds(MEDIA_GALLERY_DIR / media.storage_key)
+    return media.duration_seconds
+
+
+def _validate_qc_video_total(media: list[MediaAsset]) -> None:
+    durations = [_qc_media_duration(item) for item in media]
+    validate_video_total([value for value in durations if value is not None])
+
+
+def _create_qc_evidence_media(file: UploadFile) -> MediaAsset:
+    QC_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "").suffix or ""
+    storage_key = f"qc_evidence/{uuid4().hex}{ext}"
+    dest_path = MEDIA_GALLERY_DIR / storage_key
+    try:
+        size_bytes = _store_qc_evidence_upload(file, dest_path)
+        media = MediaAsset(
+            storage_key=storage_key,
+            mime_type=file.content_type,
+            size_bytes=size_bytes,
+            width=None,
+            height=None,
+            watermark_text=None,
+            created_at=utc_now(),
+        )
+        _validate_qc_video_total([media])
+        return media
+    except Exception:
+        _delete_media_file(storage_key)
+        raise
 
 
 def _evidence_upload_read(
@@ -208,6 +240,7 @@ def _evidence_upload_read(
         uri=f"/media_gallery/{media.storage_key}",
         mime_type=media.mime_type,
         size_bytes=media.size_bytes,
+        duration_seconds=media.duration_seconds,
         created_at=upload.created_at,
     )
 
@@ -1135,6 +1168,7 @@ def qc_check_instance_detail(
                     media_asset_id=media.id,
                     uri=f"/media_gallery/{media.storage_key}",
                     mime_type=media.mime_type,
+                    duration_seconds=media.duration_seconds,
                     captured_at=evidence_row.captured_at,
                 )
             )
@@ -1287,6 +1321,14 @@ def execute_qc_check(
         check_instance_id=instance.id,
         uploaded_by_user_id=admin.id,
     )
+    staged_media = list(
+        db.execute(
+            select(MediaAsset).where(
+                MediaAsset.id.in_([upload.media_asset_id for upload in staged_uploads])
+            )
+        ).scalars()
+    )
+    _validate_qc_video_total(staged_media)
 
     now = utc_now()
     execution = QCExecution(
@@ -1704,22 +1746,9 @@ def stage_execution_evidence(
             detail="Solo se admiten fotos y videos como registro",
         )
 
-    QC_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "").suffix or ""
-    storage_key = f"qc_evidence/{uuid4().hex}{ext}"
-    dest_path = MEDIA_GALLERY_DIR / storage_key
-    size_bytes = _store_qc_evidence_upload(file, dest_path)
+    media = _create_qc_evidence_media(file)
+    storage_key = media.storage_key
     created_at = utc_now()
-
-    media = MediaAsset(
-        storage_key=storage_key,
-        mime_type=file.content_type or "application/octet-stream",
-        size_bytes=size_bytes,
-        width=None,
-        height=None,
-        watermark_text=None,
-        created_at=created_at,
-    )
     upload = QCEvidenceUpload(
         check_instance_id=check_instance_id,
         media_asset_id=0,
@@ -1797,7 +1826,9 @@ def upload_execution_evidence(
     db: Session = Depends(get_db),
 ) -> QCEvidenceSummary:
     _require_qc_admin(admin)
-    execution = db.get(QCExecution, execution_id)
+    execution = db.execute(
+        select(QCExecution).where(QCExecution.id == execution_id).with_for_update()
+    ).scalar_one_or_none()
     if not execution:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution not found")
     if not file.content_type or not file.content_type.startswith(QC_EVIDENCE_MIME_PREFIXES):
@@ -1806,32 +1837,31 @@ def upload_execution_evidence(
             detail="Only image and video evidence uploads are supported",
         )
 
-    QC_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    ext = Path(file.filename or "").suffix or ""
-    storage_key = f"qc_evidence/{uuid4().hex}{ext}"
-    dest_path = MEDIA_GALLERY_DIR / storage_key
-
-    size_bytes = _store_qc_evidence_upload(file, dest_path)
-
-    media = MediaAsset(
-        storage_key=storage_key,
-        mime_type=file.content_type or "application/octet-stream",
-        size_bytes=size_bytes,
-        width=None,
-        height=None,
-        watermark_text=None,
-        created_at=utc_now(),
+    existing_media = list(
+        db.execute(
+            select(MediaAsset)
+            .join(QCEvidence, QCEvidence.media_asset_id == MediaAsset.id)
+            .where(QCEvidence.execution_id == execution.id)
+        ).scalars()
     )
-    db.add(media)
-    db.flush()
-
-    evidence = QCEvidence(
-        execution_id=execution.id,
-        media_asset_id=media.id,
-        captured_at=utc_now(),
-    )
-    db.add(evidence)
-    db.commit()
+    media = _create_qc_evidence_media(file)
+    storage_key = media.storage_key
+    try:
+        if media.mime_type.startswith("video/"):
+            _validate_qc_video_total([*existing_media, media])
+        db.add(media)
+        db.flush()
+        evidence = QCEvidence(
+            execution_id=execution.id,
+            media_asset_id=media.id,
+            captured_at=utc_now(),
+        )
+        db.add(evidence)
+        db.commit()
+    except Exception:
+        db.rollback()
+        _delete_media_file(storage_key)
+        raise
     db.refresh(evidence)
 
     return QCEvidenceSummary(
@@ -1840,6 +1870,7 @@ def upload_execution_evidence(
         media_asset_id=media.id,
         uri=f"/media_gallery/{storage_key}",
         mime_type=media.mime_type,
+        duration_seconds=media.duration_seconds,
         captured_at=evidence.captured_at,
     )
 
@@ -2443,6 +2474,7 @@ def library_work_unit_detail(
                         media_asset_id=media.id,
                         uri=f"/media_gallery/{media.storage_key}",
                         mime_type=media.mime_type,
+                        duration_seconds=media.duration_seconds,
                         captured_at=evidence_row.captured_at,
                     )
                 )

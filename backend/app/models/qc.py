@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    BigInteger,
     DateTime,
     Enum,
     Float,
@@ -259,7 +260,8 @@ class MediaAsset(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     storage_key: Mapped[str] = mapped_column(String(400))
     mime_type: Mapped[str] = mapped_column(String(200))
-    size_bytes: Mapped[int] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     watermark_text: Mapped[str | None] = mapped_column(String(400), nullable=True)
