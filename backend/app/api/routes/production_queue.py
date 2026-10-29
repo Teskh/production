@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_page
+from app.core.security import utc_now
 from app.models.admin import AdminUser
 from app.models.enums import (
     AdminRole,
@@ -1044,6 +1045,11 @@ def _apply_queue_updates(
     if "status" in updates and updates["status"] is not None:
         next_status = updates["status"]
         for unit in work_units:
+            if next_status == WorkUnitStatus.COMPLETED:
+                if unit.status != WorkUnitStatus.COMPLETED:
+                    unit.completed_at = utc_now()
+            else:
+                unit.completed_at = None
             unit.status = next_status
             if next_status in {
                 WorkUnitStatus.PLANNED,

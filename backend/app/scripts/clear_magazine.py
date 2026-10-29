@@ -1,5 +1,6 @@
 from sqlalchemy import func, select, update
 
+from app.core.security import utc_now
 from app.db.session import SessionLocal
 from app.models.enums import WorkUnitStatus
 from app.models.work import WorkUnit
@@ -16,7 +17,7 @@ def main() -> None:
         result = session.execute(
             update(WorkUnit)
             .where(WorkUnit.status == WorkUnitStatus.MAGAZINE)
-            .values(status=WorkUnitStatus.COMPLETED)
+            .values(status=WorkUnitStatus.COMPLETED, completed_at=utc_now())
         )
         session.commit()
 

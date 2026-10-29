@@ -44,6 +44,7 @@ class WorkUnit(Base):
     current_station_id: Mapped[int | None] = mapped_column(
         ForeignKey("stations.id"), nullable=True
     )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     work_order: Mapped["WorkOrder"] = relationship(back_populates="work_units")
     panel_units: Mapped[list["PanelUnit"]] = relationship(

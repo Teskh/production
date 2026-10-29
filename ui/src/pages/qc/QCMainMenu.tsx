@@ -49,6 +49,7 @@ type QCCheckInstanceSummary = {
   panel_code: string | null;
   status: QCCheckStatus;
   opened_at: string;
+  module_completed?: boolean;
 };
 
 type QCReworkTaskSummary = {
@@ -1574,7 +1575,9 @@ const QCMainMenu: React.FC = () => {
                         <p className="text-xs text-[var(--ink-muted)]">
                           {check.module_number}
                           {check.panel_code ? ` · Panel ${check.panel_code}` : ''} ·{' '}
-                          en {locationLabel(check.station_name, check.current_station_name)}
+                          {check.module_completed
+                            ? 'fuera de línea'
+                            : `en ${locationLabel(check.station_name, check.current_station_name)}`}
                         </p>
                       </div>
                     </div>
@@ -1582,6 +1585,11 @@ const QCMainMenu: React.FC = () => {
                       <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(242,98,65,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
                         {scopeLabels[check.scope]}
                       </span>
+                      {check.module_completed ? (
+                        <span className="inline-flex items-center rounded-full border border-[var(--ink-muted)] px-2 py-0.5 text-[10px] font-semibold text-[var(--ink)]">
+                          Terminado
+                        </span>
+                      ) : null}
                       <span>Creado {formatTimestamp(check.opened_at)}</span>
                     </div>
                   </>

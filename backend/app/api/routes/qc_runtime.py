@@ -77,6 +77,7 @@ from app.schemas.qc_runtime import (
     QCManualCheckCreate,
     QCManualCheckOption,
     QCNotificationSummary,
+    QCFinishedModuleSummary,
     QCPlantModuleSummary,
     QCPlantPanelSummary,
     QCQualityMetricsResponse,
@@ -379,7 +380,15 @@ def _build_check_summary(
     project_name: str | None = None,
     house_type_name: str | None = None,
     house_identifier: str | None = None,
+    *,
+    work_unit: WorkUnit | None = None,
 ) -> QCCheckInstanceSummary:
+    module_completed = bool(work_unit and work_unit.status == WorkUnitStatus.COMPLETED)
+    completed_at = work_unit.completed_at if work_unit else None
+    opened_after_completion = (
+        completed_at is not None
+        and instance.opened_at.replace(tzinfo=None) >= completed_at.replace(tzinfo=None)
+    )
     return QCCheckInstanceSummary(
         id=instance.id,
         check_definition_id=instance.check_definition_id,
@@ -404,6 +413,8 @@ def _build_check_summary(
         opened_by_user_id=instance.opened_by_user_id,
         opened_at=instance.opened_at,
         closed_at=instance.closed_at,
+        module_completed=module_completed,
+        opened_after_completion=opened_after_completion,
     )
 
 
@@ -582,7 +593,16 @@ def qc_dashboard(
             .join(HouseType, WorkOrder.house_type_id == HouseType.id)
             .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
             .where(QCCheckInstance.status == QCCheckStatus.OPEN)
-            .where(WorkUnit.status != WorkUnitStatus.COMPLETED)
+            .where(
+                or_(
+                    WorkUnit.status != WorkUnitStatus.COMPLETED,
+                    # Keep checks opened on an already finished module visible.
+                    QCCheckInstance.opened_at >= WorkUnit.completed_at,
+                    # Modules finished without a recorded date cannot be compared.
+                    WorkUnit.completed_at.is_(None)
+                    & (QCCheckInstance.origin == QCCheckOrigin.MANUAL),
+                )
+            )
             .where(
                 or_(
                     QCCheckInstance.scope != TaskScope.PANEL,
@@ -629,6 +649,7 @@ def qc_dashboard(
                 project_name,
                 house_type_name,
                 house_identifier,
+                work_unit=db.get(WorkUnit, instance.work_unit_id),
             )
         )
 
@@ -971,6 +992,7 @@ def mark_work_unit_completed(
     if work_unit.status == WorkUnitStatus.COMPLETED:
         return
     work_unit.status = WorkUnitStatus.COMPLETED
+    work_unit.completed_at = utc_now()
     work_unit.current_station_id = None
     panels = list(
         db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
@@ -1014,7 +1036,8 @@ def qc_check_instance_detail(
     check_def = db.get(QCCheckDefinition, instance.check_definition_id) if instance.check_definition_id else None
     check_name = check_def.name if check_def else instance.ad_hoc_title
     station_name = db.get(Station, instance.station_id).name if instance.station_id else None
-    module_number = db.get(WorkUnit, instance.work_unit_id).module_number
+    work_unit = db.get(WorkUnit, instance.work_unit_id)
+    module_number = work_unit.module_number
     panel_code = None
     if instance.panel_unit_id:
         panel = db.get(PanelUnit, instance.panel_unit_id)
@@ -1032,6 +1055,7 @@ def qc_check_instance_detail(
         current_station_name,
         module_number,
         panel_code,
+        work_unit=work_unit,
     )
 
     failure_modes = list(
@@ -1366,26 +1390,29 @@ def execute_qc_check(
             payload.measurement_json,
             payload.failure_mode_notes,
         )
-        rework_description = payload.rework_description
-        if not rework_description and payload.failure_mode_ids:
-            mode = db.get(QCFailureModeDefinition, payload.failure_mode_ids[0])
-            if mode and mode.default_rework_description:
-                rework_description = mode.default_rework_description
-        if not rework_description:
-            rework_description = "Re-trabajo requerido"
-        rework = QCReworkTask(
-            check_instance_id=instance.id,
-            description=rework_description,
-            status=QCReworkStatus.OPEN,
-            created_at=now,
-        )
-        db.add(rework)
-        # Ensure rework_task.id is available before creating notifications.
-        db.flush()
         instance.status = QCCheckStatus.CLOSED
         instance.closed_at = now
-        if instance.related_task_instance_id:
-            create_notifications_for_task(db, rework, instance.related_task_instance_id)
+        work_unit = db.get(WorkUnit, instance.work_unit_id)
+        # A finished module has left the line, so its failures are recorded without rework.
+        if not work_unit or work_unit.status != WorkUnitStatus.COMPLETED:
+            rework_description = payload.rework_description
+            if not rework_description and payload.failure_mode_ids:
+                mode = db.get(QCFailureModeDefinition, payload.failure_mode_ids[0])
+                if mode and mode.default_rework_description:
+                    rework_description = mode.default_rework_description
+            if not rework_description:
+                rework_description = "Re-trabajo requerido"
+            rework = QCReworkTask(
+                check_instance_id=instance.id,
+                description=rework_description,
+                status=QCReworkStatus.OPEN,
+                created_at=now,
+            )
+            db.add(rework)
+            # Ensure rework_task.id is available before creating notifications.
+            db.flush()
+            if instance.related_task_instance_id:
+                create_notifications_for_task(db, rework, instance.related_task_instance_id)
     else:
         instance.status = QCCheckStatus.CLOSED
         instance.closed_at = now
@@ -1449,7 +1476,7 @@ def _manual_check_target(
     if scope is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Las inspecciones manuales requieren un módulo actualmente en producción",
+            detail="Las inspecciones manuales requieren un módulo en producción o terminado",
         )
 
     panel_group = None
@@ -1487,6 +1514,49 @@ def _applicability_rows(db: Session, check_definition_id: int) -> list[QCApplica
             .where(QCApplicability.check_definition_id == check_definition_id)
         ).scalars()
     )
+
+
+@router.get("/finished-modules", response_model=list[QCFinishedModuleSummary])
+def finished_modules(
+    days: int = Query(default=7, ge=1, le=365),
+    q: str | None = None,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> list[QCFinishedModuleSummary]:
+    _require_qc_admin(admin)
+    stmt = (
+        select(WorkUnit, WorkOrder, HouseType.name)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+        .where(WorkUnit.status == WorkUnitStatus.COMPLETED)
+        .order_by(WorkUnit.completed_at.desc().nullslast(), WorkUnit.id.desc())
+        .limit(100)
+    )
+    search = (q or "").strip()
+    if search:
+        # Searching reaches older modules, so the recent-days window does not apply.
+        pattern = f"%{search}%"
+        stmt = stmt.where(
+            or_(
+                WorkOrder.project_name.ilike(pattern),
+                WorkOrder.house_identifier.ilike(pattern),
+                HouseType.name.ilike(pattern),
+            )
+        )
+    else:
+        cutoff = (utc_now() - timedelta(days=days)).replace(tzinfo=None)
+        stmt = stmt.where(WorkUnit.completed_at >= cutoff)
+    return [
+        QCFinishedModuleSummary(
+            work_unit_id=work_unit.id,
+            module_number=work_unit.module_number,
+            project_name=work_order.project_name,
+            house_type_name=house_type_name,
+            house_identifier=work_order.house_identifier,
+            completed_at=work_unit.completed_at,
+        )
+        for work_unit, work_order, house_type_name in db.execute(stmt).all()
+    ]
 
 
 @router.get("/manual-check-options", response_model=list[QCManualCheckOption])
@@ -1662,6 +1732,7 @@ def create_manual_check(
         current_station_name,
         work_unit.module_number,
         panel_code,
+        work_unit=work_unit,
     )
 
 
@@ -2434,6 +2505,7 @@ def library_work_unit_detail(
                 current_station_name,
                 work_unit.module_number,
                 panel_code,
+                work_unit=work_unit,
             )
         )
 

@@ -39,6 +39,8 @@ class QCCheckInstanceSummary(BaseModel):
     opened_by_user_id: int | None = None
     opened_at: datetime
     closed_at: datetime | None = None
+    module_completed: bool = False
+    opened_after_completion: bool = False
 
 
 class QCReworkTaskSummary(BaseModel):
@@ -87,6 +89,15 @@ class QCPlantModuleSummary(BaseModel):
     project_name: str | None = None
     house_type_name: str | None = None
     house_identifier: str | None = None
+
+
+class QCFinishedModuleSummary(BaseModel):
+    work_unit_id: int
+    module_number: int
+    project_name: str | None = None
+    house_type_name: str | None = None
+    house_identifier: str | None = None
+    completed_at: datetime | None = None
 
 
 class QCDashboardResponse(BaseModel):

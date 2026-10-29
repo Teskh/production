@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,8 +11,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.api.routes.qc_runtime import manual_check_options  # noqa: E402
-from app.models.enums import TaskScope, WorkUnitStatus  # noqa: E402
+from app.api.routes.qc_runtime import _build_check_summary, manual_check_options  # noqa: E402
+from app.models.enums import (  # noqa: E402
+    QCCheckOrigin,
+    QCCheckStatus,
+    TaskScope,
+    WorkUnitStatus,
+)
 from app.models.qc import QCCheckDefinition, QCCheckInstance  # noqa: E402
 from app.models.work import WorkOrder, WorkUnit  # noqa: E402
 from app.services.qc_runtime import manual_check_scope_for_status  # noqa: E402
@@ -82,9 +88,47 @@ class QCManualCheckScopeTests(unittest.TestCase):
             TaskScope.MODULE,
         )
 
-    def test_non_active_statuses_do_not_allow_manual_inspections(self) -> None:
+    def test_finished_modules_allow_module_inspections(self) -> None:
+        self.assertEqual(
+            manual_check_scope_for_status(WorkUnitStatus.COMPLETED),
+            TaskScope.MODULE,
+        )
+
+    def test_planned_modules_do_not_allow_manual_inspections(self) -> None:
         self.assertIsNone(manual_check_scope_for_status(WorkUnitStatus.PLANNED))
-        self.assertIsNone(manual_check_scope_for_status(WorkUnitStatus.COMPLETED))
+
+    def test_summary_marks_checks_opened_after_module_completion(self) -> None:
+        completed_at = datetime(2026, 10, 20, 12, 0)
+        work_unit = SimpleNamespace(status=WorkUnitStatus.COMPLETED, completed_at=completed_at)
+
+        def summary_opened_at(opened_at: datetime):
+            instance = SimpleNamespace(
+                id=1,
+                check_definition_id=None,
+                ad_hoc_guidance=None,
+                origin=QCCheckOrigin.MANUAL,
+                scope=TaskScope.MODULE,
+                work_unit_id=7,
+                panel_unit_id=None,
+                related_task_instance_id=None,
+                station_id=None,
+                status=QCCheckStatus.OPEN,
+                severity_level=None,
+                opened_by_user_id=None,
+                opened_at=opened_at,
+                closed_at=None,
+            )
+            return _build_check_summary(
+                instance, "Revisión", None, None, None, 3, None, work_unit=work_unit
+            )
+
+        after = summary_opened_at(datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc))
+        before = summary_opened_at(datetime(2026, 10, 19, 9, 0))
+
+        self.assertTrue(after.module_completed)
+        self.assertTrue(after.opened_after_completion)
+        self.assertTrue(before.module_completed)
+        self.assertFalse(before.opened_after_completion)
 
     def test_options_include_triggered_and_manual_definitions(self) -> None:
         options = manual_check_options(

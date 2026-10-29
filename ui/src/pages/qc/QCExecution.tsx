@@ -49,6 +49,7 @@ type QCCheckInstanceSummary = {
   panel_code: string | null;
   status: 'Open' | 'Closed';
   opened_at: string;
+  module_completed?: boolean;
 };
 
 type QCCheckMediaSummary = {
@@ -543,8 +544,11 @@ const QCExecution: React.FC = () => {
 
   const headerModule =
     checkDetail?.check_instance.module_number ?? reworkState?.module_number ?? 'Manual';
+  const moduleCompleted = Boolean(checkDetail?.check_instance.module_completed);
   const headerStation =
-    checkDetail?.check_instance.station_name ?? reworkState?.station_name ?? 'Sin estacion';
+    checkDetail?.check_instance.station_name ??
+    reworkState?.station_name ??
+    (moduleCompleted ? 'Módulo terminado' : 'Sin estacion');
   const headerPanel =
     checkDetail?.check_instance.panel_code ?? reworkState?.panel_code ?? null;
   const headerTitle =
@@ -2009,16 +2013,23 @@ const QCExecution: React.FC = () => {
                 </div>
               )}
 
-              <div className="mb-4">
-                <label className="block text-sm font-bold text-slate-300 mb-2">
-                  Instrucciones de retrabajo
-                </label>
-                <textarea
-                  className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2 text-sm h-20 text-white placeholder-slate-500"
-                  value={reworkText}
-                  onChange={(event) => setReworkText(event.target.value)}
-                />
-              </div>
+              {moduleCompleted ? (
+                <p className="mb-4 rounded-lg border border-slate-600 bg-slate-900 p-3 text-sm text-slate-300">
+                  Módulo terminado: la falla queda registrada con su evidencia, sin generar
+                  retrabajo.
+                </p>
+              ) : (
+                <div className="mb-4">
+                  <label className="block text-sm font-bold text-slate-300 mb-2">
+                    Instrucciones de retrabajo
+                  </label>
+                  <textarea
+                    className="w-full bg-slate-900 border border-slate-600 rounded-lg p-2 text-sm h-20 text-white placeholder-slate-500"
+                    value={reworkText}
+                    onChange={(event) => setReworkText(event.target.value)}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="p-4 border-t border-slate-700 bg-slate-900/50 flex justify-end gap-3 rounded-b-xl">

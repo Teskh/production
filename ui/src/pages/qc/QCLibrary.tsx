@@ -73,6 +73,7 @@ type QCCheckInstanceSummary = {
   opened_by_user_id: number | null;
   opened_at: string;
   closed_at: string | null;
+  opened_after_completion?: boolean;
 };
 
 type QCExecutionRead = {
@@ -292,7 +293,7 @@ const workUnitStatusLabel = (status: string): string =>
 
 const inspectionScopeForStatus = (status: WorkUnitStatus): 'panel' | 'module' | null => {
   if (status === 'Panels') return 'panel';
-  if (status === 'Magazine' || status === 'Assembly') return 'module';
+  if (status === 'Magazine' || status === 'Assembly' || status === 'Completed') return 'module';
   return null;
 };
 
@@ -549,6 +550,7 @@ const CheckStoryCard: React.FC<{
             {story.openReworkCount > 0 ? (
               <Tag tone="qcl-rework">{story.openReworkCount} rework abierto</Tag>
             ) : null}
+            {check.opened_after_completion ? <Tag tone="qcl-neutral">Post-término</Tag> : null}
             {story.noteCount > 0 ? (
               <span className="qcl-note-indicator">
                 <MessageSquareText className="h-3.5 w-3.5" />

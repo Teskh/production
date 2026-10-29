@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ClipboardPlus, FlaskConical, ListChecks, Loader2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ClipboardPlus,
+  Factory,
+  FlaskConical,
+  ListChecks,
+  Loader2,
+  Search,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { useOptionalQCSession } from '../../layouts/QCLayoutContext';
 
@@ -46,13 +55,50 @@ type ProductionQueueModuleStatus = {
   panels: PanelStatus[];
 };
 
+type FinishedModule = {
+  work_unit_id: number;
+  module_number: number;
+  project_name: string | null;
+  house_type_name: string | null;
+  house_identifier: string | null;
+  completed_at: string | null;
+};
+
 type ManualMode = 'ad_hoc' | 'definition';
+type ModuleSource = 'plant' | 'finished';
+
+const FINISHED_RECENT_DAYS = 7;
 
 const inspectionScopeForStatus = (status: string | null | undefined): TaskScope | null => {
   if (status === 'Panels') return 'panel';
-  if (status === 'Magazine' || status === 'Assembly') return 'module';
+  if (status === 'Magazine' || status === 'Assembly' || status === 'Completed') return 'module';
   return null;
 };
+
+// The API stores UTC without an offset; read it as UTC.
+const parseUtc = (value: string): Date =>
+  new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value}Z`);
+
+const formatFinishedAgo = (value: string | null): string => {
+  if (!value) return 'Sin fecha de término';
+  const finished = parseUtc(value);
+  if (Number.isNaN(finished.getTime())) return 'Sin fecha de término';
+  const minutes = Math.max(0, Math.round((Date.now() - finished.getTime()) / 60000));
+  if (minutes < 60) return minutes <= 1 ? 'terminado recién' : `terminado hace ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `terminado hace ${hours} h`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'terminado ayer';
+  if (days < 14) return `terminado hace ${days} días`;
+  return `terminado el ${finished.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
+};
+
+const moduleLabel = (item: {
+  project_name: string | null;
+  house_identifier: string | null;
+  module_number: number;
+}): string =>
+  `${item.project_name ?? 'Proyecto'} · Casa ${item.house_identifier ?? '—'} · Módulo ${item.module_number}`;
 
 const apiRequest = async <T,>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -85,6 +131,14 @@ const QCManualCheck: React.FC = () => {
   const [moduleStatus, setModuleStatus] = useState<ProductionQueueModuleStatus | null>(null);
   const [panels, setPanels] = useState<PanelStatus[]>([]);
   const [moduleStatusLoading, setModuleStatusLoading] = useState(false);
+
+  const [source, setSource] = useState<ModuleSource>('plant');
+  const [finishedModules, setFinishedModules] = useState<FinishedModule[]>([]);
+  const [finishedSearch, setFinishedSearch] = useState('');
+  const [finishedLoading, setFinishedLoading] = useState(false);
+  const [finishedError, setFinishedError] = useState<string | null>(null);
+  // Kept apart from the search results so the choice stays visible while searching.
+  const [selectedFinished, setSelectedFinished] = useState<FinishedModule | null>(null);
 
   const [mode, setMode] = useState<ManualMode>('ad_hoc');
   const [workUnitId, setWorkUnitId] = useState<number | null>(null);
@@ -127,6 +181,43 @@ const QCManualCheck: React.FC = () => {
       active = false;
     };
   }, [canCreate]);
+
+  useEffect(() => {
+    if (!canCreate || source !== 'finished') {
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setFinishedLoading(true);
+      try {
+        const params = new URLSearchParams({ days: String(FINISHED_RECENT_DAYS) });
+        const query = finishedSearch.trim();
+        if (query) {
+          params.set('q', query);
+        }
+        const rows = await apiRequest<FinishedModule[]>(`/api/qc/finished-modules?${params.toString()}`);
+        if (!active) {
+          return;
+        }
+        setFinishedModules(rows);
+        setFinishedError(null);
+      } catch (error) {
+        if (active) {
+          setFinishedError(
+            error instanceof Error ? error.message : 'No se pudieron cargar los módulos terminados.'
+          );
+        }
+      } finally {
+        if (active) {
+          setFinishedLoading(false);
+        }
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [canCreate, source, finishedSearch]);
 
   useEffect(() => {
     if (!workUnitId) {
@@ -178,11 +269,27 @@ const QCManualCheck: React.FC = () => {
     () => workUnits.find((item) => item.id === workUnitId) ?? null,
     [workUnitId, workUnits]
   );
-  const scope = inspectionScopeForStatus(moduleStatus?.status ?? selectedWorkUnit?.status);
+  const isFinished = source === 'finished';
+  const scope = isFinished
+    ? workUnitId
+      ? 'module'
+      : null
+    : inspectionScopeForStatus(moduleStatus?.status ?? selectedWorkUnit?.status);
   const currentStationName =
     scope === 'panel'
       ? selectedPanel?.current_station_name ?? moduleStatus?.current_station_name ?? null
       : moduleStatus?.current_station_name ?? null;
+
+  const handleSourceChange = (next: ModuleSource) => {
+    if (next === source) {
+      return;
+    }
+    setSource(next);
+    setSelectedFinished(null);
+    setWorkUnitId(null);
+    setPanelUnitId(null);
+    setSubmitError(null);
+  };
 
   const requiresPanel = scope === 'panel';
   const canSubmit =
@@ -345,22 +452,121 @@ const QCManualCheck: React.FC = () => {
               <div className="qc-card__header border-t border-[var(--qc-line)]">
                 <h3 className="qc-section-title">
                   <span className="qc-section-index">02</span>
-                  Ubicación en planta
+                  Módulo a inspeccionar
                 </h3>
               </div>
               <div className="grid gap-5 p-5 sm:p-6">
-                <div className="grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+                <div className="qc-segment">
+                  <button
+                    type="button"
+                    onClick={() => handleSourceChange('plant')}
+                    className={clsx(
+                      'qc-segment__option',
+                      !isFinished && 'qc-segment__option--active'
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <Factory className="h-4 w-4" /> En planta
+                    </span>
+                    <p className={clsx('mt-1 text-xs', !isFinished ? 'text-white/70' : 'text-[var(--qc-muted)]')}>
+                      Módulos en paneles, magazine o armado.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSourceChange('finished')}
+                    className={clsx(
+                      'qc-segment__option',
+                      isFinished && 'qc-segment__option--active'
+                    )}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <CheckCircle2 className="h-4 w-4" /> Terminados
+                    </span>
+                    <p className={clsx('mt-1 text-xs', isFinished ? 'text-white/70' : 'text-[var(--qc-muted)]')}>
+                      Revise un módulo que ya salió de la línea.
+                    </p>
+                  </button>
+                </div>
+
+                {isFinished ? (
+                  <div className="grid gap-3">
+                    <label className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--qc-muted)]" />
+                      <input
+                        value={finishedSearch}
+                        onChange={(event) => setFinishedSearch(event.target.value)}
+                        placeholder="Buscar proyecto, casa o tipo…"
+                        className="qc-input qc-input--with-icon"
+                        aria-label="Buscar módulos terminados"
+                      />
+                    </label>
+                    <div className="qc-finished-list" role="listbox" aria-label="Módulos terminados">
+                      {finishedError ? (
+                        <p className="qc-finished-list__empty">{finishedError}</p>
+                      ) : finishedLoading && finishedModules.length === 0 ? (
+                        <p className="qc-finished-list__empty">Cargando módulos terminados…</p>
+                      ) : finishedModules.length === 0 ? (
+                        <p className="qc-finished-list__empty">
+                          {finishedSearch.trim()
+                            ? 'Ningún módulo terminado coincide con la búsqueda.'
+                            : `No hay módulos terminados en los últimos ${FINISHED_RECENT_DAYS} días.`}
+                        </p>
+                      ) : (
+                        finishedModules.map((item) => {
+                          const selected = item.work_unit_id === workUnitId;
+                          return (
+                            <button
+                              key={item.work_unit_id}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              onClick={() => {
+                                setSelectedFinished(item);
+                                setWorkUnitId(item.work_unit_id);
+                              }}
+                              className={clsx(
+                                'qc-finished-list__row',
+                                selected && 'qc-finished-list__row--active'
+                              )}
+                            >
+                              <span className="qc-finished-list__name">{moduleLabel(item)}</span>
+                              <span className="qc-finished-list__when">
+                                {formatFinishedAgo(item.completed_at)}
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    <p className="text-xs text-[var(--qc-muted)]">
+                      {finishedSearch.trim()
+                        ? 'Buscando en todos los módulos terminados.'
+                        : `Últimos ${FINISHED_RECENT_DAYS} días, más reciente primero. Busque para ver módulos anteriores.`}
+                    </p>
+                  </div>
+                ) : null}
+
+                <div
+                  className={clsx(
+                    'grid gap-4',
+                    !isFinished && 'sm:grid-cols-[180px_minmax(0,1fr)]'
+                  )}
+                >
                   <div className="qc-field">
                     Alcance
                     <div className="qc-readout">
                       {workUnitId
-                        ? scope === 'panel'
-                          ? 'Panel · definido por estado Paneles'
-                          : 'Módulo · definido por estado de producción'
+                        ? isFinished
+                          ? 'Módulo completo · revisión post-término'
+                          : scope === 'panel'
+                            ? 'Panel · definido por estado Paneles'
+                            : 'Módulo · definido por estado de producción'
                         : 'Se definirá al seleccionar un módulo'}
                     </div>
                   </div>
 
+                  {!isFinished ? (
                   <label className="qc-field">
                     Módulo objetivo
                     <select
@@ -380,6 +586,7 @@ const QCManualCheck: React.FC = () => {
                       ))}
                     </select>
                   </label>
+                  ) : null}
                 </div>
 
                 {scope === 'panel' ? (
@@ -402,21 +609,34 @@ const QCManualCheck: React.FC = () => {
                   </label>
                 ) : null}
 
-                <div className="qc-field">
-                  Estación detectada
-                  <div className="qc-readout">
-                    {workUnitId
-                      ? moduleStatusLoading
-                        ? 'Consultando ubicación…'
-                        : currentStationName ?? 'Sin estación actual'
-                      : 'Se mostrará al seleccionar un módulo'}
+                {isFinished ? (
+                  selectedFinished ? (
+                    <div className="qc-field">
+                      Módulo seleccionado
+                      <div className="qc-readout">
+                        {moduleLabel(selectedFinished)} · {formatFinishedAgo(selectedFinished.completed_at)}
+                      </div>
+                    </div>
+                  ) : null
+                ) : (
+                  <div className="qc-field">
+                    Estación detectada
+                    <div className="qc-readout">
+                      {workUnitId
+                        ? moduleStatusLoading
+                          ? 'Consultando ubicación…'
+                          : currentStationName ?? 'Sin estación actual'
+                        : 'Se mostrará al seleccionar un módulo'}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-3 border-t border-[var(--qc-line)] bg-[var(--qc-paper-raised)] p-5 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-[var(--qc-muted)]">
-                  La inspección se abrirá directamente en modo ejecución.
+                  {isFinished
+                    ? 'La inspección se abrirá en modo ejecución. Si falla, queda registrada sin generar retrabajo.'
+                    : 'La inspección se abrirá directamente en modo ejecución.'}
                 </p>
                 <button type="submit" disabled={!canSubmit || loading} className="qc-btn qc-btn--primary sm:min-w-[230px]">
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardPlus className="h-4 w-4" />}

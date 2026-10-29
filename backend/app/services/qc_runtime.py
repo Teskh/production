@@ -34,7 +34,7 @@ from app.models.work import PanelUnit, WorkOrder, WorkUnit
 def manual_check_scope_for_status(status: WorkUnitStatus) -> TaskScope | None:
     if status == WorkUnitStatus.PANELS:
         return TaskScope.PANEL
-    if status in (WorkUnitStatus.MAGAZINE, WorkUnitStatus.ASSEMBLY):
+    if status in (WorkUnitStatus.MAGAZINE, WorkUnitStatus.ASSEMBLY, WorkUnitStatus.COMPLETED):
         return TaskScope.MODULE
     return None
 
