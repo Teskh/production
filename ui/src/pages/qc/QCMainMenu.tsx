@@ -106,6 +106,20 @@ type QCMainMenuResponse = {
   plant_modules: QCPlantModuleSummary[];
 };
 
+type StationUnitRow = {
+  workUnitId: number;
+  moduleNumber: number;
+  projectName: string | null;
+  houseTypeName: string | null;
+  houseIdentifier: string | null;
+  panelCodes: string[];
+  openChecks: QCCheckInstanceSummary[];
+  canMarkCompleted: boolean;
+  isAtStation: boolean;
+};
+
+const STATION_ROWS_COLLAPSED_LIMIT = 3;
+
 type StationSummary = {
   id: number;
   name: string;
@@ -426,6 +440,7 @@ const QCMainMenu: React.FC = () => {
   const [activeTaskTab, setActiveTaskTab] = useState<'checks' | 'observations' | 'reworks'>('checks');
   const [activePlantTab, setActivePlantTab] = useState<'panels' | 'armado'>('panels');
   const [completingWorkUnitIds, setCompletingWorkUnitIds] = useState<Set<number>>(new Set());
+  const [expandedStationIds, setExpandedStationIds] = useState<Set<number>>(new Set());
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
   const canExecuteChecks = Boolean(qcSession?.role && QC_ROLE_VALUES.has(qcSession.role));
@@ -736,9 +751,7 @@ const QCMainMenu: React.FC = () => {
       current.push(module);
       modulesByStation.set(module.current_station_id, current);
     });
-    modulesByStation.forEach((modules) => {
-      modules.sort((a, b) => a.module_number - b.module_number);
-    });
+    // Keep the backend order (planned sequence) so rows match the production floor view.
     return modulesByStation;
   }, [plantModules]);
   const openObservationCountsByWorkUnit = useMemo(() => {
@@ -925,138 +938,72 @@ const QCMainMenu: React.FC = () => {
   const clearStationFilter = () => {
     setSelectedStationFilterIds([]);
   };
-  const getStationSummary = (stationId: number) => {
+  const getStationRows = (stationId: number): StationUnitRow[] => {
+    const rows = new Map<number, StationUnitRow>();
+    const ensureRow = (unit: {
+      work_unit_id: number;
+      module_number: number;
+      project_name: string | null;
+      house_type_name: string | null;
+      house_identifier: string | null;
+    }) => {
+      const existing = rows.get(unit.work_unit_id);
+      if (existing) {
+        return existing;
+      }
+      const row: StationUnitRow = {
+        workUnitId: unit.work_unit_id,
+        moduleNumber: unit.module_number,
+        projectName: unit.project_name,
+        houseTypeName: unit.house_type_name,
+        houseIdentifier: unit.house_identifier,
+        panelCodes: [],
+        openChecks: [],
+        canMarkCompleted: false,
+        isAtStation: false,
+      };
+      rows.set(unit.work_unit_id, row);
+      return row;
+    };
+    const addPanelCode = (row: StationUnitRow, panelCode: string | null) => {
+      if (panelCode && !row.panelCodes.includes(panelCode)) {
+        row.panelCodes.push(panelCode);
+      }
+    };
+    (plantModulesByStation.get(stationId) ?? []).forEach((module) => {
+      const row = ensureRow(module);
+      row.canMarkCompleted = module.can_mark_completed;
+      row.isAtStation = true;
+    });
+    (plantPanelsByStation.get(stationId) ?? []).forEach((panel) => {
+      const row = ensureRow(panel);
+      row.isAtStation = true;
+      addPanelCode(row, panel.panel_code);
+    });
     const activity = stationActivity.get(stationId);
-    const stationPanels = plantPanelsByStation.get(stationId) ?? [];
-    const primaryPanel = stationPanels[0] ?? null;
-    const stationModules = plantModulesByStation.get(stationId) ?? [];
-    const primaryModule = stationModules[0] ?? null;
-    const moduleFallback = () => {
-      if (!primaryModule) {
-        return null;
-      }
-      const workUnitLabel = buildWorkUnitLabel(
-        primaryModule.project_name,
-        primaryModule.house_type_name,
-        primaryModule.house_identifier
-      );
-      return {
-        moduleLabel:
-          stationModules.length > 1
-            ? `Modulo ${primaryModule.module_number} +${stationModules.length - 1}`
-            : `Modulo ${primaryModule.module_number}`,
-        workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
-        openCheckCount: 0,
-        workUnitId: primaryModule.work_unit_id,
-        moduleNumber: primaryModule.module_number,
-        projectName: primaryModule.project_name,
-        houseTypeName: primaryModule.house_type_name,
-        houseIdentifier: primaryModule.house_identifier,
-        canMarkCompleted: primaryModule.can_mark_completed,
-      };
-    };
-    if (!activity) {
-      if (primaryPanel) {
-        const workUnitLabel = buildWorkUnitLabel(
-          primaryPanel.project_name,
-          primaryPanel.house_type_name,
-          primaryPanel.house_identifier
-        );
-        return {
-          moduleLabel:
-            stationPanels.length > 1
-              ? `${formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code)} +${stationPanels.length - 1}`
-              : formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code),
-          workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
-          openCheckCount: 0,
-          workUnitId: primaryPanel.work_unit_id,
-          moduleNumber: primaryPanel.module_number,
-          projectName: primaryPanel.project_name,
-          houseTypeName: primaryPanel.house_type_name,
-          houseIdentifier: primaryPanel.house_identifier,
-          canMarkCompleted: false,
-        };
-      }
-      const fallback = moduleFallback();
-      if (fallback) {
-        return fallback;
-      }
-      return {
-        moduleLabel: 'Sin datos',
-        workUnitLabel: '',
-        openCheckCount: 0,
-        workUnitId: null as number | null,
-        moduleNumber: null as number | null,
-        projectName: null as string | null,
-        houseTypeName: null as string | null,
-        houseIdentifier: null as string | null,
-        canMarkCompleted: false,
-      };
-    }
-    const primary = activity.openChecks[0] ?? activity.reworks[0];
-    const openCheckCount = activity.openChecks.length;
-    if (!primary) {
-      if (primaryPanel) {
-        const workUnitLabel = buildWorkUnitLabel(
-          primaryPanel.project_name,
-          primaryPanel.house_type_name,
-          primaryPanel.house_identifier
-        );
-        return {
-          moduleLabel:
-            stationPanels.length > 1
-              ? `${formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code)} +${stationPanels.length - 1}`
-              : formatModulePanelLabel(primaryPanel.module_number, primaryPanel.panel_code),
-          workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
-          openCheckCount,
-          workUnitId: primaryPanel.work_unit_id,
-          moduleNumber: primaryPanel.module_number,
-          projectName: primaryPanel.project_name,
-          houseTypeName: primaryPanel.house_type_name,
-          houseIdentifier: primaryPanel.house_identifier,
-          canMarkCompleted: false,
-        };
-      }
-      const fallback = moduleFallback();
-      if (fallback) {
-        return { ...fallback, openCheckCount };
-      }
-      return {
-        moduleLabel: 'Sin datos',
-        workUnitLabel: '',
-        openCheckCount,
-        workUnitId: null as number | null,
-        moduleNumber: null as number | null,
-        projectName: null as string | null,
-        houseTypeName: null as string | null,
-        houseIdentifier: null as string | null,
-        canMarkCompleted: false,
-      };
-    }
-    const workUnitLabel = buildWorkUnitLabel(
-      primary.project_name,
-      primary.house_type_name,
-      primary.house_identifier
-    );
-    const matchingModule = plantModules.find((module) => module.work_unit_id === primary.work_unit_id);
-    return {
-      moduleLabel: formatModulePanelLabel(primary.module_number, primary.panel_code),
-      workUnitLabel: workUnitLabel === '-' ? '' : workUnitLabel,
-      openCheckCount,
-      workUnitId: primary.work_unit_id,
-      moduleNumber: primary.module_number,
-      projectName: primary.project_name,
-      houseTypeName: primary.house_type_name,
-      houseIdentifier: primary.house_identifier,
-      canMarkCompleted: matchingModule?.can_mark_completed ?? false,
-    };
+    activity?.openChecks.forEach((check) => {
+      const row = ensureRow(check);
+      row.openChecks.push(check);
+      addPanelCode(row, check.panel_code);
+    });
+    activity?.reworks.forEach((task) => {
+      addPanelCode(ensureRow(task), task.panel_code);
+    });
+    // Units that already left the station but still have open checks/reworks go last.
+    const allRows = Array.from(rows.values());
+    return [...allRows.filter((row) => row.isAtStation), ...allRows.filter((row) => !row.isAtStation)];
   };
-  const openStationChecks = (station: StationSummary) => {
-    if (!canExecuteChecks) {
-      return;
+  const formatRowLabel = (row: StationUnitRow): string => {
+    const moduleLabel = `Modulo ${row.moduleNumber}`;
+    if (!row.panelCodes.length) {
+      return moduleLabel;
     }
-    const checks = stationActivity.get(station.id)?.openChecks ?? [];
-    if (!checks.length) {
+    const shown = row.panelCodes.slice(0, 2).join(', ');
+    const extra = row.panelCodes.length > 2 ? ` +${row.panelCodes.length - 2}` : '';
+    return `${moduleLabel} · Panel ${shown}${extra}`;
+  };
+  const openRowChecks = (stationName: string, checks: QCCheckInstanceSummary[]) => {
+    if (!canExecuteChecks || !checks.length) {
       return;
     }
     if (checks.length === 1) {
@@ -1064,7 +1011,18 @@ const QCMainMenu: React.FC = () => {
       navigate(`/qc/execute?check=${check.id}`, { state: { checkId: check.id } });
       return;
     }
-    setStationSelection({ stationName: station.name, checks });
+    setStationSelection({ stationName, checks });
+  };
+  const toggleStationExpanded = (stationId: number) => {
+    setExpandedStationIds((current) => {
+      const next = new Set(current);
+      if (next.has(stationId)) {
+        next.delete(stationId);
+      } else {
+        next.add(stationId);
+      }
+      return next;
+    });
   };
   const closeStationSelection = () => {
     setStationSelection(null);
@@ -1800,112 +1758,151 @@ const QCMainMenu: React.FC = () => {
         ) : null}
         {hasStations ? (() => {
           const renderStationCard = (station: StationSummary) => {
-            const summary = getStationSummary(station.id);
-            const hasOpenChecks = summary.openCheckCount > 0;
-            const isEmptyStation = summary.workUnitId === null && !hasOpenChecks;
-            const obsCount = summary.workUnitId
-              ? openObservationCountsByWorkUnit.get(summary.workUnitId) ?? 0
-              : 0;
-            const canOpenObservations = canExecuteChecks && summary.workUnitId !== null;
-            const canMarkStationModuleCompleted =
-              activePlantTab === 'armado' &&
-              canMarkModulesComplete &&
-              summary.canMarkCompleted &&
-              summary.workUnitId !== null &&
-              summary.moduleNumber !== null;
-            const isCompletingModule =
-              summary.workUnitId !== null && completingWorkUnitIds.has(summary.workUnitId);
-            const observationSelectionForStation =
-              summary.workUnitId !== null && summary.moduleNumber !== null
-                ? {
-                    workUnitId: summary.workUnitId,
-                    moduleNumber: summary.moduleNumber,
-                    projectName: summary.projectName,
-                    houseTypeName: summary.houseTypeName,
-                    houseIdentifier: summary.houseIdentifier,
-                  }
-                : null;
+            const rows = getStationRows(station.id);
+            const isEmptyStation = rows.length === 0;
+            const isExpanded = expandedStationIds.has(station.id);
+            const visibleRows =
+              isExpanded || rows.length <= STATION_ROWS_COLLAPSED_LIMIT + 1
+                ? rows
+                : rows.slice(0, STATION_ROWS_COLLAPSED_LIMIT);
+            const hiddenCount = rows.length - visibleRows.length;
+            const renderRow = (row: StationUnitRow) => {
+              const workUnitLabel = buildWorkUnitLabel(
+                row.projectName,
+                row.houseTypeName,
+                row.houseIdentifier
+              );
+              const openCheckCount = row.openChecks.length;
+              const hasOpenChecks = openCheckCount > 0;
+              const obsCount = openObservationCountsByWorkUnit.get(row.workUnitId) ?? 0;
+              const canMarkRowCompleted =
+                activePlantTab === 'armado' && canMarkModulesComplete && row.canMarkCompleted;
+              const isCompletingModule = completingWorkUnitIds.has(row.workUnitId);
+              return (
+                <div
+                  key={row.workUnitId}
+                  className="rounded-lg border border-black/5 bg-slate-50/60 px-2.5 py-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-medium text-[var(--ink)]">{formatRowLabel(row)}</p>
+                    {!row.isAtStation ? (
+                      <span className="shrink-0 rounded-full border border-black/10 px-1.5 text-[9px] text-[var(--ink-muted)]">
+                        fuera de linea
+                      </span>
+                    ) : null}
+                  </div>
+                  {workUnitLabel !== '-' ? (
+                    <p className="mt-0.5 truncate text-[10px] text-[var(--ink-muted)]">
+                      {workUnitLabel}
+                    </p>
+                  ) : null}
+                  <div
+                    className={clsx(
+                      'mt-2 grid gap-1.5',
+                      canMarkRowCompleted ? 'grid-cols-3' : 'grid-cols-2'
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => openRowChecks(station.name, row.openChecks)}
+                      disabled={!canExecuteChecks || !hasOpenChecks}
+                      className={clsx(
+                        'flex items-center justify-center gap-1 rounded-md border py-1 text-[10px] font-semibold transition',
+                        hasOpenChecks
+                          ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
+                          : 'border-black/5 bg-white text-[var(--ink-muted)]',
+                        canExecuteChecks && hasOpenChecks
+                          ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                          : 'opacity-70 cursor-not-allowed'
+                      )}
+                    >
+                      <ClipboardCheck className="h-3.5 w-3.5" />
+                      {openCheckCount} Checks
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openObservationModal({
+                          workUnitId: row.workUnitId,
+                          moduleNumber: row.moduleNumber,
+                          projectName: row.projectName,
+                          houseTypeName: row.houseTypeName,
+                          houseIdentifier: row.houseIdentifier,
+                        })
+                      }
+                      disabled={!canExecuteChecks}
+                      className={clsx(
+                        'flex items-center justify-center gap-1 rounded-md border py-1 text-[10px] font-semibold transition',
+                        obsCount > 0
+                          ? 'border-amber-200 bg-amber-50 text-amber-800'
+                          : 'border-black/5 bg-white text-[var(--ink-muted)]',
+                        canExecuteChecks
+                          ? 'hover:-translate-y-0.5 hover:shadow-sm'
+                          : 'opacity-70 cursor-not-allowed'
+                      )}
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {obsCount} Obs.
+                    </button>
+                    {canMarkRowCompleted ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleMarkModuleCompleted({
+                            workUnitId: row.workUnitId,
+                            moduleNumber: row.moduleNumber,
+                          });
+                        }}
+                        disabled={isCompletingModule}
+                        title="Marcar terminado"
+                        className="flex items-center justify-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 py-1 text-[10px] font-semibold text-emerald-800 transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isCompletingModule ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        )}
+                        Terminar
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            };
             return (
               <div
                 key={station.id}
                 className={clsx(
-                  'flex flex-col justify-between rounded-xl border p-3 shadow-sm transition hover:shadow-md',
+                  'flex flex-col rounded-xl border p-3 shadow-sm transition hover:shadow-md',
                   isEmptyStation
                     ? 'border-black/5 bg-slate-100/70 text-[var(--ink-muted)] opacity-75'
                     : 'border-black/10 bg-white'
                 )}
               >
-                <div className="min-w-0">
+                <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold text-[var(--ink)]">{station.name}</p>
-                  <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">{summary.moduleLabel}</p>
-                  {summary.workUnitLabel ? (
-                    <p className="mt-0.5 truncate text-[10px] text-[var(--ink-muted)]">
-                      {summary.workUnitLabel}
-                    </p>
+                  {rows.length > 1 ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-[var(--ink-muted)]">
+                      {rows.length} modulos
+                    </span>
                   ) : null}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openStationChecks(station)}
-                    disabled={!canExecuteChecks || !hasOpenChecks}
-                    className={clsx(
-                      'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
-                      hasOpenChecks
-                        ? 'border-[rgba(242,98,65,0.3)] bg-[rgba(242,98,65,0.08)] text-[var(--ink)]'
-                        : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
-                      canExecuteChecks && hasOpenChecks
-                        ? 'hover:-translate-y-0.5 hover:shadow-sm'
-                        : 'opacity-70 cursor-not-allowed'
-                    )}
-                  >
-                    <ClipboardCheck className="h-3.5 w-3.5" />
-                    {summary.openCheckCount} Checks
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (observationSelectionForStation) {
-                        openObservationModal(observationSelectionForStation);
-                      }
-                    }}
-                    disabled={!canOpenObservations || !observationSelectionForStation}
-                    className={clsx(
-                      'flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[10px] font-semibold transition',
-                      obsCount > 0
-                        ? 'border-amber-200 bg-amber-50 text-amber-800'
-                        : 'border-black/5 bg-slate-50 text-[var(--ink-muted)]',
-                      canOpenObservations && observationSelectionForStation
-                        ? 'hover:-translate-y-0.5 hover:shadow-sm'
-                        : 'opacity-70 cursor-not-allowed'
-                    )}
-                  >
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    {obsCount} Obs.
-                  </button>
-                </div>
-                {canMarkStationModuleCompleted ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (summary.workUnitId !== null && summary.moduleNumber !== null) {
-                        void handleMarkModuleCompleted({
-                          workUnitId: summary.workUnitId,
-                          moduleNumber: summary.moduleNumber,
-                        });
-                      }
-                    }}
-                    disabled={isCompletingModule}
-                    className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 py-1.5 text-[10px] font-semibold text-emerald-800 transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {isCompletingModule ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                    )}
-                    Marcar terminado
-                  </button>
-                ) : null}
+                {isEmptyStation ? (
+                  <p className="mt-0.5 text-[11px] text-[var(--ink-muted)]">Sin datos</p>
+                ) : (
+                  <div className="mt-2 grid gap-1.5">
+                    {visibleRows.map(renderRow)}
+                    {hiddenCount > 0 || isExpanded ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleStationExpanded(station.id)}
+                        className="rounded-md py-1 text-[10px] font-semibold text-[var(--ink-muted)] hover:text-[var(--ink)]"
+                      >
+                        {isExpanded ? 'Ver menos' : `Ver ${hiddenCount} mas`}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
               </div>
             );
           };
