@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import distinct, func, select
@@ -37,6 +37,7 @@ from app.schemas.tasks import (
 from app.schemas.worker_station import (
     TaskCompleteRequest,
     TaskJoinRequest,
+    TaskLeaveRequest,
     TaskNoteRequest,
     TaskPauseRequest,
     TaskResumeRequest,
@@ -46,200 +47,23 @@ from app.schemas.worker_station import (
     WorkerBusyCheckResponse,
 )
 from app.services.conditions import ConditionContext, load_condition_context
+from app.services.panel_routing import advance_panel_if_satisfied
 from app.services.task_applicability import resolve_task_station_sequence
+from app.services.task_dependencies import (
+    DependencyRules,
+    dependency_ids_of,
+    load_resolved_tasks,
+)
+from app.services.task_participation import (
+    close_open_participations,
+    close_open_pauses,
+    leave_task,
+    pause_instance,
+)
 from app.services.qc_runtime import open_qc_checks_for_task_completion
 from app.services.task_station_adherence import capture_task_station_adherence_fact
 
 router = APIRouter()
-
-
-def _required_panel_task_ids(
-    db: Session,
-    station: Station,
-    work_unit: WorkUnit,
-    work_order: WorkOrder,
-    panel_definition: PanelDefinition,
-) -> set[int]:
-    task_defs = list(
-        db.execute(
-            select(TaskDefinition)
-            .where(TaskDefinition.active == True)
-            .where(TaskDefinition.archived_at.is_(None))
-            .where(TaskDefinition.scope == TaskScope.PANEL)
-        ).scalars()
-    )
-    if not task_defs:
-        return set()
-    task_def_ids = [task.id for task in task_defs]
-    applicability_rows = list(
-        db.execute(
-            select(TaskApplicability).where(TaskApplicability.task_definition_id.in_(task_def_ids))
-        ).scalars()
-    )
-    applicability_map: dict[int, list[TaskApplicability]] = {}
-    for row in applicability_rows:
-        applicability_map.setdefault(row.task_definition_id, []).append(row)
-    condition_ctx = load_condition_context(db, task_def_ids, [work_unit.id])
-    unit_condition_value_ids = condition_ctx.values_for(work_unit.id)
-
-    required_ids: set[int] = set()
-    for task in task_defs:
-        applies, station_sequence_order = resolve_task_station_sequence(
-            task,
-            applicability_map.get(task.id, []),
-            work_order.house_type_id,
-            work_order.sub_type_id,
-            work_unit.module_number,
-            panel_definition.id,
-            condition_requirements=condition_ctx.requirements_for(task.id),
-            unit_condition_value_ids=unit_condition_value_ids,
-        )
-        if not applies:
-            continue
-        if station_sequence_order is None:
-            continue
-        if station.sequence_order != station_sequence_order:
-            continue
-        required_ids.add(task.id)
-    return required_ids
-
-
-def _applicable_panel_definitions_for_work_unit(
-    db: Session, work_unit: WorkUnit, work_order: WorkOrder
-) -> list[PanelDefinition]:
-    existing_definition_ids = set(
-        db.execute(
-            select(PanelUnit.panel_definition_id).where(
-                PanelUnit.work_unit_id == work_unit.id
-            )
-        ).scalars()
-    )
-    archive_filter = PanelDefinition.archived_at.is_(None)
-    if existing_definition_ids:
-        archive_filter = archive_filter | PanelDefinition.id.in_(existing_definition_ids)
-    panel_definitions = list(
-        db.execute(
-            select(PanelDefinition)
-            .where(PanelDefinition.house_type_id == work_order.house_type_id)
-            .where(PanelDefinition.module_sequence_number == work_unit.module_number)
-            .where(archive_filter)
-        ).scalars()
-    )
-    general = [panel_def for panel_def in panel_definitions if panel_def.sub_type_id is None]
-    if work_order.sub_type_id is not None:
-        specific = [
-            panel_def
-            for panel_def in panel_definitions
-            if panel_def.sub_type_id == work_order.sub_type_id
-        ]
-        return general + specific
-    return general
-
-
-def _all_applicable_panels_terminal(
-    db: Session, work_unit: WorkUnit, work_order: WorkOrder
-) -> bool:
-    panel_definitions = _applicable_panel_definitions_for_work_unit(db, work_unit, work_order)
-    if not panel_definitions:
-        return False
-
-    panel_units = list(
-        db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
-    )
-    panel_units_by_definition: dict[int, list[PanelUnit]] = {}
-    for panel_unit in panel_units:
-        panel_units_by_definition.setdefault(panel_unit.panel_definition_id, []).append(panel_unit)
-
-    terminal_statuses = {PanelUnitStatus.COMPLETED, PanelUnitStatus.CONSUMED}
-    for panel_definition in panel_definitions:
-        units = panel_units_by_definition.get(panel_definition.id, [])
-        if not units:
-            return False
-        if any(panel_unit.status not in terminal_statuses for panel_unit in units):
-            return False
-    return True
-
-
-def _advance_panel_if_satisfied(
-    db: Session,
-    panel_unit: PanelUnit,
-    station: Station,
-) -> None:
-    if station.role != StationRole.PANELS:
-        return
-    work_unit = db.get(WorkUnit, panel_unit.work_unit_id)
-    if not work_unit:
-        return
-    work_order = db.get(WorkOrder, work_unit.work_order_id)
-    if not work_order:
-        return
-    panel_def = db.get(PanelDefinition, panel_unit.panel_definition_id)
-    if not panel_def:
-        return
-
-    required_ids = _required_panel_task_ids(db, station, work_unit, work_order, panel_def)
-    if required_ids:
-        completed_ids = set(
-            db.execute(
-                select(TaskInstance.task_definition_id)
-                .where(TaskInstance.work_unit_id == work_unit.id)
-                .where(TaskInstance.panel_unit_id == panel_unit.id)
-                .where(TaskInstance.station_id == station.id)
-                .where(TaskInstance.status.in_([TaskStatus.COMPLETED, TaskStatus.SKIPPED]))
-                .where(TaskInstance.task_definition_id.in_(required_ids))
-            ).scalars()
-        )
-        skipped_ids = set(
-            db.execute(
-                select(TaskException.task_definition_id)
-                .where(TaskException.work_unit_id == work_unit.id)
-                .where(TaskException.panel_unit_id == panel_unit.id)
-                .where(TaskException.station_id == station.id)
-                .where(TaskException.exception_type == TaskExceptionType.SKIP)
-                .where(TaskException.task_definition_id.in_(required_ids))
-            ).scalars()
-        )
-        satisfied_ids = completed_ids | skipped_ids
-        should_advance = required_ids.issubset(satisfied_ids)
-    else:
-        should_advance = True
-
-    if not should_advance:
-        return
-
-    next_station = None
-    candidates = list(
-        db.execute(
-            select(Station)
-            .where(Station.role == StationRole.PANELS)
-            .where(Station.sequence_order > station.sequence_order)
-            .order_by(Station.sequence_order)
-        ).scalars()
-    )
-    for candidate in candidates:
-        candidate_required = _required_panel_task_ids(
-            db, candidate, work_unit, work_order, panel_def
-        )
-        if candidate_required:
-            next_station = candidate
-            break
-
-    if next_station:
-        panel_unit.current_station_id = next_station.id
-        panel_unit.status = PanelUnitStatus.IN_PROGRESS
-        if work_unit.status == WorkUnitStatus.PLANNED:
-            work_unit.status = WorkUnitStatus.PANELS
-    else:
-        panel_unit.current_station_id = None
-        panel_unit.status = PanelUnitStatus.COMPLETED
-        all_applicable_panels_done = _all_applicable_panels_terminal(db, work_unit, work_order)
-        if all_applicable_panels_done and work_unit.status in (
-            WorkUnitStatus.PLANNED,
-            WorkUnitStatus.PANELS,
-        ):
-            work_unit.status = WorkUnitStatus.MAGAZINE
-        elif work_unit.status == WorkUnitStatus.PLANNED:
-            work_unit.status = WorkUnitStatus.PANELS
 
 
 def _station_has_module_tasks(
@@ -401,32 +225,78 @@ def _auto_complete_open_module_tasks_for_work_unit(
 def _dependencies_satisfied(
     db: Session,
     task_def: TaskDefinition,
-    work_unit_id: int,
+    work_unit: WorkUnit,
     panel_unit_id: int | None,
+    panel_definition_id: int | None,
     scope: TaskScope,
 ) -> bool:
-    dependencies = task_def.dependencies_json
-    if dependencies is None:
-        return True
-    if not isinstance(dependencies, list):
+    dependency_ids = dependency_ids_of(task_def.dependencies_json)
+    if dependency_ids is None:
         return False
-    if not dependencies:
+    if not dependency_ids:
         return True
-    if scope == TaskScope.PANEL:
-        if panel_unit_id is None:
-            return False
-        panel_clause = TaskInstance.panel_unit_id == panel_unit_id
+    work_order = db.get(WorkOrder, work_unit.work_order_id)
+    if not work_order:
+        return False
+    panel_task_ids: list[int] | None = None
+    if scope == TaskScope.PANEL and panel_definition_id is not None:
+        panel_definition = db.get(PanelDefinition, panel_definition_id)
+        panel_task_ids = panel_definition.applicable_task_ids if panel_definition else None
     else:
-        panel_clause = TaskInstance.panel_unit_id.is_(None)
-    completed_ids = set(
-        db.execute(
-            select(TaskInstance.task_definition_id)
-            .where(TaskInstance.work_unit_id == work_unit_id)
-            .where(panel_clause)
-            .where(TaskInstance.status == TaskStatus.COMPLETED)
-        ).scalars()
+        panel_unit_id = None
+        panel_definition_id = None
+    rules = DependencyRules.load(db, dependency_ids, [work_unit.id])
+    resolved = load_resolved_tasks(db, work_unit.id, panel_unit_id)
+    missing = rules.missing_dependency_ids(
+        task_def,
+        resolved,
+        work_unit_id=work_unit.id,
+        house_type_id=work_order.house_type_id,
+        sub_type_id=work_order.sub_type_id,
+        module_number=work_unit.module_number,
+        panel_definition_id=panel_definition_id,
+        panel_task_ids=panel_task_ids,
     )
-    return all(dependency_id in completed_ids for dependency_id in dependencies)
+    return missing == []
+
+
+def _reject_rework_instance(instance: TaskInstance) -> None:
+    if instance.rework_task_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Rework tasks must be handled through /api/qc/rework-tasks "
+                f"(rework task {instance.rework_task_id})"
+            ),
+        )
+
+
+def _find_existing_panel_unit(
+    db: Session, work_unit_id: int, panel_definition_id: int
+) -> PanelUnit | None:
+    """Oldest panel unit already created for this module and panel definition."""
+    return (
+        db.execute(
+            select(PanelUnit)
+            .where(PanelUnit.work_unit_id == work_unit_id)
+            .where(PanelUnit.panel_definition_id == panel_definition_id)
+            .order_by(PanelUnit.id)
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
+
+
+def _lock_work_unit(db: Session, work_unit_id: int) -> WorkUnit | None:
+    """Serialize task starts on one module so concurrent tablets cannot duplicate rows."""
+    return (
+        db.execute(
+            select(WorkUnit).where(WorkUnit.id == work_unit_id).with_for_update()
+        )
+        .scalars()
+        .first()
+    )
 
 
 @router.get("/active", response_model=list[WorkerActiveTaskRead])
@@ -484,6 +354,9 @@ def list_active_tasks(
         current_station_id = panel_unit.current_station_id if panel_unit else None
         if current_station_id is None and work_unit:
             current_station_id = work_unit.current_station_id
+        if instance.rework_task_id is not None:
+            # Rework stays at the station where it was started, wherever the unit is now.
+            current_station_id = instance.station_id
         work_order = work_unit.work_order if work_unit else None
         payloads.append(
             WorkerActiveTaskRead(
@@ -505,6 +378,7 @@ def list_active_tasks(
                     if panel_unit and panel_unit.panel_definition
                     else None
                 ),
+                rework_task_id=instance.rework_task_id,
                 status=instance.status,
                 started_at=instance.started_at,
                 notes=instance.notes,
@@ -591,12 +465,13 @@ def start_task(
     station = db.get(Station, payload.station_id)
     if not station:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
-    work_unit = db.get(WorkUnit, payload.work_unit_id)
+    work_unit = _lock_work_unit(db, payload.work_unit_id)
     if not work_unit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
     panel_unit_id = payload.panel_unit_id
     panel_definition_id = payload.panel_definition_id
     if payload.scope == TaskScope.PANEL:
+        panel_unit: PanelUnit | None = None
         if panel_unit_id is not None:
             panel_unit = db.get(PanelUnit, panel_unit_id)
             if not panel_unit:
@@ -606,51 +481,51 @@ def start_task(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Panel unit does not belong to work unit",
                 )
-            if panel_unit.status != PanelUnitStatus.PLANNED and panel_unit.current_station_id != payload.station_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Panel is already in progress at another station",
-                )
-            panel_definition_id = panel_unit.panel_definition_id
-            if not _dependencies_satisfied(
-                db,
-                task_def,
-                payload.work_unit_id,
-                panel_unit_id,
-                payload.scope,
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Task dependencies not satisfied",
-                )
-            if panel_unit.status == PanelUnitStatus.PLANNED:
-                panel_unit.status = PanelUnitStatus.IN_PROGRESS
-                panel_unit.current_station_id = payload.station_id
-                if work_unit.status == WorkUnitStatus.PLANNED:
-                    work_unit.status = WorkUnitStatus.PANELS
         else:
             if panel_definition_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Panel definition is required",
                 )
-            panel_definition = db.get(PanelDefinition, panel_definition_id)
-            if not panel_definition or panel_definition.archived_at is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Panel definition not found",
-                )
-            if not _dependencies_satisfied(
-                db,
-                task_def,
-                payload.work_unit_id,
-                None,
-                payload.scope,
+            # A stale tablet can still show the panel as "planned" after another tablet
+            # created its unit; reuse that unit instead of creating a duplicate panel.
+            panel_unit = _find_existing_panel_unit(db, payload.work_unit_id, panel_definition_id)
+            if panel_unit is None:
+                panel_definition = db.get(PanelDefinition, panel_definition_id)
+                if not panel_definition or panel_definition.archived_at is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Panel definition not found",
+                    )
+        if panel_unit is not None:
+            if (
+                panel_unit.status != PanelUnitStatus.PLANNED
+                and panel_unit.current_station_id != payload.station_id
             ):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Task dependencies not satisfied",
+                    detail=(
+                        "Panel is already finished"
+                        if panel_unit.status
+                        in (PanelUnitStatus.COMPLETED, PanelUnitStatus.CONSUMED)
+                        else "Panel is already in progress at another station"
+                    ),
                 )
+            panel_unit_id = panel_unit.id
+            panel_definition_id = panel_unit.panel_definition_id
+        if not _dependencies_satisfied(
+            db,
+            task_def,
+            work_unit,
+            panel_unit_id,
+            panel_definition_id,
+            payload.scope,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Task dependencies not satisfied",
+            )
+        if panel_unit is None:
             panel_unit = PanelUnit(
                 work_unit_id=payload.work_unit_id,
                 panel_definition_id=panel_definition_id,
@@ -660,15 +535,19 @@ def start_task(
             db.add(panel_unit)
             db.flush()
             panel_unit_id = panel_unit.id
-            if work_unit.status == WorkUnitStatus.PLANNED:
-                work_unit.status = WorkUnitStatus.PANELS
+        elif panel_unit.status == PanelUnitStatus.PLANNED:
+            panel_unit.status = PanelUnitStatus.IN_PROGRESS
+            panel_unit.current_station_id = payload.station_id
+        if work_unit.status == WorkUnitStatus.PLANNED:
+            work_unit.status = WorkUnitStatus.PANELS
     else:
         panel_unit_id = None
         panel_definition_id = None
         if not _dependencies_satisfied(
             db,
             task_def,
-            payload.work_unit_id,
+            work_unit,
+            None,
             None,
             payload.scope,
         ):
@@ -699,14 +578,22 @@ def start_task(
         if panel_unit_id is None
         else TaskInstance.panel_unit_id == panel_unit_id
     )
-    existing = db.execute(
-        select(TaskInstance)
-        .where(TaskInstance.task_definition_id == payload.task_definition_id)
-        .where(TaskInstance.work_unit_id == payload.work_unit_id)
-        .where(panel_clause)
-        .where(TaskInstance.station_id == payload.station_id)
-        .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
-    ).scalar_one_or_none()
+    # Join the open instance rather than opening a second one for the same work.
+    existing = (
+        db.execute(
+            select(TaskInstance)
+            .where(TaskInstance.task_definition_id == payload.task_definition_id)
+            .where(TaskInstance.work_unit_id == payload.work_unit_id)
+            .where(panel_clause)
+            .where(TaskInstance.station_id == payload.station_id)
+            .where(TaskInstance.rework_task_id.is_(None))
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+            .order_by(TaskInstance.id)
+            .limit(1)
+        )
+        .scalars()
+        .first()
+    )
     if existing:
         if not task_def.concurrent_allowed:
             for worker_id in unique_worker_ids:
@@ -726,11 +613,12 @@ def start_task(
                 )
         for worker_id in unique_worker_ids:
             participation = db.execute(
-                select(TaskParticipation)
+                select(TaskParticipation.id)
                 .where(TaskParticipation.task_instance_id == existing.id)
                 .where(TaskParticipation.worker_id == worker_id)
                 .where(TaskParticipation.left_at.is_(None))
-            ).scalar_one_or_none()
+                .limit(1)
+            ).first()
             if participation:
                 continue
             db.add(
@@ -795,6 +683,8 @@ def join_task(
     instance = _get_task_instance(payload.task_instance_id, db)
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
+    if instance.status == TaskStatus.SKIPPED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task was skipped")
     task_def = db.get(TaskDefinition, instance.task_definition_id)
     if not task_def:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task definition not found")
@@ -812,11 +702,12 @@ def join_task(
             detail="Worker already has an active task",
         )
     existing = db.execute(
-        select(TaskParticipation)
+        select(TaskParticipation.id)
         .where(TaskParticipation.task_instance_id == instance.id)
         .where(TaskParticipation.worker_id == worker.id)
         .where(TaskParticipation.left_at.is_(None))
-    ).scalar_one_or_none()
+        .limit(1)
+    ).first()
     if existing:
         return instance
     db.add(
@@ -838,19 +729,20 @@ def pause_task(
     worker: Worker = Depends(get_current_worker),
 ) -> TaskInstance:
     instance = _get_task_instance(payload.task_instance_id, db)
+    _reject_rework_instance(instance)
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
-    instance.status = TaskStatus.PAUSED
-    db.add(
-        TaskPause(
-            task_instance_id=instance.id,
-            reason_id=payload.reason_id,
-            reason_text=payload.reason_text,
-            paused_at=utc_now(),
-        )
-    )
-    db.commit()
-    db.refresh(instance)
+    if instance.status == TaskStatus.SKIPPED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task was skipped")
+    # Pausing an already paused task (double tap, stale tablet) keeps the original pause.
+    if pause_instance(
+        db,
+        instance,
+        reason_id=payload.reason_id,
+        reason_text=payload.reason_text,
+    ):
+        db.commit()
+        db.refresh(instance)
     return instance
 
 
@@ -861,8 +753,11 @@ def resume_task(
     worker: Worker = Depends(get_current_worker),
 ) -> TaskInstance:
     instance = _get_task_instance(payload.task_instance_id, db)
+    _reject_rework_instance(instance)
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task already completed")
+    if instance.status == TaskStatus.SKIPPED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task was skipped")
     task_def = db.get(TaskDefinition, instance.task_definition_id)
     if task_def:
         allowed_worker_ids = _allowed_worker_ids(db, task_def.id)
@@ -879,15 +774,8 @@ def resume_task(
             detail="Worker already has an active task",
         )
     instance.status = TaskStatus.IN_PROGRESS
-    pause = db.execute(
-        select(TaskPause)
-        .where(TaskPause.task_instance_id == instance.id)
-        .where(TaskPause.resumed_at.is_(None))
-        .order_by(TaskPause.paused_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if pause:
-        pause.resumed_at = utc_now()
+    # Close every open pause, not only the newest, so stacked pauses stop counting.
+    close_open_pauses(db, instance.id, utc_now())
     db.commit()
     db.refresh(instance)
     return instance
@@ -901,6 +789,7 @@ def complete_task(
     session: WorkerSession = Depends(get_current_worker_session),
 ) -> TaskInstance:
     instance = _get_task_instance(payload.task_instance_id, db)
+    _reject_rework_instance(instance)
     completion_station_id = session.station_id
     if completion_station_id is None:
         raise HTTPException(
@@ -911,11 +800,12 @@ def complete_task(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Station not found")
     task_def = db.get(TaskDefinition, instance.task_definition_id)
     active_participation = db.execute(
-        select(TaskParticipation)
+        select(TaskParticipation.id)
         .where(TaskParticipation.task_instance_id == instance.id)
         .where(TaskParticipation.worker_id == worker.id)
         .where(TaskParticipation.left_at.is_(None))
-    ).scalar_one_or_none()
+        .limit(1)
+    ).first()
     if not active_participation:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -923,6 +813,8 @@ def complete_task(
         )
     if instance.status == TaskStatus.COMPLETED:
         return instance
+    if instance.status == TaskStatus.SKIPPED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task was skipped")
     instance.status = TaskStatus.COMPLETED
     instance.completed_at = utc_now()
     if payload.notes:
@@ -930,24 +822,8 @@ def complete_task(
             instance.notes = f"{instance.notes}\n{payload.notes}"
         else:
             instance.notes = payload.notes
-    participations = list(
-        db.execute(
-            select(TaskParticipation)
-            .where(TaskParticipation.task_instance_id == instance.id)
-            .where(TaskParticipation.left_at.is_(None))
-        ).scalars()
-    )
-    for participation in participations:
-        participation.left_at = instance.completed_at
-    open_pauses = list(
-        db.execute(
-            select(TaskPause)
-            .where(TaskPause.task_instance_id == instance.id)
-            .where(TaskPause.resumed_at.is_(None))
-        ).scalars()
-    )
-    for pause in open_pauses:
-        pause.resumed_at = instance.completed_at
+    close_open_participations(db, instance.id, instance.completed_at)
+    close_open_pauses(db, instance.id, instance.completed_at)
     # Ensure the completion is visible to subsequent queries in this request.
     db.flush()
     auto_completed_instances: list[TaskInstance] = []
@@ -955,7 +831,7 @@ def complete_task(
         panel_unit = db.get(PanelUnit, instance.panel_unit_id)
         station = db.get(Station, instance.station_id)
         if panel_unit and station:
-            _advance_panel_if_satisfied(db, panel_unit, station)
+            advance_panel_if_satisfied(db, panel_unit, station)
     if instance.scope == TaskScope.MODULE and instance.panel_unit_id is None:
         station = db.get(Station, instance.station_id)
         if (
@@ -998,6 +874,34 @@ def complete_task(
             completed_station_id=completion_station_id,
         )
 
+    db.commit()
+    db.refresh(instance)
+    return instance
+
+
+def _close_instance_as_skipped(db: Session, instance: TaskInstance, at: datetime) -> None:
+    instance.status = TaskStatus.SKIPPED
+    instance.completed_at = at
+    close_open_participations(db, instance.id, at)
+    close_open_pauses(db, instance.id, at)
+
+
+@router.post("/leave", response_model=TaskInstanceRead)
+def leave_task_route(
+    payload: TaskLeaveRequest,
+    db: Session = Depends(get_db),
+    worker: Worker = Depends(get_current_worker),
+) -> TaskInstance:
+    """Remove the current worker from the crew; the task pauses if nobody is left."""
+    instance = _get_task_instance(payload.task_instance_id, db)
+    if instance.status not in (TaskStatus.IN_PROGRESS, TaskStatus.PAUSED):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Task is not open")
+    result = leave_task(db, instance, worker.id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Worker is not participating in this task",
+        )
     db.commit()
     db.refresh(instance)
     return instance
@@ -1047,27 +951,26 @@ def skip_task(
         )
     )
 
-    instance = db.execute(
-        select(TaskInstance)
-        .where(TaskInstance.task_definition_id == payload.task_definition_id)
-        .where(TaskInstance.work_unit_id == payload.work_unit_id)
-        .where(TaskInstance.panel_unit_id == payload.panel_unit_id)
-        .where(TaskInstance.station_id == payload.station_id)
-        .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
-    ).scalar_one_or_none()
-    if instance:
-        instance.status = TaskStatus.PAUSED
-        db.add(
-            TaskPause(
-                task_instance_id=instance.id,
-                reason_text=payload.reason_text or "Skipped override",
-                paused_at=utc_now(),
-            )
-        )
+    # An open instance of the skipped task is closed as skipped: nobody keeps working on
+    # it, and its crew is free for other tasks.
+    skipped_at = utc_now()
+    open_instances = list(
+        db.execute(
+            select(TaskInstance)
+            .where(TaskInstance.task_definition_id == payload.task_definition_id)
+            .where(TaskInstance.work_unit_id == payload.work_unit_id)
+            .where(TaskInstance.panel_unit_id == payload.panel_unit_id)
+            .where(TaskInstance.station_id == payload.station_id)
+            .where(TaskInstance.rework_task_id.is_(None))
+            .where(TaskInstance.status.in_([TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))
+        ).scalars()
+    )
+    for instance in open_instances:
+        _close_instance_as_skipped(db, instance, skipped_at)
     db.flush()
     station = db.get(Station, payload.station_id)
     if station:
-        _advance_panel_if_satisfied(db, panel_unit, station)
+        advance_panel_if_satisfied(db, panel_unit, station)
     db.commit()
 
 

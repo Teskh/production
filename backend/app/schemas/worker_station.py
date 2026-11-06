@@ -78,6 +78,8 @@ class StationQCReworkTask(BaseModel):
     panel_code: str | None = None
     station_id: int | None = None
     created_at: datetime
+    # Panel rework shown with its module because the panel already left the panel line.
+    panel_left_line: bool = False
     failure_notes: str | None = None
     failure_modes: list[str] = Field(default_factory=list)
     evidence: list[StationQCEvidenceItem] = Field(default_factory=list)
@@ -127,6 +129,10 @@ class TaskResumeRequest(BaseModel):
     task_instance_id: int
 
 
+class TaskLeaveRequest(BaseModel):
+    task_instance_id: int
+
+
 class TaskCompleteRequest(BaseModel):
     task_instance_id: int
     notes: str | None = None
@@ -144,3 +150,18 @@ class TaskSkipRequest(BaseModel):
 class TaskNoteRequest(BaseModel):
     task_instance_id: int
     notes: str
+
+
+class WorkerOpenTaskRead(BaseModel):
+    task_instance_id: int
+    task_name: str
+    status: TaskStatus
+    station_id: int
+    station_name: str | None = None
+    work_unit_id: int
+    module_number: int | None = None
+    project_name: str | None = None
+    house_identifier: str | None = None
+    panel_code: str | None = None
+    is_rework: bool = False
+    other_participant_count: int = 0

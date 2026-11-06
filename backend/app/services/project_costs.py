@@ -152,7 +152,11 @@ def build_cost_data(db: Session, start: date | None, end: date | None) -> dict:
     instances = list(db.scalars(select(TaskInstance).where(
         TaskInstance.started_at < finish,
         (TaskInstance.completed_at >= begin) | TaskInstance.completed_at.is_(None),
-        TaskInstance.status.in_([TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]))))
+        # SKIPPED counts too: a task closed without finishing (skipped while running, a
+        # canceled rework, a module declared finished) still consumed the recorded labor.
+        # Duration samples below keep using COMPLETED only.
+        TaskInstance.status.in_([TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS, TaskStatus.PAUSED,
+                                 TaskStatus.SKIPPED]))))
     instance_map = {t.id: t for t in instances}
     masks = {}
     for role in StationRole:

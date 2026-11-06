@@ -68,7 +68,6 @@ from app.schemas.qc_runtime import (
     QCExecutionRead,
     QCFailureAnalysisResponse,
     QCReworkAttemptSummary,
-    QCDashboardResponse,
     QCEvidenceUploadRead,
     QCEvidenceSummary,
     QCFailureModeSummary,
@@ -87,15 +86,36 @@ from app.schemas.qc_runtime import (
     QCReworkStartRequest,
     QCReworkTaskSummary,
 )
+from app.schemas.qc import (
+    QCDashboardCheckSummary,
+    QCDashboardResponseV2,
+    QCDashboardReworkSummary,
+    QCReworkCancelRequest,
+    QCTriggerTaskWarning,
+    QCWorkUnitCompletionPreview,
+    QCWorkUnitCompletionRequest,
+    QCWorkUnitCompletionResult,
+)
 from app.services.qc_runtime import (
     apply_failure_modes,
+    cancel_rework,
     create_notifications_for_task,
     enforce_no_active_tasks,
+    find_trigger_task_warnings,
+    lock_qc_checks_for_work_unit,
     manual_check_scope_for_status,
+    open_qc_items_for_work_unit,
+    panel_is_off_panel_line,
+    resolve_open_qc_items_for_completion,
     resolve_qc_applicability,
     update_sampling_from_execution,
 )
 from app.services.qc_excel_report import build_qc_dashboard_excel_report
+from app.services.task_participation import (
+    close_open_instances_for_work_unit,
+    close_open_pauses,
+    pause_instance,
+)
 from app.services.qc_evidence import validate_video_total, video_duration_seconds
 from app.services.qc_dashboard_metrics import (
     build_qc_metric_window,
@@ -570,10 +590,10 @@ def _delete_check_related_rows(db: Session, check_instance_id: int) -> None:
     db.execute(delete(QCCheckInstance).where(QCCheckInstance.id == check_instance_id))
 
 
-@router.get("/dashboard", response_model=QCDashboardResponse)
+@router.get("/dashboard", response_model=QCDashboardResponseV2)
 def qc_dashboard(
     db: Session = Depends(get_db),
-) -> QCDashboardResponse:
+) -> QCDashboardResponseV2:
     pending = list(
         db.execute(
             select(
@@ -603,12 +623,8 @@ def qc_dashboard(
                     & (QCCheckInstance.origin == QCCheckOrigin.MANUAL),
                 )
             )
-            .where(
-                or_(
-                    QCCheckInstance.scope != TaskScope.PANEL,
-                    WorkUnit.status != WorkUnitStatus.ASSEMBLY,
-                )
-            )
+            # Panel checks stay listed after the module enters assembly (flagged
+            # below) instead of silently vanishing from the queue.
             .where(
                 ~exists().where(QCReworkTask.check_instance_id == QCCheckInstance.id)
             )
@@ -616,7 +632,7 @@ def qc_dashboard(
         )
     )
 
-    pending_checks: list[QCCheckInstanceSummary] = []
+    pending_checks: list[QCDashboardCheckSummary] = []
     for (
         instance,
         check_name,
@@ -637,19 +653,28 @@ def qc_dashboard(
         current_station_id, current_station_name = _resolve_current_station(
             db, instance.work_unit_id, instance.panel_unit_id
         )
+        check_work_unit = db.get(WorkUnit, instance.work_unit_id)
+        summary = _build_check_summary(
+            instance,
+            check_name,
+            station_name,
+            current_station_id,
+            current_station_name,
+            module_number,
+            panel_code,
+            project_name,
+            house_type_name,
+            house_identifier,
+            work_unit=check_work_unit,
+        )
         pending_checks.append(
-            _build_check_summary(
-                instance,
-                check_name,
-                station_name,
-                current_station_id,
-                current_station_name,
-                module_number,
-                panel_code,
-                project_name,
-                house_type_name,
-                house_identifier,
-                work_unit=db.get(WorkUnit, instance.work_unit_id),
+            QCDashboardCheckSummary(
+                **summary.model_dump(),
+                module_in_assembly=bool(
+                    instance.scope == TaskScope.PANEL
+                    and check_work_unit is not None
+                    and check_work_unit.status == WorkUnitStatus.ASSEMBLY
+                ),
             )
         )
 
@@ -682,7 +707,7 @@ def qc_dashboard(
             .order_by(QCReworkTask.created_at.desc())
         )
     )
-    rework_tasks: list[QCReworkTaskSummary] = []
+    rework_tasks: list[QCDashboardReworkSummary] = []
     for (
         rework,
         check_instance,
@@ -695,10 +720,18 @@ def qc_dashboard(
         panel_unit_ref,
     ) in rework_rows:
         panel_code = None
+        panel_off_line = False
         if panel_unit_ref:
             panel = db.get(PanelUnit, panel_unit_ref)
             if panel:
                 panel_code = panel.panel_definition.panel_code
+                if check_instance.scope == TaskScope.PANEL:
+                    panel_station = (
+                        db.get(Station, panel.current_station_id)
+                        if panel.current_station_id
+                        else None
+                    )
+                    panel_off_line = panel_is_off_panel_line(panel, panel_station)
         task_status = (
             db.execute(
                 select(TaskInstance.status)
@@ -712,23 +745,27 @@ def qc_dashboard(
         current_station_id, current_station_name = _resolve_current_station(
             db, check_instance.work_unit_id, check_instance.panel_unit_id
         )
+        rework_summary = _build_rework_summary(
+            rework,
+            check_instance.work_unit_id,
+            check_instance.panel_unit_id,
+            module_number,
+            panel_code,
+            station_id,
+            station_name,
+            current_station_id,
+            current_station_name,
+            check_instance.status,
+            check_instance.severity_level,
+            task_status,
+            project_name,
+            house_type_name,
+            house_identifier,
+        )
         rework_tasks.append(
-            _build_rework_summary(
-                rework,
-                check_instance.work_unit_id,
-                check_instance.panel_unit_id,
-                module_number,
-                panel_code,
-                station_id,
-                station_name,
-                current_station_id,
-                current_station_name,
-                check_instance.status,
-                check_instance.severity_level,
-                task_status,
-                project_name,
-                house_type_name,
-                house_identifier,
+            QCDashboardReworkSummary(
+                **rework_summary.model_dump(),
+                panel_off_line=panel_off_line,
             )
         )
 
@@ -820,11 +857,15 @@ def qc_dashboard(
         if work_unit.current_station_id is not None
     ]
 
-    return QCDashboardResponse(
+    return QCDashboardResponseV2(
         pending_checks=pending_checks,
         rework_tasks=rework_tasks,
         plant_panels=plant_panels,
         plant_modules=plant_modules,
+        trigger_warnings=[
+            QCTriggerTaskWarning.model_validate(item)
+            for item in find_trigger_task_warnings(db)
+        ],
     )
 
 
@@ -979,20 +1020,96 @@ def qc_failure_analysis_dashboard(
     )
 
 
-@router.post("/work-units/{work_unit_id}/complete", status_code=status.HTTP_204_NO_CONTENT)
-def mark_work_unit_completed(
+def _open_module_task_count(db: Session, work_unit_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.count(TaskInstance.id))
+            .where(TaskInstance.work_unit_id == work_unit_id)
+            .where(TaskInstance.rework_task_id.is_(None))
+            .where(
+                TaskInstance.status.in_(
+                    [TaskStatus.NOT_STARTED, TaskStatus.IN_PROGRESS, TaskStatus.PAUSED]
+                )
+            )
+        )
+        or 0
+    )
+
+
+def _completion_preview(db: Session, work_unit: WorkUnit) -> QCWorkUnitCompletionPreview:
+    open_checks, open_reworks = open_qc_items_for_work_unit(db, work_unit.id)
+    return QCWorkUnitCompletionPreview(
+        work_unit_id=work_unit.id,
+        open_checks=len(open_checks),
+        open_reworks=len(open_reworks),
+        open_tasks=_open_module_task_count(db, work_unit.id),
+    )
+
+
+@router.get(
+    "/work-units/{work_unit_id}/completion-preview",
+    response_model=QCWorkUnitCompletionPreview,
+)
+def work_unit_completion_preview(
     work_unit_id: int,
     admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
-) -> None:
+) -> QCWorkUnitCompletionPreview:
     _require_qc_or_admin(admin)
     work_unit = db.get(WorkUnit, work_unit_id)
     if not work_unit:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
+    return _completion_preview(db, work_unit)
+
+
+@router.post(
+    "/work-units/{work_unit_id}/complete",
+    response_model=QCWorkUnitCompletionResult,
+)
+def mark_work_unit_completed(
+    work_unit_id: int,
+    payload: QCWorkUnitCompletionRequest | None = None,
+    admin: AdminUser = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> QCWorkUnitCompletionResult:
+    _require_qc_or_admin(admin)
+    work_unit = db.execute(
+        select(WorkUnit).where(WorkUnit.id == work_unit_id).with_for_update()
+    ).scalar_one_or_none()
+    if not work_unit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work unit not found")
+    lock_qc_checks_for_work_unit(db, work_unit.id)
+    preview = _completion_preview(db, work_unit)
     if work_unit.status == WorkUnitStatus.COMPLETED:
-        return
+        return QCWorkUnitCompletionResult(**preview.model_dump())
+    resolve_open_items = bool(payload and payload.resolve_open_items)
+    if (
+        preview.open_checks or preview.open_reworks or preview.open_tasks
+    ) and not resolve_open_items:
+        # Completing would hide these items from every queue while they stay open.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"El modulo tiene {preview.open_checks} inspecciones abiertas, "
+                    f"{preview.open_reworks} retrabajos abiertos y "
+                    f"{preview.open_tasks} tareas sin terminar."
+                ),
+                **preview.model_dump(),
+            },
+        )
+    now = utc_now()
+    closed_checks = 0
+    canceled_reworks = 0
+    if resolve_open_items:
+        closed_checks, canceled_reworks = resolve_open_qc_items_for_completion(
+            db, work_unit.id, now, canceled_by_user_id=admin.id
+        )
+    # Unfinished tasks are closed as skipped (not completed) so reports and production
+    # exits don't count them as performed work; their recorded labor is kept.
+    closed_tasks = close_open_instances_for_work_unit(db, work_unit.id)
     work_unit.status = WorkUnitStatus.COMPLETED
-    work_unit.completed_at = utc_now()
+    work_unit.completed_at = now
     work_unit.current_station_id = None
     panels = list(
         db.execute(select(PanelUnit).where(PanelUnit.work_unit_id == work_unit.id)).scalars()
@@ -1001,6 +1118,12 @@ def mark_work_unit_completed(
         panel.status = PanelUnitStatus.CONSUMED
         panel.current_station_id = None
     db.commit()
+    return QCWorkUnitCompletionResult(
+        **preview.model_dump(),
+        closed_checks=closed_checks,
+        canceled_reworks=canceled_reworks,
+        closed_tasks=len(closed_tasks),
+    )
 
 
 @router.get("/dashboard/export.xlsx")
@@ -2174,18 +2297,7 @@ def start_rework_task(
     if instance:
         if instance.status == TaskStatus.PAUSED:
             instance.status = TaskStatus.IN_PROGRESS
-            pause = (
-                db.execute(
-                    select(TaskPause)
-                    .where(TaskPause.task_instance_id == instance.id)
-                    .where(TaskPause.resumed_at.is_(None))
-                    .order_by(TaskPause.paused_at.desc())
-                    .limit(1)
-                )
-                .scalar_one_or_none()
-            )
-            if pause:
-                pause.resumed_at = now
+            close_open_pauses(db, instance.id, now)
         _ensure_participations(db, instance, unique_worker_ids)
     else:
         instance = TaskInstance(
@@ -2235,16 +2347,15 @@ def pause_rework_task(
     if instance.status == TaskStatus.COMPLETED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Rework already completed")
 
-    instance.status = TaskStatus.PAUSED
-    db.add(
-        TaskPause(
-            task_instance_id=instance.id,
-            reason_id=payload.reason_id,
-            reason_text=payload.reason_text,
-            paused_at=utc_now(),
-        )
-    )
-    db.commit()
+    # No-op when already paused, so repeated pause requests never stack pauses.
+    if pause_instance(
+        db,
+        instance,
+        reason_id=payload.reason_id,
+        reason_text=payload.reason_text,
+        at=utc_now(),
+    ):
+        db.commit()
 
 
 @router.post("/rework-tasks/{rework_task_id}/resume", status_code=status.HTTP_204_NO_CONTENT)
@@ -2280,18 +2391,8 @@ def resume_rework_task(
         return
 
     instance.status = TaskStatus.IN_PROGRESS
-    pause = (
-        db.execute(
-            select(TaskPause)
-            .where(TaskPause.task_instance_id == instance.id)
-            .where(TaskPause.resumed_at.is_(None))
-            .order_by(TaskPause.paused_at.desc())
-            .limit(1)
-        )
-        .scalar_one_or_none()
-    )
-    if pause:
-        pause.resumed_at = utc_now()
+    # Close every open pause, not only the newest, so none is left dangling.
+    close_open_pauses(db, instance.id, utc_now())
     db.commit()
 
 
@@ -2301,6 +2402,26 @@ def complete_rework_task(
     worker=Depends(get_current_worker),
     db: Session = Depends(get_db),
 ) -> None:
+    # Lock order check -> rework, the same order module completion uses (it locks the
+    # module's checks, then cancels their reworks); the opposite order could deadlock.
+    # The rework lock keeps a concurrent QC cancellation from being overwritten.
+    check_instance_id = db.execute(
+        select(QCReworkTask.check_instance_id).where(QCReworkTask.id == rework_task_id)
+    ).scalars().first()
+    if check_instance_id is not None:
+        db.execute(
+            select(QCCheckInstance.id)
+            .where(QCCheckInstance.id == check_instance_id)
+            .with_for_update()
+        )
+    rework_row = db.execute(
+        select(QCReworkTask).where(QCReworkTask.id == rework_task_id).with_for_update()
+    ).scalar_one_or_none()
+    if rework_row is not None and rework_row.status == QCReworkStatus.CANCELED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El retrabajo fue cancelado por QC.",
+        )
     instance = _active_rework_instance(db, rework_task_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active rework not found")
@@ -2365,15 +2486,33 @@ def complete_rework_task(
 @router.post("/rework-tasks/{rework_task_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 def cancel_rework_task(
     rework_task_id: int,
-    _admin: AdminUser = Depends(get_current_admin),
+    payload: QCReworkCancelRequest,
+    admin: AdminUser = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ) -> None:
-    rework = db.get(QCReworkTask, rework_task_id)
+    _require_qc_or_admin(admin)
+    reason = payload.reason.strip()
+    if len(reason) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indique el motivo de la cancelacion.",
+        )
+    rework = db.execute(
+        select(QCReworkTask).where(QCReworkTask.id == rework_task_id).with_for_update()
+    ).scalar_one_or_none()
     if not rework:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rework task not found")
     if rework.status in (QCReworkStatus.DONE, QCReworkStatus.CANCELED):
         return
-    rework.status = QCReworkStatus.CANCELED
+    # The failed check stays closed with its FAIL execution; only the rework stops.
+    cancel_rework(
+        db,
+        rework,
+        utc_now(),
+        f"Retrabajo cancelado por QC: {reason}",
+        reason=reason,
+        canceled_by_user_id=admin.id,
+    )
     db.commit()
 
 

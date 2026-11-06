@@ -22,6 +22,7 @@ from app.models.house import (
     HouseType,
     PanelDefinition,
 )
+from app.models.panel_routing import PanelAutoRelease
 from app.models.protocols import (
     SafetyProtocol,
     SafetyProtocolApplicability,

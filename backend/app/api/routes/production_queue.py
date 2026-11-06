@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,7 @@ from app.models.enums import (
 )
 from app.models.conditions import ConditionValue, WorkUnitCondition
 from app.models.house import HouseSubType, HouseType, PanelDefinition
+from app.models.panel_routing import PanelAutoRelease
 from app.models.stations import Station
 from app.models.tasks import TaskApplicability, TaskDefinition, TaskException, TaskInstance
 from app.models.work import PanelUnit, WorkOrder, WorkUnit
@@ -35,6 +37,11 @@ from app.schemas.production_queue import (
     ProductionQueueUpdate,
 )
 from app.services.conditions import ConditionContext, load_condition_context
+from app.services.panel_routing import (
+    AutoReleaseUndoError,
+    auto_release_undo_blocker,
+    undo_auto_release,
+)
 from app.services.task_applicability import (
     order_tasks_by_panel_metadata,
     resolve_task_station_sequence,
@@ -1325,3 +1332,155 @@ def bulk_delete_queue_items(
             if order:
                 db.delete(order)
     db.commit()
+
+
+class PanelAutoReleaseRead(BaseModel):
+    id: int
+    created_at: datetime
+    trigger: str
+    reason: str | None
+    panel_unit_id: int
+    panel_code: str | None
+    work_unit_id: int
+    module_number: int | None
+    project_name: str | None
+    house_identifier: str | None
+    from_station_id: int
+    from_station_name: str | None
+    to_station_id: int | None
+    to_station_name: str | None
+    previous_panel_status: PanelUnitStatus
+    new_panel_status: PanelUnitStatus
+    previous_work_unit_status: WorkUnitStatus
+    new_work_unit_status: WorkUnitStatus
+    undone_at: datetime | None
+    undone_by_name: str | None
+    can_undo: bool
+    undo_blocked_reason: str | None
+
+
+def _auto_release_reads(
+    db: Session, records: list[PanelAutoRelease]
+) -> list[PanelAutoReleaseRead]:
+    if not records:
+        return []
+    station_ids = {record.from_station_id for record in records} | {
+        record.to_station_id for record in records if record.to_station_id is not None
+    }
+    station_names = {
+        station.id: station.name
+        for station in db.execute(select(Station).where(Station.id.in_(station_ids))).scalars()
+    }
+    panel_rows = db.execute(
+        select(PanelUnit.id, PanelDefinition.panel_code)
+        .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+        .where(PanelUnit.id.in_({record.panel_unit_id for record in records}))
+    ).all()
+    panel_codes = {panel_id: code for panel_id, code in panel_rows}
+    unit_rows = db.execute(
+        select(
+            WorkUnit.id,
+            WorkUnit.module_number,
+            WorkOrder.project_name,
+            WorkOrder.house_identifier,
+        )
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .where(WorkUnit.id.in_({record.work_unit_id for record in records}))
+    ).all()
+    units = {row[0]: row for row in unit_rows}
+    admin_ids = {record.undone_by_user_id for record in records if record.undone_by_user_id}
+    admin_names = (
+        {
+            admin.id: f"{admin.first_name} {admin.last_name}".strip()
+            for admin in db.execute(
+                select(AdminUser).where(AdminUser.id.in_(admin_ids))
+            ).scalars()
+        }
+        if admin_ids
+        else {}
+    )
+    reads: list[PanelAutoReleaseRead] = []
+    for record in records:
+        unit = units.get(record.work_unit_id)
+        blocker = auto_release_undo_blocker(db, record)
+        reads.append(
+            PanelAutoReleaseRead(
+                id=record.id,
+                created_at=record.created_at,
+                trigger=record.trigger,
+                reason=record.reason,
+                panel_unit_id=record.panel_unit_id,
+                panel_code=panel_codes.get(record.panel_unit_id),
+                work_unit_id=record.work_unit_id,
+                module_number=unit[1] if unit else None,
+                project_name=unit[2] if unit else None,
+                house_identifier=unit[3] if unit else None,
+                from_station_id=record.from_station_id,
+                from_station_name=station_names.get(record.from_station_id),
+                to_station_id=record.to_station_id,
+                to_station_name=(
+                    station_names.get(record.to_station_id)
+                    if record.to_station_id is not None
+                    else None
+                ),
+                previous_panel_status=record.previous_panel_status,
+                new_panel_status=record.new_panel_status,
+                previous_work_unit_status=record.previous_work_unit_status,
+                new_work_unit_status=record.new_work_unit_status,
+                undone_at=record.undone_at,
+                undone_by_name=admin_names.get(record.undone_by_user_id),
+                can_undo=blocker is None,
+                undo_blocked_reason=blocker if record.undone_at is None else None,
+            )
+        )
+    return reads
+
+
+@router.get("/auto-releases", response_model=list[PanelAutoReleaseRead])
+def list_auto_releases(
+    days: int = Query(14, ge=1, le=365),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_admin_page("production-queue")),
+) -> list[PanelAutoReleaseRead]:
+    """Panels the system moved on by itself because their station had no work left."""
+    since = utc_now() - timedelta(days=days)
+    records = list(
+        db.execute(
+            select(PanelAutoRelease)
+            .where(PanelAutoRelease.created_at >= since)
+            .order_by(PanelAutoRelease.created_at.desc(), PanelAutoRelease.id.desc())
+            .limit(limit)
+        ).scalars()
+    )
+    return _auto_release_reads(db, records)
+
+
+@router.post("/auto-releases/{release_id}/undo", response_model=PanelAutoReleaseRead)
+def undo_panel_auto_release(
+    release_id: int,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(require_queue_manager),
+) -> PanelAutoReleaseRead:
+    record = db.get(PanelAutoRelease, release_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Liberación no encontrada"
+        )
+    # Serialize with worker task starts, which lock the module (work unit) before reading
+    # its panels; same lock order here (module, then panel) avoids deadlocks. Without the
+    # module lock a start could validate the panel's station and then commit a running
+    # task after undo moved the panel back.
+    db.execute(
+        select(WorkUnit.id).where(WorkUnit.id == record.work_unit_id).with_for_update()
+    )
+    db.execute(
+        select(PanelUnit.id).where(PanelUnit.id == record.panel_unit_id).with_for_update()
+    )
+    try:
+        undo_auto_release(db, record, admin.id)
+    except AutoReleaseUndoError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(record)
+    return _auto_release_reads(db, [record])[0]

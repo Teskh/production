@@ -64,7 +64,17 @@ type QCTrigger = {
   sampling_rate: number;
   sampling_autotune: boolean;
   sampling_step: number;
+  current_sampling_rate?: number | null;
+  effective_sampling_rate?: number;
 };
+
+const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
+
+const effectiveTriggerRate = (trigger: QCTrigger): number =>
+  trigger.effective_sampling_rate ??
+  (trigger.sampling_autotune && trigger.current_sampling_rate != null
+    ? trigger.current_sampling_rate
+    : trigger.sampling_rate);
 
 type QCApplicability = {
   id: number;
@@ -830,8 +840,21 @@ const QCChecks: React.FC = () => {
       };
       let saved: QCCheckDefinition;
       if (checkDraft.id) {
+        const previous = checks.find((check) => check.id === checkDraft.id);
+        const reactivating = Boolean(previous && !previous.active && checkDraft.active);
+        const hasRules = applicability.some((rule) => rule.check_definition_id === checkDraft.id);
+        let confirmUniversal = false;
+        if (reactivating && !hasRules) {
+          confirmUniversal = window.confirm(
+            'Esta revision no tiene reglas de aplicabilidad: al activarla se aplicara a TODAS las casas y modulos.\n\nSi fue desactivada porque se eliminaron sus tipos de casa, agregue primero las reglas correctas.\n\nActivarla de todas formas?'
+          );
+          if (!confirmUniversal) {
+            setSaving(false);
+            return;
+          }
+        }
         saved = await apiRequest<QCCheckDefinition>(
-          `/api/qc/check-definitions/${checkDraft.id}`,
+          `/api/qc/check-definitions/${checkDraft.id}${confirmUniversal ? '?confirm_universal=true' : ''}`,
           {
             method: 'PUT',
             body: JSON.stringify(payload),
@@ -1167,6 +1190,22 @@ const QCChecks: React.FC = () => {
       const message =
         error instanceof Error ? error.message : 'No se pudo guardar el gatillante.';
       setTriggerStatus(message);
+    }
+  };
+
+  const handleResetTriggerSampling = async (trigger: QCTrigger) => {
+    setTriggerStatus(null);
+    try {
+      const saved = await apiRequest<QCTrigger>(`/api/qc/triggers/${trigger.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ reset_current_sampling_rate: true }),
+      });
+      setTriggers((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
+      setTriggerStatus('Tasa efectiva restablecida a la tasa base.');
+    } catch (error) {
+      setTriggerStatus(
+        error instanceof Error ? error.message : 'No se pudo restablecer la tasa efectiva.'
+      );
     }
   };
 
@@ -2288,9 +2327,21 @@ const QCChecks: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] text-[var(--ink-muted)]">
-                              {Math.round(trigger.sampling_rate * 100)}%
-                            </span>
+                            {effectiveTriggerRate(trigger) !== trigger.sampling_rate ? (
+                              <span
+                                className="text-right text-[10px] font-semibold text-amber-700"
+                                title="Tasa efectiva ajustada por muestreo adaptativo tras una falla."
+                              >
+                                {formatPercent(effectiveTriggerRate(trigger))}
+                                <span className="block font-normal text-[var(--ink-muted)]">
+                                  base {formatPercent(trigger.sampling_rate)}
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-[var(--ink-muted)]">
+                                {formatPercent(trigger.sampling_rate)}
+                              </span>
+                            )}
                           </button>
                         ))
                       )}
@@ -2368,6 +2419,41 @@ const QCChecks: React.FC = () => {
                         </span>
                       </span>
                     </label>
+                    {(() => {
+                      const savedTrigger = triggerDraft.id
+                        ? triggers.find((trigger) => trigger.id === triggerDraft.id)
+                        : undefined;
+                      if (!savedTrigger) {
+                        return null;
+                      }
+                      const effectiveRate = effectiveTriggerRate(savedTrigger);
+                      const adjusted = effectiveRate !== savedTrigger.sampling_rate;
+                      return (
+                        <div
+                          className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs ${
+                            adjusted
+                              ? 'border-amber-200 bg-amber-50 text-amber-900'
+                              : 'border-black/10 bg-white text-[var(--ink-muted)]'
+                          }`}
+                        >
+                          <span>
+                            Tasa efectiva actual: <strong>{formatPercent(effectiveRate)}</strong>
+                            {adjusted
+                              ? ` (ajustada por muestreo adaptativo; base ${formatPercent(savedTrigger.sampling_rate)}). Cambiar la tasa base o el muestreo adaptativo la restablece.`
+                              : ' (igual a la tasa base).'}
+                          </span>
+                          {adjusted ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleResetTriggerSampling(savedTrigger)}
+                              className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900"
+                            >
+                              Restablecer a tasa base
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
 
                     {triggerDraftTaskIssues.length > 0 && (
                       <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3">

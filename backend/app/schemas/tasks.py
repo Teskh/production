@@ -42,9 +42,46 @@ class TaskDefinitionRead(TaskDefinitionBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TaskUsageQCTrigger(BaseModel):
+    trigger_id: int
+    check_definition_id: int
+    check_name: str
+
+
+class TaskUsageDependent(BaseModel):
+    task_definition_id: int
+    name: str
+    active: bool
+
+
+class AdvanceCoverageHouseType(BaseModel):
+    house_type_id: int
+    house_type_name: str
+    module_numbers: list[int]
+    # Sub types affected; empty when the house type has none or all are affected.
+    sub_type_names: list[str] = Field(default_factory=list)
+    # "missing": no advance-trigger task applies; "conditional": the only ones
+    # that apply are gated by condition rules and may be excluded.
+    reason: str
+
+
+class AdvanceCoverageStation(BaseModel):
+    station_id: int
+    station_name: str
+    line_type: str | None = None
+    sequence_order: int
+    advance_task_names: list[str] = Field(default_factory=list)
+    house_types: list[AdvanceCoverageHouseType] = Field(default_factory=list)
+
+
 class TaskDefinitionUsageRead(BaseModel):
     task_instances: int
     qc_checks: int
+    qc_triggers: list[TaskUsageQCTrigger] = Field(default_factory=list)
+    dependent_tasks: list[TaskUsageDependent] = Field(default_factory=list)
+    # Assembly stations that would be left without an advance-trigger task for some
+    # house type/module if this task stopped applying.
+    advance_trigger_stations: list[AdvanceCoverageStation] = Field(default_factory=list)
 
 
 class TaskSpecialty(BaseModel):
@@ -150,6 +187,7 @@ class WorkerActiveTaskRead(BaseModel):
     project_name: str | None = None
     house_identifier: str | None = None
     panel_code: str | None = None
+    rework_task_id: int | None = None
     status: TaskStatus
     started_at: datetime | None = None
     notes: str | None = None

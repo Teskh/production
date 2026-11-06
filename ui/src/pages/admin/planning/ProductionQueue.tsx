@@ -21,6 +21,7 @@ import {
   useAdminPageAccess,
   useAdminSession,
 } from '../../../layouts/AdminLayoutContext';
+import AutoReleasesPanel from './AutoReleasesPanel';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -2174,6 +2175,12 @@ const ProductionQueue: React.FC = () => {
           </div>
         )}
       </section>
+
+      <AutoReleasesPanel
+        apiRequest={apiRequest}
+        canUndo={canManageQueue}
+        onUndone={() => void loadQueue(true)}
+      />
 
       {isStatusModalOpen && (
         <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center backdrop-blur-[2px]">

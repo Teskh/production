@@ -32,6 +32,42 @@ type Worker = {
   supervisor_id: number | null;
 };
 
+type WorkerOpenTask = {
+  task_instance_id: number;
+  task_name: string;
+  status: string;
+  station_name: string | null;
+  module_number: number | null;
+  project_name: string | null;
+  house_identifier: string | null;
+  panel_code: string | null;
+  is_rework: boolean;
+  other_participant_count: number;
+};
+
+const formatOpenTaskLine = (task: WorkerOpenTask): string => {
+  const parts = [task.is_rework ? `${task.task_name} (retrabajo)` : task.task_name];
+  if (task.station_name) {
+    parts.push(task.station_name);
+  }
+  const unit = [
+    task.house_identifier,
+    task.module_number !== null ? `Modulo ${task.module_number}` : null,
+    task.panel_code ? `Panel ${task.panel_code}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  if (unit) {
+    parts.push(unit);
+  }
+  parts.push(task.status === 'Paused' ? 'en pausa' : 'en curso');
+  const outcome =
+    task.other_participant_count > 0
+      ? 'sigue con el resto del equipo'
+      : 'quedara en pausa';
+  return `- ${parts.join(' - ')} (${outcome})`;
+};
+
 type WorkerSupervisor = {
   id: number;
   geovictoria_id: string | null;
@@ -859,6 +895,35 @@ const Workers: React.FC<WorkersProps> = ({
         'El enlace de GeoVictoria es obligatorio antes de guardar un trabajador.'
       );
       return;
+    }
+    const storedWorker = working.id
+      ? workers.find((worker) => worker.id === working.id) ?? null
+      : null;
+    if (working.id && storedWorker?.active && !working.active) {
+      let openTasks: WorkerOpenTask[] = [];
+      try {
+        openTasks = await apiRequest<WorkerOpenTask[]>(
+          `/api/workers/${working.id}/open-tasks`
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'No se pudieron revisar las tareas abiertas del trabajador.';
+        setStatusMessage(message);
+        return;
+      }
+      if (openTasks.length > 0) {
+        const confirmed = window.confirm(
+          `${working.first_name} ${working.last_name} participa en ${openTasks.length} ` +
+            `tarea(s) abierta(s):\n\n${openTasks.map(formatOpenTaskLine).join('\n')}\n\n` +
+            'Al desactivarlo saldra de estas tareas. Las tareas sin otros participantes ' +
+            'quedaran en pausa. Continuar?'
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
     }
     setSaving(true);
     setStatusMessage(null);

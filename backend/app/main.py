@@ -19,6 +19,9 @@ from app.db.session import SessionLocal
 from app.services import company_access
 from app.services import backups as backup_service
 from app.services import shift_estimate_scheduler as shift_estimate_scheduler_service
+from app.services.panel_routing import install_stalled_panel_guard
+
+install_stalled_panel_guard(SessionLocal)
 
 app = FastAPI(title="SCP API", version="0.1.0")
 MEDIA_GALLERY_DIR = BASE_DIR / "media_gallery"

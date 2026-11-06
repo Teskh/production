@@ -168,6 +168,7 @@ type QCComplaintEvent = {
     | 'media_added'
     | 'closure_proposed'
     | 'closure_accepted'
+    | 'force_closed'
     | 'closure_rejected';
   message: string | null;
   created_at: string;
@@ -328,6 +329,7 @@ const complaintEventLabel = (value: QCComplaintEvent['event_type']): string => {
   if (value === 'created') return 'Creo la observacion';
   if (value === 'closure_proposed') return 'Propuso cierre';
   if (value === 'closure_accepted') return 'Acepto cierre';
+  if (value === 'force_closed') return 'Cierre forzado por QC';
   if (value === 'closure_rejected') return 'Rechazo cierre';
   if (value === 'media_added') return 'Agrego evidencia';
   return 'Comento';

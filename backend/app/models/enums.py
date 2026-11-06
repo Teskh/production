@@ -123,6 +123,7 @@ class QCComplaintEventType(str, Enum):
     CLOSURE_PROPOSED = "closure_proposed"
     CLOSURE_ACCEPTED = "closure_accepted"
     CLOSURE_REJECTED = "closure_rejected"
+    FORCE_CLOSED = "force_closed"
 
 
 class QCComplaintMediaRole(str, Enum):

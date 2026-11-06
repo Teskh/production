@@ -323,6 +323,11 @@ class QCReworkTask(Base):
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[QCReworkStatus] = mapped_column(Enum(QCReworkStatus))
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    canceled_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class QCNotification(Base):

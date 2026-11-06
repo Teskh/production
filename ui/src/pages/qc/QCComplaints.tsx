@@ -13,6 +13,7 @@ import {
   Search,
   Send,
   Trash2,
+  UserCog,
   X,
 } from 'lucide-react';
 import QCPhotoCaptureButton from '../../components/QCPhotoCaptureButton';
@@ -90,6 +91,7 @@ type ComplaintEvent = {
     | 'media_added'
     | 'closure_proposed'
     | 'closure_accepted'
+    | 'force_closed'
     | 'closure_rejected';
   message: string | null;
   created_at: string;
@@ -145,6 +147,7 @@ const eventLabels: Record<ComplaintEvent['event_type'], string> = {
   media_added: 'Agrego evidencia',
   closure_proposed: 'Propuso cierre',
   closure_accepted: 'Acepto cierre',
+  force_closed: 'Cierre forzado por QC',
   closure_rejected: 'Rechazo cierre',
 };
 
@@ -250,6 +253,9 @@ const QCComplaints: React.FC = () => {
   const [commentFiles, setCommentFiles] = useState<File[]>([]);
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reassignForId, setReassignForId] = useState<number | null>(null);
+  const [reassignSupervisorIds, setReassignSupervisorIds] = useState<Set<number>>(new Set());
+  const [reassignSubmitting, setReassignSubmitting] = useState(false);
 
   const loadComplaints = async () => {
     setLoading(true);
@@ -602,7 +608,12 @@ const QCComplaints: React.FC = () => {
   };
 
   const handleCancel = async () => {
-    if (!detail || !window.confirm('Cancelar y eliminar esta observacion con sus comentarios y fotos?')) {
+    if (
+      !detail ||
+      !window.confirm(
+        'Cancelar y eliminar esta observacion con sus comentarios y fotos?\n\nPara cerrarla conservando el historial use "Cerrar (QC)".'
+      )
+    ) {
       return;
     }
     setActionError(null);
@@ -613,6 +624,69 @@ const QCComplaints: React.FC = () => {
       await loadComplaints();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'No se pudo cancelar la observacion.');
+    }
+  };
+
+  const openReassign = () => {
+    if (!detail) return;
+    setReassignSupervisorIds(new Set(detail.supervisors.map((supervisor) => supervisor.id)));
+    setReassignForId(detail.id);
+    setActionError(null);
+  };
+
+  const reassignOpen = detail !== null && reassignForId === detail.id;
+
+  const handleReassignSupervisors = async () => {
+    if (!detail) return;
+    if (reassignSupervisorIds.size === 0) {
+      setActionError('Seleccione al menos un supervisor.');
+      return;
+    }
+    setReassignSubmitting(true);
+    setActionError(null);
+    try {
+      const updated = await apiRequest<ComplaintDetail>(
+        `/api/qc/complaints/${detail.id}/supervisors`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({ supervisor_ids: Array.from(reassignSupervisorIds) }),
+        }
+      );
+      setDetail(updated);
+      setReassignForId(null);
+      await loadComplaints();
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : 'No se pudieron reasignar los supervisores.'
+      );
+    } finally {
+      setReassignSubmitting(false);
+    }
+  };
+
+  const handleForceClose = async () => {
+    if (!detail) return;
+    const reason = window.prompt(
+      'Cerrar la observacion desde QC sin propuesta del supervisor.\nSe conserva todo el historial y las fotos.\n\nMotivo del cierre:'
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setActionError('Indique un motivo para cerrar la observacion.');
+      return;
+    }
+    setActionError(null);
+    try {
+      const updated = await apiRequest<ComplaintDetail>(
+        `/api/qc/complaints/${detail.id}/force-close`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ message: reason }),
+        }
+      );
+      setDetail(updated);
+      await loadComplaints();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo cerrar la observacion.');
     }
   };
 
@@ -896,6 +970,11 @@ const QCComplaints: React.FC = () => {
                     <span>{statusLabels[item.status]}</span>
                     <span>{item.event_count} mensajes</span>
                     <span>{item.media_count} archivos</span>
+                    {item.status !== 'Closed' && item.supervisors.length === 0 ? (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                        Sin supervisor
+                      </span>
+                    ) : null}
                   </div>
                 </button>
               ))}
@@ -931,9 +1010,38 @@ const QCComplaints: React.FC = () => {
                           {fullName(supervisor)}
                         </span>
                       ))}
+                      {detail.supervisors.length === 0 ? (
+                        <span
+                          className="rounded-full bg-red-100 px-2 py-1 font-semibold text-red-700"
+                          title="Ningun supervisor puede proponer el cierre. Reasigne supervisores o cierre desde QC."
+                        >
+                          Sin supervisor
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    {canManage && detail.status !== 'Closed' && (
+                      <button
+                        type="button"
+                        onClick={() => (reassignOpen ? setReassignForId(null) : openReassign())}
+                        className="qc-btn min-h-8 px-3 py-1.5"
+                      >
+                        <UserCog className="h-4 w-4" />
+                        Reasignar
+                      </button>
+                    )}
+                    {canManage && detail.status !== 'Closed' && (
+                      <button
+                        type="button"
+                        onClick={() => void handleForceClose()}
+                        className="qc-btn min-h-8 px-3 py-1.5"
+                        title="Cerrar sin propuesta del supervisor, conservando el historial"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Cerrar (QC)
+                      </button>
+                    )}
                     {canManage && detail.status !== 'Closed' && (
                       <button
                         type="button"
@@ -946,6 +1054,56 @@ const QCComplaints: React.FC = () => {
                     )}
                   </div>
                 </div>
+                {canManage && reassignOpen && detail.status !== 'Closed' ? (
+                  <div className="mt-4 rounded-lg border border-black/10 bg-white p-3">
+                    <div className="mb-2 text-sm font-semibold text-[var(--ink)]">
+                      Supervisores responsables
+                    </div>
+                    <div className="grid max-h-44 gap-2 overflow-y-auto sm:grid-cols-2">
+                      {supervisors.map((supervisor) => {
+                        const checked = reassignSupervisorIds.has(supervisor.id);
+                        return (
+                          <label
+                            key={supervisor.id}
+                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => {
+                                setReassignSupervisorIds((current) => {
+                                  const next = new Set(current);
+                                  if (event.target.checked) next.add(supervisor.id);
+                                  else next.delete(supervisor.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                            {fullName(supervisor)}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setReassignForId(null)}
+                        className="qc-btn min-h-8 px-3 py-1.5"
+                      >
+                        Volver
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleReassignSupervisors()}
+                        disabled={reassignSubmitting || reassignSupervisorIds.size === 0}
+                        className="qc-btn qc-btn--primary min-h-8 px-3 py-1.5"
+                      >
+                        {reassignSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        Guardar supervisores
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               {detailLoading ? (
@@ -965,7 +1123,8 @@ const QCComplaints: React.FC = () => {
                       const fromQc = event.actor_type === 'qc';
                       const isStatusEvent =
                         event.event_type === 'closure_accepted' ||
-                        event.event_type === 'closure_rejected';
+                        event.event_type === 'closure_rejected' ||
+                        event.event_type === 'force_closed';
                       const isPendingClosureProposal =
                         event.event_type === 'closure_proposed' &&
                         detail.status === 'ClosureProposed';

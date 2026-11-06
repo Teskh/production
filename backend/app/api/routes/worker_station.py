@@ -58,8 +58,44 @@ from app.services.task_applicability import (
     order_tasks_by_panel_metadata,
     resolve_task_station_sequence,
 )
+from app.services.task_dependencies import (
+    DependencyRules,
+    ResolvedTaskIndex,
+    ResolvedTasks,
+    collect_dependency_ids,
+)
 
 router = APIRouter()
+
+PANEL_LEFT_LINE_STATUSES = (PanelUnitStatus.COMPLETED, PanelUnitStatus.CONSUMED)
+OPEN_REWORK_STATUSES = (QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS)
+
+
+def _modules_with_finished_panel_rework(
+    db: Session, exclude_work_unit_ids: set[int]
+) -> list[tuple[WorkUnit, WorkOrder, HouseType, HouseSubType | None]]:
+    """Modules still on the panel line that have open rework on an already finished panel."""
+    work_unit_ids = (
+        select(QCCheckInstance.work_unit_id)
+        .join(QCReworkTask, QCReworkTask.check_instance_id == QCCheckInstance.id)
+        .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id)
+        .where(QCReworkTask.status.in_(OPEN_REWORK_STATUSES))
+        .where(PanelUnit.status.in_(PANEL_LEFT_LINE_STATUSES))
+    )
+    stmt = (
+        select(WorkUnit, WorkOrder, HouseType, HouseSubType)
+        .join(WorkOrder, WorkUnit.work_order_id == WorkOrder.id)
+        .join(HouseType, WorkOrder.house_type_id == HouseType.id)
+        .outerjoin(HouseSubType, WorkOrder.sub_type_id == HouseSubType.id)
+        .where(WorkUnit.status.in_([WorkUnitStatus.PLANNED, WorkUnitStatus.PANELS]))
+        .where(WorkUnit.id.in_(work_unit_ids))
+        .order_by(WorkUnit.id)
+    )
+    return [
+        tuple(row)
+        for row in db.execute(stmt).all()
+        if row[0].id not in exclude_work_unit_ids
+    ]
 
 
 def _group_work_unit_condition_rows(
@@ -136,28 +172,6 @@ def _format_worker_name(first_name: str, last_name: str) -> str:
     return " ".join(part for part in parts if part)
 
 
-def _completed_task_definition_ids(
-    db: Session,
-    work_unit_id: int,
-    panel_unit_id: int | None,
-    task_scope: TaskScope,
-) -> set[int]:
-    if task_scope == TaskScope.PANEL:
-        if panel_unit_id is None:
-            return set()
-        panel_clause = TaskInstance.panel_unit_id == panel_unit_id
-    else:
-        panel_clause = TaskInstance.panel_unit_id.is_(None)
-    return set(
-        db.execute(
-            select(TaskInstance.task_definition_id)
-            .where(TaskInstance.work_unit_id == work_unit_id)
-            .where(panel_clause)
-            .where(TaskInstance.status == TaskStatus.COMPLETED)
-        ).scalars()
-    )
-
-
 def _build_task_lists(
     station: Station,
     task_definitions: list[TaskDefinition],
@@ -169,10 +183,10 @@ def _build_task_lists(
     module_number: int,
     panel_definition_id: int | None,
     panel_task_order: list[int] | None,
-    completed_task_definition_ids: set[int],
+    resolved_tasks: ResolvedTasks,
     allowed_worker_map: dict[int, set[int]],
     allowed_worker_name_map: dict[int, list[str]],
-    dependency_name_map: dict[int, str],
+    dependency_rules: DependencyRules,
     worker_id: int | None,
     current_station_sequence_order: int | None,
     panel_applicability_index: PanelApplicabilityIndex | None = None,
@@ -261,26 +275,25 @@ def _build_task_lists(
             status_value == TaskStatus.COMPLETED or task.id in skipped_task_ids
         ):
             continue
-        dependencies = task.dependencies_json
         missing_dependency_names: list[str] = []
-        if dependencies is None:
-            dependencies_satisfied = True
-        elif not isinstance(dependencies, list):
+        missing_dependency_ids = dependency_rules.missing_dependency_ids(
+            task,
+            resolved_tasks,
+            work_unit_id=work_unit_id,
+            house_type_id=house_type_id,
+            sub_type_id=sub_type_id,
+            module_number=module_number,
+            panel_definition_id=panel_definition_id,
+            panel_task_ids=panel_task_order if panel_definition_id is not None else None,
+        )
+        if missing_dependency_ids is None:
             dependencies_satisfied = False
-        elif not dependencies:
-            dependencies_satisfied = True
         else:
-            missing_dependency_ids = [
-                dependency_id
-                for dependency_id in dependencies
-                if dependency_id not in completed_task_definition_ids
-            ]
             dependencies_satisfied = len(missing_dependency_ids) == 0
-            if missing_dependency_ids:
-                missing_dependency_names = [
-                    dependency_name_map.get(dependency_id, f"Tarea {dependency_id}")
-                    for dependency_id in missing_dependency_ids
-                ]
+            missing_dependency_names = [
+                dependency_rules.name_for(dependency_id)
+                for dependency_id in missing_dependency_ids
+            ]
         allowed_worker_ids = allowed_worker_map.get(task.id)
         worker_allowed = (
             True
@@ -581,24 +594,9 @@ def station_snapshot(
         for task_id in allowed_worker_name_map:
             allowed_worker_name_map[task_id].sort()
 
-    dependency_ids: set[int] = set()
-    for task in task_definition_by_id.values():
-        dependencies = task.dependencies_json
-        if not isinstance(dependencies, list):
-            continue
-        for dependency_id in dependencies:
-            if isinstance(dependency_id, int):
-                dependency_ids.add(dependency_id)
-    dependency_name_map: dict[int, str] = {}
-    if dependency_ids:
-        dependency_name_map = {
-            row.id: row.name
-            for row in db.execute(
-                select(TaskDefinition.id, TaskDefinition.name).where(
-                    TaskDefinition.id.in_(sorted(dependency_ids))
-                )
-            ).all()
-        }
+    dependency_rules = DependencyRules.load(
+        db, collect_dependency_ids(task_definition_by_id.values()), None
+    )
 
     work_items: list[StationWorkItem] = []
     planned_total_count: int | None = None
@@ -623,6 +621,7 @@ def station_snapshot(
                 .where(PanelUnit.status == PanelUnitStatus.IN_PROGRESS)
             ).all()
         )
+        resolved_index = ResolvedTaskIndex.load(db, {row[1].id for row in rows})
         for (
             panel_unit,
             work_unit,
@@ -645,9 +644,6 @@ def station_snapshot(
                     .where(TaskException.panel_unit_id == panel_unit.id)
                 ).scalars()
             )
-            completed_task_definition_ids = _completed_task_definition_ids(
-                db, work_unit.id, panel_unit.id, TaskScope.PANEL
-            )
             task_definitions = task_definitions_for_item(work_unit.id, panel_unit.id)
             tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
@@ -660,10 +656,10 @@ def station_snapshot(
                 work_unit.module_number,
                 panel_unit.panel_definition_id,
                 panel_def.applicable_task_ids,
-                completed_task_definition_ids,
+                resolved_index.for_unit(work_unit.id, panel_unit.id),
                 allowed_worker_map,
                 allowed_worker_name_map,
-                dependency_name_map,
+                dependency_rules,
                 _worker.id if _worker else None,
                 station.sequence_order,
                 panel_applicability_index,
@@ -792,6 +788,9 @@ def station_snapshot(
                 if planned_limit is not None:
                     planned_candidates = planned_candidates[:planned_limit]
                 if planned_candidates:
+                    planned_resolved_index = ResolvedTaskIndex.load(
+                        db, {candidate[1].id for candidate in planned_candidates}
+                    )
                     planned_items: list[StationWorkItem] = []
                     for idx, (
                         _sort_key,
@@ -808,9 +807,6 @@ def station_snapshot(
                             if panel_unit
                             else PanelUnitStatus.PLANNED.value
                         )
-                        completed_task_definition_ids = _completed_task_definition_ids(
-                            db, work_unit.id, panel_unit_id, TaskScope.PANEL
-                        )
                         task_definitions = task_definitions_for_item(work_unit.id, panel_unit_id)
                         tasks, other_tasks, backlog_tasks = _build_task_lists(
                             station,
@@ -823,10 +819,10 @@ def station_snapshot(
                             work_unit.module_number,
                             panel_def.id,
                             panel_def.applicable_task_ids,
-                            completed_task_definition_ids,
+                            planned_resolved_index.for_unit(work_unit.id, panel_unit_id),
                             allowed_worker_map,
                             allowed_worker_name_map,
-                            dependency_name_map,
+                            dependency_rules,
                             _worker.id if _worker else None,
                             station.sequence_order,
                             panel_applicability_index,
@@ -944,6 +940,9 @@ def station_snapshot(
                             target_station = first_station
                         if target_station and target_station.id == station.id:
                             rows.append(row)
+        module_resolved_index = ResolvedTaskIndex.load(
+            db, {work_unit.id for work_unit, *_ in rows}
+        )
         for work_unit, work_order, house_type, sub_type in rows:
             task_instances = list(
                 db.execute(
@@ -959,9 +958,6 @@ def station_snapshot(
                     .where(TaskException.panel_unit_id.is_(None))
                 ).scalars()
             )
-            completed_task_definition_ids = _completed_task_definition_ids(
-                db, work_unit.id, None, task_scope
-            )
             task_definitions = task_definitions_for_item(work_unit.id, None)
             tasks, other_tasks, backlog_tasks = _build_task_lists(
                 station,
@@ -974,10 +970,10 @@ def station_snapshot(
                 work_unit.module_number,
                 None,
                 None,
-                completed_task_definition_ids,
+                module_resolved_index.for_unit(work_unit.id, None),
                 allowed_worker_map,
                 allowed_worker_name_map,
-                dependency_name_map,
+                dependency_rules,
                 _worker.id if _worker else None,
                 station.sequence_order,
                 condition_ctx=condition_ctx,
@@ -1003,6 +999,33 @@ def station_snapshot(
                     recommended=False,
                 )
             )
+        if station.role == StationRole.MAGAZINE:
+            # Finished panels wait in the magazine while the rest of their module is still
+            # on the panel line; their open reworks are listed here with the module.
+            listed_ids = {item.work_unit_id for item in work_items}
+            for work_unit, work_order, house_type, sub_type in _modules_with_finished_panel_rework(
+                db, listed_ids
+            ):
+                work_items.append(
+                    StationWorkItem(
+                        id=f"module-{work_unit.id}",
+                        scope=TaskScope.MODULE,
+                        work_unit_id=work_unit.id,
+                        panel_unit_id=None,
+                        panel_definition_id=None,
+                        module_number=work_unit.module_number,
+                        project_name=work_order.project_name,
+                        house_identifier=work_order.house_identifier or f"WO-{work_order.id}",
+                        house_type_name=house_type.name,
+                        sub_type_name=sub_type.name if sub_type else None,
+                        panel_code=None,
+                        status=work_unit.status.value,
+                        tasks=[],
+                        other_tasks=[],
+                        backlog_tasks=[],
+                        recommended=False,
+                    )
+                )
 
     if station.role == StationRole.PANELS and station.sequence_order == 1:
         in_progress_items = [
@@ -1103,6 +1126,19 @@ def station_snapshot(
 
     work_unit_ids = {item.work_unit_id for item in work_items}
     panel_unit_ids = {item.panel_unit_id for item in work_items if item.panel_unit_id is not None}
+    # Module items (Magazine/Assembly/AUX) also carry reworks of panels that already left
+    # the panel line; no panel station lists those panels any more.
+    module_item_work_unit_ids = {
+        item.work_unit_id for item in work_items if item.panel_unit_id is None
+    }
+    rework_scope_filter = (QCCheckInstance.panel_unit_id.is_(None)) | (
+        QCCheckInstance.panel_unit_id.in_(panel_unit_ids)
+    )
+    if station.role != StationRole.PANELS and module_item_work_unit_ids:
+        rework_scope_filter = rework_scope_filter | (
+            QCCheckInstance.work_unit_id.in_(module_item_work_unit_ids)
+            & PanelUnit.status.in_(PANEL_LEFT_LINE_STATUSES)
+        )
     rework_rows = []
     if work_unit_ids:
         rework_rows = list(
@@ -1114,10 +1150,7 @@ def station_snapshot(
                 .join(PanelUnit, QCCheckInstance.panel_unit_id == PanelUnit.id, isouter=True)
                 .where(QCReworkTask.status.in_([QCReworkStatus.OPEN, QCReworkStatus.IN_PROGRESS]))
                 .where(QCCheckInstance.work_unit_id.in_(work_unit_ids))
-                .where(
-                    (QCCheckInstance.panel_unit_id.is_(None))
-                    | (QCCheckInstance.panel_unit_id.in_(panel_unit_ids))
-                )
+                .where(rework_scope_filter)
                 .order_by(QCReworkTask.created_at.desc())
             )
         )
@@ -1127,6 +1160,11 @@ def station_snapshot(
             panel_unit.panel_definition.panel_code
             if panel_unit and panel_unit.panel_definition
             else None
+        )
+        panel_left_line = (
+            station.role != StationRole.PANELS
+            and panel_unit is not None
+            and panel_unit.status in PANEL_LEFT_LINE_STATUSES
         )
         latest_fail = (
             db.execute(
@@ -1197,6 +1235,7 @@ def station_snapshot(
                 panel_code=panel_code,
                 station_id=check_instance.station_id,
                 created_at=rework.created_at,
+                panel_left_line=panel_left_line,
                 failure_notes=failure_notes,
                 failure_modes=failure_modes,
                 evidence=evidence_items,

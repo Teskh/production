@@ -33,6 +33,26 @@ type StationDraft = {
   sequence_order: string;
 };
 
+type StationChangeImpact = {
+  panels_at_station: number;
+  modules_at_station: number;
+  blocking_message: string | null;
+  sequence_conflict_station: string | null;
+  routed_task_count: number;
+  routed_task_names: string[];
+  missing_panel_start: boolean;
+  warnings: string[];
+};
+
+type AdvanceCoverageStation = {
+  station_id: number;
+  station_name: string;
+  line_type: string | null;
+  sequence_order: number;
+  advance_task_names: string[];
+  house_types: { house_type_name: string; module_numbers: number[]; reason: string }[];
+};
+
 const emptyDraft = (): StationDraft => ({
   name: '',
   role: 'Panels',
@@ -64,7 +84,18 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    let message = text;
+    if (text) {
+      try {
+        const data = JSON.parse(text) as { detail?: unknown };
+        if (typeof data?.detail === 'string') {
+          message = data.detail;
+        }
+      } catch {
+        // Fall through to the raw text.
+      }
+    }
+    throw new Error(message || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -94,6 +125,7 @@ const Stations: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'builder' | 'shift-estimation'>('builder');
   const [cameraModalStation, setCameraModalStation] = useState<Station | null>(null);
+  const [advanceCoverage, setAdvanceCoverage] = useState<AdvanceCoverageStation[]>([]);
   const [stationChangeProtectionEnabled, setStationChangeProtectionEnabled] = useState(
     () => readStationChangeProtectionEnabled()
   );
@@ -116,6 +148,7 @@ const Stations: React.FC = () => {
           return;
         }
         setStations(data);
+        void loadAdvanceCoverage();
         if (data.length > 0) {
           setSelectedStationId(data[0].id);
           setDraft(buildDraftFromStation(data[0]));
@@ -140,6 +173,25 @@ const Stations: React.FC = () => {
       active = false;
     };
   }, []);
+
+  const loadAdvanceCoverage = async () => {
+    try {
+      const coverage = await pageApiRequest<AdvanceCoverageStation[]>(
+        '/api/task-definitions/advance-trigger-coverage'
+      );
+      setAdvanceCoverage(coverage);
+    } catch {
+      // Advisory only.
+      setAdvanceCoverage([]);
+    }
+  };
+
+  const fetchChangeImpact = (stationId: number, params: Record<string, string>) => {
+    const query = new URLSearchParams(params).toString();
+    return pageApiRequest<StationChangeImpact>(
+      `/api/stations/${stationId}/change-impact${query ? `?${query}` : ''}`
+    );
+  };
 
   const filteredStations = useMemo(() => {
     const query = normalizeSearch(search.trim());
@@ -208,6 +260,33 @@ const Stations: React.FC = () => {
       assemblyOther,
     };
   }, [filteredStations]);
+
+  const advanceCoverageSummary = useMemo(() => {
+    const bySequence = new Map<number, { names: Set<string>; lines: Set<string>; houses: Set<string> }>();
+    advanceCoverage.forEach((entry) => {
+      const group = bySequence.get(entry.sequence_order) ?? {
+        names: new Set<string>(),
+        lines: new Set<string>(),
+        houses: new Set<string>(),
+      };
+      group.names.add(entry.station_name.trim());
+      if (entry.line_type) {
+        group.lines.add(entry.line_type);
+      }
+      entry.house_types.forEach((houseType) => group.houses.add(houseType.house_type_name.trim()));
+      bySequence.set(entry.sequence_order, group);
+    });
+    return Array.from(bySequence.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([sequence, group]) => {
+        const lines = Array.from(group.lines).sort();
+        const lineLabel = lines.length ? `, L${lines.join('/')}` : '';
+        const houses = Array.from(group.houses);
+        const houseLabel =
+          houses.length > 3 ? `${houses.slice(0, 3).join(', ')} +${houses.length - 3}` : houses.join(', ');
+        return `${Array.from(group.names).join(' / ')} (Sec ${sequence}${lineLabel}: ${houseLabel})`;
+      });
+  }, [advanceCoverage]);
 
   const summaryLabel = useMemo(() => {
     const assemblyLines = new Set(
@@ -302,6 +381,38 @@ const Stations: React.FC = () => {
     setStatusMessage(null);
     try {
       const payload = buildPayload(draft);
+      const current = draft.id ? stations.find((station) => station.id === draft.id) : null;
+      const placementChanged =
+        current != null &&
+        (current.role !== payload.role ||
+          (current.line_type ?? null) !== (payload.line_type || null) ||
+          current.sequence_order !== payload.sequence_order);
+      if (current && placementChanged) {
+        const params: Record<string, string> = { role: payload.role };
+        if (payload.line_type) {
+          params.line_type = payload.line_type;
+        }
+        if (payload.sequence_order !== null) {
+          params.sequence_order = String(payload.sequence_order);
+        }
+        const impact = await fetchChangeImpact(current.id, params);
+        if (impact.blocking_message) {
+          setStatusMessage(impact.blocking_message);
+          return;
+        }
+        if (impact.sequence_conflict_station) {
+          setStatusMessage(impact.warnings[0] ?? 'La secuencia ya esta en uso.');
+          return;
+        }
+        if (
+          impact.warnings.length > 0 &&
+          !window.confirm(
+            `${impact.warnings.join('\n\n')}\n\n¿Guardar los cambios de ${current.name}?`
+          )
+        ) {
+          return;
+        }
+      }
       let saved: Station;
       if (draft.id) {
         saved = await pageApiRequest<Station>(`/api/stations/${draft.id}`, {
@@ -316,6 +427,7 @@ const Stations: React.FC = () => {
         });
         setStations((prev) => [...prev, saved]);
       }
+      void loadAdvanceCoverage();
       setSelectedStationId(saved.id);
       setDraft(buildDraftFromStation(saved));
       setStatusMessage('Estacion guardada.');
@@ -334,7 +446,21 @@ const Stations: React.FC = () => {
     setSaving(true);
     setStatusMessage(null);
     try {
+      const impact = await fetchChangeImpact(draft.id, { delete: 'true' });
+      if (impact.blocking_message) {
+        setStatusMessage(impact.blocking_message);
+        return;
+      }
+      const warningText = impact.warnings.length ? `${impact.warnings.join('\n\n')}\n\n` : '';
+      if (
+        !window.confirm(
+          `${warningText}¿Eliminar la estacion ${draft.name}? Esta accion no se puede deshacer.`
+        )
+      ) {
+        return;
+      }
       await pageApiRequest<void>(`/api/stations/${draft.id}`, { method: 'DELETE' });
+      void loadAdvanceCoverage();
       setStations((prev) => prev.filter((station) => station.id !== draft.id));
       const next = stations.find((station) => station.id !== draft.id) ?? null;
       if (next) {
@@ -493,6 +619,14 @@ const Stations: React.FC = () => {
                 />
               </label>
             </div>
+
+            {advanceCoverageSummary.length > 0 && (
+              <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                <span className="font-semibold">Modulos pueden quedar detenidos:</span> ninguna
+                tarea que gatille avance aplica para algunos tipos de casa en{' '}
+                {advanceCoverageSummary.join('; ')}. Revise Definiciones de tareas.
+              </div>
+            )}
 
             {loading && (
               <div className="px-4 py-8 text-center text-sm text-gray-500">

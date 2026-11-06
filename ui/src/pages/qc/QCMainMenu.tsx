@@ -50,6 +50,7 @@ type QCCheckInstanceSummary = {
   status: QCCheckStatus;
   opened_at: string;
   module_completed?: boolean;
+  module_in_assembly?: boolean;
 };
 
 type QCReworkTaskSummary = {
@@ -71,6 +72,25 @@ type QCReworkTaskSummary = {
   house_identifier: string | null;
   panel_code: string | null;
   created_at: string;
+  panel_off_line?: boolean;
+};
+
+type QCTriggerTaskWarning = {
+  check_definition_id: number;
+  check_name: string;
+  blocked: boolean;
+  tasks: {
+    task_definition_id: number;
+    task_name: string | null;
+    reason: 'archived' | 'inactive' | 'missing' | string;
+  }[];
+};
+
+type QCWorkUnitCompletionPreview = {
+  work_unit_id: number;
+  open_checks: number;
+  open_reworks: number;
+  open_tasks: number;
 };
 
 type QCPlantPanelSummary = {
@@ -104,6 +124,35 @@ type QCMainMenuResponse = {
   rework_tasks: QCReworkTaskSummary[];
   plant_panels: QCPlantPanelSummary[];
   plant_modules: QCPlantModuleSummary[];
+  trigger_warnings?: QCTriggerTaskWarning[];
+};
+
+const triggerTaskReasonLabels: Record<string, string> = {
+  archived: 'archivada',
+  inactive: 'inactiva',
+  missing: 'no encontrada',
+};
+
+const pluralize = (count: number, singular: string, plural: string) =>
+  `${count} ${count === 1 ? singular : plural}`;
+
+const readErrorMessage = async (response: Response): Promise<string> => {
+  const text = await response.text();
+  if (!text) {
+    return `Solicitud fallida (${response.status})`;
+  }
+  try {
+    const data = JSON.parse(text) as { detail?: unknown };
+    if (typeof data.detail === 'string') {
+      return data.detail;
+    }
+    if (data.detail && typeof data.detail === 'object' && 'message' in data.detail) {
+      return String((data.detail as { message: unknown }).message);
+    }
+  } catch {
+    // Fall back to the raw text.
+  }
+  return text;
 };
 
 type StationUnitRow = {
@@ -160,6 +209,7 @@ type QCComplaintEvent = {
     | 'media_added'
     | 'closure_proposed'
     | 'closure_accepted'
+    | 'force_closed'
     | 'closure_rejected';
   message: string | null;
   created_at: string;
@@ -261,6 +311,7 @@ const observationEventLabels: Record<QCComplaintEvent['event_type'], string> = {
   media_added: 'Agrego evidencia',
   closure_proposed: 'Propuso cierre',
   closure_accepted: 'Acepto cierre',
+  force_closed: 'Cierre forzado por QC',
   closure_rejected: 'Rechazo cierre',
 };
 
@@ -440,6 +491,8 @@ const QCMainMenu: React.FC = () => {
   const [activeTaskTab, setActiveTaskTab] = useState<'checks' | 'observations' | 'reworks'>('checks');
   const [activePlantTab, setActivePlantTab] = useState<'panels' | 'armado'>('panels');
   const [completingWorkUnitIds, setCompletingWorkUnitIds] = useState<Set<number>>(new Set());
+  const [cancelingReworkIds, setCancelingReworkIds] = useState<Set<number>>(new Set());
+  const [triggerWarningsOpen, setTriggerWarningsOpen] = useState(false);
   const [expandedStationIds, setExpandedStationIds] = useState<Set<number>>(new Set());
   const qcSession = useOptionalQCSession();
   const { setStatus } = useQCLayoutStatus();
@@ -690,7 +743,8 @@ const QCMainMenu: React.FC = () => {
   const plantPanels = useMemo(() => dashboard.plant_panels ?? [], [dashboard.plant_panels]);
   const plantModules = useMemo(() => dashboard.plant_modules ?? [], [dashboard.plant_modules]);
   const activeReworkTasks = useMemo(
-    () => reworkTasks.filter((task) => task.current_station_id !== null),
+    () =>
+      reworkTasks.filter((task) => task.current_station_id !== null || task.panel_off_line),
     [reworkTasks]
   );
   const stationActivity = useMemo(() => {
@@ -1038,19 +1092,51 @@ const QCMainMenu: React.FC = () => {
     if (!canMarkModulesComplete || completingWorkUnitIds.has(module.workUnitId)) {
       return;
     }
-    const confirmed = window.confirm(`Marcar modulo ${module.moduleNumber} como terminado?`);
-    if (!confirmed) {
-      return;
-    }
     setCompletingWorkUnitIds((current) => new Set(current).add(module.workUnitId));
     try {
+      const previewResponse = await fetch(
+        `${API_BASE_URL}/api/qc/work-units/${module.workUnitId}/completion-preview`,
+        { credentials: 'include' }
+      );
+      if (!previewResponse.ok) {
+        throw new Error(await readErrorMessage(previewResponse));
+      }
+      const preview = (await previewResponse.json()) as QCWorkUnitCompletionPreview;
+      const hasOpenItems = preview.open_checks > 0 || preview.open_reworks > 0;
+      const openParts: string[] = [];
+      if (preview.open_checks > 0) {
+        openParts.push(
+          pluralize(preview.open_checks, 'inspeccion abierta', 'inspecciones abiertas')
+        );
+      }
+      if (preview.open_reworks > 0) {
+        openParts.push(pluralize(preview.open_reworks, 'retrabajo abierto', 'retrabajos abiertos'));
+      }
+      const lines = [`Marcar modulo ${module.moduleNumber} como terminado?`];
+      if (hasOpenItems) {
+        lines.push(
+          '',
+          `El modulo tiene ${openParts.join(', ')}.`,
+          'Al terminar, las inspecciones se cerraran sin ejecutar (quedan como no realizadas) y los retrabajos se cancelaran.'
+        );
+      }
+      if (preview.open_tasks > 0) {
+        lines.push(
+          '',
+          `${pluralize(preview.open_tasks, 'tarea en curso se cerrara', 'tareas en curso se cerraran')} sin terminar (quedan como omitidas; se conserva el tiempo trabajado).`
+        );
+      }
+      if (!window.confirm(lines.join('\n'))) {
+        return;
+      }
       const response = await fetch(`${API_BASE_URL}/api/qc/work-units/${module.workUnitId}/complete`, {
         method: 'POST',
         credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolve_open_items: hasOpenItems || preview.open_tasks > 0 }),
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Solicitud fallida (${response.status})`);
+        throw new Error(await readErrorMessage(response));
       }
       setDashboard((current) => ({
         ...current,
@@ -1058,6 +1144,12 @@ const QCMainMenu: React.FC = () => {
           (item) => item.work_unit_id !== module.workUnitId
         ),
         plant_panels: current.plant_panels.filter(
+          (item) => item.work_unit_id !== module.workUnitId
+        ),
+        pending_checks: current.pending_checks.filter(
+          (item) => item.work_unit_id !== module.workUnitId
+        ),
+        rework_tasks: current.rework_tasks.filter(
           (item) => item.work_unit_id !== module.workUnitId
         ),
       }));
@@ -1071,6 +1163,50 @@ const QCMainMenu: React.FC = () => {
       setCompletingWorkUnitIds((current) => {
         const next = new Set(current);
         next.delete(module.workUnitId);
+        return next;
+      });
+    }
+  };
+  const handleCancelRework = async (task: QCReworkTaskSummary) => {
+    if (cancelingReworkIds.has(task.id)) {
+      return;
+    }
+    const label = `${task.module_number}${task.panel_code ? ` · Panel ${task.panel_code}` : ''}`;
+    const reasonInput = window.prompt(
+      `Cancelar el retrabajo de ${label}?\n\nLa inspeccion fallida queda registrada en el historial; el retrabajo deja de mostrarse en las estaciones.\n\nMotivo de la cancelacion (obligatorio):`
+    );
+    if (reasonInput === null) {
+      return;
+    }
+    const reason = reasonInput.trim();
+    if (reason.length < 3) {
+      setErrorMessage('Indique el motivo de la cancelacion del retrabajo.');
+      return;
+    }
+    setCancelingReworkIds((current) => new Set(current).add(task.id));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/qc/rework-tasks/${task.id}/cancel`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+      setDashboard((current) => ({
+        ...current,
+        rework_tasks: current.rework_tasks.filter((item) => item.id !== task.id),
+      }));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : 'No se pudo cancelar el retrabajo.'
+      );
+    } finally {
+      setCancelingReworkIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
         return next;
       });
     }
@@ -1303,6 +1439,10 @@ const QCMainMenu: React.FC = () => {
     }
   };
 
+  const triggerWarnings = dashboard.trigger_warnings ?? [];
+  const blockedTriggerWarnings = triggerWarnings.filter((warning) => warning.blocked).length;
+  const canCancelReworks = canMarkModulesComplete;
+
   const selectedModuleObservations = observationSelection
     ? observations
         .filter((observation) => observation.work_unit_id === observationSelection.workUnitId)
@@ -1361,6 +1501,63 @@ const QCMainMenu: React.FC = () => {
           {reportError}
         </div>
       )}
+      {triggerWarnings.length > 0 ? (
+        <div className="qc-notice">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-2 font-semibold text-[var(--ink)]">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              {pluralize(
+                triggerWarnings.length,
+                'inspeccion disparada depende de tareas archivadas o inactivas',
+                'inspecciones disparadas dependen de tareas archivadas o inactivas'
+              )}
+              {blockedTriggerWarnings > 0
+                ? ` · ${pluralize(blockedTriggerWarnings, 'ya no se dispara', 'ya no se disparan')}`
+                : ''}
+            </span>
+            <span className="inline-flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTriggerWarningsOpen((open) => !open)}
+                className="text-xs font-semibold text-[var(--ink)] underline"
+              >
+                {triggerWarningsOpen ? 'Ocultar' : 'Ver detalle'}
+              </button>
+              <Link to="/qc/checks" className="text-xs font-semibold text-[var(--ink)] underline">
+                Configurar inspecciones
+              </Link>
+            </span>
+          </div>
+          {triggerWarningsOpen ? (
+            <ul className="mt-2 space-y-1 text-xs text-[var(--ink-muted)]">
+              {triggerWarnings.map((warning) => (
+                <li key={warning.check_definition_id} className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-semibold text-[var(--ink)]">{warning.check_name}</span>
+                  {warning.blocked ? (
+                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                      No se dispara
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                      Parcial
+                    </span>
+                  )}
+                  <span>
+                    {warning.tasks
+                      .map(
+                        (task) =>
+                          `${task.task_name ?? `Tarea #${task.task_definition_id}`} (${
+                            triggerTaskReasonLabels[task.reason] ?? task.reason
+                          })`
+                      )
+                      .join(', ')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       <section className="qc-card p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex flex-wrap items-center gap-2">
@@ -1548,6 +1745,14 @@ const QCMainMenu: React.FC = () => {
                           Terminado
                         </span>
                       ) : null}
+                      {check.module_in_assembly ? (
+                        <span
+                          className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                          title="El panel ya fue consumido en ensamble; la inspeccion sigue abierta."
+                        >
+                          Modulo ya en ensamble
+                        </span>
+                      ) : null}
                       <span>Creado {formatTimestamp(check.opened_at)}</span>
                     </div>
                   </>
@@ -1613,6 +1818,11 @@ const QCMainMenu: React.FC = () => {
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-xs text-[var(--ink-muted)]">
                     <span>{observationStatusLabels[obs.status]} · {formatTimestamp(obs.updated_at)}</span>
+                    {obs.supervisors.length === 0 ? (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                        Sin supervisor
+                      </span>
+                    ) : null}
                   </div>
                 </>
               );
@@ -1678,36 +1888,62 @@ const QCMainMenu: React.FC = () => {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--ink-muted)]">
+                    {task.panel_off_line ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                        title="El panel ya salio de la linea de paneles; el retrabajo no aparece en su estacion original."
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        Panel fuera de linea
+                      </span>
+                    ) : null}
                     <span>Creado {formatTimestamp(task.created_at)}</span>
                   </div>
                 </>
               );
-              if (!checkReady) {
-                return (
-                  <div
-                    key={task.id}
-                    className="rounded-2xl border border-black/10 bg-white px-4 py-3 shadow-sm opacity-70"
+              const reworkOpen = task.status === 'Open' || task.status === 'InProgress';
+              const isCanceling = cancelingReworkIds.has(task.id);
+              const cancelButton =
+                canCancelReworks && reworkOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleCancelRework(task)}
+                    disabled={isCanceling}
+                    className="absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-full border border-red-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-wait disabled:opacity-60"
                   >
+                    {isCanceling ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                    Cancelar retrabajo
+                  </button>
+                ) : null;
+              let card: React.ReactNode;
+              if (!checkReady) {
+                card = (
+                  <div className="h-full rounded-2xl border border-black/10 bg-white px-4 py-3 pb-9 shadow-sm">
+                    <div className="opacity-70">{cardContent}</div>
+                  </div>
+                );
+              } else if (!canExecuteChecks) {
+                card = (
+                  <div className={clsx(disabledCardClass, 'h-full')} aria-disabled="true">
                     {cardContent}
                   </div>
                 );
-              }
-              if (!canExecuteChecks) {
-                return (
-                  <div key={task.id} className={disabledCardClass} aria-disabled="true">
+              } else {
+                card = (
+                  <Link
+                    to={`/qc/execute?check=${task.check_instance_id}`}
+                    state={{ rework: task, checkId: task.check_instance_id }}
+                    className={clsx(baseCardClass, 'block h-full border-emerald-200')}
+                  >
                     {cardContent}
-                  </div>
+                  </Link>
                 );
               }
               return (
-                <Link
-                  key={task.id}
-                  to={`/qc/execute?check=${task.check_instance_id}`}
-                  state={{ rework: task, checkId: task.check_instance_id }}
-                  className={clsx(baseCardClass, 'border-emerald-200')}
-                >
-                  {cardContent}
-                </Link>
+                <div key={task.id} className="relative">
+                  {card}
+                  {cancelButton}
+                </div>
               );
             })}
           </div>
@@ -2192,7 +2428,8 @@ const QCMainMenu: React.FC = () => {
                         const fromQc = event.actor_type === 'qc';
                         const isStatusEvent =
                           event.event_type === 'closure_accepted' ||
-                          event.event_type === 'closure_rejected';
+                          event.event_type === 'closure_rejected' ||
+                          event.event_type === 'force_closed';
                         const isPendingClosureProposal =
                           event.event_type === 'closure_proposed' &&
                           observationDetail.status === 'ClosureProposed';
@@ -2377,6 +2614,11 @@ const QCMainMenu: React.FC = () => {
                           {formatModulePanelLabel(check.module_number, check.panel_code)}
                         </p>
                         <p className="text-xs text-[var(--ink-muted)]">{workUnitLabel}</p>
+                        {check.module_in_assembly ? (
+                          <span className="mt-1 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            Modulo ya en ensamble
+                          </span>
+                        ) : null}
                       </div>
                       <span className="text-xs text-[var(--ink-muted)]">
                         {formatTimestamp(check.opened_at)}

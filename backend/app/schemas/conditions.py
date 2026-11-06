@@ -86,3 +86,24 @@ class WorkUnitConditionsMatrixItem(BaseModel):
 
 class WorkUnitConditionsMatrixUpdate(BaseModel):
     items: list[WorkUnitConditionsMatrixItem] = Field(min_length=1)
+
+
+class ConditionImpactTask(BaseModel):
+    task_definition_id: int
+    name: str
+    scope: str
+    modes: list[str] = []
+    # Empty when at least one rule is global (applies to every house type).
+    house_type_names: list[str] = []
+    in_progress_modules: int = 0
+
+
+class ConditionTypeImpactRead(BaseModel):
+    condition_type_id: int
+    name: str
+    active: bool
+    affected_tasks: list[ConditionImpactTask] = []
+    # In-progress modules (Panels/Magazine/Assembly) for which at least one task
+    # would start or stop applying once this condition's rules are ignored.
+    in_progress_modules: int = 0
+    in_progress_modules_total: int = 0

@@ -5,6 +5,7 @@ import {
   Bell,
   CheckSquare,
   FastForward,
+  LogOut,
   MessageSquare,
   Pause,
   Play,
@@ -159,6 +160,7 @@ type StationTask = {
   current_worker_participating?: boolean;
   active_participant_count?: number;
   backlog?: boolean;
+  rework_task_id?: number | null;
 };
 
 const buildTaskNameKey = (task: StationTask, workItemId: string): string =>
@@ -230,6 +232,7 @@ type WorkerActiveTask = {
   project_name: string | null;
   house_identifier: string | null;
   panel_code: string | null;
+  rework_task_id: number | null;
   status: string;
   started_at: string | null;
   notes: string | null;
@@ -260,6 +263,7 @@ type StationQCReworkTask = {
   panel_code: string | null;
   station_id: number | null;
   created_at: string;
+  panel_left_line?: boolean;
   failure_notes: string | null;
   failure_modes: string[];
   evidence: Array<{
@@ -499,6 +503,7 @@ const StationWorkspace: React.FC = () => {
       notes: autoFocusTarget.notes,
       current_worker_participating: true,
       active_participant_count: 1,
+      rework_task_id: autoFocusTarget.rework_task_id ?? null,
     };
   }, [autoFocusTarget]);
 
@@ -679,20 +684,25 @@ const StationWorkspace: React.FC = () => {
   );
   const qcReworkTasks = useMemo(() => snapshot?.qc_rework_tasks ?? [], [snapshot?.qc_rework_tasks]);
   const qcNotificationCount = snapshot?.qc_notification_count ?? 0;
+  const reworkBelongsToWorkItem = useCallback(
+    (rework: StationQCReworkTask, item: StationWorkItem) => {
+      if (rework.work_unit_id !== item.work_unit_id) {
+        return false;
+      }
+      if (item.panel_unit_id) {
+        return rework.panel_unit_id === item.panel_unit_id;
+      }
+      // Module items also carry reworks of panels that already left the panel line.
+      return rework.panel_unit_id === null || Boolean(rework.panel_left_line);
+    },
+    []
+  );
   const selectedReworkTasks = useMemo(() => {
     if (!selectedWorkItem) {
       return [];
     }
-    return qcReworkTasks.filter((rework) => {
-      if (rework.work_unit_id !== selectedWorkItem.work_unit_id) {
-        return false;
-      }
-      if (selectedWorkItem.panel_unit_id) {
-        return rework.panel_unit_id === selectedWorkItem.panel_unit_id;
-      }
-      return rework.panel_unit_id === null;
-    });
-  }, [qcReworkTasks, selectedWorkItem]);
+    return qcReworkTasks.filter((rework) => reworkBelongsToWorkItem(rework, selectedWorkItem));
+  }, [qcReworkTasks, reworkBelongsToWorkItem, selectedWorkItem]);
 
   const formatReworkStatus = (status: string) => {
     switch (status) {
@@ -1264,6 +1274,9 @@ const StationWorkspace: React.FC = () => {
 
   const renderWorkItemDetails = (item: StationWorkItem) => {
     const hasPanel = Boolean(item.panel_code);
+    const reworkCount = qcReworkTasks.filter((rework) =>
+      reworkBelongsToWorkItem(rework, item)
+    ).length;
     return (
       <>
         <div className="flex items-center justify-between">
@@ -1272,7 +1285,14 @@ const StationWorkspace: React.FC = () => {
             <span className="mx-1 text-gray-400">-</span>
             <span className="text-emerald-600">M{item.module_number}</span>
           </div>
-          {statusBadge(item.status)}
+          <div className="flex items-center gap-1">
+            {reworkCount > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
+                Retrabajo{reworkCount > 1 ? ` (${reworkCount})` : ''}
+              </span>
+            )}
+            {statusBadge(item.status)}
+          </div>
         </div>
         {hasPanel ? (
           <>
@@ -1455,6 +1475,7 @@ const StationWorkspace: React.FC = () => {
                   >
                     <Pause className="h-5 w-5" /> Pausa
                   </button>
+                  {renderLeaveButton(task)}
                   <button
                     onClick={() => handleComplete(task)}
                     className="inline-flex items-center gap-2.5 rounded-lg bg-blue-600 px-6 py-4 text-base font-semibold text-white hover:bg-blue-700"
@@ -1493,6 +1514,7 @@ const StationWorkspace: React.FC = () => {
                   >
                     <Play className="h-5 w-5" /> Reanudar
                   </button>
+                  {renderLeaveButton(task)}
                   <button
                     onClick={() => handleComplete(task)}
                     className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-600 hover:bg-gray-50"
@@ -1546,6 +1568,17 @@ const StationWorkspace: React.FC = () => {
     );
   };
 
+  const renderLeaveButton = (task: StationTask) => (
+    <button
+      onClick={() => handleLeave(task)}
+      disabled={submitting}
+      title="Salir de la tarea sin terminarla"
+      className="inline-flex items-center gap-2.5 rounded-lg border border-gray-200 px-5 py-4 text-base font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+    >
+      <LogOut className="h-5 w-5" /> Salir
+    </button>
+  );
+
   const renderReworkCard = (rework: StationQCReworkTask) => {
     const statusStyles: Record<string, string> = {
       Open: 'border-amber-200 bg-amber-50/50',
@@ -1572,6 +1605,11 @@ const StationWorkspace: React.FC = () => {
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-amber-100 text-amber-700 border-amber-200">
                 Retrabajo
               </span>
+              {rework.panel_code && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border bg-emerald-50 text-emerald-700 border-emerald-200">
+                  Panel {rework.panel_code}
+                </span>
+              )}
               <span
                 className={clsx(
                   'px-2 py-0.5 rounded-full text-xs font-bold uppercase border',
@@ -1605,6 +1643,12 @@ const StationWorkspace: React.FC = () => {
               <p className="mt-2 text-xs text-gray-600">
                 <span className="font-semibold text-gray-700">Fallas:</span>{' '}
                 {rework.failure_modes.join(', ')}
+              </p>
+            )}
+            {rework.panel_left_line && rework.panel_code && (
+              <p className="mt-2 text-xs font-semibold text-emerald-700">
+                El panel {rework.panel_code} ya salio de la linea de paneles; el retrabajo se
+                realiza junto al modulo.
               </p>
             )}
           </div>
@@ -1858,14 +1902,24 @@ const StationWorkspace: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      await apiRequest('/api/worker-tasks/pause', {
-        method: 'POST',
-        body: JSON.stringify({
-          task_instance_id: selectedTask.task_instance_id,
-          reason_id: reasonId ?? null,
-          reason_text: customReason ?? null,
-        }),
-      });
+      if (selectedTask.rework_task_id) {
+        await apiRequest(`/api/qc/rework-tasks/${selectedTask.rework_task_id}/pause`, {
+          method: 'POST',
+          body: JSON.stringify({
+            reason_id: reasonId ?? null,
+            reason_text: customReason ?? null,
+          }),
+        });
+      } else {
+        await apiRequest('/api/worker-tasks/pause', {
+          method: 'POST',
+          body: JSON.stringify({
+            task_instance_id: selectedTask.task_instance_id,
+            reason_id: reasonId ?? null,
+            reason_text: customReason ?? null,
+          }),
+        });
+      }
       await refreshSnapshot();
       await refreshActiveTaskTarget();
       closeModal();
@@ -1900,10 +1954,16 @@ const StationWorkspace: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      await apiRequest('/api/worker-tasks/resume', {
-        method: 'POST',
-        body: JSON.stringify({ task_instance_id: task.task_instance_id }),
-      });
+      if (task.rework_task_id) {
+        await apiRequest(`/api/qc/rework-tasks/${task.rework_task_id}/resume`, {
+          method: 'POST',
+        });
+      } else {
+        await apiRequest('/api/worker-tasks/resume', {
+          method: 'POST',
+          body: JSON.stringify({ task_instance_id: task.task_instance_id }),
+        });
+      }
       await refreshSnapshot();
       await refreshActiveTaskTarget();
     } catch (err) {
@@ -1942,6 +2002,36 @@ const StationWorkspace: React.FC = () => {
       await refreshActiveTaskTarget();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo unir a la tarea.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleLeave = async (task: StationTask) => {
+    if (!task.task_instance_id) {
+      return;
+    }
+    const participantCount = task.active_participant_count;
+    const confirmation =
+      participantCount === undefined
+        ? 'Salir de la tarea? Si nadie mas participa, la tarea quedara en pausa.'
+        : participantCount <= 1
+        ? 'Eres el ultimo participante. Al salir, la tarea quedara en pausa. Salir de la tarea?'
+        : 'Salir de la tarea? El resto del equipo seguira trabajando en ella.';
+    if (!window.confirm(confirmation)) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest('/api/worker-tasks/leave', {
+        method: 'POST',
+        body: JSON.stringify({ task_instance_id: task.task_instance_id }),
+      });
+      await refreshSnapshot();
+      await refreshActiveTaskTarget();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo salir de la tarea.';
       setError(message);
     } finally {
       setSubmitting(false);
@@ -1990,6 +2080,25 @@ const StationWorkspace: React.FC = () => {
     }
     if (!autoFocusTargetStationId) {
       setError('No se pudo identificar la estacion de la tarea activa.');
+      return;
+    }
+    if (task.rework_task_id) {
+      // Rework completion reopens the QC check; it must not run normal task routing.
+      setSubmitting(true);
+      try {
+        await apiRequest(`/api/qc/rework-tasks/${task.rework_task_id}/complete`, {
+          method: 'POST',
+        });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'No se pudo completar el rework.';
+        setError(message);
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+      await refreshSnapshot();
+      await refreshActiveTaskTarget();
       return;
     }
     const intendedStationId = selectedStationId;
@@ -2049,6 +2158,7 @@ const StationWorkspace: React.FC = () => {
         }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'No se pudo iniciar el rework.';
@@ -2066,6 +2176,7 @@ const StationWorkspace: React.FC = () => {
         body: JSON.stringify({ reason_id: null, reason_text: null }),
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'No se pudo pausar el rework.';
@@ -2082,6 +2193,7 @@ const StationWorkspace: React.FC = () => {
         method: 'POST',
       });
       await refreshSnapshot();
+      await refreshActiveTaskTarget();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'No se pudo completar el rework.';
@@ -2554,17 +2666,23 @@ const StationWorkspace: React.FC = () => {
                 )}
               </div>
 
+              {selectedReworkTasks.length > 0 && (
+                <div className="space-y-3">
+                  {selectedReworkTasks.map((rework) => renderReworkCard(rework))}
+                </div>
+              )}
               {selectedWorkItem.tasks.length === 0 &&
               selectedWorkItem.backlog_tasks.length === 0 &&
               (!isMagazineStation || selectedWorkItem.other_tasks.length === 0) ? (
-                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
-                  No hay tareas de estacion asignadas para este elemento.
-                </div>
+                selectedReworkTasks.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-500">
+                    No hay tareas de estacion asignadas para este elemento.
+                  </div>
+                )
               ) : (
                 <div className="space-y-6">
                   {selectedWorkItem.tasks.length > 0 && (
                     <div className="space-y-3">
-                      {selectedReworkTasks.map((rework) => renderReworkCard(rework))}
                       {orderedSelectedStationTasks.map((task) =>
                         renderTaskCard(task, selectedWorkItem, {
                           isFrequent: frequentTaskDefinitionIds.has(task.task_definition_id),
@@ -3604,6 +3722,16 @@ const StationWorkspace: React.FC = () => {
                     className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-6 py-4 text-lg font-bold text-blue-700 transition-all hover:bg-blue-100 active:scale-95 disabled:opacity-50"
                   >
                     <Play className="h-5 w-5" /> Reanudar
+                  </button>
+                )}
+
+                {(activeTaskProxy.status === 'InProgress' || activeTaskProxy.status === 'Paused') && (
+                  <button
+                    onClick={() => handleLeave({ ...activeTaskProxy, active_participant_count: undefined })}
+                    disabled={submitting}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-6 py-4 text-lg font-bold text-gray-700 transition-all hover:bg-gray-50 active:scale-95 disabled:opacity-50"
+                  >
+                    <LogOut className="h-5 w-5" /> Salir de la tarea
                   </button>
                 )}
 

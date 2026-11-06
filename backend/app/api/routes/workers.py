@@ -1,10 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db, require_admin_page
 from app.models.admin import AdminUser
+from app.models.house import PanelDefinition
 from app.models.stations import Station
+from app.models.tasks import TaskDefinition, TaskParticipation
+from app.models.work import PanelUnit, WorkUnit
 from app.models.workers import (
     Skill,
     Worker,
@@ -24,6 +27,11 @@ from app.schemas.workers import (
     WorkerSupervisorUpdate,
     WorkerSkillRead,
     WorkerUpdate,
+)
+from app.schemas.worker_station import WorkerOpenTaskRead
+from app.services.task_participation import (
+    open_task_instances_for_worker,
+    release_worker_participations,
 )
 
 router = APIRouter()
@@ -381,11 +389,106 @@ def update_worker(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="One or more stations not found",
             )
+    deactivating = worker.active and payload_data.get("active") is False
     for key, value in payload_data.items():
         setattr(worker, key, value)
+    if deactivating:
+        # An inactive worker can no longer act on the tablets: take them off every open
+        # task so they stop accruing labor, pausing tasks that are left without crew.
+        release_worker_participations(db, worker.id)
     db.commit()
     db.refresh(worker)
     return worker
+
+
+@router.get("/{worker_id}/open-tasks", response_model=list[WorkerOpenTaskRead])
+def list_worker_open_tasks(
+    worker_id: int,
+    db: Session = Depends(get_db),
+    _admin: AdminUser = Depends(require_admin_page("workers")),
+) -> list[WorkerOpenTaskRead]:
+    """Open tasks the worker participates in (shown before deactivating them)."""
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+    instances = open_task_instances_for_worker(db, worker.id)
+    if not instances:
+        return []
+    instance_ids = [instance.id for instance in instances]
+    task_names = {
+        row.id: row.name
+        for row in db.execute(
+            select(TaskDefinition.id, TaskDefinition.name).where(
+                TaskDefinition.id.in_({instance.task_definition_id for instance in instances})
+            )
+        ).all()
+    }
+    station_names = {
+        row.id: row.name
+        for row in db.execute(
+            select(Station.id, Station.name).where(
+                Station.id.in_({instance.station_id for instance in instances})
+            )
+        ).all()
+    }
+    work_units = {
+        unit.id: unit
+        for unit in db.execute(
+            select(WorkUnit)
+            .options(selectinload(WorkUnit.work_order))
+            .where(WorkUnit.id.in_({instance.work_unit_id for instance in instances}))
+        ).scalars()
+    }
+    panel_unit_ids = {
+        instance.panel_unit_id for instance in instances if instance.panel_unit_id is not None
+    }
+    panel_codes: dict[int, str] = {}
+    if panel_unit_ids:
+        panel_codes = {
+            row.id: row.panel_code
+            for row in db.execute(
+                select(PanelUnit.id, PanelDefinition.panel_code)
+                .join(PanelDefinition, PanelUnit.panel_definition_id == PanelDefinition.id)
+                .where(PanelUnit.id.in_(panel_unit_ids))
+            ).all()
+        }
+    other_counts = {
+        task_instance_id: count
+        for task_instance_id, count in db.execute(
+            select(TaskParticipation.task_instance_id, func.count(TaskParticipation.id))
+            .where(TaskParticipation.task_instance_id.in_(instance_ids))
+            .where(TaskParticipation.left_at.is_(None))
+            .where(TaskParticipation.worker_id != worker.id)
+            .group_by(TaskParticipation.task_instance_id)
+        ).all()
+    }
+    result: list[WorkerOpenTaskRead] = []
+    for instance in instances:
+        work_unit = work_units.get(instance.work_unit_id)
+        work_order = work_unit.work_order if work_unit else None
+        result.append(
+            WorkerOpenTaskRead(
+                task_instance_id=instance.id,
+                task_name=task_names.get(
+                    instance.task_definition_id, f"Tarea {instance.task_definition_id}"
+                ),
+                status=instance.status,
+                station_id=instance.station_id,
+                station_name=station_names.get(instance.station_id),
+                work_unit_id=instance.work_unit_id,
+                module_number=work_unit.module_number if work_unit else None,
+                project_name=work_order.project_name if work_order else None,
+                house_identifier=work_order.house_identifier if work_order else None,
+                panel_code=(
+                    panel_codes.get(instance.panel_unit_id)
+                    if instance.panel_unit_id is not None
+                    else None
+                ),
+                is_rework=instance.rework_task_id is not None,
+                other_participant_count=other_counts.get(instance.id, 0),
+            )
+        )
+    return result
 
 
 @router.delete("/{worker_id}", status_code=status.HTTP_204_NO_CONTENT)

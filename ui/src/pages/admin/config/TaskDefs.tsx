@@ -37,9 +37,142 @@ type TaskDefinition = {
   archived_by_user_id: number | null;
 };
 
+type AdvanceCoverageHouseType = {
+  house_type_id: number;
+  house_type_name: string;
+  module_numbers: number[];
+  sub_type_names: string[];
+  reason: 'missing' | 'conditional' | string;
+};
+
+type AdvanceCoverageStation = {
+  station_id: number;
+  station_name: string;
+  line_type: string | null;
+  sequence_order: number;
+  advance_task_names: string[];
+  house_types: AdvanceCoverageHouseType[];
+};
+
 type TaskDefinitionUsage = {
   task_instances: number;
   qc_checks: number;
+  qc_triggers?: { trigger_id: number; check_definition_id: number; check_name: string }[];
+  dependent_tasks?: { task_definition_id: number; name: string; active: boolean }[];
+  advance_trigger_stations?: AdvanceCoverageStation[];
+};
+
+const formatCoverageHouseTypes = (houseTypes: AdvanceCoverageHouseType[], limit = 4): string => {
+  const parts = houseTypes.slice(0, limit).map((houseType) => {
+    const modules = houseType.module_numbers.map((number) => `M${number}`).join(', ');
+    const subTypes = houseType.sub_type_names.length
+      ? ` [${houseType.sub_type_names.join(', ')}]`
+      : '';
+    const conditional = houseType.reason === 'conditional' ? ' solo con condicion' : '';
+    return `${houseType.house_type_name.trim()}${subTypes} (${modules})${conditional}`;
+  });
+  if (houseTypes.length > limit) {
+    parts.push(`+${houseTypes.length - limit} tipos mas`);
+  }
+  return parts.join('; ');
+};
+
+type CoverageGroup = {
+  key: string;
+  label: string;
+  advanceTaskNames: string[];
+  houseTypes: AdvanceCoverageHouseType[];
+};
+
+// Lines usually share the same routing per sequence; group identical entries.
+const groupCoverageStations = (entries: AdvanceCoverageStation[]): CoverageGroup[] => {
+  const groups = new Map<
+    string,
+    { names: Set<string>; lines: Set<string>; sequence: number; entry: AdvanceCoverageStation }
+  >();
+  entries.forEach((entry) => {
+    const signature = JSON.stringify(
+      entry.house_types.map((houseType) => [
+        houseType.house_type_id,
+        houseType.module_numbers,
+        houseType.sub_type_names,
+        houseType.reason,
+      ])
+    );
+    const key = `${entry.sequence_order}|${signature}`;
+    const group = groups.get(key) ?? {
+      names: new Set<string>(),
+      lines: new Set<string>(),
+      sequence: entry.sequence_order,
+      entry,
+    };
+    group.names.add(entry.station_name.trim());
+    if (entry.line_type) {
+      group.lines.add(entry.line_type);
+    }
+    groups.set(key, group);
+  });
+  return Array.from(groups.entries())
+    .sort((a, b) => a[1].sequence - b[1].sequence)
+    .map(([key, group]) => {
+      const lines = Array.from(group.lines).sort();
+      const lineLabel = lines.length
+        ? ` · ${lines.length > 1 ? 'lineas' : 'linea'} ${lines.join(', ')}`
+        : '';
+      return {
+        key,
+        label: `${Array.from(group.names).join(' / ')} (Sec ${group.sequence}${lineLabel})`,
+        advanceTaskNames: group.entry.advance_task_names,
+        houseTypes: group.entry.house_types,
+      };
+    });
+};
+
+const buildTaskRemovalMessage = (
+  taskName: string,
+  scope: TaskScope,
+  usage: TaskDefinitionUsage,
+  question: string
+): string => {
+  const lines: string[] = [
+    `${taskName}: usada en ${usage.task_instances} tareas y ${usage.qc_checks} inspecciones QC (historial).`,
+  ];
+  const triggers = usage.qc_triggers ?? [];
+  if (triggers.length) {
+    lines.push(
+      '',
+      `Inspecciones QC que se generan al completar esta tarea (dejaran de generarse): ${triggers
+        .map((trigger) => trigger.check_name)
+        .join(', ')}.`
+    );
+  }
+  const dependents = usage.dependent_tasks ?? [];
+  if (dependents.length) {
+    lines.push(
+      '',
+      `Tareas que la tienen como dependencia (ya no la esperaran): ${dependents
+        .map((dependent) => (dependent.active ? dependent.name : `${dependent.name} (inactiva)`))
+        .join(', ')}.`
+    );
+  }
+  const stations = groupCoverageStations(usage.advance_trigger_stations ?? []);
+  if (stations.length) {
+    lines.push(
+      '',
+      'Es la unica tarea que gatilla avance en estas estaciones; los modulos quedarian detenidos ahi:'
+    );
+    stations.forEach((group) => {
+      lines.push(`- ${group.label}: ${formatCoverageHouseTypes(group.houseTypes)}`);
+    });
+  }
+  if (scope === 'panel') {
+    lines.push(
+      '',
+      'Los paneles detenidos cuyo unico trabajo pendiente era esta tarea se liberaran automaticamente a la siguiente estacion.'
+    );
+  }
+  lines.push('', question);
+  return lines.join('\n');
 };
 
 type TaskSpecialty = {
@@ -238,6 +371,7 @@ const TaskDefs: React.FC = () => {
   const [conditionTypes, setConditionTypes] = useState<ConditionType[]>([]);
   const [conditionRules, setConditionRules] = useState<TaskConditionRule[]>([]);
   const [houseTypeOptions, setHouseTypeOptions] = useState<HouseTypeOption[]>([]);
+  const [advanceCoverage, setAdvanceCoverage] = useState<AdvanceCoverageStation[]>([]);
   const [isConditionModalOpen, setIsConditionModalOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(emptyTaskDraft());
@@ -268,7 +402,20 @@ const TaskDefs: React.FC = () => {
     });
   }, [setHeader]);
 
+  const loadAdvanceCoverage = async () => {
+    try {
+      const coverage = await pageApiRequest<AdvanceCoverageStation[]>(
+        '/api/task-definitions/advance-trigger-coverage'
+      );
+      setAdvanceCoverage(coverage);
+    } catch {
+      // The warning is advisory; keep the page usable if it fails.
+      setAdvanceCoverage([]);
+    }
+  };
+
   const loadTasks = async () => {
+    void loadAdvanceCoverage();
     const taskData = await pageApiRequest<TaskDefinition[]>(
       '/api/task-definitions?include_archived=true'
     );
@@ -324,6 +471,7 @@ const TaskDefs: React.FC = () => {
         setConditionRules(ruleData);
         setHouseTypeOptions(houseTypeData);
         setSelectedTaskId(null);
+        void loadAdvanceCoverage();
       } catch (error) {
         if (active) {
           const message =
@@ -655,6 +803,37 @@ const TaskDefs: React.FC = () => {
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [draft.id, draft.scope, draftSequenceOrder, hasSequenceData, taskSequenceById, tasks]);
+
+  // Tasks that already depend (directly or transitively) on the draft task; picking any
+  // of them as a prerequisite would create a cycle.
+  const cycleBlockedDependencyIds = useMemo(() => {
+    const blocked = new Set<number>();
+    if (!draft.id) {
+      return blocked;
+    }
+    const dependentsByPrerequisite = new Map<number, number[]>();
+    tasks.forEach((task) => {
+      if (task.archived_at !== null || task.id === draft.id) {
+        return;
+      }
+      (task.dependencies_json ?? []).forEach((prerequisiteId) => {
+        const list = dependentsByPrerequisite.get(prerequisiteId) ?? [];
+        list.push(task.id);
+        dependentsByPrerequisite.set(prerequisiteId, list);
+      });
+    });
+    const pending = [draft.id];
+    while (pending.length) {
+      const current = pending.pop() as number;
+      (dependentsByPrerequisite.get(current) ?? []).forEach((dependentId) => {
+        if (dependentId !== draft.id && !blocked.has(dependentId)) {
+          blocked.add(dependentId);
+          pending.push(dependentId);
+        }
+      });
+    }
+    return blocked;
+  }, [draft.id, tasks]);
 
   const dependencyOptions = useMemo(() => {
     const needle = dependencyQuery.trim().toLowerCase();
@@ -1093,6 +1272,38 @@ const TaskDefs: React.FC = () => {
       return;
     }
 
+    const blockedDependencyNames = draft.dependencies_json
+      .filter((id) => cycleBlockedDependencyIds.has(id))
+      .map((id) => taskNameById.get(id) ?? `Tarea ${id}`);
+    if (blockedDependencyNames.length) {
+      setStatusMessage(
+        `Quite las dependencias que forman un ciclo antes de guardar: ${blockedDependencyNames.join(', ')}.`
+      );
+      return;
+    }
+
+    if (draft.id && selectedTask && selectedTask.active && !draft.active) {
+      try {
+        const usage = await pageApiRequest<TaskDefinitionUsage>(
+          `/api/task-definitions/${draft.id}/usage`
+        );
+        const message = buildTaskRemovalMessage(
+          selectedTask.name,
+          selectedTask.scope,
+          usage,
+          '¿Marcar esta tarea como Inactiva y guardar?'
+        );
+        if (!window.confirm(message)) {
+          return;
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'No se pudo revisar el uso de la tarea.';
+        setStatusMessage(message);
+        return;
+      }
+    }
+
     const payload = {
       name,
       scope: draft.scope,
@@ -1176,8 +1387,13 @@ const TaskDefs: React.FC = () => {
       const usage = await pageApiRequest<TaskDefinitionUsage>(
         `/api/task-definitions/${draft.id}/usage`
       );
-      const warning = `${draft.name} has been used by ${usage.task_instances} tasks and ${usage.qc_checks} QC checks.`;
-      if (!window.confirm(`${warning}\n\n¿Archivar esta definición de tarea?`)) {
+      const message = buildTaskRemovalMessage(
+        selectedTask?.name ?? draft.name,
+        selectedTask?.scope ?? draft.scope,
+        usage,
+        '¿Archivar esta definicion de tarea?'
+      );
+      if (!window.confirm(message)) {
         return;
       }
       await pageApiRequest<TaskDefinition>(`/api/task-definitions/${draft.id}/archive`, {
@@ -1215,6 +1431,7 @@ const TaskDefs: React.FC = () => {
     }
   };
 
+  const advanceCoverageGroups = groupCoverageStations(advanceCoverage);
   const currentTasks = tasks.filter((task) => task.archived_at === null);
   const totalTasks = currentTasks.length;
   const moduleTasks = currentTasks.filter((task) => task.scope === 'module').length;
@@ -1304,6 +1521,27 @@ const TaskDefs: React.FC = () => {
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+          {advanceCoverageGroups.length > 0 && (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <p className="font-semibold">
+                Estaciones de ensamblaje donde un modulo puede quedar detenido
+              </p>
+              <p className="mt-1 text-amber-800">
+                Un modulo solo sale de una estacion de ensamblaje cuando se completa una tarea que
+                gatilla avance. En estas estaciones hay tareas de modulo, pero ninguna tarea de
+                avance aplica (o solo aplica segun condiciones) para:
+              </p>
+              <ul className="mt-2 space-y-1">
+                {advanceCoverageGroups.map((group) => (
+                  <li key={group.key}>
+                    <span className="font-semibold">{group.label}</span>
+                    {group.advanceTaskNames.length === 0 ? ' · sin tarea de avance activa' : ''}:{' '}
+                    {formatCoverageHouseTypes(group.houseTypes, 6)}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           <div className="mt-3 flex justify-end">
@@ -1643,16 +1881,40 @@ const TaskDefs: React.FC = () => {
                             </p>
                           ) : dependencyOptions.length ? (
                             <div className="flex flex-col gap-1.5">
-                              {dependencyOptions.map((dep) => (
-                                <label key={dep.id} className="flex items-center gap-2 py-0.5">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.dependencies_json.includes(dep.id)}
-                                    onChange={() => toggleDependency(dep.id)}
-                                  />
-                                  <span className="text-[var(--ink)]">{dep.name}</span>
-                                </label>
-                              ))}
+                              {dependencyOptions.map((dep) => {
+                                const checked = draft.dependencies_json.includes(dep.id);
+                                const createsCycle = cycleBlockedDependencyIds.has(dep.id);
+                                return (
+                                  <label
+                                    key={dep.id}
+                                    className={`flex items-center gap-2 py-0.5 ${
+                                      createsCycle && !checked ? 'opacity-50' : ''
+                                    }`}
+                                    title={
+                                      createsCycle
+                                        ? 'Esta tarea ya depende de la tarea actual; agregarla crearia un ciclo.'
+                                        : undefined
+                                    }
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={createsCycle && !checked}
+                                      onChange={() => toggleDependency(dep.id)}
+                                    />
+                                    <span className="text-[var(--ink)]">{dep.name}</span>
+                                    {createsCycle && (
+                                      <span
+                                        className={`text-[10px] ${
+                                          checked ? 'text-red-600' : 'text-[var(--ink-muted)]'
+                                        }`}
+                                      >
+                                        {checked ? 'forma un ciclo: quitela' : 'crearia un ciclo'}
+                                      </span>
+                                    )}
+                                  </label>
+                                );
+                              })}
                             </div>
                           ) : (
                             <p className="text-[var(--ink-muted)]">

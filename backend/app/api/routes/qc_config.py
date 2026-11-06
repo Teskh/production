@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -46,6 +46,7 @@ from app.schemas.qc import (
     QCTriggerRead,
     QCTriggerUpdate,
 )
+from app.services.qc_runtime import should_reset_current_sampling
 
 router = APIRouter(dependencies=[Depends(get_current_admin)])
 
@@ -328,10 +329,30 @@ def get_check_definition(
 
 @router.put("/check-definitions/{check_definition_id}", response_model=QCCheckDefinitionRead)
 def update_check_definition(
-    check_definition_id: int, payload: QCCheckDefinitionUpdate, db: Session = Depends(get_db)
+    check_definition_id: int,
+    payload: QCCheckDefinitionUpdate,
+    confirm_universal: bool = Query(default=False),
+    db: Session = Depends(get_db),
 ) -> QCCheckDefinition:
     check = _require_check_definition(db, check_definition_id)
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("active") is True and not check.active and not confirm_universal:
+        # A check without applicability rules applies everywhere. Checks are deactivated
+        # automatically when deleting house types removes their last rule, so turning one
+        # back on must be an explicit decision, not a side effect of a toggle.
+        has_rules = db.execute(
+            select(QCApplicability.id)
+            .where(QCApplicability.check_definition_id == check.id)
+            .limit(1)
+        ).first()
+        if has_rules is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "La revision no tiene reglas de aplicabilidad y se aplicaria a todas "
+                    "las casas. Agregue reglas o confirme la activacion."
+                ),
+            )
     if "category_id" in updates and updates["category_id"] is not None:
         _require_category(db, updates["category_id"])
     for key, value in updates.items():
@@ -401,8 +422,16 @@ def update_trigger(
     _validate_sampling_value(updates.get("sampling_rate"), "sampling_rate")
     _validate_sampling_value(updates.get("sampling_step"), "sampling_step")
     _validate_trigger_params(db, event_type, params_json)
+    reset_sampling = should_reset_current_sampling(trigger, updates)
+    updates.pop("reset_current_sampling_rate", None)
     for key, value in updates.items():
+        if value is None and key in ("sampling_rate", "sampling_autotune", "sampling_step"):
+            continue
         setattr(trigger, key, value)
+    if reset_sampling or not trigger.sampling_autotune:
+        # A stale adaptive rate (e.g. 1.0 after a FAIL) must not outlive an edit of
+        # the base rate/autotune, nor apply while autotune is off.
+        trigger.current_sampling_rate = None
     db.commit()
     db.refresh(trigger)
     return trigger

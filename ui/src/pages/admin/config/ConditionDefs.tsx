@@ -21,6 +21,57 @@ type ConditionType = {
   values: ConditionValue[];
 };
 
+type ConditionTypeImpact = {
+  condition_type_id: number;
+  name: string;
+  active: boolean;
+  affected_tasks: {
+    task_definition_id: number;
+    name: string;
+    scope: string;
+    modes: string[];
+    house_type_names: string[];
+    in_progress_modules: number;
+  }[];
+  in_progress_modules: number;
+  in_progress_modules_total: number;
+};
+
+const IMPACT_TASK_LIMIT = 12;
+
+const buildDeactivationMessage = (impact: ConditionTypeImpact): string => {
+  const lines: string[] = [
+    `Al desactivar "${impact.name}" todas sus reglas dejan de aplicarse de inmediato, tambien en modulos en proceso:`,
+    '- Las tareas con regla "es" pasaran a aplicar a todos los modulos.',
+    '- Las tareas excluidas con "no es" volveran a aparecer.',
+  ];
+  if (impact.affected_tasks.length === 0) {
+    lines.push('', 'Ninguna tarea activa usa esta condicion.');
+  } else {
+    lines.push('', `Tareas afectadas (${impact.affected_tasks.length}):`);
+    impact.affected_tasks.slice(0, IMPACT_TASK_LIMIT).forEach((task) => {
+      const modes = task.modes.map((mode) => (mode === 'is_not' ? 'no es' : 'es')).join('/');
+      const houses = task.house_type_names.length
+        ? task.house_type_names.map((name) => name.trim()).join(', ')
+        : 'todas las casas';
+      const modules = task.in_progress_modules
+        ? ` · cambia en ${task.in_progress_modules} modulo(s) en proceso`
+        : '';
+      lines.push(`- ${task.name} [${modes}; ${houses}]${modules}`);
+    });
+    if (impact.affected_tasks.length > IMPACT_TASK_LIMIT) {
+      lines.push(`- ... y ${impact.affected_tasks.length - IMPACT_TASK_LIMIT} tareas mas`);
+    }
+  }
+  lines.push(
+    '',
+    `Modulos en proceso cuyas tareas cambiarian: ${impact.in_progress_modules} de ${impact.in_progress_modules_total}.`,
+    '',
+    '¿Desactivar esta condicion?'
+  );
+  return lines.join('\n');
+};
+
 type TypeDraft = {
   id?: number;
   name: string;
@@ -54,7 +105,18 @@ const apiRequest = async <T,>(path: string, options: RequestInit = {}): Promise<
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Solicitud fallida (${response.status})`);
+    let message = text;
+    if (text) {
+      try {
+        const data = JSON.parse(text) as { detail?: unknown };
+        if (typeof data?.detail === 'string') {
+          message = data.detail;
+        }
+      } catch {
+        // Fall through to the raw text.
+      }
+    }
+    throw new Error(message || `Solicitud fallida (${response.status})`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -175,6 +237,14 @@ const ConditionDefs: React.FC = () => {
       const name = typeDraft.name.trim();
       if (!name) {
         throw new Error('Se requiere el nombre de la condicion.');
+      }
+      if (typeDraft.id && selectedType?.active && !typeDraft.active) {
+        const impact = await pageApiRequest<ConditionTypeImpact>(
+          `/api/conditions/types/${typeDraft.id}/deactivation-impact`
+        );
+        if (!window.confirm(buildDeactivationMessage(impact))) {
+          return;
+        }
       }
       const payload = { name, active: typeDraft.active };
       let saved: ConditionType;
@@ -399,7 +469,8 @@ const ConditionDefs: React.FC = () => {
                     setTypeDraft((prev) => ({ ...prev, active: event.target.checked }))
                   }
                 />
-                Activa (las condiciones inactivas dejan de filtrar tareas)
+                Activa (las condiciones inactivas dejan de filtrar tareas, incluso en modulos en
+                proceso)
               </label>
 
               <div>

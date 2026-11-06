@@ -43,6 +43,7 @@ from app.schemas.qc_complaints import (
     QCComplaintSummary,
     QCComplaintSupervisorRead,
 )
+from app.schemas.qc import QCComplaintForceClose, QCComplaintSupervisorsUpdate
 
 router = APIRouter()
 
@@ -762,6 +763,135 @@ def reject_closure(
         actor_type=QCComplaintActorType.QC,
         event_type=QCComplaintEventType.CLOSURE_REJECTED,
         message=payload.message,
+        admin=admin,
+    )
+    db.commit()
+    return get_complaint(complaint_id, db)
+
+
+def _load_complaint_for_update(db: Session, complaint_id: int) -> QCQualityComplaint:
+    complaint = db.execute(
+        select(QCQualityComplaint)
+        .options(selectinload(QCQualityComplaint.supervisors))
+        .where(QCQualityComplaint.id == complaint_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if not complaint:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Complaint not found")
+    return complaint
+
+
+def _supervisor_names(supervisors: list[WorkerSupervisor]) -> str:
+    return ", ".join(
+        f"{supervisor.first_name} {supervisor.last_name}".strip()
+        for supervisor in sorted(supervisors, key=lambda item: (item.last_name, item.first_name))
+    )
+
+
+@router.put("/complaints/{complaint_id}/supervisors", response_model=QCComplaintDetail)
+def update_complaint_supervisors(
+    complaint_id: int,
+    payload: QCComplaintSupervisorsUpdate,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> QCComplaintDetail:
+    """Reassign the supervisors responsible for an open complaint.
+
+    Needed when the original supervisors left or were deleted: only assigned
+    supervisors can propose closure, so a complaint without them is stuck.
+    """
+    _require_qc_admin(admin)
+    complaint = _load_complaint_for_update(db, complaint_id)
+    if complaint.status == QCComplaintStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
+    supervisors = _load_supervisors(db, payload.supervisor_ids)
+    previous_ids = {link.supervisor_id for link in complaint.supervisors}
+    next_ids = {supervisor.id for supervisor in supervisors}
+    if previous_ids == next_ids:
+        return get_complaint(complaint_id, db)
+    previous = (
+        list(
+            db.execute(
+                select(WorkerSupervisor).where(WorkerSupervisor.id.in_(previous_ids))
+            ).scalars()
+        )
+        if previous_ids
+        else []
+    )
+    for link in list(complaint.supervisors):
+        if link.supervisor_id not in next_ids:
+            complaint.supervisors.remove(link)
+    for supervisor in supervisors:
+        if supervisor.id not in previous_ids:
+            complaint.supervisors.append(
+                QCQualityComplaintSupervisor(
+                    complaint_id=complaint.id,
+                    supervisor_id=supervisor.id,
+                )
+            )
+    db.flush()
+    lines = [f"Supervisores reasignados: {_supervisor_names(supervisors)}."]
+    lines.append(
+        f"Antes: {_supervisor_names(previous)}." if previous else "Antes: sin supervisor."
+    )
+    if complaint.status == QCComplaintStatus.CLOSURE_PROPOSED:
+        # A pending proposal from a supervisor who is no longer assigned must not be
+        # accepted on their word: the new supervisors have to review and propose again.
+        last_proposal = db.execute(
+            select(QCQualityComplaintEvent)
+            .where(QCQualityComplaintEvent.complaint_id == complaint.id)
+            .where(QCQualityComplaintEvent.event_type == QCComplaintEventType.CLOSURE_PROPOSED)
+            .order_by(QCQualityComplaintEvent.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if last_proposal is None or last_proposal.actor_supervisor_id not in next_ids:
+            complaint.status = QCComplaintStatus.OPEN
+            complaint.closure_proposed_at = None
+            complaint.updated_at = utc_now()
+            lines.append("La propuesta de cierre pendiente se descarto.")
+    if payload.message and payload.message.strip():
+        lines.append(payload.message.strip())
+    # QC events notify every currently assigned supervisor, so the new ones are told.
+    _create_event(
+        db,
+        complaint,
+        actor_type=QCComplaintActorType.QC,
+        event_type=QCComplaintEventType.COMMENT,
+        message="\n".join(lines),
+        admin=admin,
+    )
+    db.commit()
+    return get_complaint(complaint_id, db)
+
+
+@router.post("/complaints/{complaint_id}/force-close", response_model=QCComplaintDetail)
+def force_close_complaint(
+    complaint_id: int,
+    payload: QCComplaintForceClose,
+    db: Session = Depends(get_db),
+    admin: AdminUser = Depends(get_current_admin),
+) -> QCComplaintDetail:
+    """Close a complaint from QC without a supervisor proposal, keeping its history."""
+    _require_qc_admin(admin)
+    reason = (payload.message or "").strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indique un motivo para cerrar la observacion",
+        )
+    complaint = _load_complaint_for_update(db, complaint_id)
+    if complaint.status == QCComplaintStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Complaint is closed")
+    now = utc_now()
+    complaint.status = QCComplaintStatus.CLOSED
+    complaint.closed_at = now
+    complaint.updated_at = now
+    _create_event(
+        db,
+        complaint,
+        actor_type=QCComplaintActorType.QC,
+        event_type=QCComplaintEventType.FORCE_CLOSED,
+        message=f"Cierre forzado por QC: {reason}",
         admin=admin,
     )
     db.commit()

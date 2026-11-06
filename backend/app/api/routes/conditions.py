@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping, Sequence
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db, require_admin_page
@@ -11,10 +15,14 @@ from app.models.conditions import (
     TaskConditionRuleValue,
     WorkUnitCondition,
 )
+from app.models.enums import WorkUnitStatus
 from app.models.house import HouseType
 from app.models.tasks import TaskDefinition
-from app.models.work import WorkUnit
+from app.models.work import WorkOrder, WorkUnit
+from app.services.conditions import ConditionRule, conditions_met
 from app.schemas.conditions import (
+    ConditionImpactTask,
+    ConditionTypeImpactRead,
     ConditionTypeCreate,
     ConditionTypeRead,
     ConditionTypeUpdate,
@@ -62,6 +70,41 @@ def _validated_condition_value_ids(db: Session, condition_value_ids: list[int]) 
             detail="Condition value not found",
         )
     return unique_ids
+
+
+IN_PROGRESS_WORK_UNIT_STATUSES = (
+    WorkUnitStatus.PANELS,
+    WorkUnitStatus.MAGAZINE,
+    WorkUnitStatus.ASSEMBLY,
+)
+
+
+def condition_deactivation_effect(
+    condition_type_id: int,
+    rules_by_task: Mapping[int, Sequence[ConditionRule]],
+    units: Iterable[tuple[int, int | None, frozenset[int]]],
+) -> tuple[dict[int, set[int]], set[int]]:
+    """Which units change task applicability if a condition type's rules are dropped.
+
+    ``rules_by_task`` holds every rule currently in force for the affected tasks
+    (including the condition type's own rules); ``units`` are (work_unit_id,
+    house_type_id, assigned condition value ids). Returns the changed unit ids per
+    task and the union of changed units.
+    """
+    without_type = {
+        task_id: tuple(rule for rule in rules if rule.condition_type_id != condition_type_id)
+        for task_id, rules in rules_by_task.items()
+    }
+    changed_by_task: dict[int, set[int]] = {task_id: set() for task_id in rules_by_task}
+    changed_units: set[int] = set()
+    for unit_id, house_type_id, value_ids in units:
+        for task_id, rules in rules_by_task.items():
+            before = conditions_met(rules, value_ids, house_type_id)
+            after = conditions_met(without_type[task_id], value_ids, house_type_id)
+            if before != after:
+                changed_by_task[task_id].add(unit_id)
+                changed_units.add(unit_id)
+    return changed_by_task, changed_units
 
 
 @router.get("/types", response_model=list[ConditionTypeRead])
@@ -137,6 +180,111 @@ def update_condition_type(
     return row
 
 
+@router.get("/types/{type_id}/deactivation-impact", response_model=ConditionTypeImpactRead)
+def get_condition_type_deactivation_impact(
+    type_id: int, db: Session = Depends(get_db)
+) -> ConditionTypeImpactRead:
+    """What changes if this condition type is deactivated (its rules stop counting)."""
+    row = db.get(ConditionType, type_id)
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Condition type not found"
+        )
+    type_rules = list(
+        db.execute(
+            select(TaskConditionRule, TaskDefinition)
+            .join(TaskDefinition, TaskDefinition.id == TaskConditionRule.task_definition_id)
+            .where(TaskConditionRule.condition_type_id == type_id)
+            .where(TaskDefinition.active == True)  # noqa: E712
+            .where(TaskDefinition.archived_at.is_(None))
+            .order_by(TaskDefinition.name, TaskConditionRule.id)
+        ).all()
+    )
+    tasks_by_id: dict[int, TaskDefinition] = {}
+    modes_by_task: dict[int, set[str]] = {}
+    house_ids_by_task: dict[int, set[int | None]] = {}
+    for rule, task in type_rules:
+        tasks_by_id[task.id] = task
+        modes_by_task.setdefault(task.id, set()).add(rule.mode)
+        house_ids_by_task.setdefault(task.id, set()).add(rule.house_type_id)
+
+    # Every rule in force now for those tasks: active types plus this one.
+    rules_by_task: dict[int, list[ConditionRule]] = {task_id: [] for task_id in tasks_by_id}
+    if tasks_by_id:
+        rule_rows = db.execute(
+            select(TaskConditionRule)
+            .options(selectinload(TaskConditionRule.rule_values))
+            .join(ConditionType, ConditionType.id == TaskConditionRule.condition_type_id)
+            .where(TaskConditionRule.task_definition_id.in_(list(tasks_by_id)))
+            .where(or_(ConditionType.active == True, ConditionType.id == type_id))  # noqa: E712
+        ).scalars()
+        for rule in rule_rows:
+            value_ids = frozenset(value.condition_value_id for value in rule.rule_values)
+            if not value_ids:
+                continue
+            rules_by_task[rule.task_definition_id].append(
+                ConditionRule(
+                    condition_type_id=rule.condition_type_id,
+                    house_type_id=rule.house_type_id,
+                    mode=rule.mode,
+                    value_ids=value_ids,
+                )
+            )
+
+    unit_rows = db.execute(
+        select(WorkUnit.id, WorkOrder.house_type_id)
+        .join(WorkOrder, WorkOrder.id == WorkUnit.work_order_id)
+        .where(WorkUnit.status.in_(IN_PROGRESS_WORK_UNIT_STATUSES))
+    ).all()
+    values_by_unit: dict[int, set[int]] = {}
+    unit_ids = [unit_id for unit_id, _ in unit_rows]
+    if unit_ids and tasks_by_id:
+        for unit_id, value_id in db.execute(
+            select(WorkUnitCondition.work_unit_id, WorkUnitCondition.condition_value_id).where(
+                WorkUnitCondition.work_unit_id.in_(unit_ids)
+            )
+        ).all():
+            values_by_unit.setdefault(unit_id, set()).add(value_id)
+    changed_by_task, changed_units = condition_deactivation_effect(
+        type_id,
+        rules_by_task,
+        (
+            (unit_id, house_type_id, frozenset(values_by_unit.get(unit_id, ())))
+            for unit_id, house_type_id in unit_rows
+        ),
+    )
+
+    house_names = dict(db.execute(select(HouseType.id, HouseType.name)).all())
+    affected_tasks = []
+    for task_id, task in tasks_by_id.items():
+        house_ids = house_ids_by_task.get(task_id, set())
+        affected_tasks.append(
+            ConditionImpactTask(
+                task_definition_id=task_id,
+                name=task.name,
+                scope=getattr(task.scope, "value", str(task.scope)),
+                modes=sorted(modes_by_task.get(task_id, set())),
+                house_type_names=(
+                    []
+                    if None in house_ids
+                    else sorted(
+                        house_names.get(house_id, f"Casa {house_id}") for house_id in house_ids
+                    )
+                ),
+                in_progress_modules=len(changed_by_task.get(task_id, ())),
+            )
+        )
+    affected_tasks.sort(key=lambda entry: entry.name.lower())
+    return ConditionTypeImpactRead(
+        condition_type_id=row.id,
+        name=row.name,
+        active=row.active,
+        affected_tasks=affected_tasks,
+        in_progress_modules=len(changed_units),
+        in_progress_modules_total=len(unit_rows),
+    )
+
+
 @router.delete("/types/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_condition_type(
     type_id: int,
@@ -166,8 +314,10 @@ def delete_condition_type(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Condition type is in use by tasks or production items. "
-                "Deactivate it instead."
+                "La condicion esta en uso por tareas o modulos y no se puede eliminar. "
+                "Quite primero sus reglas de las tareas. Desactivarla tambien deja de "
+                "aplicar todas sus reglas (incluso en modulos en proceso), asi que revise "
+                "el impacto antes de hacerlo."
             ),
         )
     db.delete(row)

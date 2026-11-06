@@ -1,7 +1,12 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.schemas.qc_runtime import (
+    QCCheckInstanceSummary,
+    QCDashboardResponse,
+    QCReworkTaskSummary,
+)
 from app.models.enums import (
     QCCheckKind,
     QCCheckMediaType,
@@ -84,6 +89,9 @@ class QCTriggerUpdate(BaseModel):
     sampling_rate: float | None = None
     sampling_autotune: bool | None = None
     sampling_step: float | None = None
+    # Explicitly restart the adaptive rate (it is also restarted whenever the base
+    # rate or the autotune switch changes).
+    reset_current_sampling_rate: bool | None = None
 
 
 class QCTriggerRead(QCTriggerBase):
@@ -91,6 +99,13 @@ class QCTriggerRead(QCTriggerBase):
     current_sampling_rate: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_sampling_rate(self) -> float:
+        if self.sampling_autotune and self.current_sampling_rate is not None:
+            return self.current_sampling_rate
+        return self.sampling_rate
 
 
 class QCApplicabilityBase(BaseModel):
@@ -158,3 +173,74 @@ class QCCheckMediaAssetRead(QCCheckMediaAssetBase):
     id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# QC dashboard extensions (runtime summaries live in app.schemas.qc_runtime)
+# ---------------------------------------------------------------------------
+
+
+class QCDashboardCheckSummary(QCCheckInstanceSummary):
+    # Panel check still open while its module already entered assembly.
+    module_in_assembly: bool = False
+
+
+class QCDashboardReworkSummary(QCReworkTaskSummary):
+    # Panel rework whose panel already left the panel line.
+    panel_off_line: bool = False
+
+
+class QCTriggerTaskIssue(BaseModel):
+    task_definition_id: int
+    task_name: str | None = None
+    reason: str  # "archived" | "inactive" | "missing"
+
+
+class QCTriggerTaskWarning(BaseModel):
+    check_definition_id: int
+    check_name: str
+    # True when no referenced task can complete anymore (the check never opens).
+    blocked: bool = False
+    tasks: list[QCTriggerTaskIssue] = Field(default_factory=list)
+
+
+class QCDashboardResponseV2(QCDashboardResponse):
+    pending_checks: list[QCDashboardCheckSummary]
+    rework_tasks: list[QCDashboardReworkSummary]
+    trigger_warnings: list[QCTriggerTaskWarning] = Field(default_factory=list)
+
+
+class QCWorkUnitCompletionPreview(BaseModel):
+    work_unit_id: int
+    open_checks: int = 0
+    open_reworks: int = 0
+    open_tasks: int = 0
+
+
+class QCWorkUnitCompletionRequest(BaseModel):
+    # Close open checks and cancel open reworks as part of completing the module.
+    resolve_open_items: bool = False
+
+
+class QCWorkUnitCompletionResult(QCWorkUnitCompletionPreview):
+    closed_checks: int = 0
+    canceled_reworks: int = 0
+    closed_tasks: int = 0
+
+
+# ---------------------------------------------------------------------------
+# QC complaints: supervisor reassignment and forced closure
+# ---------------------------------------------------------------------------
+
+
+class QCComplaintSupervisorsUpdate(BaseModel):
+    supervisor_ids: list[int]
+    message: str | None = None
+
+
+class QCComplaintForceClose(BaseModel):
+    message: str
+
+
+class QCReworkCancelRequest(BaseModel):
+    reason: str

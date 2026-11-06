@@ -34,6 +34,11 @@ from app.schemas.houses import (
     HouseTypeRead,
     HouseTypeUpdate,
 )
+from app.services.qc_runtime import (
+    QCApplicabilityPrunePlan,
+    apply_qc_applicability_prune,
+    plan_qc_applicability_prune_for_refs,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -238,14 +243,28 @@ def _house_type_cascade_counts(db: Session, house_type_id: int, queries) -> dict
     }
 
 
-def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None:
+def _house_type_qc_prune_plan(db: Session, house_type_id: int) -> QCApplicabilityPrunePlan:
+    sub_type_ids = list(
+        db.execute(
+            select(HouseSubType.id).where(HouseSubType.house_type_id == house_type_id)
+        ).scalars()
+    )
+    return plan_qc_applicability_prune_for_refs(db, [house_type_id], sub_type_ids)
+
+
+def _qc_deactivation_message(plan: QCApplicabilityPrunePlan) -> str:
+    count = len(plan.check_ids_to_deactivate)
+    names = ", ".join(plan.check_names_to_deactivate[:5])
+    if len(plan.check_names_to_deactivate) > 5:
+        names += ", ..."
+    noun = "inspeccion QC quedaria desactivada" if count == 1 else "inspecciones QC quedarian desactivadas"
+    return f"{count} {noun} ({names})"
+
+
+def _delete_house_type_cascade(
+    db: Session, house_type_id: int, queries, qc_plan: QCApplicabilityPrunePlan
+) -> None:
     sub_type_ids = queries["sub_type_ids"]
-    qc_applicability_house_type_ids = select(
-        QCApplicabilityHouseType.applicability_id
-    ).where(QCApplicabilityHouseType.house_type_id == house_type_id)
-    qc_applicability_sub_type_ids = select(
-        QCApplicabilitySubType.applicability_id
-    ).where(QCApplicabilitySubType.sub_type_id.in_(sub_type_ids))
     panel_definition_ids = queries["panel_definition_ids"]
     work_order_ids = queries["work_order_ids"]
     work_unit_ids = queries["work_unit_ids"]
@@ -342,14 +361,9 @@ def _delete_house_type_cascade(db: Session, house_type_id: int, queries) -> None
             )
         )
     )
-    db.execute(
-        delete(QCApplicability).where(
-            or_(
-                QCApplicability.id.in_(qc_applicability_house_type_ids),
-                QCApplicability.id.in_(qc_applicability_sub_type_ids),
-            )
-        )
-    )
+    # Drop only the deleted house type / subtypes from QC applicability. Removing a
+    # whole rule could leave a check with no rules, which means "applies to all".
+    apply_qc_applicability_prune(db, qc_plan)
     db.execute(
         delete(HouseParameterValue).where(
             HouseParameterValue.house_type_id == house_type_id
@@ -422,16 +436,26 @@ def delete_house_type(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="House type not found")
     queries = _house_type_cascade_queries(house_type_id)
     counts = _house_type_cascade_counts(db, house_type_id, queries)
+    qc_plan = _house_type_qc_prune_plan(db, house_type_id)
     cascade_total = sum(counts.values())
+    summary_counts = dict(counts)
+    if qc_plan.check_ids_to_deactivate:
+        summary_counts["qc_checks_deactivated"] = len(qc_plan.check_ids_to_deactivate)
     counts_summary = ", ".join(
-        f"{key}={value}" for key, value in counts.items() if value
+        f"{key}={value}" for key, value in summary_counts.items() if value
     )
     if cascade_total > 0 and not force:
+        qc_note = (
+            f"{_qc_deactivation_message(qc_plan)}. "
+            if qc_plan.check_ids_to_deactivate
+            else ""
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "House type has dependent records. "
                 f"{counts_summary}. "
+                f"{qc_note}"
                 "Retry with ?force=true to delete anyway."
             ),
         )
@@ -442,7 +466,7 @@ def delete_house_type(
             counts_summary or "none",
         )
         if force:
-            _delete_house_type_cascade(db, house_type_id, queries)
+            _delete_house_type_cascade(db, house_type_id, queries, qc_plan)
     db.delete(house_type)
     db.commit()
 
@@ -506,14 +530,70 @@ def update_house_subtype(
     return subtype
 
 
+SUBTYPE_DEPENDENCY_LABELS = {
+    "work_orders": "ordenes de trabajo",
+    "panel_definitions": "definiciones de panel",
+    "parameter_values": "valores de parametros",
+    "task_applicability": "reglas de aplicabilidad de tareas",
+    "task_expected_durations": "duraciones esperadas de tareas",
+}
+
+
+def _sub_type_dependency_counts(db: Session, sub_type_id: int) -> dict[str, int]:
+    return {
+        "work_orders": _count(
+            db, select(func.count()).where(WorkOrder.sub_type_id == sub_type_id)
+        ),
+        "panel_definitions": _count(
+            db, select(func.count()).where(PanelDefinition.sub_type_id == sub_type_id)
+        ),
+        "parameter_values": _count(
+            db,
+            select(func.count()).where(HouseParameterValue.sub_type_id == sub_type_id),
+        ),
+        "task_applicability": _count(
+            db, select(func.count()).where(TaskApplicability.sub_type_id == sub_type_id)
+        ),
+        "task_expected_durations": _count(
+            db,
+            select(func.count()).where(TaskExpectedDuration.sub_type_id == sub_type_id),
+        ),
+    }
+
+
 @router.delete("/subtypes/{sub_type_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_house_subtype(
     sub_type_id: int,
+    force: bool = False,
     db: Session = Depends(get_db),
     _admin: AdminUser = Depends(require_admin_page("house-config", edit=True)),
 ) -> None:
     subtype = db.get(HouseSubType, sub_type_id)
     if not subtype:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="House subtype not found")
+    dependencies = _sub_type_dependency_counts(db, sub_type_id)
+    if any(dependencies.values()):
+        used_by = ", ".join(
+            f"{value} {SUBTYPE_DEPENDENCY_LABELS[key]}"
+            for key, value in dependencies.items()
+            if value
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El subtipo esta en uso y no se puede eliminar: {used_by}.",
+        )
+    qc_plan = plan_qc_applicability_prune_for_refs(db, sub_type_ids=[sub_type_id])
+    if qc_plan.check_ids_to_deactivate and not force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{_qc_deactivation_message(qc_plan)} porque solo aplican a este subtipo. "
+                "Reintente con ?force=true para eliminar de todos modos."
+            ),
+        )
+    # Remove only this subtype from QC applicability; rules that targeted only this
+    # subtype are dropped and checks left without rules are deactivated, instead of
+    # letting an empty list widen them to every house.
+    apply_qc_applicability_prune(db, qc_plan)
     db.delete(subtype)
     db.commit()

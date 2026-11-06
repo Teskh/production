@@ -242,6 +242,7 @@ const COUNT_LABELS: Record<string, string> = {
   qc_evidence: 'Evidencia QC',
   qc_rework_tasks: 'Tareas de retrabajo QC',
   qc_notifications: 'Notificaciones QC',
+  qc_checks_deactivated: 'Inspecciones QC que quedarian desactivadas',
 };
 
 const parseCascadeWarning = (message: string) => {
@@ -1275,9 +1276,17 @@ const HouseConfigurator: React.FC = () => {
             (entry) =>
               `${COUNT_LABELS[entry.key] ?? entry.key}: ${entry.value}`
           );
+        const deactivatedChecks =
+          counts.find((entry) => entry.key === 'qc_checks_deactivated')?.value ?? 0;
         const confirmMessage = [
           'Este tipo de casa tiene registros dependientes:',
           ...lines,
+          ...(deactivatedChecks > 0
+            ? [
+                '',
+                `${deactivatedChecks} inspeccion(es) QC quedarian desactivadas porque solo aplican a este tipo de casa o sus subtipos.`,
+              ]
+            : []),
           'Eliminar de todos modos?',
         ].join('\n');
         if (!window.confirm(confirmMessage)) {
@@ -1396,7 +1405,23 @@ const HouseConfigurator: React.FC = () => {
     setSavingSubtype(true);
     setSubtypeMessage(null);
     try {
-      await pageApiRequest<void>(`/api/house-types/subtypes/${subtype.id}`, { method: 'DELETE' });
+      try {
+        await pageApiRequest<void>(`/api/house-types/subtypes/${subtype.id}`, { method: 'DELETE' });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        // The backend asks for confirmation when QC checks would be deactivated.
+        if (!message.includes('force=true')) {
+          throw error;
+        }
+        const warning = message.replace(/\s*Reintente con \?force=true[^.]*\.?/, '').trim();
+        if (!window.confirm(`${warning}\n\nEliminar el subtipo de todos modos?`)) {
+          setSubtypeMessage('Eliminacion cancelada.');
+          return;
+        }
+        await pageApiRequest<void>(`/api/house-types/subtypes/${subtype.id}?force=true`, {
+          method: 'DELETE',
+        });
+      }
       setSubtypesByType((prev) => ({
         ...prev,
         [subtype.house_type_id]: (prev[subtype.house_type_id] ?? []).filter(
