@@ -62,3 +62,11 @@ docs/references/
 backend/media_gallery/
 backend/backups/
 backend/runtime/
+
+# pnpm store (its projects/<hash> folder is a junction back to ui/, which made git
+# see a second copy of every UI file)
+.pnpm-store/
+
+# Claude Code local state (launch.json is shared and stays tracked)
+.claude/settings.local.json
+.claude/worktrees/
